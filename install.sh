@@ -162,7 +162,7 @@ install_gemini() {
     note "  clearing corrupted Gemini integrity store"
     [ "$DRY" = 0 ] && rm -f "$integrity"
   fi
-  if try gemini extensions install --yes "https://github.com/$REPO"; then
+  if try gemini extensions install --consent "https://github.com/$REPO"; then
     [ "$DRY" = 1 ] && WOULD_INSTALL+=("gemini") || INSTALLED+=("gemini")
   else
     FAILED+=("gemini")
