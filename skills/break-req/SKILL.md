@@ -1,3 +1,4 @@
+---
 name: break-req
 description: Recursive tech-audit & decision-tree mapping.
 rules:
@@ -9,3 +10,4 @@ rules:
       - Backend: NuGet packages, API contracts, service arch.
   - Strategy: Search codebase first. Query user for unknowns.
   - Success: Compile all resolutions into `technical_requirements.md`.
+---
