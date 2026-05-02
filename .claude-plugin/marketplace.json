@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ai-skill-collections",
+  "description": "A personal collection of AI skills — token-saving modes, workflow helpers, and productivity boosters for any AI coding agent.",
+  "owner": {
+    "name": "Chanakya",
+    "url": "https://github.com/chanakya-net"
+  },
+  "plugins": [
+    {
+      "name": "ai-skill-collections",
+      "description": "Token-saving modes, workflow helpers, and productivity boosters.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
