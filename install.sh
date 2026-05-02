@@ -11,33 +11,17 @@ set -euo pipefail
 
 REPO="chanakya-net/AI-Skills"
 
-# ── Flags ──────────────────────────────────────────────────────────────────
+# ── Flags (declare defaults first) ─────────────────────────────────────────
 DRY=0
-FORCE=0
 LIST_ONLY=0
 NO_COLOR=0
 ONLY=()
+WOULD_INSTALL=()
 
 # ── Result trackers ────────────────────────────────────────────────────────
 INSTALLED=()
 SKIPPED=()
 FAILED=()
-
-# ── Color setup ────────────────────────────────────────────────────────────
-if [ ! -t 1 ]; then NO_COLOR=1; fi
-c_green=""; c_yellow=""; c_red=""; c_dim=""; c_reset=""
-if [ "$NO_COLOR" = 0 ]; then
-  c_green=$'\033[0;32m'
-  c_yellow=$'\033[0;33m'
-  c_red=$'\033[0;31m'
-  c_dim=$'\033[2m'
-  c_reset=$'\033[0m'
-fi
-
-say()  { echo "${c_green}$*${c_reset}"; }
-warn() { echo "${c_yellow}$*${c_reset}"; }
-err()  { echo "${c_red}$*${c_reset}" >&2; }
-note() { echo "${c_dim}$*${c_reset}"; }
 
 # ── Help ───────────────────────────────────────────────────────────────────
 print_help() {
@@ -50,7 +34,6 @@ USAGE
 
 FLAGS
   --dry-run         Print what would run, do nothing.
-  --force           Re-run even for already-installed agents.
   --only <agent>    Install only for the named agent. Repeatable.
   --list            Print the agent support matrix and exit.
   --no-color        Disable ANSI color codes.
@@ -95,30 +78,48 @@ EXAMPLES
 EOF
 }
 
-# ── Argument parsing ────────────────────────────────────────────────────────
+# ── Argument parsing (BEFORE color init) ───────────────────────────────────
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run)   DRY=1 ;;
-    --force)     FORCE=1 ;;
     --list)      LIST_ONLY=1 ;;
     --no-color)  NO_COLOR=1 ;;
     --only)
       shift
-      [ $# -eq 0 ] && { err "error: --only requires an argument"; exit 2; }
+      [ $# -eq 0 ] && { echo "error: --only requires an argument" >&2; exit 2; }
       ONLY+=("$1") ;;
     -h|--help)   print_help; exit 0 ;;
-    *) err "error: unknown flag: $1"; echo "run 'install.sh --help' for usage" >&2; exit 2 ;;
+    *) echo "error: unknown flag: $1" >&2; echo "run 'install.sh --help' for usage" >&2; exit 2 ;;
   esac
   shift
 done
 
 if [ "$LIST_ONLY" = 1 ]; then print_help; exit 0; fi
 
+# ── Color setup (AFTER arg parsing, so --no-color works) ───────────────────
+if [ ! -t 1 ]; then NO_COLOR=1; fi
+c_green=""; c_yellow=""; c_red=""; c_dim=""; c_reset=""
+if [ "$NO_COLOR" = 0 ]; then
+  c_green=$'\033[0;32m'
+  c_yellow=$'\033[0;33m'
+  c_red=$'\033[0;31m'
+  c_dim=$'\033[2m'
+  c_reset=$'\033[0m'
+fi
+
+say()  { echo "${c_green}$*${c_reset}"; }
+warn() { echo "${c_yellow}$*${c_reset}"; }
+err()  { echo "${c_red}$*${c_reset}" >&2; }
+note() { echo "${c_dim}$*${c_reset}"; }
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 only_filter() {
   local id="$1"
-  [ ${#ONLY[@]} -eq 0 ] && return 0
-  for o in "${ONLY[@]}"; do [ "$o" = "$id" ] && return 0; done
+  [ "${#ONLY[@]}" -eq 0 ] && return 0
+  local o
+  for o in "${ONLY[@]+"${ONLY[@]}"}"; do
+    [ "$o" = "$id" ] && return 0
+  done
   return 1
 }
 
@@ -142,7 +143,7 @@ install_claude() {
   command -v claude >/dev/null 2>&1 || return 0
   say "→ Claude Code detected"
   if try claude plugin install "github:$REPO"; then
-    INSTALLED+=("claude")
+    [ "$DRY" = 1 ] && WOULD_INSTALL+=("claude") || INSTALLED+=("claude")
   else
     FAILED+=("claude")
     err "  claude plugin install failed"
@@ -156,7 +157,7 @@ install_gemini() {
   command -v gemini >/dev/null 2>&1 || return 0
   say "→ Gemini CLI detected"
   if try gemini extensions install "github.com/$REPO"; then
-    INSTALLED+=("gemini")
+    [ "$DRY" = 1 ] && WOULD_INSTALL+=("gemini") || INSTALLED+=("gemini")
   else
     FAILED+=("gemini")
     err "  gemini extensions install failed"
@@ -181,6 +182,9 @@ install_via_skills() {
     command -v "${detect#cmd:}" >/dev/null 2>&1 && detected=1
   elif [[ "$detect" == dir:* ]]; then
     [ -d "${detect#dir:}" ] && detected=1
+  else
+    warn "  BUG: unknown detect_expr '$detect' for agent '$id'"
+    return 0
   fi
   [ "$detected" = 0 ] && return 0
 
@@ -188,7 +192,7 @@ install_via_skills() {
   ensure_node || { SKIPPED+=("$id"); echo; return 0; }
 
   if try npx -y skills add "$REPO" -a "$profile"; then
-    INSTALLED+=("$id")
+    [ "$DRY" = 1 ] && WOULD_INSTALL+=("$id") || INSTALLED+=("$id")
   else
     FAILED+=("$id")
     err "  npx skills add failed (profile: $profile)"
@@ -230,15 +234,24 @@ echo "────────────────────────�
 if [ ${#INSTALLED[@]} -gt 0 ]; then
   say "✓ Installed: ${INSTALLED[*]}"
 fi
+if [ ${#WOULD_INSTALL[@]} -gt 0 ]; then
+  note "~ Would install (dry-run): ${WOULD_INSTALL[*]}"
+fi
 if [ ${#SKIPPED[@]} -gt 0 ]; then
   warn "⊘ Skipped (missing dep): ${SKIPPED[*]}"
 fi
 if [ ${#FAILED[@]} -gt 0 ]; then
   err "✗ Failed: ${FAILED[*]}"
 fi
-if [ ${#INSTALLED[@]} -eq 0 ] && [ ${#FAILED[@]} -eq 0 ] && [ ${#SKIPPED[@]} -eq 0 ]; then
-  warn "No supported agents detected."
-  note "Run with --only <agent> to force install for a specific agent."
-  note "Supported agents: claude gemini codex copilot cursor windsurf cline roo continue opencode junie amp"
+if [ ${#INSTALLED[@]} -eq 0 ] && [ ${#FAILED[@]} -eq 0 ] && [ ${#SKIPPED[@]} -eq 0 ] && [ ${#WOULD_INSTALL[@]} -eq 0 ]; then
+  if [ "${#ONLY[@]}" -gt 0 ]; then
+    warn "None of the specified agents were detected on this machine."
+  else
+    warn "No supported agents detected."
+  fi
+  note "Run 'install.sh --list' to see all supported agents."
 fi
 echo "────────────────────────────────────"
+
+[ "${#FAILED[@]}" -gt 0 ] && exit 1
+exit 0
