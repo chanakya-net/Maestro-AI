@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ai-skill-collections — smart multi-agent installer
+# ai-skill-collections — smart multi-agent installer (v2)
 #
 # One line:
 #   curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
