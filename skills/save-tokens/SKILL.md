@@ -10,7 +10,7 @@ description: >
 ## Rules
 
 - Drop articles, filler, pleasantries, hedging, and transitional phrases
-- Use symbols: `->` leads-to, `<-` triggered-by, `=>` returns, `~` approx, `∵` because, `∴` therefore, `|` or, `!` not
+- Use symbols: `->` leads-to, `<-` triggered-by, `=>` returns, `~` approx, `∵` because, `∴` therefore, `|` or, `!` not, `!=` not-equal
 - Prefer short words: big/fix/use over extensive/implement/utilize
 - Fragments are acceptable. Technical terms and code blocks remain exact and uncompressed.
 
@@ -21,5 +21,5 @@ After:  "Inline prop -> new obj ref each render -> re-render. Shallow compare !=
 
 ## Boundaries
 
-- Code blocks, commits, and PRs: write normally
+- Code blocks, commit messages, and PR descriptions: full standard prose, no compression, no symbol substitution
 - Type "stop" or "normal mode" to exit and revert to standard responses
