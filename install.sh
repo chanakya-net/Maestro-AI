@@ -156,7 +156,13 @@ install_gemini() {
   only_filter "gemini" || return 0
   command -v gemini >/dev/null 2>&1 || return 0
   say "→ Gemini CLI detected"
-  if try gemini extensions install "https://github.com/$REPO"; then
+  # Clear corrupted integrity store if present (causes install to abort)
+  local integrity="$HOME/.gemini/extension_integrity.json"
+  if [ -f "$integrity" ] && ! python3 -m json.tool "$integrity" >/dev/null 2>&1; then
+    note "  clearing corrupted Gemini integrity store"
+    [ "$DRY" = 0 ] && rm -f "$integrity"
+  fi
+  if try gemini extensions install --yes "https://github.com/$REPO"; then
     [ "$DRY" = 1 ] && WOULD_INSTALL+=("gemini") || INSTALLED+=("gemini")
   else
     FAILED+=("gemini")
