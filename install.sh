@@ -142,7 +142,7 @@ install_claude() {
   only_filter "claude" || return 0
   command -v claude >/dev/null 2>&1 || return 0
   say "→ Claude Code detected"
-  if try claude plugin install "github:$REPO"; then
+  if try claude plugin marketplace add "$REPO" && try claude plugin install "ai-skill-collections@ai-skill-collections"; then
     [ "$DRY" = 1 ] && WOULD_INSTALL+=("claude") || INSTALLED+=("claude")
   else
     FAILED+=("claude")
@@ -156,7 +156,7 @@ install_gemini() {
   only_filter "gemini" || return 0
   command -v gemini >/dev/null 2>&1 || return 0
   say "→ Gemini CLI detected"
-  if try gemini extensions install "github.com/$REPO"; then
+  if try gemini extensions install "https://github.com/$REPO"; then
     [ "$DRY" = 1 ] && WOULD_INSTALL+=("gemini") || INSTALLED+=("gemini")
   else
     FAILED+=("gemini")
@@ -191,7 +191,7 @@ install_via_skills() {
   say "→ $label detected"
   ensure_node || { SKIPPED+=("$id"); echo; return 0; }
 
-  if try npx -y skills add "$REPO" -a "$profile"; then
+  if try npx -y skills add "$REPO" -a "$profile" --yes --global; then
     [ "$DRY" = 1 ] && WOULD_INSTALL+=("$id") || INSTALLED+=("$id")
   else
     FAILED+=("$id")
