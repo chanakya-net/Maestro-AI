@@ -72,6 +72,7 @@ npx -y skills add chanakya-net/AI-Skills -a cursor
 | Skill | Description |
 |-------|-------------|
 | [`save-tokens`](skills/save-tokens/SKILL.md) | Compresses AI responses using symbols/abbreviations to cut token usage ~75% |
+| [`break-req`](skills/break-req/SKILL.md) | Interviews relentlessly to break down complex requirements and resolve design dependencies |
 
 ---
 
