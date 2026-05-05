@@ -10,6 +10,8 @@
 set -euo pipefail
 
 REPO="chanakya-net/AI-Skills"
+ASSETS_REF="${ASSETS_REF:-main}"
+ASSETS_DEST="${ASSETS_DEST:-$HOME/.ai-skill-collections/assets}"
 
 # ── Flags (declare defaults first) ─────────────────────────────────────────
 DRY=0
@@ -38,6 +40,12 @@ FLAGS
   --list            Print the agent support matrix and exit.
   --no-color        Disable ANSI color codes.
   -h, --help        Show this help and exit.
+
+ENVIRONMENT
+  ASSETS_DEST       Where shared assets are installed.
+                    Default: ~/.ai-skill-collections/assets
+  ASSETS_REF        Git ref used to download assets from GitHub.
+                    Default: main
 
 SUPPORTED AGENTS
   Native:
@@ -114,6 +122,56 @@ ensure_node() {
   command -v node >/dev/null 2>&1 && return 0
   warn "  node/npx not found — skipping (install Node.js from https://nodejs.org)"
   return 1
+}
+
+install_assets() {
+  say "→ Installing shared assets"
+
+  local files=("prompt.md" "run-codex.sh" "run-copilot.sh")
+  local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
+
+  if [ "$DRY" = 1 ]; then
+    note "  [dry-run] mkdir -p $ASSETS_DEST"
+    local f
+    for f in "${files[@]}"; do
+      note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
+    done
+    note "  [dry-run] chmod +x ${ASSETS_DEST}/run-codex.sh ${ASSETS_DEST}/run-copilot.sh"
+    WOULD_INSTALL+=("assets")
+    echo
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    FAILED+=("assets")
+    err "  curl not found; cannot download shared assets"
+    echo
+    return 1
+  fi
+
+  mkdir -p "$ASSETS_DEST"
+
+  local f url tmp
+  for f in "${files[@]}"; do
+    url="${base_url}/${f}"
+    tmp="${ASSETS_DEST}/${f}.tmp"
+
+    if ! curl -fsSL "$url" -o "$tmp"; then
+      rm -f "$tmp"
+      FAILED+=("assets")
+      err "  failed to download ${url}"
+      echo
+      return 1
+    fi
+
+    mv "$tmp" "${ASSETS_DEST}/${f}"
+  done
+
+  chmod +x "${ASSETS_DEST}/run-codex.sh" "${ASSETS_DEST}/run-copilot.sh"
+
+  INSTALLED+=("assets")
+  note "  assets installed at: $ASSETS_DEST"
+  echo
 }
 
 # ── Native: Claude Code ─────────────────────────────────────────────────────
@@ -202,6 +260,8 @@ install_via_skills() {
 }
 
 # ── Run installs ─────────────────────────────────────────────────────────────
+install_assets || true
+
 install_claude
 install_gemini
 

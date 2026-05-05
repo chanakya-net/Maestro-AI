@@ -9,10 +9,36 @@ curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install
 ```
 
 The smart installer detects your active agent(s) and wires everything up automatically.
+It also installs shared assets required by workflow skills:
+
+- `prompt.md`
+- `run-codex.sh`
+- `run-copilot.sh`
+
+Default asset location:
+
+```bash
+~/.ai-skill-collections/assets
+```
+
+Runner contract (execution-only):
+
+- `run-codex.sh <context-payload-file> <prompt-file>`
+- `run-copilot.sh <context-payload-file> <prompt-file>`
+
+These scripts no longer fetch GitHub issues or git history themselves; `run-with-it` prepares context and invokes them.
+
+Override asset destination or git ref:
+
+```bash
+ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+```
 
 ---
 
 ## Per-Agent Install
+
+Per-agent commands below install skills for that specific agent. To guarantee shared assets are installed too, prefer the `install.sh` one-liner above.
 
 ### Claude Code
 
@@ -54,6 +80,23 @@ npx -y skills add chanakya-net/AI-Skills -a github-copilot
 | [`break-req`](skills/break-req/SKILL.md) | Interviews relentlessly to break down complex requirements and resolve design dependencies |
 | [`create-git-issue`](skills/create-git-issue/SKILL.md) | Synthesizes a PRD from context, then creates dependency-aware tracer-bullet implementation issues |
 | [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Enforces red-green-refactor with behavior-focused tests and thin vertical implementation slices |
+| [`run-with-it`](skills/run-with-it/SKILL.md) | Routes execution to Codex or Copilot runner scripts based on task complexity and runs the selected workflow |
+
+---
+
+## Minimal Calculator CLI
+
+The repo includes a tiny Bash tracer-bullet for adding two numbers:
+
+```bash
+./add-two-numbers.sh 1.5 2
+```
+
+Run its focused tests with:
+
+```bash
+bash tests/add-two-numbers.test.sh
+```
 
 ---
 
@@ -81,6 +124,7 @@ description: What this skill does and when to use it
 AI-Skills/
 ├── install.sh              # Smart one-liner installer
 ├── gemini-extension.json   # Gemini CLI extension manifest
+├── assets/                 # Shared prompt + runner scripts
 ├── skills/
 │   └── save-tokens/
 │       └── SKILL.md        # Skill definition with front-matter
