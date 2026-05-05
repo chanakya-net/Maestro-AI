@@ -41,38 +41,17 @@ FLAGS
 
 SUPPORTED AGENTS
   Native:
-    claude       Claude Code            claude plugin install
-    gemini       Gemini CLI             gemini extensions install
+    claude       Claude Code CLI + App  claude plugin install
+    gemini       Gemini CLI              gemini extensions install
   Via npx skills add:
-    codex        Codex CLI
+    codex        Codex CLI + GUI
     copilot      GitHub Copilot CLI + VS Code
-    cursor       Cursor IDE
-    windsurf     Windsurf IDE
-    cline        Cline (VS Code)
-    roo          Roo Code (VS Code)
-    continue     Continue (VS Code)
-    opencode     opencode CLI
-    junie        JetBrains Junie / Rider
-    amp          Sourcegraph Amp
-    kilo         Kilo Code
-    augment      Augment Code
-    goose        Block Goose
-    warp         Warp
-    devin        Devin
-    openhands    OpenHands
-    trae         Trae
-    qwen         Qwen Code
-    rovodev      Atlassian Rovo Dev
-    bob          IBM Bob
-    forgecode    ForgeCode
-    mistral      Mistral Vibe
-    tabnine      Tabnine CLI
-    replit       Replit Agent
+    antigravity  Gemini GUI (Antigravity)
 
 EXAMPLES
   install.sh                        # auto-detect all agents
   install.sh --only claude          # Claude Code only
-  install.sh --only copilot --only cursor
+  install.sh --only copilot --only codex
   install.sh --dry-run
   install.sh --list
 EOF
@@ -156,17 +135,33 @@ install_gemini() {
   only_filter "gemini" || return 0
   command -v gemini >/dev/null 2>&1 || return 0
   say "→ Gemini CLI detected"
+  local gemini_output=""
   # Clear corrupted integrity store if present (causes install to abort)
   local integrity="$HOME/.gemini/extension_integrity.json"
   if [ -f "$integrity" ] && ! python3 -m json.tool "$integrity" >/dev/null 2>&1; then
     note "  clearing corrupted Gemini integrity store"
     [ "$DRY" = 0 ] && rm -f "$integrity"
   fi
-  if try gemini extensions install --consent "https://github.com/$REPO"; then
-    [ "$DRY" = 1 ] && WOULD_INSTALL+=("gemini") || INSTALLED+=("gemini")
+
+  if [ "$DRY" = 1 ]; then
+    note "  [dry-run] gemini extensions install --consent https://github.com/$REPO"
+    WOULD_INSTALL+=("gemini")
+    echo
+    return 0
+  fi
+
+  if gemini_output=$(gemini extensions install --consent "https://github.com/$REPO" 2>&1); then
+    echo "$gemini_output"
+    INSTALLED+=("gemini")
   else
-    FAILED+=("gemini")
-    err "  gemini extensions install failed"
+    echo "$gemini_output"
+    if echo "$gemini_output" | grep -qi "already installed"; then
+      note "  Gemini extension already installed; continuing"
+      INSTALLED+=("gemini")
+    else
+      FAILED+=("gemini")
+      err "  gemini extensions install failed"
+    fi
   fi
   echo
 }
@@ -210,30 +205,9 @@ install_via_skills() {
 install_claude
 install_gemini
 
-install_via_skills "codex"     "Codex CLI"              "cmd:codex"                                   "codex"
-install_via_skills "copilot"   "GitHub Copilot"         "cmd:gh"                                      "github-copilot"
-install_via_skills "cursor"    "Cursor IDE"             "dir:$HOME/.cursor"                           "cursor"
-install_via_skills "windsurf"  "Windsurf"               "dir:$HOME/.codeium/windsurf"                 "windsurf"
-install_via_skills "cline"     "Cline"                  "dir:$HOME/.cline"                            "cline"
-install_via_skills "roo"       "Roo Code"               "dir:$HOME/.roo-cline"                        "roo"
-install_via_skills "continue"  "Continue"               "dir:$HOME/.continue"                         "continue"
-install_via_skills "opencode"  "opencode"               "cmd:opencode"                                "opencode"
-install_via_skills "junie"     "JetBrains Junie"        "dir:$HOME/.junie"                            "junie"
-install_via_skills "amp"       "Sourcegraph Amp"        "cmd:amp"                                     "amp"
-install_via_skills "kilo"      "Kilo Code"              "dir:$HOME/.kilo"                             "kilo"
-install_via_skills "augment"   "Augment Code"           "dir:$HOME/.augment"                          "augment"
-install_via_skills "goose"     "Block Goose"            "cmd:goose"                                   "goose"
-install_via_skills "warp"      "Warp"                   "dir:$HOME/.warp"                             "warp"
-install_via_skills "devin"     "Devin"                  "cmd:devin"                                   "devin"
-install_via_skills "openhands" "OpenHands"              "cmd:openhands"                               "openhands"
-install_via_skills "trae"      "Trae"                   "cmd:trae"                                    "trae"
-install_via_skills "qwen"      "Qwen Code"              "cmd:qwen-code"                               "qwen-code"
-install_via_skills "rovodev"   "Atlassian Rovo Dev"     "cmd:rovo"                                    "rovodev"
-install_via_skills "bob"       "IBM Bob"                "cmd:bob"                                     "bob"
-install_via_skills "forgecode" "ForgeCode"              "cmd:forgecode"                               "forgecode"
-install_via_skills "mistral"   "Mistral Vibe"           "cmd:mistral"                                 "mistral-vibe"
-install_via_skills "tabnine"   "Tabnine CLI"            "cmd:tabnine"                                 "tabnine-cli"
-install_via_skills "replit"    "Replit Agent"           "cmd:replit"                                  "replit"
+install_via_skills "codex"     "Codex CLI + GUI"        "cmd:codex"                                   "codex"
+install_via_skills "copilot"   "GitHub Copilot CLI + VS Code" "cmd:gh"                                "github-copilot"
+install_via_skills "antigravity" "Gemini GUI (Antigravity)" "dir:$HOME/.antigravity"                     "antigravity"
 
 # ── Summary ──────────────────────────────────────────────────────────────────
 echo "────────────────────────────────────"

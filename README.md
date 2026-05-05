@@ -34,35 +34,14 @@ npx -y skills add chanakya-net/AI-Skills -a <agent>
 
 | Agent | `--agent` slug |
 |-------|---------------|
-| GitHub Copilot CLI | `github-copilot` |
-| Cursor | `cursor` |
-| Windsurf | `windsurf` |
-| Cline | `cline` |
-| OpenAI Codex | `codex` |
-| OpenCode | `open-code` |
-| Continue.dev | `continue` |
-| Kiro | `kiro-cli` |
-| JetBrains Junie | `junie` |
-| Tabnine | `tabnine-cli` |
-| Aider | `aider` |
-| Avante | `avante` |
-| Zed AI | `zed` |
-| Claude Code (fallback) | `claude-code` |
-| Gemini Code (fallback) | `gemini-code` |
-| Copilot Chat | `copilot-chat` |
-| Qwen Code | `qwen-code` |
-| Mistral Vibe | `mistral-vibe` |
-| iFlow CLI | `iflow-cli` |
-| Void | `void` |
-| Codemoss | `codemoss` |
-| Rubberduck | `rubberduck` |
-| Refact | `refact` |
-| Supermaven | `supermaven` |
+| OpenAI Codex (CLI + GUI) | `codex` |
+| GitHub Copilot (CLI + VS Code) | `github-copilot` |
+| Gemini GUI (Antigravity) | `antigravity` |
 
 **Example:**
 
 ```bash
-npx -y skills add chanakya-net/AI-Skills -a cursor
+npx -y skills add chanakya-net/AI-Skills -a github-copilot
 ```
 
 ---
@@ -73,6 +52,8 @@ npx -y skills add chanakya-net/AI-Skills -a cursor
 |-------|-------------|
 | [`save-tokens`](skills/save-tokens/SKILL.md) | Compresses AI responses using symbols/abbreviations to cut token usage ~75% |
 | [`break-req`](skills/break-req/SKILL.md) | Interviews relentlessly to break down complex requirements and resolve design dependencies |
+| [`create-git-issue`](skills/create-git-issue/SKILL.md) | Synthesizes a PRD from context, then creates dependency-aware tracer-bullet implementation issues |
+| [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Enforces red-green-refactor with behavior-focused tests and thin vertical implementation slices |
 
 ---
 

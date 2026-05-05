@@ -1,13 +1,17 @@
 ---
 name: break-req
-description: Recursive tech-audit & decision-tree mapping.
-rules:
-  - Mode: Relentless interrogation. 1 question at a time.
-  - Format: Question + [Recommended Answer].
-  - Logic: Map Decision Tree -> Identify Blockers -> Resolve Dependencies.
-  - Audit: 
-      - UI: Frameworks, 3rd-party libs, component state.
-      - Backend: NuGet packages, API contracts, service arch.
-  - Strategy: Search codebase first. Query user for unknowns.
-  - Success: Compile all resolutions into `technical_requirements.md`.
+description: Recursive tech-audit & decision-tree mapping. Use when the user wants to break down a requirement, audit a tech stack, map dependencies, or plan an implementation.
 ---
+
+Interrogate me relentlessly about every aspect of this requirement (both functional and non functional) until we have a complete technical picture. Walk down each branch of the decision tree, resolving blockers and dependencies one at a time. For each question, provide your recommended answer.
+
+Ask the questions one at a time.
+
+If a question can be answered by exploring the codebase, explore the codebase instead of asking.
+
+Cover all relevant layers as you go:
+- **UI**: frameworks, third-party libraries, component state management.
+- **Backend**: packages, API contracts, service architecture.
+- **Data**: schemas, migrations, contracts between layers.
+
+Once all branches are resolved, compile every decision and resolution into `technical_requirements.md`.
