@@ -34,6 +34,31 @@ Override asset destination or git ref:
 ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
 ```
 
+## Troubleshooting
+
+### "No asset files" when running run-with-it
+
+This means the shared files were not found in either:
+
+- `~/.ai-skill-collections/assets`
+- `./assets` (current working directory)
+
+Quick fix from this repository root:
+
+```bash
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-codex.sh ./assets/run-copilot.sh "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-codex.sh" "$HOME/.ai-skill-collections/assets/run-copilot.sh"
+```
+
+Or re-run installer:
+
+```bash
+bash install.sh
+```
+
+### No git repo yet
+
+`run-with-it` can still run without git initialization. It will skip commit-history context and continue with issue/local context.
+
 ---
 
 ## Per-Agent Install

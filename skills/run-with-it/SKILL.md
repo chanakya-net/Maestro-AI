@@ -52,6 +52,17 @@ Selection rules:
 - Use the first location that contains all required files.
 - If no location contains all required files, stop and report missing files clearly.
 - Treat the resolved location as the single source for prompt and runners for that run.
+- Do not require a git repository for asset discovery. If git is unavailable or the current directory is not a repo, still check the working-directory fallback (`./assets`).
+
+### Fresh/No-Git Project Notes
+
+- This skill must work in folders that are not initialized with git.
+- Asset discovery is filesystem-based, not git-root-based.
+- If assets are missing, report a one-command fix:
+
+```bash
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-codex.sh ./assets/run-copilot.sh "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-codex.sh" "$HOME/.ai-skill-collections/assets/run-copilot.sh"
+```
 
 ## Responsibility Boundary
 
@@ -74,6 +85,7 @@ Fallback policy:
 - Primary source: `gh` issue data.
 - If `gh` is unavailable, unauthenticated, fails, or returns no issues, fall back to local `issues.md`.
 - Local fallback path defaults to `./issues.md` and can be overridden with `LOCAL_ISSUES_FILE`.
+- If `git log` is unavailable because the folder is not a git repository, continue with empty commit context rather than failing the run.
 
 1. List candidate issues:
 
