@@ -66,6 +66,8 @@ def check(condition, message):
 
 agents = registry.get("agents", {})
 aliases = registry.get("aliases", {})
+model_catalog = registry.get("model_catalog", {})
+provider_rules = registry.get("model_routing", {}).get("provider_routing_rules", {})
 required_agents = ["codex", "claude", "gemini", "github-copilot", "opencode"]
 
 for agent_id in required_agents:
@@ -92,6 +94,25 @@ for agent_id in ["codex", "claude", "gemini", "github-copilot"]:
     check(model.get("default"), f"{agent_id} has default model metadata")
     check(model.get("known_models"), f"{agent_id} has known model metadata")
     check(agents[agent_id]["user_model_configuration"]["requires_user_model_config"] is False, f"{agent_id} does not require user model config")
+
+google_rules = provider_rules.get("google", {})
+check(google_rules.get("automatic_routing") == "last_resort_only", "google provider is last-resort-only for automatic routing")
+check("last-resort" in google_rules.get("_note", "").lower(), "google provider note documents last-resort routing")
+check("explicit" in google_rules.get("_note", "").lower(), "google provider note documents explicit overrides")
+
+gemini_known_models = set(agents["gemini"]["model"].get("known_models", []))
+removed_gemini_models = {
+    "auto-gemini-2.5",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+}
+check(not removed_gemini_models & set(model_catalog), "gemini 2.5 models are removed from model catalog")
+check(not removed_gemini_models & gemini_known_models, "gemini 2.5 models are removed from known models")
+for model_id in ["auto-gemini-3", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"]:
+    check(model_id in gemini_known_models, f"{model_id} remains in gemini known models")
+for model_id in ["auto", "pro", "flash", "flash-lite"]:
+    check(model_id in gemini_known_models, f"{model_id} generic gemini alias remains in known models")
 
 opencode = agents["opencode"]
 check(opencode["user_model_configuration"]["requires_user_model_config"] is True, "opencode requires user model config")

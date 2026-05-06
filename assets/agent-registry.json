@@ -254,37 +254,6 @@
       "strengths": ["copilot-fine-tuned", "autocomplete", "coding"],
       "_note": "Autocomplete fine-tune — excluded from agentic routing (w=11 is above all band ceilings). Copilot plan-based, not standalone API. Fine-tuned on GPT-5.1-Codex."
     },
-    "gemini-2.5-flash-lite": {
-      "provider": "google",
-      "ability": "ultra-fast",
-      "price_tier": "low",
-      "price_input_per_1m": 0.10,
-      "price_output_per_1m": 0.40,
-      "complexity_weight": 2,
-      "context_window": 1000000,
-      "strengths": ["cheapest-gemini", "translation", "transcription", "data-extraction", "routing"]
-    },
-    "gemini-2.5-flash": {
-      "provider": "google",
-      "ability": "balanced",
-      "price_tier": "low",
-      "price_input_per_1m": 0.30,
-      "price_output_per_1m": 2.50,
-      "complexity_weight": 5,
-      "context_window": 1000000,
-      "strengths": ["hybrid-reasoning", "speed", "price-performance", "1M-context"]
-    },
-    "gemini-2.5-pro": {
-      "provider": "google",
-      "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 1.25,
-      "price_output_per_1m": 10.00,
-      "complexity_weight": 7,
-      "context_window": 1000000,
-      "strengths": ["coding", "complex-reasoning", "multimodal", "1M-context"],
-      "_note": "Tiered pricing: >200k tokens input $2.50/M, output $15/M (high tier)."
-    },
     "gemini-3-flash-preview": {
       "provider": "google",
       "ability": "balanced",
@@ -341,7 +310,8 @@
     "provider_routing_rules": {
       "google": {
         "max_band": "medium",
-        "_note": "Gemini models are excluded from medium-hard and above (score >= 23). Use only for quick, exploratory, or low-stakes tasks where hallucination risk and reasoning depth matter less."
+        "automatic_routing": "last_resort_only",
+        "_note": "Google/Gemini models are excluded from normal automatic routing. Use only as a last-resort automatic fallback after eligible non-Google routes are unavailable or fail, or when explicitly selected by AGENT/MODEL overrides."
       }
     },
     "hard_minimum_overrides": [
@@ -452,7 +422,6 @@
         "flag_template": "--model {{model}}",
         "known_models": [
           "auto-gemini-3",
-          "auto-gemini-2.5",
           "auto",
           "pro",
           "flash",
@@ -460,10 +429,7 @@
           "gemini-3.1-pro-preview",
           "gemini-3.1-pro-preview-customtools",
           "gemini-3-flash-preview",
-          "gemini-3.1-flash-lite-preview",
-          "gemini-2.5-pro",
-          "gemini-2.5-flash",
-          "gemini-2.5-flash-lite"
+          "gemini-3.1-flash-lite-preview"
         ]
       },
       "capability_band": "balanced",
