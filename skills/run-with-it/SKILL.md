@@ -1,6 +1,6 @@
 ---
 name: run-with-it
-description: Route issue-running automation through a deterministic control plane that selects agent + model from registry and executes the unified run-agent runner.
+description: Route issue-running automation through a deterministic control plane that selects agent + model from registry, can coordinate multiple safe parallel agents, and executes the unified run-agent runner.
 ---
 
 # Run With It
@@ -15,7 +15,7 @@ Preferred upstream flow:
 
 ## Goal
 
-Resolve required assets, score complexity deterministically, choose required capability, select an installed agent/model from registry, emit a parseable routing report, and execute `run-agent.sh`.
+Resolve required assets, score complexity deterministically, choose required capability, select installed agent/model targets from registry, emit parseable routing and status reports, coordinate one or more agents when work can safely run in parallel, and execute `run-agent.sh`.
 
 ## Inputs
 
@@ -41,6 +41,9 @@ Collect these values before execution:
   - `AGENT_DENYLIST` (comma-separated)
 - Optional fallback bound:
   - `MAX_AGENT_FALLBACKS` (default `2`)
+- Optional multi-agent bound:
+  - `MAX_PARALLEL_AGENTS` (default `3`)
+  - `ALLOW_PARALLEL_AGENTS` (default `true`)
 
 ## Asset Discovery (Required)
 
@@ -77,11 +80,33 @@ This skill owns:
 - deterministic complexity scoring
 - capability-band requirement resolution
 - agent/model selection using `agent-registry.json`
+- multi-agent batch planning for independent ready issues
 - bounded fallback policy
 - status and routing report output
 
 `run-agent.sh` only executes selected parameters.
 `prompt.md` is implementation-only guidance.
+
+## Multi-Agent Capability
+
+`run-with-it` may run a single issue or coordinate a batch of multiple agents.
+
+Use multiple agents when all are true:
+
+- two or more `ready-for-agent` issues are unblocked
+- ownership scopes do not overlap, or one agent has explicit ownership of shared files
+- verification can run independently before final integration
+- `ALLOW_PARALLEL_AGENTS` is not `false`
+- the batch size is within `MAX_PARALLEL_AGENTS`
+
+Use sequential execution when any are true:
+
+- issues depend on one another
+- issues touch the same files without a clear owner
+- migrations, fixtures, generated assets, or shared contracts are involved
+- requirements are ambiguous enough that one result may change the next issue
+
+For multi-agent batches, keep one coordinator in the main session. The coordinator selects issues, assigns ownership, reviews each result, integrates accepted changes, runs verification, commits per issue unless told otherwise, and updates or closes issues.
 
 ## Issue Intake
 
@@ -133,6 +158,16 @@ Complexity level maps to required capability:
 - `quite-easy|easy` => `fast`
 - `medium` => `balanced`
 - `medium-hard|complex|holy-fuck` => `advanced`
+
+### Default Agent Preference
+
+When multiple detected agents satisfy the required capability, prefer this order:
+
+- `quite-easy|easy`: `gemini`, then `github-copilot`, then `claude`, then `codex`
+- `medium`: `gemini`, then `github-copilot`, then `claude`, then `codex`
+- `medium-hard|complex|holy-fuck`: `codex`, then `claude`, then `gemini`, then `github-copilot`
+
+For trivial file read or concatenate-style tasks such as `cat`, choose `gemini` first when it is detected and not filtered by `AGENT_ALLOWLIST` or `AGENT_DENYLIST`.
 
 ### Hard Minimum Rules
 

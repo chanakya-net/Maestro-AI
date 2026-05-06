@@ -60,9 +60,15 @@
         "available": ["--dangerously-skip-permissions"]
       },
       "model": {
-        "default": "sonnet",
+        "default": "claude-sonnet-4.6",
         "flag_template": "--model {{model}}",
-        "known_models": ["sonnet", "opus", "haiku"]
+        "known_models": [
+          "claude-sonnet-4.6",
+          "claude-sonnet-4.6-1m",
+          "claude-opus-4.7",
+          "claude-opus-4.7-1m",
+          "claude-haiku-4.5"
+        ]
       },
       "capability_band": "advanced",
       "fallback_order": ["codex", "gemini", "github-copilot"],
@@ -89,9 +95,23 @@
         "available": ["--consent"]
       },
       "model": {
-        "default": "gemini-2.5-pro",
+        "default": "auto-gemini-3",
         "flag_template": "--model {{model}}",
-        "known_models": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]
+        "known_models": [
+          "auto-gemini-3",
+          "auto-gemini-2.5",
+          "auto",
+          "pro",
+          "flash",
+          "flash-lite",
+          "gemini-3.1-pro-preview",
+          "gemini-3.1-pro-preview-customtools",
+          "gemini-3-flash-preview",
+          "gemini-3.1-flash-lite-preview",
+          "gemini-2.5-pro",
+          "gemini-2.5-flash",
+          "gemini-2.5-flash-lite"
+        ]
       },
       "capability_band": "balanced",
       "fallback_order": ["codex", "claude", "github-copilot"],
@@ -118,9 +138,32 @@
         "available": ["--allow-all-tools"]
       },
       "model": {
-        "default": "copilot-default",
+        "default": "gpt-5.5",
         "flag_template": "--model {{model}}",
-        "known_models": ["copilot-default", "gpt-5", "claude-sonnet"]
+        "known_models": [
+          "claude-sonnet-4.6",
+          "claude-sonnet-4.5",
+          "claude-haiku-4.5",
+          "claude-opus-4.7",
+          "claude-sonnet-4",
+          "gpt-5.5",
+          "gpt-5.4",
+          "gpt-5.3-codex",
+          "gpt-5.2-codex",
+          "gpt-5.2",
+          "gpt-5.4-mini",
+          "gpt-5-mini",
+          "gpt-4.1",
+          "claude-opus-4.7-1m-internal",
+          "claude-opus-4.7-high",
+          "claude-opus-4.7-xhigh",
+          "claude-opus-4.6",
+          "claude-opus-4.6-fast",
+          "claude-opus-4.6-1m",
+          "claude-opus-4.5",
+          "goldeneye",
+          "gpt-5.1"
+        ]
       },
       "capability_band": "balanced",
       "fallback_order": ["gemini", "claude", "codex"],
