@@ -31,6 +31,16 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+
+  if [[ "${haystack}" == *"${needle}"* ]]; then
+    fail "${message} (unexpected: ${needle})"
+  fi
+}
+
 if [[ ! -f "${REGISTRY_PATH}" ]]; then
   fail "agent registry exists at assets/agent-registry.json"
 fi
@@ -225,11 +235,27 @@ dry_run_output="$("${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context
 assert_contains "${dry_run_output}" "codex exec" "dry-run prints codex command"
 assert_contains "${dry_run_output}" "--model gpt-5.3-codex" "dry-run includes selected model"
 assert_contains "${dry_run_output}" "--dangerously-bypass-approvals-and-sandbox" "dry-run includes unattended permission mode"
+assert_not_contains "${dry_run_output}" "--ask-for-approval" "codex exec dry-run excludes unsupported approval flag"
 assert_contains "${dry_run_output}" "Issue context" "dry-run includes combined payload"
 assert_contains "${dry_run_output}" "Instructions:" "dry-run inserts instructions separator"
 assert_contains "${dry_run_output}" "Do the work" "dry-run includes prompt file"
 
 echo "PASS: run-agent dry-run builds command from CLI arguments"
+
+gemini_dry_run_output="$("${RUNNER_PATH}" --agent gemini --model auto-gemini-3 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${gemini_dry_run_output}" "gemini --yolo --model auto-gemini-3 --prompt" "gemini dry-run uses supported unattended and prompt flags"
+assert_not_contains "${gemini_dry_run_output}" "--consent" "gemini dry-run excludes unsupported consent flag"
+
+claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4.6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4.6 --print" "claude dry-run uses supported print/model/permission flags"
+
+copilot_dry_run_output="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${copilot_dry_run_output}" "copilot --allow-all-tools --model gpt-5.5 -p" "copilot dry-run uses supported prompt/model/permission flags"
+
+opencode_dry_run_output="$("${RUNNER_PATH}" --agent opencode --model github-copilot/gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${opencode_dry_run_output}" "opencode run --dangerously-skip-permissions --model github-copilot/gpt-5.5" "opencode dry-run places supported run permission flag after subcommand"
+
+echo "PASS: run-agent registry uses supported CLI flags"
 
 env_dry_run_output="$(PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake-alias MODEL=fake-pro CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" UNATTENDED=1 "${RUNNER_PATH}" --dry-run)"
 assert_contains "${env_dry_run_output}" "fake-agent run" "environment variables select custom registry agent"

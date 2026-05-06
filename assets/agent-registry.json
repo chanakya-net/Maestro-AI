@@ -26,7 +26,7 @@
         "default": "--dangerously-bypass-approvals-and-sandbox",
         "available": [
           "--dangerously-bypass-approvals-and-sandbox",
-          "--ask-for-approval=on-request",
+          "--sandbox=read-only",
           "--sandbox=workspace-write"
         ]
       },
@@ -91,8 +91,8 @@
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": {
-        "default": "--consent",
-        "available": ["--consent"]
+        "default": "--yolo",
+        "available": ["--yolo", "--approval-mode=yolo", "--approval-mode=auto_edit", "--approval-mode=plan"]
       },
       "model": {
         "default": "auto-gemini-3",
@@ -182,12 +182,12 @@
       },
       "invocation": {
         "command": "opencode",
-        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "run", "{{prompt}}"],
+        "args_template": ["run", "{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "{{prompt}}"],
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": {
-        "default": "",
-        "available": [""]
+        "default": "--dangerously-skip-permissions",
+        "available": ["--dangerously-skip-permissions", ""]
       },
       "model": {
         "default": "",
