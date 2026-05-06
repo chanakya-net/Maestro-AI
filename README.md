@@ -103,6 +103,42 @@ PowerShell: `.\install.ps1`
 
 ---
 
+## Uninstall
+
+Remove skills per agent, then delete shared assets.
+
+### Claude Code
+
+```bash
+claude plugin uninstall ai-skill-collections
+```
+
+### Gemini CLI
+
+```bash
+gemini extensions uninstall https://github.com/chanakya-net/AI-Skills
+```
+
+### Codex / Copilot / Antigravity (via npx)
+
+```bash
+npx -y skills remove chanakya-net/AI-Skills --global
+```
+
+### Delete shared assets
+
+macOS / Linux:
+```bash
+rm -rf "$HOME/.ai-skill-collections"
+```
+
+Windows (PowerShell):
+```powershell
+Remove-Item -Recurse -Force "$env:USERPROFILE\.ai-skill-collections"
+```
+
+---
+
 ## Per-Agent Install
 
 Per-agent commands below install skills for that specific agent. To guarantee shared assets are installed too, prefer the `install.sh` one-liner above.
