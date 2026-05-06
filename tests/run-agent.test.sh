@@ -4,14 +4,39 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY_PATH="${ROOT_DIR}/assets/agent-registry.json"
+RUNNER_PATH="${ROOT_DIR}/assets/run-agent.sh"
 
 fail() {
   echo "FAIL: $1" >&2
   exit 1
 }
 
+assert_equals() {
+  local expected="$1"
+  local actual="$2"
+  local message="$3"
+
+  if [[ "${expected}" != "${actual}" ]]; then
+    fail "${message} (expected: ${expected}, actual: ${actual})"
+  fi
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+
+  if [[ "${haystack}" != *"${needle}"* ]]; then
+    fail "${message} (missing: ${needle})"
+  fi
+}
+
 if [[ ! -f "${REGISTRY_PATH}" ]]; then
   fail "agent registry exists at assets/agent-registry.json"
+fi
+
+if [[ ! -x "${RUNNER_PATH}" ]]; then
+  fail "run-agent.sh exists and is executable"
 fi
 
 python3 - "${REGISTRY_PATH}" <<'PY'
@@ -67,3 +92,163 @@ check("model" in opencode["user_model_configuration"].get("skip_message", "").lo
 
 print("PASS: agent registry contract")
 PY
+
+WORK_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "${WORK_DIR}"
+}
+trap cleanup EXIT
+
+CONTEXT_FILE="${WORK_DIR}/context.md"
+PROMPT_FILE="${WORK_DIR}/prompt.md"
+FAKE_BIN="${WORK_DIR}/bin"
+CUSTOM_REGISTRY="${WORK_DIR}/registry.json"
+mkdir -p "${FAKE_BIN}"
+printf 'Issue context\n' > "${CONTEXT_FILE}"
+printf 'Do the work\n' > "${PROMPT_FILE}"
+printf '#!/usr/bin/env bash\nprintf "fake-agent 1.0\\n"\n' > "${FAKE_BIN}/fake-agent"
+chmod +x "${FAKE_BIN}/fake-agent"
+
+cat > "${CUSTOM_REGISTRY}" <<JSON
+{
+  "schema_version": 1,
+  "aliases": {
+    "fake-alias": "fake"
+  },
+  "agents": {
+    "fake": {
+      "display_name": "Fake Agent",
+      "detection": {
+        "command": "fake-agent",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "fake-agent",
+        "args_template": ["run", "{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--unsafe",
+        "available": ["--unsafe"]
+      },
+      "model": {
+        "default": "fake-default",
+        "flag_template": "--model {{model}}",
+        "known_models": ["fake-default", "fake-pro"]
+      },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
+    "empty-models": {
+      "display_name": "Empty Models",
+      "detection": {
+        "command": "missing-empty-models",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "missing-empty-models",
+        "args_template": ["{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "",
+        "available": [""]
+      },
+      "model": {
+        "default": "",
+        "flag_template": "--model {{model}}",
+        "known_models": []
+      },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    }
+  }
+}
+JSON
+
+dry_run_output="$("${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${dry_run_output}" "codex exec" "dry-run prints codex command"
+assert_contains "${dry_run_output}" "--model gpt-5.3-codex" "dry-run includes selected model"
+assert_contains "${dry_run_output}" "--dangerously-bypass-approvals-and-sandbox" "dry-run includes unattended permission mode"
+assert_contains "${dry_run_output}" "Issue context" "dry-run includes combined payload"
+assert_contains "${dry_run_output}" "Instructions:" "dry-run inserts instructions separator"
+assert_contains "${dry_run_output}" "Do the work" "dry-run includes prompt file"
+
+echo "PASS: run-agent dry-run builds command from CLI arguments"
+
+env_dry_run_output="$(PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake-alias MODEL=fake-pro CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" UNATTENDED=1 "${RUNNER_PATH}" --dry-run)"
+assert_contains "${env_dry_run_output}" "fake-agent run" "environment variables select custom registry agent"
+assert_contains "${env_dry_run_output}" "--model fake-pro" "environment MODEL selects model"
+assert_contains "${env_dry_run_output}" "--unsafe" "environment dry-run includes default permission mode"
+
+echo "PASS: run-agent supports environment argument parity"
+
+print_prompt_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" PRINT_PROMPT=1 "${RUNNER_PATH}")"
+assert_equals $'Issue context\n\nInstructions:\n\nDo the work' "${print_prompt_output}" "PRINT_PROMPT prints combined payload and exits"
+
+echo "PASS: run-agent prints combined payload"
+
+list_output="$(PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${RUNNER_PATH}" --list-agents)"
+assert_contains "${list_output}" $'fake\tFake Agent\tdetected\tdetected' "list-agents shows detected custom agent"
+assert_contains "${list_output}" $'empty-models\tEmpty Models\tmissing\tmissing command: missing-empty-models' "list-agents shows missing command reason"
+
+detected_only_output="$(PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${RUNNER_PATH}" --list-agents --detected-only)"
+assert_contains "${detected_only_output}" $'fake\tFake Agent\tdetected\tdetected' "detected-only keeps detected custom agent"
+if [[ "${detected_only_output}" == *"empty-models"* ]]; then
+  fail "detected-only filters missing agents"
+fi
+
+echo "PASS: run-agent lists detected and missing agents"
+
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_FALLBACK_BIN="${WORK_DIR}/python-fallback-bin"
+  mkdir -p "${PYTHON_FALLBACK_BIN}"
+  ln -s "$(command -v python3)" "${PYTHON_FALLBACK_BIN}/python3"
+  ln -s "${FAKE_BIN}/fake-agent" "${PYTHON_FALLBACK_BIN}/fake-agent"
+
+  python_fallback_output="$(PATH="${PYTHON_FALLBACK_BIN}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${BASH}" "${RUNNER_PATH}" --list-agents --detected-only)"
+  assert_contains "${python_fallback_output}" $'fake\tFake Agent\tdetected\tdetected' "python3 parser fallback lists detected agents when jq is unavailable"
+
+  echo "PASS: run-agent falls back to python3 JSON parsing"
+fi
+
+models_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${RUNNER_PATH}" --list-models fake)"
+assert_equals $'fake-default\nfake-pro' "${models_output}" "list-models prints configured models"
+
+empty_models_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${RUNNER_PATH}" --list-models empty-models)"
+assert_equals "No configured models for empty-models." "${empty_models_output}" "list-models prints clear message without configured models"
+
+echo "PASS: run-agent lists models"
+
+set +e
+unattended_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" "${RUNNER_PATH}" --dry-run 2>&1)"
+unattended_status=$?
+set -e
+
+assert_equals "1" "${unattended_status}" "unsafe permission mode requires unattended"
+assert_contains "${unattended_output}" "requires --unattended or UNATTENDED=1" "unsafe permission failure is clear"
+
+echo "PASS: run-agent rejects unsafe manual execution"
+
+mkdir -p "${WORK_DIR}/empty-path"
+set +e
+parser_output="$(PATH="${WORK_DIR}/empty-path" "${BASH}" "${RUNNER_PATH}" --list-agents 2>&1)"
+parser_status=$?
+set -e
+
+assert_equals "1" "${parser_status}" "runner fails when no JSON parser is available"
+assert_contains "${parser_output}" "install jq or python3" "missing parser failure is clear"
+
+echo "PASS: run-agent fails clearly without a JSON parser"
