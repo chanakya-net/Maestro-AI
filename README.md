@@ -12,8 +12,8 @@ The smart installer detects your active agent(s) and wires everything up automat
 It also installs shared assets required by workflow skills:
 
 - `prompt.md`
-- `run-codex.sh`
-- `run-copilot.sh`
+- `run-agent.sh`
+- `agent-registry.json`
 
 Default asset location:
 
@@ -23,8 +23,7 @@ Default asset location:
 
 Runner contract (execution-only):
 
-- `run-codex.sh <context-payload-file> <prompt-file>`
-- `run-copilot.sh <context-payload-file> <prompt-file>`
+- `run-agent.sh --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
 
 These scripts no longer fetch GitHub issues or git history themselves; `run-with-it` prepares context and invokes them.
 
@@ -46,7 +45,7 @@ This means the shared files were not found in either:
 Quick fix from this repository root:
 
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-codex.sh ./assets/run-copilot.sh "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-codex.sh" "$HOME/.ai-skill-collections/assets/run-copilot.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
 Or re-run installer:

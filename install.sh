@@ -127,7 +127,7 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "run-codex.sh" "run-copilot.sh")
+  local files=("prompt.md" "run-agent.sh" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then
@@ -136,7 +136,7 @@ install_assets() {
     for f in "${files[@]}"; do
       note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
     done
-    note "  [dry-run] chmod +x ${ASSETS_DEST}/run-codex.sh ${ASSETS_DEST}/run-copilot.sh"
+    note "  [dry-run] chmod +x ${ASSETS_DEST}/run-agent.sh"
     WOULD_INSTALL+=("assets")
     echo
     return 0
@@ -167,7 +167,7 @@ install_assets() {
     mv "$tmp" "${ASSETS_DEST}/${f}"
   done
 
-  chmod +x "${ASSETS_DEST}/run-codex.sh" "${ASSETS_DEST}/run-copilot.sh"
+  chmod +x "${ASSETS_DEST}/run-agent.sh"
 
   INSTALLED+=("assets")
   note "  assets installed at: $ASSETS_DEST"
