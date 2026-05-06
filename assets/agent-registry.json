@@ -213,6 +213,16 @@
       "context_window": 400000,
       "strengths": ["agentic-coding", "swe-bench-pro", "25pct-faster-than-5.2", "copilot-business-base"]
     },
+    "gpt-5.3-codex-spark": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.75,
+      "price_output_per_1m": 14.00,
+      "complexity_weight": 4,
+      "context_window": 400000,
+      "strengths": ["agentic-coding", "code-speed", "easy-to-medium-complexity"]
+    },
     "gpt-5.4": {
       "provider": "openai",
       "ability": "frontier",
@@ -388,7 +398,7 @@
       "model": {
         "default": "gpt-5.3-codex",
         "flag_template": "--model {{model}}",
-        "known_models": ["gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5"]
+        "known_models": ["gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.5"]
       },
       "capability_band": "advanced",
       "fallback_order": ["claude", "gemini", "github-copilot"],
