@@ -4,8 +4,14 @@
 
 ## Quick Install
 
+**macOS / Linux / Git Bash:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
 ```
 
 The smart installer detects your active agent(s) and wires everything up automatically.
@@ -17,15 +23,16 @@ It also installs shared assets required by workflow skills:
 
 Default asset location:
 
-```bash
-~/.ai-skill-collections/assets
+```
+macOS/Linux:  ~/.ai-skill-collections/assets
+Windows:      %USERPROFILE%\.ai-skill-collections\assets
 ```
 
 Runner contract (execution-only):
 
 - `run-agent.sh --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
 
-These scripts no longer fetch GitHub issues or git history themselves; `run-with-it` prepares context and invokes them.
+`run-with-it` prepares context and invokes the runner. The runner does not fetch GitHub issues or git history itself.
 
 ## Unified Routing Workflow
 
@@ -53,8 +60,15 @@ Supported overrides and filters:
 
 Override asset destination or git ref:
 
+Bash:
 ```bash
 ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+```
+
+PowerShell:
+```powershell
+$env:ASSETS_DEST="$env:USERPROFILE\.my-ai-assets"; $env:ASSETS_REF="main"
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
 ```
 
 ## Troubleshooting
@@ -63,20 +77,25 @@ ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main curl -fsSL https://raw.githubu
 
 This means the shared files were not found in either:
 
-- `~/.ai-skill-collections/assets`
+- `~/.ai-skill-collections/assets` (macOS/Linux) or `%USERPROFILE%\.ai-skill-collections\assets` (Windows)
 - `./assets` (current working directory)
 
 Quick fix from this repository root:
 
+Bash (macOS / Linux / Git Bash):
 ```bash
 mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
+PowerShell (Windows):
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+```
+
 Or re-run installer:
 
-```bash
-bash install.sh
-```
+Bash: `bash install.sh`
+PowerShell: `.\install.ps1`
 
 ### No git repo yet
 
