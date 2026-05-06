@@ -87,6 +87,11 @@ assert_contains 'Canonical Coordinator Contract (Required)' "preserves coordinat
 assert_contains 'You are the coordinator.' "documents coordinator role"
 assert_contains 'Continue selecting and completing ready tasks until no ready work remains for the run.' "documents queue continuation"
 assert_contains 'STATUS|type=spawn|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=assigned|scope=<owned-paths>|eta=<rough-eta>' "documents spawn status line"
+assert_contains 'At the end of every run, include a final task execution ledger.' "documents required final execution ledger"
+assert_contains 'Line changes: `+<added>/-<deleted> (<total> total)`' "documents final ledger line change format"
+assert_contains 'Selection reasoning: one short sentence explaining why that agent/model was selected' "documents final ledger selection reasoning"
+assert_contains 'Calculate line changes per task from the accepted diff for that task.' "documents per-task line change calculation"
+assert_contains 'STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>' "documents parseable final ledger row"
 assert_contains 'Commit per issue by default.' "documents per-issue closure loop"
 
 echo "PASS: run-with-it routing control plane documentation contract"

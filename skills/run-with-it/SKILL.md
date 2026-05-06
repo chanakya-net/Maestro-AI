@@ -334,6 +334,20 @@ Also provide human-readable details:
 6. fallback attempts used
 7. completion status
 
+At the end of every run, include a final task execution ledger. The ledger must clearly show which agent and model handled each completed task, how many lines that task changed, and a short routing reason.
+
+Required final ledger columns:
+
+- Task: issue number/title or local task name
+- Agent: selected agent slug/display name
+- Model: selected model id
+- Line changes: `+<added>/-<deleted> (<total> total)`
+- Selection reasoning: one short sentence explaining why that agent/model was selected, such as score band match, forced override, sole compatible agent, interchangeable random pick, provider match, or fallback
+
+Calculate line changes per task from the accepted diff for that task. Prefer `git diff --numstat` or commit stats after each task integration; sum added and deleted lines across files owned by that task. For binary files or unavailable stats, report `n/a` and explain why in the selection or notes text.
+
+For multi-agent batches, emit one ledger row per child agent task and do not collapse rows by batch. For sequential runs, emit one row per completed issue/task. If a task is blocked or rejected and no diff is accepted, list `+0/-0 (0 total)` with the final status.
+
 ## Canonical Coordinator Contract (Required)
 
 Apply these rules after routing and before invoking the selected agent.
@@ -418,6 +432,7 @@ Emit parseable one-line status messages for multi-agent runs:
 - batch summary: `STATUS|type=batch|batch=<batch-id>|running=<count>|completed=<count>|blocked=<count>|next=<text>`
 - integration: `STATUS|type=integration|batch=<batch-id>|issue=#<n>|action=<merge|conflict-fix|follow-up-agent>|state=<in-progress|done>`
 - close: `STATUS|type=close|batch=<batch-id>|agent=<agent-name>|issue=#<n>|reason=<completed|blocked|replaced|failed-review>`
+- final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>`
 
 Keep `progress` values under 8 words and `next` values under 5 words.
 
