@@ -69,7 +69,7 @@ Environment equivalents:
 "@
         exit 0
     } elseif ($arg.StartsWith("-")) {
-        Write-Error "error: unknown argument: $arg"
+        [Console]::Error.WriteLine("error: unknown argument: $arg")
         exit 1
     } else {
         if (-not $CONTEXT_FILE) {
@@ -77,7 +77,7 @@ Environment equivalents:
         } elseif ($PROMPT_FILE_VAL -eq $DEFAULT_PROMPT_FILE) {
             $PROMPT_FILE_VAL = $arg
         } else {
-            Write-Error "error: unexpected positional argument: $arg"
+            [Console]::Error.WriteLine("error: unexpected positional argument: $arg")
             exit 1
         }
     }
@@ -86,7 +86,7 @@ Environment equivalents:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 function Fail([string]$msg) {
-    Write-Error "error: $msg"
+    [Console]::Error.WriteLine("error: $msg")
     exit 1
 }
 
