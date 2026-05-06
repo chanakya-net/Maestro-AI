@@ -30,7 +30,11 @@ Windows:      %USERPROFILE%\.ai-skill-collections\assets
 
 Runner contract (execution-only):
 
+Bash (macOS / Linux / Git Bash):
 - `run-agent.sh --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
+
+PowerShell (Windows):
+- `run-agent.ps1 --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
 
 `run-with-it` prepares context and invokes the runner. The runner does not fetch GitHub issues or git history itself.
 
@@ -89,7 +93,7 @@ mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./asse
 
 PowerShell (Windows):
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 Or re-run installer:

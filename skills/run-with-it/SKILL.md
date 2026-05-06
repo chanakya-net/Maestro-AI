@@ -93,7 +93,7 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
@@ -247,14 +247,14 @@ Before execution verify:
 
 1. resolved asset root exists
 2. `prompt.md` exists
-3. `run-agent.sh` exists and is executable
+3. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
 4. `agent-registry.json` exists
 5. `gh` auth when GitHub intake is required
 6. unified runner supports selected agent/model
 
 ## Execution
 
-Use unified runner only.
+Use unified runner only. Select runner based on detected OS (see OS Detection table above).
 
 Required environment/flags:
 
@@ -264,7 +264,7 @@ Required environment/flags:
 - selected `AGENT`
 - selected `MODEL` (optional; default from registry)
 
-Unified invocation examples:
+Bash (macOS / Linux / Git Bash):
 
 ```bash
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
@@ -273,12 +273,13 @@ PROMPT_FILE="$ASSET_ROOT/prompt.md" \
 "$ASSET_ROOT/run-agent.sh" --agent "$AGENT" --model "$MODEL" --unattended
 ```
 
-```bash
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-CONTEXT_PAYLOAD_FILE="$CONTEXT_PAYLOAD_FILE" \
-PROMPT_FILE="$ASSET_ROOT/prompt.md" \
-AGENT="$AGENT" MODEL="$MODEL" \
-"$ASSET_ROOT/run-agent.sh" --unattended
+PowerShell (Windows):
+
+```powershell
+$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
+$env:CONTEXT_PAYLOAD_FILE = $CONTEXT_PAYLOAD_FILE
+$env:PROMPT_FILE = "$ASSET_ROOT\prompt.md"
+& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --unattended
 ```
 
 Never invoke legacy per-agent runner scripts from this skill.
