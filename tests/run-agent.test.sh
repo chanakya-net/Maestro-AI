@@ -178,6 +178,49 @@ cat > "${CUSTOM_REGISTRY}" <<JSON
 }
 JSON
 
+OPENCODE_REGISTRY="${WORK_DIR}/opencode-registry.json"
+cat > "${OPENCODE_REGISTRY}" <<'JSON'
+{
+  "schema_version": 1,
+  "aliases": {},
+  "agents": {
+    "opencode": {
+      "display_name": "OpenCode",
+      "detection": {
+        "command": "opencode",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "opencode",
+        "args_template": ["run", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "",
+        "available": [""]
+      },
+      "model": {
+        "default": "",
+        "flag_template": "--model {{model}}",
+        "known_models": []
+      },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": true,
+        "config_paths": [
+          "$HOME/.config/opencode/opencode.json",
+          "$HOME/.opencode.json",
+          "./opencode.json"
+        ],
+        "skip_when_unconfigured": true,
+        "skip_message": "OpenCode detected but no user model configuration was found; skipping OpenCode until a model is configured."
+      }
+    }
+  }
+}
+JSON
+
 dry_run_output="$("${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${dry_run_output}" "codex exec" "dry-run prints codex command"
 assert_contains "${dry_run_output}" "--model gpt-5.3-codex" "dry-run includes selected model"
@@ -211,6 +254,21 @@ if [[ "${detected_only_output}" == *"empty-models"* ]]; then
 fi
 
 echo "PASS: run-agent lists detected and missing agents"
+
+OPENCODE_HOME="${WORK_DIR}/opencode-home"
+mkdir -p "${OPENCODE_HOME}"
+printf '#!/usr/bin/env bash\nprintf "opencode 0.0.0\\n"\n' > "${FAKE_BIN}/opencode"
+chmod +x "${FAKE_BIN}/opencode"
+
+opencode_list_output="$(HOME="${OPENCODE_HOME}" PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${OPENCODE_REGISTRY}" "${RUNNER_PATH}" --list-agents)"
+assert_contains "${opencode_list_output}" $'opencode\tOpenCode\tmissing\tOpenCode detected but no user model configuration was found; skipping OpenCode until a model is configured.' "list-agents explains missing OpenCode model configuration"
+
+opencode_detected_only_output="$(HOME="${OPENCODE_HOME}" PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${OPENCODE_REGISTRY}" "${RUNNER_PATH}" --list-agents --detected-only)"
+if [[ -n "${opencode_detected_only_output}" ]]; then
+  fail "detected-only omits OpenCode when model config is missing"
+fi
+
+echo "PASS: run-agent reports OpenCode model-configuration gating"
 
 if command -v python3 >/dev/null 2>&1; then
   PYTHON_FALLBACK_BIN="${WORK_DIR}/python-fallback-bin"

@@ -26,10 +26,26 @@ assert_not_contains() {
   fi
 }
 
+assert_not_present_in_active_files() {
+  local needle="$1"
+  local message="$2"
+  local output
+
+  output="$(rg -n --glob '*.md' --glob '*.sh' "${needle}" "${ROOT_DIR}/README.md" "${ROOT_DIR}/docs" "${ROOT_DIR}/skills" "${ROOT_DIR}/assets" "${ROOT_DIR}/install.sh" || true)"
+  if [[ -n "${output}" ]]; then
+    fail "${message} (found forbidden references: ${output})"
+  fi
+}
+
 [[ -f "$SKILL_FILE" ]] || fail "run-with-it skill file exists"
 
 assert_not_contains 'run-codex.sh' "legacy codex runner references removed"
 assert_not_contains 'run-copilot.sh' "legacy copilot runner references removed"
+assert_not_present_in_active_files 'run-codex\.sh' "legacy codex runner references removed from active docs/scripts"
+assert_not_present_in_active_files 'run-copilot\.sh' "legacy copilot runner references removed from active docs/scripts"
+assert_not_present_in_active_files 'run-claude\.sh' "legacy claude runner references removed from active docs/scripts"
+assert_not_present_in_active_files 'run-gemini\.sh' "legacy gemini runner references removed from active docs/scripts"
+assert_not_present_in_active_files 'run-opencode\.sh' "legacy opencode runner references removed from active docs/scripts"
 
 assert_contains 'prompt.md' "asset discovery includes prompt.md"
 assert_contains 'run-agent.sh' "asset discovery includes run-agent.sh"
