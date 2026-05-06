@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # ai-skill-collections — smart multi-agent installer (v2)
 #
-# One line:
+# One line (macOS / Linux / Git Bash):
 #   curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+#
+# Windows (PowerShell) — use install.ps1 instead:
+#   irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
 #
 # Detects which AI coding agents are on your machine and installs the skills
 # for each one. Skips agents that aren't installed. Safe to re-run.

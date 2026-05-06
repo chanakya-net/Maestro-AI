@@ -13,6 +13,25 @@ Preferred upstream flow:
 2. `create-git-issue` publishes PRD + implementation slices with routing hints.
 3. `run-with-it` performs final runtime routing and executes the selected run.
 
+## OS Detection
+
+Detect the current OS before asset discovery and runner selection:
+
+- **Windows (native PowerShell):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
+- **macOS / Linux / Git Bash / WSL:** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
+
+Adapt all shell commands in this skill to the detected runtime:
+
+| Operation | PowerShell (Windows) | Bash (Mac/Linux/Git Bash) |
+|-----------|---------------------|--------------------------|
+| Home dir | `$env:USERPROFILE` | `$HOME` |
+| Create dir | `New-Item -ItemType Directory -Force` | `mkdir -p` |
+| Check command | `Get-Command X -ErrorAction SilentlyContinue` | `command -v X` |
+| Check dir | `Test-Path` | `[ -d ... ]` |
+| Temp file | `[System.IO.Path]::GetTempFileName()` | `mktemp -t name.XXXXXX` |
+| Copy file | `Copy-Item -Force` | `cp -f` |
+| Make executable | *(not needed)* | `chmod +x` |
+
 ## Goal
 
 Resolve required assets, score complexity deterministically, choose required capability, select installed agent/model targets from registry, emit parseable routing and status reports, coordinate one or more agents when work can safely run in parallel, and execute `run-agent.sh`.
@@ -66,8 +85,18 @@ Selection rules:
 - Do not require git to resolve assets.
 - Resolved asset root is the single source for that run.
 
-One-command local fix example:
+### Fresh/No-Git Project Notes
 
+- This skill must work in folders that are not initialized with git.
+- Asset discovery is filesystem-based, not git-root-based.
+- If assets are missing, report the platform-appropriate one-command fix:
+
+**PowerShell (Windows):**
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+```
+
+**Bash (macOS / Linux / Git Bash):**
 ```bash
 mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
@@ -218,14 +247,14 @@ Before execution verify:
 
 1. resolved asset root exists
 2. `prompt.md` exists
-3. `run-agent.sh` exists and is executable
+3. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
 4. `agent-registry.json` exists
 5. `gh` auth when GitHub intake is required
 6. unified runner supports selected agent/model
 
 ## Execution
 
-Use unified runner only.
+Use unified runner only. Select runner based on detected OS (see OS Detection table above).
 
 Required environment/flags:
 
@@ -235,7 +264,7 @@ Required environment/flags:
 - selected `AGENT`
 - selected `MODEL` (optional; default from registry)
 
-Unified invocation examples:
+Bash (macOS / Linux / Git Bash):
 
 ```bash
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
@@ -244,12 +273,13 @@ PROMPT_FILE="$ASSET_ROOT/prompt.md" \
 "$ASSET_ROOT/run-agent.sh" --agent "$AGENT" --model "$MODEL" --unattended
 ```
 
-```bash
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-CONTEXT_PAYLOAD_FILE="$CONTEXT_PAYLOAD_FILE" \
-PROMPT_FILE="$ASSET_ROOT/prompt.md" \
-AGENT="$AGENT" MODEL="$MODEL" \
-"$ASSET_ROOT/run-agent.sh" --unattended
+PowerShell (Windows):
+
+```powershell
+$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
+$env:CONTEXT_PAYLOAD_FILE = $CONTEXT_PAYLOAD_FILE
+$env:PROMPT_FILE = "$ASSET_ROOT\prompt.md"
+& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --unattended
 ```
 
 Never invoke legacy per-agent runner scripts from this skill.
