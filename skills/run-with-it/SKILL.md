@@ -112,23 +112,24 @@ Total score range: `8-40`.
 
 ### Score to Complexity Level
 
-- `8-12` => `trivial`
-- `13-20` => `simple`
-- `21-26` => `moderate`
-- `27-32` => `complex`
+- `8-12` => `quite-easy`
+- `13-17` => `easy`
+- `18-22` => `medium`
+- `23-27` => `medium-hard`
+- `28-32` => `complex`
 - `33-40` => `holy-fuck`
 
 ### Capability Bands
 
 Complexity level maps to required capability:
 
-- `trivial|simple` => `fast`
-- `moderate` => `balanced`
-- `complex|holy-fuck` => `frontier`
+- `quite-easy|easy` => `fast`
+- `medium` => `balanced`
+- `medium-hard|complex|holy-fuck` => `advanced`
 
 ### Hard Minimum Rules
 
-Always require at least `frontier` if any are true:
+Always require at least `advanced` if any are true:
 
 - dependency state is unknown or conflicting
 - heavy shared-file ownership conflict risk

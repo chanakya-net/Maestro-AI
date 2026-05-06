@@ -219,6 +219,9 @@ Apply `ready-for-agent` to each issue.
 
 Set each slice issue to reference the PRD issue as parent. If using local fallback, reference `prd.md` as the parent.
 
+Include machine-readable routing hints in every implementation issue. These hints guide planning only and must not bind runtime orchestration.
+State explicitly in each issue that run-with-it remains the final runtime routing authority.
+
 <issue-template>
 ## Parent
 
@@ -227,6 +230,21 @@ A reference to the PRD parent issue.
 ## What to build
 
 A concise end-to-end description of this slice.
+
+## Agent Routing
+
+```yaml
+agent_routing:
+  complexity_hint: <quite-easy|easy|medium|medium-hard|complex|holy-fuck>
+  required_capability: <fast|balanced|advanced>
+  parallel_safe: <true|false>
+  cost_preference: <low|balanced|high>
+  speed_preference: <low|balanced|high>
+  ownership_scope:
+    - <path-or-module-scope>
+  verification:
+    - <verification-hint>
+```
 
 ## Technical Context Snapshot
 
@@ -247,6 +265,8 @@ A concise end-to-end description of this slice.
 - Existing module boundaries to respect
 - Existing service/component patterns to follow
 - ADRs or architectural constraints to follow
+- `create-git-issue` provides routing hints only; it must not assign concrete agent/model names
+- `run-with-it` remains the final runtime routing authority
 
 ### Integration touchpoints
 
