@@ -248,8 +248,8 @@ assert_not_contains "${gemini_dry_run_output}" "--yolo" "gemini dry-run excludes
 assert_not_contains "${gemini_dry_run_output}" "--approval-mode=yolo" "gemini dry-run excludes approval-mode yolo by default"
 assert_not_contains "${gemini_dry_run_output}" "--consent" "gemini dry-run excludes unsupported consent flag"
 
-claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4.6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4.6 --print" "claude dry-run uses supported print/model/permission flags"
+claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
 
 copilot_dry_run_output="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${copilot_dry_run_output}" "copilot --allow-all-tools --model gpt-5.5 -p" "copilot dry-run uses supported prompt/model/permission flags"

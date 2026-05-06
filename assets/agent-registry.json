@@ -12,7 +12,7 @@
   },
   "model_catalog": {
     "_note": "price_tier: low=<$5/M output, med=$5-15/M, high=$15-30/M, extrahigh=>$30/M. complexity_weight 1-10: higher=better for complex/long tasks, prefer heavier models. ability: ultra-fast|fast|balanced|advanced|frontier.",
-    "claude-haiku-4.5": {
+    "claude-haiku-4-5": {
       "provider": "anthropic",
       "ability": "fast",
       "price_tier": "low",
@@ -22,7 +22,7 @@
       "context_window": 200000,
       "strengths": ["speed", "high-throughput", "cost-sensitive"]
     },
-    "claude-sonnet-4.6": {
+    "claude-sonnet-4-6": {
       "provider": "anthropic",
       "ability": "advanced",
       "price_tier": "med",
@@ -32,7 +32,7 @@
       "context_window": 1000000,
       "strengths": ["speed-intelligence-balance", "coding", "extended-thinking", "1M-context"]
     },
-    "claude-sonnet-4.6-1m": {
+    "claude-sonnet-4-6[1m]": {
       "provider": "anthropic",
       "ability": "advanced",
       "price_tier": "med",
@@ -52,7 +52,7 @@
       "context_window": 200000,
       "strengths": ["balanced", "general-purpose"]
     },
-    "claude-opus-4.5": {
+    "claude-opus-4-5": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -62,7 +62,7 @@
       "context_window": 200000,
       "strengths": ["reasoning", "extended-thinking", "complex-tasks"]
     },
-    "claude-opus-4.6": {
+    "claude-opus-4-6": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -72,7 +72,7 @@
       "context_window": 1000000,
       "strengths": ["1M-context", "long-doc-retrieval", "coding", "extended-thinking"]
     },
-    "claude-opus-4.6-fast": {
+    "claude-opus-4-6-fast": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -82,7 +82,7 @@
       "context_window": 1000000,
       "strengths": ["speed", "1M-context", "frontier-fast"]
     },
-    "claude-opus-4.6-1m": {
+    "claude-opus-4-6[1m]": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -93,7 +93,7 @@
       "strengths": ["1M-context", "deep-reasoning", "long-doc"],
       "_note": "Long-context specialist — w=10 keeps it out of standard holy-fuck pool so gpt-5.5 and opus-4.7 can fill those slots."
     },
-    "claude-opus-4.7": {
+    "claude-opus-4-7": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -103,7 +103,7 @@
       "context_window": 1000000,
       "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"]
     },
-    "claude-opus-4.7-1m": {
+    "claude-opus-4-7[1m]": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -113,7 +113,7 @@
       "context_window": 1000000,
       "strengths": ["best-coding", "1M-context", "agentic", "adaptive-thinking"]
     },
-    "claude-opus-4.7-1m-internal": {
+    "claude-opus-4-7[1m]-internal": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -123,7 +123,7 @@
       "context_window": 1000000,
       "strengths": ["internal-variant", "1M-context", "frontier"]
     },
-    "claude-opus-4.7-high": {
+    "claude-opus-4-7-high": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "high",
@@ -133,7 +133,7 @@
       "context_window": 1000000,
       "strengths": ["high-reasoning-effort", "frontier", "complex-problems"]
     },
-    "claude-opus-4.7-xhigh": {
+    "claude-opus-4-7-xhigh": {
       "provider": "anthropic",
       "ability": "frontier",
       "price_tier": "extrahigh",
@@ -232,7 +232,7 @@
       "complexity_weight": 9,
       "context_window": 922000,
       "strengths": ["best-coding", "swe-bench-88.7pct", "professional-work", "computer-use", "MCP", "frontier"],
-      "_note": "20% pricier than claude-opus-4.7 on output ($30 vs $25). Marginally better SWE-bench (88.7% vs 87.6%). In Codex CLI requires ChatGPT Plus/Pro/Business account, NOT API-key auth."
+      "_note": "20% pricier than claude-opus-4-7 on output ($30 vs $25). Marginally better SWE-bench (88.7% vs 87.6%). In Codex CLI requires ChatGPT Plus/Pro/Business account, NOT API-key auth."
     },
     "goldeneye": {
       "provider": "openai",
@@ -415,14 +415,14 @@
         "available": ["--dangerously-skip-permissions"]
       },
       "model": {
-        "default": "claude-sonnet-4.6",
+        "default": "claude-sonnet-4-6",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-sonnet-4.6",
-          "claude-sonnet-4.6-1m",
-          "claude-opus-4.7",
-          "claude-opus-4.7-1m",
-          "claude-haiku-4.5"
+          "claude-sonnet-4-6",
+          "claude-sonnet-4-6[1m]",
+          "claude-opus-4-7",
+          "claude-opus-4-7[1m]",
+          "claude-haiku-4-5"
         ]
       },
       "capability_band": "advanced",
@@ -496,10 +496,10 @@
         "default": "gpt-5.5",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-sonnet-4.6",
-          "claude-sonnet-4.5",
-          "claude-haiku-4.5",
-          "claude-opus-4.7",
+          "claude-sonnet-4-6",
+          "claude-sonnet-4-5",
+          "claude-haiku-4-5",
+          "claude-opus-4-7",
           "claude-sonnet-4",
           "gpt-5.5",
           "gpt-5.4",
@@ -509,13 +509,13 @@
           "gpt-5.4-mini",
           "gpt-5-mini",
           "gpt-4.1",
-          "claude-opus-4.7-1m-internal",
-          "claude-opus-4.7-high",
-          "claude-opus-4.7-xhigh",
-          "claude-opus-4.6",
-          "claude-opus-4.6-fast",
-          "claude-opus-4.6-1m",
-          "claude-opus-4.5",
+          "claude-opus-4-7[1m]-internal",
+          "claude-opus-4-7-high",
+          "claude-opus-4-7-xhigh",
+          "claude-opus-4-6",
+          "claude-opus-4-6-fast",
+          "claude-opus-4-6[1m]",
+          "claude-opus-4-5",
           "goldeneye",
           "gpt-5.1"
         ]
