@@ -7,6 +7,12 @@ description: Route issue-running automation through a deterministic control plan
 
 Use this skill to process ready-for-agent issues without manually selecting a runner.
 
+Preferred upstream flow:
+
+1. `break-req` resolves requirements and constraints.
+2. `create-git-issue` publishes PRD + implementation slices with routing hints.
+3. `run-with-it` performs final runtime routing and executes the selected run.
+
 ## Goal
 
 Resolve required assets, score complexity deterministically, choose required capability, select an installed agent/model from registry, emit a parseable routing report, and execute `run-agent.sh`.
@@ -18,6 +24,7 @@ Collect these values before execution:
 - Task summary
 - Optional pre-fetched issue context (otherwise fetch with `gh`)
 - Optional asset root override: `ASSETS_DEST`
+- Optional registry override: `AGENT_REGISTRY_FILE`
 - Optional intake overrides:
   - `ISSUE_LABEL` (default `ready-for-agent`)
   - `ISSUE_LIMIT` (default `10`)

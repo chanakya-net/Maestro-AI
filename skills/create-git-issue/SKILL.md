@@ -7,6 +7,14 @@ description: Create a PRD from current context, then break it into tracer-bullet
 
 Turn the current conversation context into a PRD and then publish implementation issues as thin, dependency-aware vertical slices.
 
+Workflow position:
+
+1. `break-req` first, to resolve product/technical decisions.
+2. `create-git-issue` second, to publish PRD + implementation slices and routing hints.
+3. `run-with-it` third, to perform final runtime routing and execution.
+
+`create-git-issue` must never claim final routing authority.
+
 ## Issue Tracker Vocabulary
 
 Use these canonical triage roles when creating and labeling issues:

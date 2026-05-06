@@ -27,6 +27,30 @@ Runner contract (execution-only):
 
 These scripts no longer fetch GitHub issues or git history themselves; `run-with-it` prepares context and invokes them.
 
+## Unified Routing Workflow
+
+Use this sequence for issue-driven execution:
+
+1. `break-req` captures and resolves requirements/constraints.
+2. `create-git-issue` publishes `prd.md` + implementation slices with routing hints.
+3. `run-with-it` performs final runtime routing and invokes `run-agent.sh`.
+
+`create-git-issue` hints are advisory only. `run-with-it` remains final routing authority at execution time.
+
+## Routing and Registry Overrides
+
+`run-with-it` uses `agent-registry.json` + complexity scoring to select agent/model.
+
+Supported overrides and filters:
+
+- `AGENT_REGISTRY_FILE` override registry path (default: `<asset-root>/agent-registry.json`)
+- `AGENT_ALLOWLIST` comma-separated agent slugs to permit
+- `AGENT_DENYLIST` comma-separated agent slugs to block (denylist wins conflicts)
+- `AGENT` force agent selection (must be installed/valid)
+- `MODEL` force model selection for selected agent
+- `COMPLEXITY_LEVEL` force complexity band
+- `COMPLEXITY_SCORE` force numeric score (`8-40`)
+
 Override asset destination or git ref:
 
 ```bash
@@ -88,6 +112,8 @@ npx -y skills add chanakya-net/AI-Skills -a <agent>
 | GitHub Copilot (CLI + VS Code) | `github-copilot` |
 | Gemini GUI (Antigravity) | `antigravity` |
 
+OpenCode note: OpenCode users must configure their preferred model in their local OpenCode setup; this repo does not set OpenCode model defaults for you.
+
 **Example:**
 
 ```bash
@@ -104,7 +130,7 @@ npx -y skills add chanakya-net/AI-Skills -a github-copilot
 | [`break-req`](skills/break-req/SKILL.md) | Interviews relentlessly to break down complex requirements and resolve design dependencies |
 | [`create-git-issue`](skills/create-git-issue/SKILL.md) | Synthesizes a PRD from context, then creates dependency-aware tracer-bullet implementation issues |
 | [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Enforces red-green-refactor with behavior-focused tests and thin vertical implementation slices |
-| [`run-with-it`](skills/run-with-it/SKILL.md) | Routes execution to Codex or Copilot runner scripts based on task complexity and runs the selected workflow |
+| [`run-with-it`](skills/run-with-it/SKILL.md) | Routes execution by complexity/capability, selects agent+model from registry, and invokes the unified `run-agent.sh` runner |
 
 ---
 
