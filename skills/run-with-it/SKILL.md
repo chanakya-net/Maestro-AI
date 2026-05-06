@@ -334,7 +334,7 @@ Also provide human-readable details:
 6. fallback attempts used
 7. completion status
 
-At the end of every run, include a final task execution ledger. The ledger must clearly show which agent and model handled each completed task, how many lines that task changed, and a short routing reason.
+At the end of every run, include a final task execution ledger. The ledger must clearly show which agent and model handled each completed task, how many lines that task changed, a short routing reason, and the child-agent token telemetry captured for that task.
 
 Required final ledger columns:
 
@@ -342,11 +342,28 @@ Required final ledger columns:
 - Agent: selected agent slug/display name
 - Model: selected model id
 - Line changes: `+<added>/-<deleted> (<total> total)`
+- Input tokens: child-agent prompt/input token count when available
+- Output tokens: child-agent completion/output token count when available
+- Cache hit tokens: child-agent cache-hit token count when available
+- Telemetry source: telemetry origin, such as `runner-default`, provider-native, or coordinator-estimated
 - Selection reasoning: one short sentence explaining why that agent/model was selected, such as score band match, forced override, sole compatible agent, interchangeable random pick, provider match, or fallback
 
 Calculate line changes per task from the accepted diff for that task. Prefer `git diff --numstat` or commit stats after each task integration; sum added and deleted lines across files owned by that task. For binary files or unavailable stats, report `n/a` and explain why in the selection or notes text.
 
+Preserve all existing parseable ledger fields and append token telemetry fields in this order for backward compatibility: `input_tokens`, `output_tokens`, `cache_hit_tokens`, `telemetry_source`.
+
 For multi-agent batches, emit one ledger row per child agent task and do not collapse rows by batch. For sequential runs, emit one row per completed issue/task. If a task is blocked or rejected and no diff is accepted, list `+0/-0 (0 total)` with the final status.
+
+Normalize child-agent token telemetry from the selected runner's final telemetry contract. When a child agent does not expose token counts, emit `unknown` for the missing values and keep the original ledger row.
+
+After the ledger, emit a final human-readable token summary aligned with the parseable rows. Include:
+
+- child-agent aggregate totals across completed tasks: input, output, and cache-hit tokens
+- separate coordinator totals when the coordinator used measurable tokens during planning, review, or integration
+- a combined run total when both child-agent and coordinator totals are available
+- `unknown` for any total that cannot be computed from captured telemetry
+
+Human-readable final summary should explicitly label these sections as `Child-agent totals`, `Coordinator totals`, and `Run totals`.
 
 ## Canonical Coordinator Contract (Required)
 
@@ -432,7 +449,10 @@ Emit parseable one-line status messages for multi-agent runs:
 - batch summary: `STATUS|type=batch|batch=<batch-id>|running=<count>|completed=<count>|blocked=<count>|next=<text>`
 - integration: `STATUS|type=integration|batch=<batch-id>|issue=#<n>|action=<merge|conflict-fix|follow-up-agent>|state=<in-progress|done>`
 - close: `STATUS|type=close|batch=<batch-id>|agent=<agent-name>|issue=#<n>|reason=<completed|blocked|replaced|failed-review>`
-- final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>`
+- final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
+- final token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
+- coordinator token totals: `STATUS|type=summary|scope=coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
+- combined run token totals: `STATUS|type=summary|scope=run|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 
 Keep `progress` values under 8 words and `next` values under 5 words.
 
@@ -441,8 +461,49 @@ Keep `progress` values under 8 words and `next` values under 5 words.
 - Review each agent diff individually, then review the combined batch diff.
 - Run issue-specific checks before broader suites.
 - Commit per issue by default.
-- Update each issue with completion, verification, and follow-up notes.
+- Update each terminal-state issue with the standardized final comment before closing or leaving it blocked.
 - Close completed issues with `gh issue close` unless explicitly left open.
+
+### Terminal Issue Comments
+
+Post issue comments only for terminal outcomes: `completed`, `blocked`, or `failed-review`.
+Do not post this final template for non-terminal progress updates.
+
+Use the same markdown template for every terminal outcome, with this fixed section order:
+
+1. `## Status`
+2. `## Summary`
+3. `## Verification`
+4. `## Token Usage`
+5. `## Notes`
+
+Terminal comment template:
+
+```md
+## Status
+<completed|blocked|failed-review>
+
+## Summary
+<task outcome summary>
+
+## Verification
+<task-specific verification results>
+
+## Token Usage
+- Input tokens: <n|unknown>
+- Output tokens: <n|unknown>
+- Cache hit tokens: <n|unknown>
+
+## Notes
+<follow-ups, blockers, or reviewer notes>
+```
+
+Comment requirements:
+
+- `Token Usage` must report task-specific telemetry only. Do not include coordinator totals or combined run totals in the issue comment.
+- If any token value is unavailable, render that value explicitly as `unknown`.
+- `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
+- `Notes` may be empty only when there are no follow-ups or blockers; otherwise include the remaining action or reason.
 
 ## Guardrails
 

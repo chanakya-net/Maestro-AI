@@ -168,6 +168,15 @@ Capture the created PRD issue URL or number. Use it as the parent reference for 
 
 If GitHub publishing is unavailable, write the PRD body to `prd.md` and continue preparing the implementation slice issues for `issues.md`.
 
+For every implementation slice, the initial issue body must use the exact Markdown template headings below in the exact order shown, with no extra top-level sections inserted before, between, or after them:
+
+1. `## Parent`
+2. `## What to build`
+3. `## Agent Routing`
+4. `## Technical Context Snapshot`
+5. `## Acceptance criteria`
+6. `## Blocked by`
+
 Do not close or modify unrelated issues.
 
 ### 6. Break PRD into tracer-bullet slices
@@ -210,6 +219,8 @@ If GitHub publishing is available, use `gh issue create` for each approved slice
 
 If GitHub publishing is unavailable, append each approved slice issue to `issues.md` instead.
 
+When using local fallback in `issues.md`, keep each implementation issue nearly identical to the GitHub issue body format: preserve the same title, labels, parent reference, section headings, section order, routing YAML block, technical context detail, acceptance criteria, and blocked-by content.
+
 Before publishing each issue, derive a stack snapshot from the codebase and include it in the issue body so implementation agents can align with existing patterns.
 
 Capture at minimum:
@@ -231,6 +242,8 @@ Include machine-readable routing hints in every implementation issue. These hint
 State explicitly in each issue that run-with-it remains the final runtime routing authority.
 
 <issue-template>
+Use this exact top-level section order for every initial implementation issue body and for local fallback entries in `issues.md`.
+
 ## Parent
 
 A reference to the PRD parent issue.

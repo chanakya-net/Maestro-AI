@@ -90,6 +90,20 @@ function Fail([string]$msg) {
     exit 1
 }
 
+function Normalize-TelemetryValue([string]$value) {
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return "unknown"
+    }
+
+    return ($value -replace "`r", " " -replace "`n", " ")
+}
+
+function Write-Telemetry([string]$status) {
+    $telemetryAgent = Normalize-TelemetryValue $AGENT
+    $telemetryModel = Normalize-TelemetryValue $MODEL
+    [Console]::Error.WriteLine("STATUS|type=telemetry|agent=$telemetryAgent|model=$telemetryModel|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=$status|source=runner-default")
+}
+
 if (-not (Test-Path $REGISTRY_FILE)) { Fail "agent registry file not found: $REGISTRY_FILE" }
 
 $registry = Get-Content $REGISTRY_FILE -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -254,7 +268,13 @@ try {
     }
 
     & $invokeCmd @cmdArgs
-    exit $LASTEXITCODE
+    $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+    if ($commandExitCode -eq 0) {
+        Write-Telemetry "success"
+    } else {
+        Write-Telemetry "failed"
+    }
+    exit $commandExitCode
 }
 finally {
     Remove-Item -Force $PAYLOAD_FILE -ErrorAction SilentlyContinue

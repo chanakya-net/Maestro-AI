@@ -26,6 +26,32 @@ fail() {
   exit 1
 }
 
+normalize_telemetry_value() {
+  local value="${1:-}"
+
+  if [[ -z "${value}" ]]; then
+    printf 'unknown\n'
+    return
+  fi
+
+  value="${value//$'\r'/ }"
+  value="${value//$'\n'/ }"
+  printf '%s\n' "${value}"
+}
+
+emit_telemetry() {
+  local status="$1"
+  local telemetry_agent telemetry_model
+
+  telemetry_agent="$(normalize_telemetry_value "${AGENT}")"
+  telemetry_model="$(normalize_telemetry_value "${MODEL}")"
+
+  printf 'STATUS|type=telemetry|agent=%s|model=%s|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=%s|source=runner-default\n' \
+    "${telemetry_agent}" \
+    "${telemetry_model}" \
+    "${status}" >&2
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -410,4 +436,15 @@ if [[ "${DRY_RUN}" == "1" ]]; then
   exit 0
 fi
 
+set +e
 "${cmd[@]}"
+command_status=$?
+set -e
+
+if [[ "${command_status}" == "0" ]]; then
+  emit_telemetry "success"
+else
+  emit_telemetry "failed"
+fi
+
+exit "${command_status}"

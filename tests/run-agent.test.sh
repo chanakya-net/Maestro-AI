@@ -176,6 +176,35 @@ cat > "${CUSTOM_REGISTRY}" <<JSON
         "skip_message": ""
       }
     },
+    "failing": {
+      "display_name": "Failing Agent",
+      "detection": {
+        "command": "failing-agent",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "failing-agent",
+        "args_template": ["{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "",
+        "available": [""]
+      },
+      "model": {
+        "default": "",
+        "flag_template": "--model {{model}}",
+        "known_models": []
+      },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
     "empty-models": {
       "display_name": "Empty Models",
       "detection": {
@@ -208,6 +237,9 @@ cat > "${CUSTOM_REGISTRY}" <<JSON
   }
 }
 JSON
+
+printf '#!/usr/bin/env bash\nexit 7\n' > "${FAKE_BIN}/failing-agent"
+chmod +x "${FAKE_BIN}/failing-agent"
 
 OPENCODE_REGISTRY="${WORK_DIR}/opencode-registry.json"
 cat > "${OPENCODE_REGISTRY}" <<'JSON'
@@ -286,6 +318,28 @@ assert_contains "${env_dry_run_output}" "--model fake-pro" "environment MODEL se
 assert_contains "${env_dry_run_output}" "--unsafe" "environment dry-run includes default permission mode"
 
 echo "PASS: run-agent supports environment argument parity"
+
+successful_run_stdout="${WORK_DIR}/successful-run.stdout"
+successful_run_stderr="${WORK_DIR}/successful-run.stderr"
+PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" UNATTENDED=1 "${RUNNER_PATH}" >"${successful_run_stdout}" 2>"${successful_run_stderr}"
+successful_run_output="$(<"${successful_run_stdout}")"
+successful_run_telemetry="$(<"${successful_run_stderr}")"
+assert_equals "fake-agent 1.0" "${successful_run_output}" "successful invocation preserves agent stdout"
+assert_contains "${successful_run_telemetry}" "STATUS|type=telemetry|agent=fake|model=fake-default|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=success|source=runner-default" "successful invocation emits normalized telemetry"
+
+set +e
+failing_run_stdout="${WORK_DIR}/failing-run.stdout"
+failing_run_stderr="${WORK_DIR}/failing-run.stderr"
+PATH="${FAKE_BIN}:${PATH}" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=failing CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" UNATTENDED=1 "${RUNNER_PATH}" >"${failing_run_stdout}" 2>"${failing_run_stderr}"
+failing_run_status=$?
+set -e
+failing_run_output="$(<"${failing_run_stdout}")"
+failing_run_telemetry="$(<"${failing_run_stderr}")"
+assert_equals "7" "${failing_run_status}" "runner preserves agent exit status"
+assert_equals "" "${failing_run_output}" "failing invocation preserves empty stdout"
+assert_contains "${failing_run_telemetry}" "STATUS|type=telemetry|agent=failing|model=unknown|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=failed|source=runner-default" "failed invocation emits normalized telemetry"
+
+echo "PASS: run-agent emits normalized telemetry contract"
 
 print_prompt_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" PRINT_PROMPT=1 "${RUNNER_PATH}")"
 assert_equals $'Issue context\n\nInstructions:\n\nDo the work' "${print_prompt_output}" "PRINT_PROMPT prints combined payload and exits"
