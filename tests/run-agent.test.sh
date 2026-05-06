@@ -243,7 +243,9 @@ assert_contains "${dry_run_output}" "Do the work" "dry-run includes prompt file"
 echo "PASS: run-agent dry-run builds command from CLI arguments"
 
 gemini_dry_run_output="$("${RUNNER_PATH}" --agent gemini --model auto-gemini-3 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${gemini_dry_run_output}" "gemini --yolo --model auto-gemini-3 --prompt" "gemini dry-run uses supported unattended and prompt flags"
+assert_contains "${gemini_dry_run_output}" "gemini --model auto-gemini-3 --prompt" "gemini dry-run uses prompt flags without elevated permission mode"
+assert_not_contains "${gemini_dry_run_output}" "--yolo" "gemini dry-run excludes yolo mode by default"
+assert_not_contains "${gemini_dry_run_output}" "--approval-mode=yolo" "gemini dry-run excludes approval-mode yolo by default"
 assert_not_contains "${gemini_dry_run_output}" "--consent" "gemini dry-run excludes unsupported consent flag"
 
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4.6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"

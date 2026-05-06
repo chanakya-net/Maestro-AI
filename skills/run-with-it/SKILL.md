@@ -180,40 +180,80 @@ Total score range: `8-40`.
 - `28-32` => `complex`
 - `33-40` => `holy-fuck`
 
-### Capability Bands
+### Model-First Selection
 
-Complexity level maps to required capability:
+The orchestrator selects the **model first**, then the agent that supports it. Agent defaults are ignored.
 
-- `quite-easy|easy` => `fast`
-- `medium` => `balanced`
-- `medium-hard|complex|holy-fuck` => `advanced`
+#### Step 1 — Map Score to Target Weight Range
 
-### Default Agent Preference
+Look up the score in `model_routing.score_to_weight` from `agent-registry.json`:
 
-When multiple detected agents satisfy the required capability, prefer this order:
+| Score | Label | Weight range |
+|-------|-------|-------------|
+| 8–12  | `quite-easy`  | 1–3 |
+| 13–17 | `easy`        | 2–4 |
+| 18–22 | `medium`      | 4–6 |
+| 23–27 | `medium-hard` | 6–7 |
+| 28–32 | `complex`     | 7–9 |
+| 33–40 | `holy-fuck`   | 9–10 |
 
-- `quite-easy|easy`: `gemini`, then `github-copilot`, then `claude`, then `codex`
-- `medium`: `gemini`, then `github-copilot`, then `claude`, then `codex`
-- `medium-hard|complex|holy-fuck`: `codex`, then `claude`, then `gemini`, then `github-copilot`
+#### Step 2 — Apply Hard Minimum Overrides
 
-For trivial file read or concatenate-style tasks such as `cat`, choose `gemini` first when it is detected and not filtered by `AGENT_ALLOWLIST` or `AGENT_DENYLIST`.
+Before proceeding, raise `weight_min` if any condition is true:
 
-### Hard Minimum Rules
+- dependency state unknown or conflicting → `weight_min = 9`
+- heavy shared-file ownership conflict risk → `weight_min = 9`
+- broad cross-module integration change → `weight_min = 7`
+- explicit user request for deep/complex orchestration → `weight_min = 9`
 
-Always require at least `advanced` if any are true:
+Use the higher of the table `weight_min` and any override.
 
-- dependency state is unknown or conflicting
-- heavy shared-file ownership conflict risk
-- broad cross-module integration change
-- explicit user request for deep/complex orchestration
+#### Step 3 — Build Pool and Randomly Select Model
+
+From `model_catalog` in `agent-registry.json`:
+
+1. Collect all models where `complexity_weight` is within `[weight_min, weight_max]`.
+2. Keep only models available on at least one detected, non-filtered agent (check each agent's `known_models` list).
+3. Apply `model_routing.provider_routing_rules`: remove any model whose `provider` exceeds its `max_band` for the current complexity level. Example: `google` is excluded for `medium-hard` and above.
+4. Sort remaining candidates by `(complexity_weight ASC, price_tier ASC, price_output_per_1m ASC)`.
+5. Take the top `selection_pool_size` (default 4 from `model_routing`) — this is the **base pool**.
+6. Append any models listed in `model_routing.band_required_models[current_level]` that are not already in the base pool. These are always available regardless of price ranking.
+7. **Randomly pick one model** from the final pool. This distributes load across agents and providers on every run.
+8. If fewer than 2 candidates exist after filtering, expand `weight_max` by 1 and retry (up to 3 expansions) until pool reaches at least 2, then fail with diagnostics.
+
+#### Step 4 — Select Agent
+
+1. Find all agents that list the chosen model in their `known_models`.
+2. Apply `AGENT_ALLOWLIST` and `AGENT_DENYLIST`.
+3. Keep only detected (installed) agents.
+4. **Interchangeable group rule**: `codex` and `github-copilot` are identical runners for GPT models. If both are in the candidate set, pick one at random. Do not prefer either.
+5. If one agent remains, use it.
+6. If multiple non-interchangeable agents remain, prefer: `claude` for Claude models, `gemini` for Gemini models, random pick for GPT models.
+7. If no agent remains, fail with clear filter diagnostics before attempting fallback.
+
+#### Step 5 — Pass to Runner
+
+Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
+
+```bash
+run-agent.sh --agent "$AGENT" --model "$MODEL" --unattended
+```
 
 ### Override Precedence (highest first)
 
-1. `AGENT` and `MODEL` (forced if valid and installed)
-2. `COMPLEXITY_LEVEL`
-3. `COMPLEXITY_SCORE`
-4. computed score from eight dimensions
-5. default model from selected registry entry
+1. `AGENT` + `MODEL` forced together (both must be valid and installed)
+2. `MODEL` forced alone → skip Steps 1–3, run Step 4 with forced model
+3. `AGENT` forced alone → skip Step 4, run Steps 1–3 restricted to that agent's `known_models`
+4. `COMPLEXITY_LEVEL` forced → use corresponding weight range from table, skip score computation
+5. `COMPLEXITY_SCORE` forced → use as computed score, run full Steps 1–4
+6. Computed score from eight dimensions → full Steps 1–4
+
+Validation rules:
+
+- Forced `AGENT` not installed → fail fast.
+- Forced `MODEL` not in chosen agent's `known_models` → fail fast.
+- `COMPLEXITY_LEVEL` must be one of the documented labels.
+- `COMPLEXITY_SCORE` must be integer in `8–40`.
 
 Validation rules:
 
@@ -289,17 +329,18 @@ Never invoke legacy per-agent runner scripts from this skill.
 Emit a parseable one-line route summary before execution:
 
 ```text
-ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|required_capability=<band>|fallback_budget=<n>|allowlist=<value>|denylist=<value>
+ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>
 ```
 
 Also provide human-readable details:
 
 1. per-dimension scores
 2. final score and complexity level
-3. required capability and selected agent/model
-4. runner command summary
-5. fallback attempts used
-6. completion status
+3. target weight range and selected model (with `complexity_weight` and `price_tier`)
+4. agent selection reason (sole match / interchangeable random pick / provider match)
+5. runner command summary
+6. fallback attempts used
+7. completion status
 
 ## Canonical Coordinator Contract (Required)
 

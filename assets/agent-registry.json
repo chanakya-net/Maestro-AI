@@ -10,6 +10,361 @@
     "open-code": "opencode",
     "open_code": "opencode"
   },
+  "model_catalog": {
+    "_note": "price_tier: low=<$5/M output, med=$5-15/M, high=$15-30/M, extrahigh=>$30/M. complexity_weight 1-10: higher=better for complex/long tasks, prefer heavier models. ability: ultra-fast|fast|balanced|advanced|frontier.",
+    "claude-haiku-4.5": {
+      "provider": "anthropic",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 5.00,
+      "complexity_weight": 2,
+      "context_window": 200000,
+      "strengths": ["speed", "high-throughput", "cost-sensitive"]
+    },
+    "claude-sonnet-4.6": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 3.00,
+      "price_output_per_1m": 15.00,
+      "complexity_weight": 6,
+      "context_window": 1000000,
+      "strengths": ["speed-intelligence-balance", "coding", "extended-thinking", "1M-context"]
+    },
+    "claude-sonnet-4.6-1m": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 3.00,
+      "price_output_per_1m": 15.00,
+      "complexity_weight": 7,
+      "context_window": 1000000,
+      "strengths": ["long-context", "extended-thinking", "agentic"]
+    },
+    "claude-sonnet-4": {
+      "provider": "anthropic",
+      "ability": "balanced",
+      "price_tier": "med",
+      "price_input_per_1m": 3.00,
+      "price_output_per_1m": 15.00,
+      "complexity_weight": 5,
+      "context_window": 200000,
+      "strengths": ["balanced", "general-purpose"]
+    },
+    "claude-opus-4.5": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 8,
+      "context_window": 200000,
+      "strengths": ["reasoning", "extended-thinking", "complex-tasks"]
+    },
+    "claude-opus-4.6": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 9,
+      "context_window": 1000000,
+      "strengths": ["1M-context", "long-doc-retrieval", "coding", "extended-thinking"]
+    },
+    "claude-opus-4.6-fast": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 8,
+      "context_window": 1000000,
+      "strengths": ["speed", "1M-context", "frontier-fast"]
+    },
+    "claude-opus-4.6-1m": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["1M-context", "deep-reasoning", "long-doc"],
+      "_note": "Long-context specialist — w=10 keeps it out of standard holy-fuck pool so gpt-5.5 and opus-4.7 can fill those slots."
+    },
+    "claude-opus-4.7": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 9,
+      "context_window": 1000000,
+      "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"]
+    },
+    "claude-opus-4.7-1m": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["best-coding", "1M-context", "agentic", "adaptive-thinking"]
+    },
+    "claude-opus-4.7-1m-internal": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["internal-variant", "1M-context", "frontier"]
+    },
+    "claude-opus-4.7-high": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["high-reasoning-effort", "frontier", "complex-problems"]
+    },
+    "claude-opus-4.7-xhigh": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "extrahigh",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["maximum-reasoning-effort", "frontier", "hardest-problems"]
+    },
+    "gpt-5-mini": {
+      "provider": "openai",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.25,
+      "price_output_per_1m": 2.00,
+      "complexity_weight": 2,
+      "context_window": 400000,
+      "strengths": ["ultra-cheap", "high-throughput", "simple-tasks"]
+    },
+    "gpt-5.4-mini": {
+      "provider": "openai",
+      "ability": "balanced",
+      "price_tier": "low",
+      "price_input_per_1m": 0.75,
+      "price_output_per_1m": 4.50,
+      "complexity_weight": 4,
+      "context_window": 400000,
+      "strengths": ["coding", "computer-use", "subagents", "cost-efficient"]
+    },
+    "gpt-4.1": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 2.00,
+      "price_output_per_1m": 8.00,
+      "complexity_weight": 5,
+      "context_window": 1047576,
+      "strengths": ["instruction-following", "tool-calling", "1M-context", "low-latency"]
+    },
+    "gpt-5.1": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.25,
+      "price_output_per_1m": 10.00,
+      "complexity_weight": 6,
+      "context_window": 400000,
+      "strengths": ["adaptive-reasoning", "math", "coding", "science"]
+    },
+    "gpt-5.2": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.75,
+      "price_output_per_1m": 14.00,
+      "complexity_weight": 7,
+      "context_window": 400000,
+      "strengths": ["agentic", "long-context", "adaptive-reasoning"]
+    },
+    "gpt-5.2-codex": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.75,
+      "price_output_per_1m": 14.00,
+      "complexity_weight": 7,
+      "context_window": 400000,
+      "strengths": ["agentic-coding", "prior-codex-default", "swe-bench"]
+    },
+    "gpt-5.3-codex": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.75,
+      "price_output_per_1m": 14.00,
+      "complexity_weight": 8,
+      "context_window": 400000,
+      "strengths": ["agentic-coding", "swe-bench-pro", "25pct-faster-than-5.2", "copilot-business-base"]
+    },
+    "gpt-5.4": {
+      "provider": "openai",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 2.50,
+      "price_output_per_1m": 15.00,
+      "complexity_weight": 9,
+      "context_window": 1050000,
+      "strengths": ["complex-professional", "variable-reasoning", "computer-use", "MCP", "web-search", "1M-context"]
+    },
+    "gpt-5.5": {
+      "provider": "openai",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 30.00,
+      "complexity_weight": 9,
+      "context_window": 922000,
+      "strengths": ["best-coding", "swe-bench-88.7pct", "professional-work", "computer-use", "MCP", "frontier"],
+      "_note": "20% pricier than claude-opus-4.7 on output ($30 vs $25). Marginally better SWE-bench (88.7% vs 87.6%). In Codex CLI requires ChatGPT Plus/Pro/Business account, NOT API-key auth."
+    },
+    "goldeneye": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.25,
+      "price_output_per_1m": 10.00,
+      "complexity_weight": 11,
+      "context_window": 400000,
+      "strengths": ["copilot-fine-tuned", "autocomplete", "coding"],
+      "_note": "Autocomplete fine-tune — excluded from agentic routing (w=11 is above all band ceilings). Copilot plan-based, not standalone API. Fine-tuned on GPT-5.1-Codex."
+    },
+    "gemini-2.5-flash-lite": {
+      "provider": "google",
+      "ability": "ultra-fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.10,
+      "price_output_per_1m": 0.40,
+      "complexity_weight": 2,
+      "context_window": 1000000,
+      "strengths": ["cheapest-gemini", "translation", "transcription", "data-extraction", "routing"]
+    },
+    "gemini-2.5-flash": {
+      "provider": "google",
+      "ability": "balanced",
+      "price_tier": "low",
+      "price_input_per_1m": 0.30,
+      "price_output_per_1m": 2.50,
+      "complexity_weight": 5,
+      "context_window": 1000000,
+      "strengths": ["hybrid-reasoning", "speed", "price-performance", "1M-context"]
+    },
+    "gemini-2.5-pro": {
+      "provider": "google",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.25,
+      "price_output_per_1m": 10.00,
+      "complexity_weight": 7,
+      "context_window": 1000000,
+      "strengths": ["coding", "complex-reasoning", "multimodal", "1M-context"],
+      "_note": "Tiered pricing: >200k tokens input $2.50/M, output $15/M (high tier)."
+    },
+    "gemini-3-flash-preview": {
+      "provider": "google",
+      "ability": "balanced",
+      "price_tier": "low",
+      "price_input_per_1m": 0.50,
+      "price_output_per_1m": 3.00,
+      "complexity_weight": 5,
+      "context_window": 1048576,
+      "strengths": ["multimodal", "thinking", "computer-use", "code-execution", "search-grounding"]
+    },
+    "gemini-3.1-flash-lite-preview": {
+      "provider": "google",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.25,
+      "price_output_per_1m": 1.50,
+      "complexity_weight": 3,
+      "context_window": 1048576,
+      "strengths": ["cost-efficient", "translation", "routing", "fastest-gemini-3x"]
+    },
+    "gemini-3.1-pro-preview": {
+      "provider": "google",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 2.00,
+      "price_output_per_1m": 12.00,
+      "complexity_weight": 9,
+      "context_window": 1000000,
+      "strengths": ["advanced-reasoning", "agentic", "multimodal", "frontier-gemini"]
+    },
+    "gemini-3.1-pro-preview-customtools": {
+      "provider": "google",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 2.00,
+      "price_output_per_1m": 12.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["custom-tools", "agentic", "advanced-reasoning", "tool-calling"],
+      "_note": "Same backend as gemini-3.1-pro-preview — only differs in custom-tool support flag. Weight set to 10 to avoid duplicating pro-preview in pool."
+    },
+    "_gemini_cli_aliases": {
+      "_note": "Gemini CLI shorthand aliases — resolved at runtime by the CLI, not actual API model IDs.",
+      "auto-gemini-3": "resolves to gemini-3.1-pro-preview",
+      "auto-gemini-2.5": "resolves to gemini-2.5-pro",
+      "auto": "CLI auto-selects based on task",
+      "pro": "resolves to current gemini-*-pro",
+      "flash": "resolves to current gemini-*-flash",
+      "flash-lite": "resolves to current gemini-*-flash-lite"
+    }
+  },
+  "model_routing": {
+    "_note": "Model-first routing table. Orchestrator picks model from model_catalog, then finds compatible agents. Codex and github-copilot are interchangeable for GPT models — pick randomly between detected ones.",
+    "score_to_weight": [
+      {"score_min":  8, "score_max": 12, "weight_min": 1, "weight_max": 3, "label": "quite-easy"},
+      {"score_min": 13, "score_max": 17, "weight_min": 2, "weight_max": 4, "label": "easy"},
+      {"score_min": 18, "score_max": 22, "weight_min": 4, "weight_max": 6, "label": "medium"},
+      {"score_min": 23, "score_max": 27, "weight_min": 6, "weight_max": 7, "label": "medium-hard"},
+      {"score_min": 28, "score_max": 32, "weight_min": 7, "weight_max": 9, "label": "complex"},
+      {"score_min": 33, "score_max": 40, "weight_min": 9, "weight_max": 10, "label": "holy-fuck"}
+    ],
+    "selection_strategy": "top-n-cheapest-random",
+    "selection_pool_size": 4,
+    "_strategy_note": "Sort candidates by (complexity_weight ASC, price_tier ASC, price_output_per_1m ASC). Take the top selection_pool_size models. Randomly pick one from that pool. This ensures cost-efficiency while spreading load across agents and providers.",
+    "provider_routing_rules": {
+      "google": {
+        "max_band": "medium",
+        "_note": "Gemini models are excluded from medium-hard and above (score >= 23). Use only for quick, exploratory, or low-stakes tasks where hallucination risk and reasoning depth matter less."
+      }
+    },
+    "hard_minimum_overrides": [
+      "dependency state unknown or conflicting → weight_min=9",
+      "heavy shared-file ownership conflict → weight_min=9",
+      "broad cross-module integration change → weight_min=7",
+      "explicit user request for deep/complex → weight_min=9"
+    ],
+    "band_required_models": {
+      "complex":    ["gpt-5.5"],
+      "holy-fuck":  ["gpt-5.5"],
+      "_note": "These models are pinned into the pool regardless of price ranking. Ensures frontier GPT options are always available at high complexity even when cheaper models dominate the cost-sorted slots."
+    },
+    "interchangeable_agent_groups": [
+      {
+        "agents": ["codex", "github-copilot"],
+        "selection": "random",
+        "_note": "Both run GPT models identically. Pick randomly between whichever are detected and not filtered."
+      }
+    ]
+  },
   "agents": {
     "codex": {
       "display_name": "Codex",
@@ -33,7 +388,7 @@
       "model": {
         "default": "gpt-5.3-codex",
         "flag_template": "--model {{model}}",
-        "known_models": ["gpt-5.3-codex", "gpt-5.2", "gpt-5.4"]
+        "known_models": ["gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5"]
       },
       "capability_band": "advanced",
       "fallback_order": ["claude", "gemini", "github-copilot"],
@@ -91,8 +446,8 @@
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": {
-        "default": "--yolo",
-        "available": ["--yolo", "--approval-mode=yolo", "--approval-mode=auto_edit", "--approval-mode=plan"]
+        "default": "safe",
+        "available": ["safe", "--yolo", "--approval-mode=yolo", "--approval-mode=auto_edit", "--approval-mode=plan"]
       },
       "model": {
         "default": "auto-gemini-3",
