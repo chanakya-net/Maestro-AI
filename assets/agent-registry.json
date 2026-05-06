@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "description": "Shared run target registry for AI skill issue runners.",
+  "aliases": {
+    "codex-cli": "codex",
+    "claude-code": "claude",
+    "gemini-cli": "gemini",
+    "copilot": "github-copilot",
+    "github-copilot-cli": "github-copilot",
+    "open-code": "opencode",
+    "open_code": "opencode"
+  },
+  "agents": {
+    "codex": {
+      "display_name": "Codex",
+      "detection": {
+        "command": "codex",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "codex",
+        "args_template": ["exec", "-C", "{{repo_root}}", "{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--dangerously-bypass-approvals-and-sandbox",
+        "available": [
+          "--dangerously-bypass-approvals-and-sandbox",
+          "--ask-for-approval=on-request",
+          "--sandbox=workspace-write"
+        ]
+      },
+      "model": {
+        "default": "gpt-5.3-codex",
+        "flag_template": "--model {{model}}",
+        "known_models": ["gpt-5.3-codex", "gpt-5.2", "gpt-5.4"]
+      },
+      "capability_band": "advanced",
+      "fallback_order": ["claude", "gemini", "github-copilot"],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
+    "claude": {
+      "display_name": "Claude Code",
+      "detection": {
+        "command": "claude",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "claude",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "--print", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--dangerously-skip-permissions",
+        "available": ["--dangerously-skip-permissions"]
+      },
+      "model": {
+        "default": "sonnet",
+        "flag_template": "--model {{model}}",
+        "known_models": ["sonnet", "opus", "haiku"]
+      },
+      "capability_band": "advanced",
+      "fallback_order": ["codex", "gemini", "github-copilot"],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
+    "gemini": {
+      "display_name": "Gemini CLI",
+      "detection": {
+        "command": "gemini",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "gemini",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "--prompt", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--consent",
+        "available": ["--consent"]
+      },
+      "model": {
+        "default": "gemini-2.5-pro",
+        "flag_template": "--model {{model}}",
+        "known_models": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-1.5-pro"]
+      },
+      "capability_band": "balanced",
+      "fallback_order": ["codex", "claude", "github-copilot"],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
+    "github-copilot": {
+      "display_name": "GitHub Copilot",
+      "detection": {
+        "command": "copilot",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "copilot",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "-p", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--allow-all-tools",
+        "available": ["--allow-all-tools"]
+      },
+      "model": {
+        "default": "copilot-default",
+        "flag_template": "--model {{model}}",
+        "known_models": ["copilot-default", "gpt-5", "claude-sonnet"]
+      },
+      "capability_band": "balanced",
+      "fallback_order": ["gemini", "claude", "codex"],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
+    "opencode": {
+      "display_name": "OpenCode",
+      "detection": {
+        "command": "opencode",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "opencode",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "run", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "",
+        "available": [""]
+      },
+      "model": {
+        "default": "",
+        "flag_template": "--model {{model}}",
+        "known_models": []
+      },
+      "capability_band": "balanced",
+      "fallback_order": ["github-copilot", "gemini", "claude", "codex"],
+      "user_model_configuration": {
+        "requires_user_model_config": true,
+        "config_paths": [
+          "$HOME/.config/opencode/opencode.json",
+          "$HOME/.opencode.json",
+          "./opencode.json"
+        ],
+        "skip_when_unconfigured": true,
+        "skip_message": "OpenCode detected but no user model configuration was found; skipping OpenCode until a model is configured."
+      }
+    }
+  }
+}
