@@ -11,7 +11,6 @@
     "open_code": "opencode"
   },
   "model_catalog": {
-    "_note": "price_tier: low=<$5/M output, med=$5-15/M, high=$15-30/M, extrahigh=>$30/M. complexity_weight 1-10: higher=better for complex/long tasks, prefer heavier models. ability: ultra-fast|fast|balanced|advanced|frontier.",
     "claude-haiku-4-5": {
       "provider": "anthropic",
       "ability": "fast",
@@ -324,21 +323,10 @@
       "price_output_per_1m": 12.00,
       "complexity_weight": 10,
       "context_window": 1000000,
-      "strengths": ["custom-tools", "agentic", "advanced-reasoning", "tool-calling"],
-      "_note": "Same backend as gemini-3.1-pro-preview — only differs in custom-tool support flag. Weight set to 10 to avoid duplicating pro-preview in pool."
-    },
-    "_gemini_cli_aliases": {
-      "_note": "Gemini CLI shorthand aliases — resolved at runtime by the CLI, not actual API model IDs.",
-      "auto-gemini-3": "resolves to gemini-3.1-pro-preview",
-      "auto-gemini-2.5": "resolves to gemini-2.5-pro",
-      "auto": "CLI auto-selects based on task",
-      "pro": "resolves to current gemini-*-pro",
-      "flash": "resolves to current gemini-*-flash",
-      "flash-lite": "resolves to current gemini-*-flash-lite"
+      "strengths": ["custom-tools", "agentic", "advanced-reasoning", "tool-calling"]
     }
   },
   "model_routing": {
-    "_note": "Model-first routing table. Orchestrator picks model from model_catalog, then finds compatible agents. Codex and github-copilot are interchangeable for GPT models — pick randomly between detected ones.",
     "score_to_weight": [
       {"score_min":  8, "score_max": 12, "weight_min": 1, "weight_max": 3, "label": "quite-easy"},
       {"score_min": 13, "score_max": 17, "weight_min": 2, "weight_max": 4, "label": "easy"},
