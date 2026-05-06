@@ -51,6 +51,7 @@ Use this sequence for issue-driven execution:
 ## Routing and Registry Overrides
 
 `run-with-it` uses `agent-registry.json` + complexity scoring to select agent/model.
+Automatic routing reserves Google/Gemini models for last-resort fallback only. Explicit `AGENT` or `MODEL` overrides can still select Gemini after normal validation.
 
 Supported overrides and filters:
 

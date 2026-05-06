@@ -188,6 +188,8 @@ Look up the score in `model_routing.score_to_weight` from `agent-registry.json`:
 | 28–32 | `complex`     | 7–9 |
 | 33–40 | `holy-fuck`   | 9–10 |
 
+Canonical score labels: `8-12` => `quite-easy`, `13-17` => `easy`, `18-22` => `medium`, `23-27` => `medium-hard`, `28-32` => `complex`, `33-40` => `holy-fuck`.
+
 #### Step 2 — Apply Hard Minimum Overrides
 
 Before proceeding, raise `weight_min` if any condition is true:
@@ -205,12 +207,15 @@ From `model_catalog` in `agent-registry.json`:
 
 1. Collect all models where `complexity_weight` is within `[weight_min, weight_max]`.
 2. Keep only models available on at least one detected, non-filtered agent (check each agent's `known_models` list).
-3. Apply `model_routing.provider_routing_rules`: remove any model whose `provider` exceeds its `max_band` for the current complexity level. Example: `google` is excluded for `medium-hard` and above.
-4. Sort remaining candidates by `(complexity_weight ASC, price_tier ASC, price_output_per_1m ASC)`.
-5. Take the top `selection_pool_size` (default 4 from `model_routing`) — this is the **base pool**.
-6. Append any models listed in `model_routing.band_required_models[current_level]` that are not already in the base pool. These are always available regardless of price ranking.
-7. **Randomly pick one model** from the final pool. This distributes load across agents and providers on every run.
-8. If fewer than 2 candidates exist after filtering, expand `weight_max` by 1 and retry (up to 3 expansions) until pool reaches at least 2, then fail with diagnostics.
+3. Apply `model_routing.provider_routing_rules`:
+   - remove any model whose `provider` exceeds its `max_band` for the current complexity level
+   - exclude any provider with `automatic_routing = "last_resort_only"` from the normal automatic model pool
+4. Google/Gemini is last-resort-only for automatic routing. Do not include Google/Gemini models in the normal candidate pool for any complexity band.
+5. Sort remaining candidates by `(complexity_weight ASC, price_tier ASC, price_output_per_1m ASC)`, prioritizing the lowest `complexity_weight` before cost tie-breakers.
+6. Take the top `selection_pool_size` (default 4 from `model_routing`) — this is the **base pool**.
+7. Append any models listed in `model_routing.band_required_models[current_level]` that are not already in the base pool. These are always available regardless of price ranking.
+8. **Randomly pick one model** from the final pool. This distributes load across non-Google agents and providers on every run.
+9. If fewer than 2 candidates exist after filtering, expand `weight_max` by 1 and retry (up to 3 expansions) until pool reaches at least 2, then continue to bounded fallback diagnostics before considering last-resort providers.
 
 #### Step 4 — Select Agent
 
@@ -219,7 +224,7 @@ From `model_catalog` in `agent-registry.json`:
 3. Keep only detected (installed) agents.
 4. **Interchangeable group rule**: `codex` and `github-copilot` are identical runners for GPT models. If both are in the candidate set, pick one at random. Do not prefer either.
 5. If one agent remains, use it.
-6. If multiple non-interchangeable agents remain, prefer: `claude` for Claude models, `gemini` for Gemini models, random pick for GPT models.
+6. If multiple non-interchangeable agents remain, prefer: `claude` for Claude models, random pick for GPT models.
 7. If no agent remains, fail with clear filter diagnostics before attempting fallback.
 
 #### Step 5 — Pass to Runner
@@ -243,6 +248,7 @@ Validation rules:
 
 - Forced `AGENT` not installed → fail fast.
 - Forced `MODEL` not in chosen agent's `known_models` → fail fast.
+- Forced Gemini via `AGENT`, Gemini `MODEL`, or an `AGENT_ALLOWLIST` that only leaves Gemini is an explicit user constraint and may select Gemini after validation.
 - `COMPLEXITY_LEVEL` must be one of the documented labels.
 - `COMPLEXITY_SCORE` must be integer in `8–40`.
 
@@ -261,9 +267,11 @@ Denylist wins on conflicts.
 
 If selected agent fails preflight or execution start:
 
-- Attempt next compatible agent from registry fallback order.
+- Attempt next compatible non-Google agent from registry fallback order.
 - Stop after `MAX_AGENT_FALLBACKS` attempts.
-- Emit final bounded-fallback failure with attempted chain.
+- Do not spend `MAX_AGENT_FALLBACKS` on Google/Gemini last-resort attempts.
+- Only after all eligible non-Google candidates are unavailable or fail preflight/execution start, evaluate Google/Gemini as a separate last-resort phase.
+- Emit final bounded-fallback diagnostics with the normal attempted chain and any separate last-resort Google/Gemini attempt.
 
 ## Preflight Checks
 
