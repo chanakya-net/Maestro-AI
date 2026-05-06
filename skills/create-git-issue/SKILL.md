@@ -298,12 +298,6 @@ Or "None - can start immediately".
 
 ## Output Checklist
 
-- Existing break-req decisions reused where available
-- No duplicate questioning for already-resolved decisions
-- PRD drafted and user-aligned
 - `gh` availability checked before publishing
-- PRD issue published with `enhancement` and `needs-triage`, or saved to `prd.md`
-- Vertical slices reviewed and approved
-- Slice issues published in dependency order, or saved to `issues.md`
 - Each implementation issue includes a technical context snapshot (stack, dependencies, architecture, integration touchpoints)
 - Parent/blocked-by relationships set correctly

@@ -171,15 +171,6 @@ Score each dimension from `1` (lowest) to `5` (highest):
 
 Total score range: `8-40`.
 
-### Score to Complexity Level
-
-- `8-12` => `quite-easy`
-- `13-17` => `easy`
-- `18-22` => `medium`
-- `23-27` => `medium-hard`
-- `28-32` => `complex`
-- `33-40` => `holy-fuck`
-
 ### Model-First Selection
 
 The orchestrator selects the **model first**, then the agent that supports it. Agent defaults are ignored.
@@ -254,13 +245,6 @@ Validation rules:
 - Forced `MODEL` not in chosen agent's `known_models` → fail fast.
 - `COMPLEXITY_LEVEL` must be one of the documented labels.
 - `COMPLEXITY_SCORE` must be integer in `8–40`.
-
-Validation rules:
-
-- If forced `AGENT` is not installed/detected, fail fast.
-- If forced `MODEL` is invalid for selected agent, fail fast.
-- `COMPLEXITY_LEVEL` must be one of documented levels.
-- `COMPLEXITY_SCORE` must be integer in `8-40`.
 
 ### Allowlist and Denylist
 
