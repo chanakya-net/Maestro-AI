@@ -1,10 +1,28 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -eo pipefail
+
+RUN_AGENT_BOOTSTRAP_PATH="${RUN_AGENT_BOOTSTRAP_PATH:-1}"
+if [[ "${RUN_AGENT_BOOTSTRAP_PATH}" != "0" ]]; then
+  for _path_dir in \
+    /opt/homebrew/bin \
+    /usr/local/bin \
+    "${HOME:-}/.npm-global/bin" \
+    "${HOME:-}/.local/bin" \
+    "${HOME:-}/.cargo/bin" \
+    "${HOME:-}/.bun/bin" \
+    "${HOME:-}/.dotnet/tools"; do
+    if [[ -d "${_path_dir}" && ":${PATH}:" != *":${_path_dir}:"* ]]; then
+      PATH="${_path_dir}:${PATH}"
+    fi
+  done
+  export PATH
+  unset _path_dir
+fi
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
-REPO_ROOT="${REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd -P)}"
+REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
 AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${SCRIPT_DIR}/agent-registry.json}"
 
 AGENT="${AGENT:-}"
@@ -15,6 +33,7 @@ PRINT_PROMPT="${PRINT_PROMPT:-0}"
 AGENT_PERMISSION_MODE="${AGENT_PERMISSION_MODE:-}"
 AGENT_EXTRA_ARGS="${AGENT_EXTRA_ARGS:-}"
 UNATTENDED="${UNATTENDED:-0}"
+GUI_MODE="${GUI_MODE:-auto}"
 
 DRY_RUN=0
 LIST_AGENTS=0
@@ -62,6 +81,65 @@ Usage:
 Environment equivalents:
   AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED
 EOF
+}
+
+detect_gui_mode() {
+  [[ -n "${VSCODE_PID:-}" ]] && return 0
+  [[ "${TERM_PROGRAM:-}" == "vscode" ]] && return 0
+  [[ -n "${ELECTRON_RUN_AS_NODE:-}" ]] && return 0
+  [[ -n "${ANTIGRAVITY_APP:-}" ]] && return 0
+  [[ -n "${CURSOR_TRACE_ID:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_ENTRYPOINT:-}" ]] && return 0
+  return 1
+}
+
+resolve_gui_mode() {
+  case "${GUI_MODE}" in
+    auto)
+      if detect_gui_mode; then
+        GUI_MODE=1
+      else
+        GUI_MODE=0
+      fi
+      ;;
+    1|true|TRUE|yes|YES|on|ON)
+      GUI_MODE=1
+      ;;
+    0|false|FALSE|no|NO|off|OFF)
+      GUI_MODE=0
+      ;;
+    *)
+      fail "GUI_MODE must be auto, 1, or 0"
+      ;;
+  esac
+}
+
+apply_gui_permission_mode() {
+  [[ "${GUI_MODE}" == "1" ]] || return 0
+
+  UNATTENDED=1
+  case "${AGENT}" in
+    codex)
+      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--dangerously-bypass-approvals-and-sandbox" ]]; then
+        AGENT_PERMISSION_MODE="--sandbox=workspace-write"
+      fi
+      ;;
+    claude)
+      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--dangerously-skip-permissions" ]]; then
+        AGENT_PERMISSION_MODE="--permission-mode=acceptEdits"
+      fi
+      ;;
+    github-copilot)
+      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--allow-all" || "${AGENT_PERMISSION_MODE}" == "--yolo" ]]; then
+        AGENT_PERMISSION_MODE="--allow-all-tools"
+      fi
+      ;;
+    gemini)
+      if [[ "${AGENT_PERMISSION_MODE}" == "--yolo" || "${AGENT_PERMISSION_MODE}" == "--approval-mode=yolo" ]]; then
+        AGENT_PERMISSION_MODE="--approval-mode=auto_edit"
+      fi
+      ;;
+  esac
 }
 
 while [[ $# -gt 0 ]]; do
@@ -352,6 +430,9 @@ if [[ -z "${AGENT_PERMISSION_MODE}" ]]; then
   AGENT_PERMISSION_MODE="$(json_value default_permission "${AGENT}")"
 fi
 
+resolve_gui_mode
+apply_gui_permission_mode
+
 if [[ "${AGENT_PERMISSION_MODE}" == "safe" ]]; then
   AGENT_PERMISSION_MODE=""
 fi
@@ -379,6 +460,10 @@ if [[ -n "${AGENT_PERMISSION_MODE}" && "${UNATTENDED}" != "1" ]]; then
 fi
 
 prompt_payload="$(cat "${PAYLOAD_FILE}")"
+if [[ "${#prompt_payload}" -gt 131072 ]]; then
+  echo "warn: prompt exceeds 128KB (${#prompt_payload} bytes); may be truncated in sandboxed contexts" >&2
+fi
+
 invoke_command="$(json_value invoke_command "${AGENT}")"
 [[ -n "${invoke_command}" ]] || fail "agent has no invocation command: ${AGENT}"
 

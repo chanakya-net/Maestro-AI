@@ -295,10 +295,19 @@ Required environment/flags:
 - `PROMPT_FILE="$ASSET_ROOT/prompt.md"` (or override)
 - selected `AGENT`
 - selected `MODEL` (optional; default from registry)
+- `GUI_MODE=1` when running from GUI-hosted agents such as VS Code, Codex GUI, Copilot in VS Code, Claude Code app, Cursor, or Antigravity
+
+`GUI_MODE` behavior:
+
+- `GUI_MODE=auto` is the runner default and detects common GUI environment variables.
+- `GUI_MODE=1` explicitly uses GUI-safe noninteractive permissions and bootstrapped GUI PATH lookup.
+- `GUI_MODE=0` preserves CLI/CI behavior.
+- In GUI mode, the runner still allows noninteractive execution but downgrades dangerous full-bypass flags where the target CLI supports a safer mode.
 
 Bash (macOS / Linux / Git Bash):
 
 ```bash
+GUI_MODE="${GUI_MODE:-1}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 CONTEXT_PAYLOAD_FILE="$CONTEXT_PAYLOAD_FILE" \
 PROMPT_FILE="$ASSET_ROOT/prompt.md" \
@@ -311,6 +320,7 @@ PowerShell (Windows):
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
 $env:CONTEXT_PAYLOAD_FILE = $CONTEXT_PAYLOAD_FILE
 $env:PROMPT_FILE = "$ASSET_ROOT\prompt.md"
+$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --unattended
 ```
 
