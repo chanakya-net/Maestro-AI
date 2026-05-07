@@ -7,9 +7,21 @@
 #
 # Environment equivalents:
 #   AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT,
-#   AGENT_PERMISSION_MODE, AGENT_EXTRA_ARGS, AGENT_REGISTRY_FILE, UNATTENDED
+#   AGENT_PERMISSION_MODE, AGENT_EXTRA_ARGS, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE
 
 $ErrorActionPreference = "Stop"
+
+foreach ($pathDir in @(
+    "$env:USERPROFILE\.npm-global\bin",
+    "$env:USERPROFILE\.local\bin",
+    "$env:USERPROFILE\.cargo\bin",
+    "$env:USERPROFILE\.bun\bin",
+    "$env:USERPROFILE\.dotnet\tools"
+)) {
+    if ($pathDir -and (Test-Path $pathDir) -and (($env:PATH -split ';') -notcontains $pathDir)) {
+        $env:PATH = "$pathDir;$env:PATH"
+    }
+}
 
 $SCRIPT_DIR        = $PSScriptRoot
 $REPO_ROOT         = if ($env:REPO_ROOT) { $env:REPO_ROOT } else { $PWD.Path }
@@ -21,7 +33,8 @@ $PRINT_PROMPT      = if ($env:PRINT_PROMPT) { $env:PRINT_PROMPT } else { "0" }
 $AGENT_PERM_MODE   = $env:AGENT_PERMISSION_MODE
 $AGENT_EXTRA_ARGS  = $env:AGENT_EXTRA_ARGS
 $REGISTRY_FILE     = if ($env:AGENT_REGISTRY_FILE) { $env:AGENT_REGISTRY_FILE } else { Join-Path $SCRIPT_DIR "agent-registry.json" }
-$UNATTENDED        = $false
+$UNATTENDED        = $env:UNATTENDED -eq "1"
+$GUI_MODE          = if ($env:GUI_MODE) { $env:GUI_MODE } else { "auto" }
 $DRY_RUN           = $false
 $LIST_AGENTS       = $false
 $DETECTED_ONLY     = $false
@@ -65,7 +78,7 @@ Usage:
   run-agent.ps1 --list-models <agent>
 
 Environment equivalents:
-  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED
+  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE
 "@
         exit 0
     } elseif ($arg.StartsWith("-")) {
@@ -102,6 +115,61 @@ function Write-Telemetry([string]$status) {
     $telemetryAgent = Normalize-TelemetryValue $AGENT
     $telemetryModel = Normalize-TelemetryValue $MODEL
     [Console]::Error.WriteLine("STATUS|type=telemetry|agent=$telemetryAgent|model=$telemetryModel|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=$status|source=runner-default")
+}
+
+function Test-GuiMode {
+    if ($env:VSCODE_PID) { return $true }
+    if ($env:TERM_PROGRAM -eq "vscode") { return $true }
+    if ($env:ELECTRON_RUN_AS_NODE) { return $true }
+    if ($env:ANTIGRAVITY_APP) { return $true }
+    if ($env:CURSOR_TRACE_ID) { return $true }
+    if ($env:CLAUDE_CODE_ENTRYPOINT) { return $true }
+    return $false
+}
+
+function Resolve-GuiMode {
+    switch ($GUI_MODE) {
+        "auto" {
+            if (Test-GuiMode) { $script:GUI_MODE = "1" } else { $script:GUI_MODE = "0" }
+        }
+        { $_ -in @("1", "true", "TRUE", "yes", "YES", "on", "ON") } {
+            $script:GUI_MODE = "1"
+        }
+        { $_ -in @("0", "false", "FALSE", "no", "NO", "off", "OFF") } {
+            $script:GUI_MODE = "0"
+        }
+        default {
+            Fail "GUI_MODE must be auto, 1, or 0"
+        }
+    }
+}
+
+function Apply-GuiPermissionMode {
+    if ($GUI_MODE -ne "1") { return }
+
+    $script:UNATTENDED = $true
+    switch ($AGENT) {
+        "codex" {
+            if (-not $AGENT_PERM_MODE -or $AGENT_PERM_MODE -eq "--dangerously-bypass-approvals-and-sandbox") {
+                $script:AGENT_PERM_MODE = "--sandbox=workspace-write"
+            }
+        }
+        "claude" {
+            if (-not $AGENT_PERM_MODE -or $AGENT_PERM_MODE -eq "--dangerously-skip-permissions") {
+                $script:AGENT_PERM_MODE = "--permission-mode=acceptEdits"
+            }
+        }
+        "github-copilot" {
+            if (-not $AGENT_PERM_MODE -or $AGENT_PERM_MODE -in @("--allow-all", "--yolo")) {
+                $script:AGENT_PERM_MODE = "--allow-all-tools"
+            }
+        }
+        "gemini" {
+            if ($AGENT_PERM_MODE -in @("--yolo", "--approval-mode=yolo")) {
+                $script:AGENT_PERM_MODE = "--approval-mode=auto_edit"
+            }
+        }
+    }
 }
 
 if (-not (Test-Path $REGISTRY_FILE)) { Fail "agent registry file not found: $REGISTRY_FILE" }
@@ -193,6 +261,8 @@ if (-not (Test-Path $PROMPT_FILE_VAL)) { Fail "prompt file not found: $PROMPT_FI
 # ── Resolve model + permission mode ──────────────────────────────────────────
 if (-not $MODEL)          { $MODEL = $agentDef.model.default }
 if (-not $AGENT_PERM_MODE) { $AGENT_PERM_MODE = $agentDef.permission_modes.default }
+Resolve-GuiMode
+Apply-GuiPermissionMode
 if ($AGENT_PERM_MODE -eq "safe") { $AGENT_PERM_MODE = "" }
 
 $PAYLOAD_FILE = [System.IO.Path]::GetTempFileName()
@@ -212,6 +282,9 @@ try {
     }
 
     $promptPayload = Get-Content $PAYLOAD_FILE -Raw -Encoding UTF8
+    if ($promptPayload.Length -gt 131072) {
+        [Console]::Error.WriteLine("warn: prompt exceeds 128KB ($($promptPayload.Length) bytes); may be truncated in sandboxed contexts")
+    }
 
     # ── Resolve model flag ────────────────────────────────────────────────────
     $modelFlag = ""

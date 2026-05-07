@@ -49,6 +49,11 @@ if [[ ! -x "${RUNNER_PATH}" ]]; then
   fail "run-agent.sh exists and is executable"
 fi
 
+runner_preamble="$(sed -n '1,8p' "${RUNNER_PATH}")"
+assert_not_contains "${runner_preamble}" "set -euo pipefail" "run-agent avoids nounset so VS Code zsh prompt hooks are not tripped"
+assert_not_contains "${runner_preamble}" "set -u" "run-agent avoids nounset shorthand"
+assert_not_contains "${runner_preamble}" "set -o nounset" "run-agent avoids nounset long form"
+
 python3 - "${REGISTRY_PATH}" <<'PY'
 import json
 import sys
@@ -129,6 +134,7 @@ cleanup() {
   rm -rf "${WORK_DIR}"
 }
 trap cleanup EXIT
+export GUI_MODE=0
 
 CONTEXT_FILE="${WORK_DIR}/context.md"
 PROMPT_FILE="${WORK_DIR}/prompt.md"
@@ -295,6 +301,33 @@ assert_contains "${dry_run_output}" "Do the work" "dry-run includes prompt file"
 
 echo "PASS: run-agent dry-run builds command from CLI arguments"
 
+EXTERNAL_ASSET_ROOT="${WORK_DIR}/external-assets"
+mkdir -p "${EXTERNAL_ASSET_ROOT}"
+cp "${RUNNER_PATH}" "${EXTERNAL_ASSET_ROOT}/run-agent.sh"
+cp "${REGISTRY_PATH}" "${EXTERNAL_ASSET_ROOT}/agent-registry.json"
+external_asset_dry_run_output="$("${EXTERNAL_ASSET_ROOT}/run-agent.sh" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${external_asset_dry_run_output}" "-C ${ROOT_DIR}" "runner defaults repo root to launch directory when assets live elsewhere"
+assert_not_contains "${external_asset_dry_run_output}" "-C ${WORK_DIR}/external-assets" "runner does not treat installed asset directory as repo root"
+
+echo "PASS: run-agent defaults repo root to launch directory"
+
+codex_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${codex_gui_dry_run_output}" "--sandbox=workspace-write" "GUI mode uses workspace-write sandbox for Codex"
+assert_not_contains "${codex_gui_dry_run_output}" "--dangerously-bypass-approvals-and-sandbox" "GUI mode avoids Codex sandbox bypass"
+
+codex_auto_gui_dry_run_output="$(GUI_MODE=auto TERM_PROGRAM=vscode "${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${codex_auto_gui_dry_run_output}" "--sandbox=workspace-write" "GUI auto-detection uses workspace-write sandbox for Codex"
+
+claude_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${claude_gui_dry_run_output}" "--permission-mode=acceptEdits" "GUI mode uses acceptEdits permission mode for Claude"
+assert_not_contains "${claude_gui_dry_run_output}" "--dangerously-skip-permissions" "GUI mode avoids Claude permission bypass"
+
+copilot_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${copilot_gui_dry_run_output}" "--allow-all-tools" "GUI mode keeps Copilot non-interactive tool permission"
+assert_not_contains "${copilot_gui_dry_run_output}" "--allow-all-paths" "GUI mode avoids Copilot all-paths permission"
+
+echo "PASS: run-agent GUI mode selects safer non-interactive permissions"
+
 gemini_dry_run_output="$("${RUNNER_PATH}" --agent gemini --model auto-gemini-3 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${gemini_dry_run_output}" "gemini --model auto-gemini-3 --prompt" "gemini dry-run uses prompt flags without elevated permission mode"
 assert_not_contains "${gemini_dry_run_output}" "--yolo" "gemini dry-run excludes yolo mode by default"
@@ -385,6 +418,19 @@ if command -v python3 >/dev/null 2>&1; then
   echo "PASS: run-agent falls back to python3 JSON parsing"
 fi
 
+if command -v python3 >/dev/null 2>&1; then
+  GUI_HOME="${WORK_DIR}/gui-home"
+  mkdir -p "${GUI_HOME}/.local/bin"
+  ln -s "$(command -v python3)" "${GUI_HOME}/.local/bin/python3"
+  printf '#!/usr/bin/env bash\nprintf "fake-agent 1.0\\n"\n' > "${GUI_HOME}/.local/bin/fake-agent"
+  chmod +x "${GUI_HOME}/.local/bin/fake-agent"
+
+  gui_path_output="$(HOME="${GUI_HOME}" PATH="/usr/bin:/bin" AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${BASH}" "${RUNNER_PATH}" --list-agents --detected-only)"
+  assert_contains "${gui_path_output}" $'fake\tFake Agent\tdetected\tdetected' "PATH bootstrap detects agents installed in GUI-thin user bin paths"
+
+  echo "PASS: run-agent bootstraps PATH for GUI-launched environments"
+fi
+
 models_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" "${RUNNER_PATH}" --list-models fake)"
 assert_equals $'fake-default\nfake-pro' "${models_output}" "list-models prints configured models"
 
@@ -403,9 +449,24 @@ assert_contains "${unattended_output}" "requires --unattended or UNATTENDED=1" "
 
 echo "PASS: run-agent rejects unsafe manual execution"
 
+LARGE_PROMPT_FILE="${WORK_DIR}/large-prompt.md"
+python3 - "${LARGE_PROMPT_FILE}" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write("x" * 131073)
+PY
+
+large_prompt_stderr="${WORK_DIR}/large-prompt.stderr"
+"${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${LARGE_PROMPT_FILE}" --dry-run --unattended >/dev/null 2>"${large_prompt_stderr}"
+large_prompt_warning="$(<"${large_prompt_stderr}")"
+assert_contains "${large_prompt_warning}" "warn: prompt exceeds 128KB" "large inline prompts emit a sandbox truncation warning"
+
+echo "PASS: run-agent warns for large inline prompts"
+
 mkdir -p "${WORK_DIR}/empty-path"
 set +e
-parser_output="$(PATH="${WORK_DIR}/empty-path" "${BASH}" "${RUNNER_PATH}" --list-agents 2>&1)"
+parser_output="$(RUN_AGENT_BOOTSTRAP_PATH=0 PATH="${WORK_DIR}/empty-path" "${BASH}" "${RUNNER_PATH}" --list-agents 2>&1)"
 parser_status=$?
 set -e
 
