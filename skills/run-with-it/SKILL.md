@@ -329,6 +329,19 @@ Before execution verify:
 
    This does not block execution; it signals that the run will use the degraded same-band different-model reviewer for all tasks in this run.
 
+9. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
+
+   - If it exists, pause and present exactly this prompt to the user:
+
+     ```
+     Existing run state found at .run-with-it/state.json.
+     Type "resume" to continue the previous run, or "discard" to delete it and start fresh.
+     ```
+
+   - **`resume`**: do not delete the file. Proceed to the Resume Flow section.
+   - **`discard`**: delete `.run-with-it/state.json` (and leave any archived reviews under `.run-with-it/reviews/` in place for reference). Continue with normal preflight and fresh issue intake as if no prior state existed.
+   - Do not start any new task, fetch any issue, or spawn any agent until the user responds.
+
 If `review-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
 
 ## Execution
@@ -556,6 +569,7 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
 - Cycle 2 = reviewer run after first modification.
 - The cap is **2 cycles**, hardcoded (no env override in this iteration).
 - Cap exhaustion terminates the issue as `failed-review`.
+- **Compaction survival**: the authoritative cycle counter for each task is `review_history[task].cycles_used` in `.run-with-it/state.json`. On resume, restore this value and enforce the cap against it — a task that consumed cycle 1 before compaction may use only one more cycle (cycle 2) after resume.
 
 #### Per-Cycle Steps
 
@@ -672,6 +686,52 @@ State category requirements:
 - `review_history`: store total cycles used per task and the archived review JSON file paths.
 
 The coordinator may include additional fields, but must not omit these four categories when `schema_version` is 1.
+
+### Resume Flow (Required)
+
+Triggered when the user types `resume` at the existing-state prompt.
+
+#### Rehydration
+
+Read `.run-with-it/state.json` (schema_version 1) and rebuild all four state categories in memory:
+
+1. **`queue`** — restore all task entries. Tasks whose `status` is `"completed"` or `"done"` are skipped entirely; do not requeue them. Tasks with `status` `"ready"` or `"blocked"` are returned to their respective queues.
+2. **`ledger_rows`** — restore verbatim ledger `STATUS` lines. Do not re-emit them; hold them in memory so the final ledger includes pre-compaction rows.
+3. **`in_flight_agents`** — restore each entry. These represent agents that were active or last-known-active at compaction time.
+4. **`review_history`** — restore `cycles_used` per task. The 2-cycle cap is enforced against these restored values for every subsequent review pass.
+
+Emit one parseable line immediately after rehydration succeeds:
+
+```
+STATUS|type=resume|state_file=.run-with-it/state.json|tasks_restored=<n>|in_flight=<n>|skipped_done=<n>
+```
+
+If `.run-with-it/state.json` is missing or unparseable when the user types `resume`, emit:
+
+```
+STATUS|type=resume-error|reason=<missing|parse-error>|action=user-required
+```
+
+Then stop and ask the user whether to proceed as a fresh run.
+
+#### In-Flight Agent Reattempt
+
+For each entry in `in_flight_agents`, resume work from the phase recorded in `role`:
+
+| Persisted `role` | Reattempt behavior |
+|---|---|
+| `impl` | Re-spawn the implementer for this task using the same band selection; treat as a fresh impl pass (cycle 0 stays 0). |
+| `review` | Re-spawn the reviewer for this task at the recorded `cycle`. Read the existing archived review JSON for prior cycles from `review_history.review_files` before spawning. |
+| `modify` | Re-spawn the modification agent for this task at the recorded `cycle`. Pass it the archived reviewer JSON for that cycle. |
+| `coordinator` | No child agent to reattempt; the coordinator itself was interrupted. Resume from task selection normally. |
+
+Emit a standard `STATUS|type=spawn` or `review-spawn`/`modify-spawn` line before each reattempted agent, identical to a first-run spawn.
+
+After reattempting all in-flight agents, continue the normal run loop: select the next ready task, score, route, execute, review, and integrate until no ready work remains.
+
+#### Backward Compatibility
+
+Runs that never compacted and never have a prior `.run-with-it/state.json` bypass the resume/discard prompt entirely and are unaffected by this section.
 
 ### `.gitignore` Auto-Append for `.run-with-it/` (Required)
 
