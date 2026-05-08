@@ -235,6 +235,45 @@ These are audit seeds, not final conclusions:
   - No production file rewrite is included in this audit output.
   - The rewritten skill continues to satisfy `bash tests/break-req-contract.test.sh`.
 
+## Per-File Audit Plan: `skills/save-tokens/SKILL.md`
+
+- current role: Small response-mode skill that compresses assistant prose by dropping filler, using short wording, and allowing symbolic relationships while preserving exact technical terms and code blocks.
+- target role: Response compression mode, matching the responsibility map. The skill should own wording style for compressed assistant responses only, not any planning or execution behavior.
+- authority boundary: Owns compressed response wording only. The mode skill has no planning, routing, review, implementation, or persisted-artifact authority, and must not alter code blocks, commit messages, PR descriptions, generated plans, review artifacts, implementation instructions, issue updates, state files, or other durable outputs.
+- primary verdict: `tighten`
+- front matter assessment: `name: save-tokens` is accurate and should stay. The description correctly states the compression behavior and code-block exception, but the trigger list is too broad: "compress" can mean file compression, prompt compression, memory compression, image compression, or artifact rewriting, and "be brief" can mean concise normal prose rather than activating symbol-heavy mode. Rewrite should retain working response-mode triggers such as "save tokens" and "RTU mode", optionally add "compressed response mode", and drop or qualify generic "compress" and "be brief" activation.
+- passages to keep:
+  - The core rule to drop articles, filler, pleasantries, hedging, and transitional phrases. It is the simplest enforceable definition of the mode.
+  - The preference for short words and sentence fragments. This explains the style without granting process authority.
+  - The requirement that technical terms and code blocks remain exact and uncompressed.
+  - The before/after React example, if kept short, because it demonstrates the intended compressed reply shape better than abstract rules alone.
+  - The explicit exit phrases "stop" and "normal mode", placed under the `Exit` section if the small-mode template is adopted.
+- passages to tighten:
+  - Make symbol substitution optional or context-aware rather than mandatory for every compressed response, while preserving the current symbol catalog as a compact reference or example. Overuse can reduce clarity, especially in user-facing explanations.
+  - Replace the broad trigger words "compress" and "be brief" with scoped trigger wording that does not steal requests meant for file compression, memory compression, prompt rewriting, summaries, or normal concise answers.
+  - Expand the boundary line beyond code blocks, commit messages, and PR descriptions to cover formal artifacts: plans, issue bodies, review JSON, test output summaries, implementation prompts, persisted state, and any content intended to be copied or saved.
+  - State that compression applies to assistant narration around work, not to quoted source text, user-provided text, command output that needs fidelity, or generated code.
+  - Fit the small-mode template by grouping content as `Purpose`, `When To Use`, `Rules`, `Hard Boundaries`, `Example`, and `Exit`, while keeping the file compact.
+- passages to move, with destination:
+  - None. The response-style rules and exit behavior belong in `skills/save-tokens/SKILL.md` because they are local runtime guidance for this mode.
+- passages to remove:
+  - Remove or qualify generic activation on "compress" and "be brief" if the rewrite cannot make them unambiguously response-style triggers.
+  - Remove any implication that the mode can rewrite durable artifacts or downstream prompts. The current file does not explicitly claim this authority, but the rewrite should avoid adding it through broad wording.
+- duplicated contracts and source-of-truth handling:
+  - Code-block fidelity: `skills/save-tokens/SKILL.md` should be the local source of truth for how this response mode treats code blocks. Other skills and prompts own their own output contracts; this skill may only say that compression does not modify code blocks.
+  - Commit messages and PR descriptions: This skill should keep only a boundary exception. It must not define commit-message or PR-description style; those remain owned by the relevant workflow, prompt, or user request.
+  - README token-savings summary: README owns any catalog-level savings summary. The skill should not need a percentage unless it is useful as a non-binding mode description.
+  - Formal artifacts: `assets/review-prompt.md`, `skills/run-with-it/SKILL.md`, `skills/create-git-issue/SKILL.md`, and other scoped owners retain their artifact contracts. `skills/save-tokens/SKILL.md` may only preserve them by declaring that compression does not rewrite or symbol-substitute those outputs.
+- authority changes, if any: None. The rewrite should preserve the skill's current narrow authority as a response-style mode and explicitly deny planning, routing, review, implementation, and persisted-artifact authority.
+- acceptance checks for the rewrite:
+  - YAML front matter triggers only on explicit compressed-response intent and does not broadly capture unrelated "compress" or "be brief" requests.
+  - The body states compression applies only to assistant response wording.
+  - The mode skill has no planning, routing, review, implementation, or persisted-artifact authority.
+  - Code blocks, technical terms, commit messages, PR descriptions, formal plans, issue bodies, review artifacts, implementation prompts, command output requiring fidelity, and persisted artifacts remain uncompressed and free of symbol substitution.
+  - Exit behavior is explicit and limited to returning assistant responses to normal style.
+  - The rewrite fits the small-mode template concepts without bloating the file.
+  - No production skill or prompt file rewrite is included in this audit output.
+
 ## Acceptance Criteria
 
 - The audit output covers exactly the seven scoped files.
