@@ -237,6 +237,27 @@ Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's regis
 run-agent.sh --agent "$AGENT" --model "$MODEL" --unattended
 ```
 
+### Reviewer Band Selection
+
+For the happy-path review pass, bump the implementer's band up exactly one level and then reuse the same model-first selection logic.
+
+| Implementer band | Reviewer band | Rule |
+|-------------------|---------------|------|
+| `quite-easy` | `easy` | bump one band |
+| `easy` | `medium` | bump one band |
+| `medium` | `medium-hard` | bump one band |
+| `medium-hard` | `complex` | bump one band |
+| `complex` | `holy-fuck` | bump one band |
+| `holy-fuck` | `holy-fuck` | stay at top band, but select a different model |
+
+Reviewer model selection rules:
+
+1. Set `current_level` to the bumped reviewer band.
+2. Reuse the main model-first algorithm.
+3. Exclude the implementer's exact `model_id` from the candidate pool before selection.
+4. If the implementer is already at `holy-fuck`, keep `current_level=holy-fuck` and pick a different model from that band instead of upgrading beyond the top band.
+5. Pass the chosen reviewer through the same unified runner contract as any other child agent.
+
 ### Override Precedence (highest first)
 
 1. `AGENT` + `MODEL` forced together (both must be valid and installed)
@@ -453,6 +474,42 @@ Child agent lifecycle rules:
 - record the decision immediately: `integrate|revise|blocked`
 - do not keep agents open only because more tasks might appear later
 
+### Review Handoff
+
+After the implementer finishes and the diff is captured, the coordinator performs the happy-path review delegation flow:
+
+1. Assemble a reviewer payload file in this order:
+   - issue context from the existing context payload
+   - the original `PROMPT_FILE` contents
+   - the captured implementer diff
+   - a per-file changed-file list with `+added/-deleted` counts for each file
+   - the implementer telemetry stub
+2. Spawn the reviewer child agent with the selected reviewer band and selected reviewer model.
+3. Emit `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before the reviewer starts.
+4. Run the reviewer through the existing unified runner using the same `--agent`, `--model`, `--unattended` contract.
+5. Parse the reviewer JSON output against the PRD contract below.
+6. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after parsing the reviewer result.
+7. On `verdict=approve`, integrate the implementer's diff using the existing per-issue commit policy.
+8. Defer `revise`, `reject`, modification, cycle-limit, and degraded-fallback handling to later slices.
+
+Reviewer JSON contract from the PRD:
+
+```json
+{
+  "verdict": "approve | revise | reject",
+  "summary": "one-paragraph rationale",
+  "comments": [
+    {
+      "file": "path/to/file",
+      "line": 42,
+      "severity": "info | warning | critical",
+      "fix": "concrete suggested change"
+    }
+  ],
+  "blocking_reasons": ["list when verdict=reject"]
+}
+```
+
 ### Status Messages
 
 Emit parseable one-line status messages for multi-agent runs:
@@ -464,6 +521,8 @@ Emit parseable one-line status messages for multi-agent runs:
 - batch summary: `STATUS|type=batch|batch=<batch-id>|running=<count>|completed=<count>|blocked=<count>|next=<text>`
 - integration: `STATUS|type=integration|batch=<batch-id>|issue=#<n>|action=<merge|conflict-fix|follow-up-agent>|state=<in-progress|done>`
 - close: `STATUS|type=close|batch=<batch-id>|agent=<agent-name>|issue=#<n>|reason=<completed|blocked|replaced|failed-review>`
+- review spawn: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
+- review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 - final token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - coordinator token totals: `STATUS|type=summary|scope=coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
