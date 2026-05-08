@@ -476,21 +476,53 @@ Child agent lifecycle rules:
 
 ### Review Handoff
 
-After the implementer finishes and the diff is captured, the coordinator performs the happy-path review delegation flow:
+After the implementer finishes and the diff is captured, the coordinator performs the review and modification loop:
+
+#### Cycle Counter
+
+- Cycle 1 = first reviewer run after implementation.
+- Cycle 2 = reviewer run after first modification.
+- The cap is **2 cycles**, hardcoded (no env override in this iteration).
+- Cap exhaustion terminates the issue as `failed-review`.
+
+#### Per-Cycle Steps
 
 1. Assemble a reviewer payload file in this order:
    - issue context from the existing context payload
    - the original `PROMPT_FILE` contents
-   - the captured implementer diff
+   - the captured implementer diff (or latest modification diff when cycling)
    - a per-file changed-file list with `+added/-deleted` counts for each file
    - the implementer telemetry stub
 2. Spawn the reviewer child agent with the selected reviewer band and selected reviewer model.
 3. Emit `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before the reviewer starts.
 4. Run the reviewer through the existing unified runner using the same `--agent`, `--model`, `--unattended` contract.
 5. Parse the reviewer JSON output against the PRD contract below.
-6. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after parsing the reviewer result.
-7. On `verdict=approve`, integrate the implementer's diff using the existing per-issue commit policy.
-8. Defer `revise`, `reject`, modification, cycle-limit, and degraded-fallback handling to later slices.
+6. **Archive the reviewer JSON** to `.run-with-it/reviews/<issue-number>-cycle-<n>.json` immediately after parsing.
+7. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after archival.
+
+#### Verdict Routing
+
+**`verdict=approve`**
+
+Integrate the current diff using the existing per-issue commit policy. No modification agent is spawned.
+
+**`verdict=revise`**
+
+1. If the current cycle equals the cap (2), terminate the issue as `failed-review` immediately — do not spawn a modification agent.
+2. Otherwise, spawn a modification agent for the current cycle:
+   - Select the modification agent at the **original implementer band** using the same model-first selection algorithm.
+   - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before spawning.
+   - Pass the modification agent a payload containing, in this order:
+     1. the original issue context
+     2. the original `prompt.md` contents
+     3. the implementer's reviewed diff
+     4. the complete reviewer JSON (from `.run-with-it/reviews/<issue-number>-cycle-<n>.json`)
+   - Capture the new diff produced by the modification agent.
+3. Increment the cycle counter and return to **Per-Cycle Steps** with the new diff.
+
+**`verdict=reject`**
+
+Skip modification entirely. Terminate the issue as `failed-review` immediately. The reviewer JSON for this cycle is already archived. No modification agent is spawned.
 
 Reviewer JSON contract from the PRD:
 
@@ -523,6 +555,7 @@ Emit parseable one-line status messages for multi-agent runs:
 - close: `STATUS|type=close|batch=<batch-id>|agent=<agent-name>|issue=#<n>|reason=<completed|blocked|replaced|failed-review>`
 - review spawn: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
 - review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
+- modify spawn: `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
 - final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 - final token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - coordinator token totals: `STATUS|type=summary|scope=coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
