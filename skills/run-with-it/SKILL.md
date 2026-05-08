@@ -450,6 +450,49 @@ Implementation belongs to child agents or the selected external agent process.
 - Do not stop after one issue if other ready work remains.
 - Reassess the queue after each completed issue or batch.
 
+### Context Budget and Compaction Handoff (Required)
+
+The coordinator must track a **running context budget estimate** and halt for a user-driven compaction handoff when the estimate crosses **50%** of the host model context window.
+
+#### Estimator
+
+- Maintain `context_bytes_total`: a running sum of the UTF-8 byte length of coordinator-visible content.
+- Estimate tokens as `context_tokens_est = floor(context_bytes_total / 4)`. (Heuristic: `bytes/4`.)
+- Increment the counter for coordinator-visible content including (non-exhaustive):
+  - issue context payloads (including any fetched issue bodies/comments included in the payload)
+  - any direct file reads (prompt files, registry reads, diffs, logs, etc.)
+  - any re-reads of archived review JSON files under `.run-with-it/reviews/`
+  - any ledger rows and STATUS lines the coordinator emits (count emitted text toward the estimate)
+
+#### Denominator (context window)
+
+- Resolve `host_context_window` by reading the active host model’s `context_window` from the resolved `agent-registry.json` `model_catalog`.
+- If the host model id cannot be detected, or if it is not present in the registry catalog, fall back to `host_context_window = 200000`.
+
+#### 50% Trigger Behavior
+
+When `context_tokens_est / host_context_window >= 0.50` (crossing the threshold for the first time in a run):
+
+1. Persist `.run-with-it/state.json` (schema version 1; see below).
+2. Emit exactly one parseable status line:
+
+   `STATUS|type=compact|action=user-required|state_file=.run-with-it/state.json`
+
+3. Print a human-readable handoff instruction block (per host below).
+4. **Stop**: halt new work (no new file reads, no new child-agent spawns, no new review cycles, no new integrations) and wait for the user.
+
+The coordinator must never invoke any host compaction command itself; compaction is always user-driven.
+
+#### User Instructions (human-readable)
+
+After emitting the `STATUS|type=compact...` line, present per-host instructions:
+
+- **Claude Code:** run `/compact`, then re-run the coordinator with the same run context payload, ensuring `.run-with-it/state.json` remains present.
+- **Codex GUI:** use the UI’s compaction control (equivalent to “compact”), then restart the run using the same run context payload and the persisted `.run-with-it/state.json`.
+- **GitHub Copilot (VS Code Chat):** use Copilot Chat’s “compact” / “summarize conversation” equivalent, then restart the run with the same run context payload and `.run-with-it/state.json`.
+
+Do not claim equivalence between hosts beyond the intent: reduce chat context while preserving the persisted state file.
+
 ### Task Selection
 
 Before selecting a task, confirm dependencies are complete.
@@ -571,6 +614,75 @@ Reviewer JSON contract from the PRD:
 }
 ```
 
+### Persistent State (Required)
+
+When the coordinator persists any file under `.run-with-it/` (including `.run-with-it/state.json` and any archived review JSON), it owns that directory namespace for the run.
+
+#### `.run-with-it/state.json` (schema_version 1)
+
+Write a single JSON file at `.run-with-it/state.json` using this schema:
+
+```json
+{
+  "schema_version": 1,
+  "queue": {
+    "ready": [
+      {
+        "issue_number": 36,
+        "title": "example title",
+        "dependencies": [30],
+        "dependency_proof": "freeform string",
+        "ownership_scope": ["skills/run-with-it/SKILL.md"],
+        "paths_to_avoid": ["assets/prompt.md"],
+        "verification": ["freeform command list"],
+        "status": "ready | in_progress | blocked | completed"
+      }
+    ],
+    "blocked": [],
+    "completed": []
+  },
+  "ledger_rows": [
+    "STATUS|type=ledger|task=... (verbatim line as emitted)"
+  ],
+  "in_flight_agents": [
+    {
+      "task": 36,
+      "role": "impl | review | modify | coordinator",
+      "cycle": 0,
+      "agent": "agent-name",
+      "model": "model-id",
+      "ownership_scope": ["path/owned"]
+    }
+  ],
+  "review_history": [
+    {
+      "task": 36,
+      "cycles_used": 1,
+      "review_files": [".run-with-it/reviews/36-cycle-1.json"]
+    }
+  ]
+}
+```
+
+State category requirements:
+
+- `queue`: include dependencies, dependency proof, status, and ownership scope per task.
+- `ledger_rows`: store the coordinator-emitted `STATUS|type=ledger...` lines verbatim.
+- `in_flight_agents`: store role, cycle, and scope for any currently running or last-known active agents.
+- `review_history`: store total cycles used per task and the archived review JSON file paths.
+
+The coordinator may include additional fields, but must not omit these four categories when `schema_version` is 1.
+
+### `.gitignore` Auto-Append for `.run-with-it/` (Required)
+
+On the first write of any file under `.run-with-it/` in a run:
+
+- If a `.git/` directory exists in the current working directory, ensure `.run-with-it/` is present in the repo `.gitignore`:
+  - create `.gitignore` if it does not exist
+  - append `.run-with-it/` on its own line only if not already present (idempotent)
+  - preserve existing `.gitignore` contents unchanged aside from the single appended entry when needed
+- If `.git/` is absent, skip `.gitignore` creation or modification silently.
+
 ### Status Messages
 
 Emit parseable one-line status messages for multi-agent runs:
@@ -586,6 +698,7 @@ Emit parseable one-line status messages for multi-agent runs:
 - review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - modify spawn: `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
 - review degraded: `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` — emitted once per task when degraded fallback activates; never emitted when `DELEGATED_REVIEW=false`
+- compact handoff: `STATUS|type=compact|action=user-required|state_file=.run-with-it/state.json` — emitted exactly once when the context estimate crosses 50% of the host context window; the coordinator halts and waits for the user to compact
 - final ledger row: `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 - impl token totals: `STATUS|type=summary|scope=impl|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - review token totals: `STATUS|type=summary|scope=review|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
