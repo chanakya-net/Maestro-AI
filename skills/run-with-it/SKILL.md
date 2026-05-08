@@ -63,6 +63,8 @@ Collect these values before execution:
 - Optional multi-agent bound:
   - `MAX_PARALLEL_AGENTS` (default `3`)
   - `ALLOW_PARALLEL_AGENTS` (default `true`)
+- Optional review controls:
+  - `DELEGATED_REVIEW` (default `true`): when `false`, bypasses the entire delegated-review path and reverts to today's inline-review behavior; no `review-spawn`, `review-result`, `modify-spawn`, or `review-degraded` STATUS lines are emitted and no per-role ledger rows are written
 
 ## Asset Discovery (Required)
 
@@ -258,6 +260,18 @@ Reviewer model selection rules:
 4. If the implementer is already at `holy-fuck`, keep `current_level=holy-fuck` and pick a different model from that band instead of upgrading beyond the top band.
 5. Pass the chosen reviewer through the same unified runner contract as any other child agent.
 
+### Degraded Fallback
+
+If no installed agent supports any model in the bumped reviewer band after applying `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, and bounded fallback:
+
+1. Fall back to the **implementer's original band** (`current_level` = implementer band).
+2. Exclude the implementer's exact `model_id` from the candidate pool.
+3. Select a different model from the implementer band using the normal model-first algorithm.
+4. Emit `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` before spawning the reviewer.
+5. Continue with the normal per-cycle review steps. The run still completes.
+
+One `review-degraded` STATUS line is emitted per task that triggers this path, not per cycle.
+
 ### Override Precedence (highest first)
 
 1. `AGENT` + `MODEL` forced together (both must be valid and installed)
@@ -307,6 +321,13 @@ Before execution verify:
 5. `agent-registry.json` exists
 6. `gh` auth when GitHub intake is required
 7. unified runner supports selected agent/model
+8. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
+
+   ```
+   PREFLIGHT|review-band=<bumped-band>|status=degraded|reason=no-higher-band-agent|fallback-band=<implementer-band>
+   ```
+
+   This does not block execution; it signals that the run will use the degraded same-band different-model reviewer for all tasks in this run.
 
 If `review-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
 
@@ -476,7 +497,9 @@ Child agent lifecycle rules:
 
 ### Review Handoff
 
-After the implementer finishes and the diff is captured, the coordinator performs the review and modification loop:
+When `DELEGATED_REVIEW=false`, skip this entire section. The coordinator performs inline review using today's behavior with no child agents spawned for review or modification. No `review-spawn`, `review-result`, `modify-spawn`, or `review-degraded` STATUS lines are emitted. No per-role ledger rows for reviewer or modifier are written.
+
+When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and the diff is captured, the coordinator performs the review and modification loop:
 
 #### Cycle Counter
 
@@ -556,6 +579,7 @@ Emit parseable one-line status messages for multi-agent runs:
 - review spawn: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
 - review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - modify spawn: `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
+- review degraded: `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` — emitted once per task when degraded fallback activates; never emitted when `DELEGATED_REVIEW=false`
 - final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 - final token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - coordinator token totals: `STATUS|type=summary|scope=coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
