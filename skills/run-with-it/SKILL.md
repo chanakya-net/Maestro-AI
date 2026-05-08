@@ -77,6 +77,7 @@ Required files:
 - `prompt.md`
 - `run-agent.sh`
 - `agent-registry.json`
+- `review-prompt.md`
 
 Selection rules:
 
@@ -93,12 +94,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json ./assets/review-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
 ## Responsibility Boundary
@@ -115,6 +116,7 @@ This skill owns:
 
 `run-agent.sh` only executes selected parameters.
 `prompt.md` is implementation-only guidance.
+`review-prompt.md` is review-only guidance.
 
 ## Multi-Agent Capability
 
@@ -279,10 +281,13 @@ Before execution verify:
 
 1. resolved asset root exists
 2. `prompt.md` exists
-3. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
-4. `agent-registry.json` exists
-5. `gh` auth when GitHub intake is required
-6. unified runner supports selected agent/model
+3. `review-prompt.md` exists
+4. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
+5. `agent-registry.json` exists
+6. `gh` auth when GitHub intake is required
+7. unified runner supports selected agent/model
+
+If `review-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
 
 ## Execution
 
