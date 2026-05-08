@@ -391,11 +391,13 @@ Also provide human-readable details:
 6. fallback attempts used
 7. completion status
 
-At the end of every run, include a final task execution ledger. The ledger must clearly show which agent and model handled each completed task, how many lines that task changed, a short routing reason, and the child-agent token telemetry captured for that task.
+At the end of every run, include a final task execution ledger. The ledger must clearly show which role handled each completed task (impl, review, or modify), the cycle number, which agent and model handled it, how many lines that task changed, a short routing reason, and the child-agent token telemetry captured for that task.
 
 Required final ledger columns:
 
 - Task: issue number/title or local task name
+- Role: `impl`, `review`, or `modify`
+- Cycle: integer cycle number (`0` for the impl row, `1` for the first review/modify pair, `2` for the second review/modify pair if it occurs)
 - Agent: selected agent slug/display name
 - Model: selected model id
 - Line changes: `+<added>/-<deleted> (<total> total)`
@@ -404,6 +406,8 @@ Required final ledger columns:
 - Cache hit tokens: child-agent cache-hit token count when available
 - Telemetry source: telemetry origin, such as `runner-default`, provider-native, or coordinator-estimated
 - Selection reasoning: one short sentence explaining why that agent/model was selected, such as score band match, forced override, sole compatible agent, interchangeable random pick, provider match, or fallback
+
+Cycle-numbering rule: the implementer always receives `cycle=0`. The first reviewer run and the modification agent it triggers (if any) share `cycle=1`. The second reviewer run and its modification agent (if any) share `cycle=2`. This means a full revise→approve flow emits exactly four ledger rows: `role=impl|cycle=0`, `role=review|cycle=1`, `role=modify|cycle=1`, `role=review|cycle=2`.
 
 Calculate line changes per task from the accepted diff for that task. Prefer `git diff --numstat` or commit stats after each task integration; sum added and deleted lines across files owned by that task. For binary files or unavailable stats, report `n/a` and explain why in the selection or notes text.
 
@@ -415,12 +419,14 @@ Normalize child-agent token telemetry from the selected runner's final telemetry
 
 After the ledger, emit a final human-readable token summary aligned with the parseable rows. Include:
 
-- child-agent aggregate totals across completed tasks: input, output, and cache-hit tokens
+- implementation-role aggregate totals across completed tasks: input, output, and cache-hit tokens
+- review-role aggregate totals across all review passes
+- modify-role aggregate totals across all modification passes
 - separate coordinator totals when the coordinator used measurable tokens during planning, review, or integration
 - a combined run total when both child-agent and coordinator totals are available
 - `unknown` for any total that cannot be computed from captured telemetry
 
-Human-readable final summary should explicitly label these sections as `Child-agent totals`, `Coordinator totals`, and `Run totals`.
+Human-readable final summary must explicitly label these five sections as `Impl totals`, `Review totals`, `Modify totals`, `Coordinator totals`, and `Run totals`. Sections with zero rows may still be emitted with `unknown` if no telemetry was captured for that role.
 
 ## Canonical Coordinator Contract (Required)
 
@@ -580,8 +586,10 @@ Emit parseable one-line status messages for multi-agent runs:
 - review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - modify spawn: `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
 - review degraded: `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` — emitted once per task when degraded fallback activates; never emitted when `DELEGATED_REVIEW=false`
-- final ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
-- final token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
+- final ledger row: `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
+- impl token totals: `STATUS|type=summary|scope=impl|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
+- review token totals: `STATUS|type=summary|scope=review|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
+- modify token totals: `STATUS|type=summary|scope=modify|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - coordinator token totals: `STATUS|type=summary|scope=coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - combined run token totals: `STATUS|type=summary|scope=run|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 
@@ -626,7 +634,8 @@ Terminal comment template:
 - Cache hit tokens: <n|unknown>
 
 ## Notes
-<follow-ups, blockers, or reviewer notes>
+Review: <approve|revise (N cycles)>, final verdict: <approve|reject>, reviewer model: <model-id>
+<follow-ups, blockers, or additional reviewer notes — omit line if none>
 ```
 
 Comment requirements:
@@ -634,7 +643,7 @@ Comment requirements:
 - `Token Usage` must report task-specific telemetry only. Do not include coordinator totals or combined run totals in the issue comment.
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
-- `Notes` may be empty only when there are no follow-ups or blockers; otherwise include the remaining action or reason.
+- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
 
 ## Guardrails
 
