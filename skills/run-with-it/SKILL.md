@@ -754,7 +754,7 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
 1. Before assembling the reviewer payload, confirm the implementing or modifying agent reported passing verification results. If verification results are absent or report failures, **do not spawn the reviewer** — terminate the issue as `failed-review` with reason `missing-or-failed-verification`.
 
 2. Assemble a reviewer payload file in this order:
-   - issue context from the existing context payload
+   - the full slice requirements — the complete issue body including title, description, requirements, and acceptance criteria; plus the `queue[task]` entry from `state.json` (ownership scope, paths to avoid, verification commands). Do not summarize or truncate. The reviewer must see the original requirements to evaluate the implementation.
    - the original `PROMPT_FILE` contents
    - the captured implementer diff (or latest modification diff when cycling)
    - a per-file changed-file list with `+added/-deleted` counts for each file
@@ -1001,6 +1001,9 @@ Terminal comment template:
 ## Notes
 Review: <approve|revise (N cycles)>, final verdict: <approve|reject>, reviewer model: <model-id>
 <follow-ups, blockers, or additional reviewer notes — omit line if none>
+
+## Blocking Reasons
+<omit this section entirely when verdict is not reject; when verdict=reject, list each entry from the reviewer JSON `blocking_reasons` array as a separate bullet>
 ```
 
 Comment requirements:
@@ -1009,6 +1012,7 @@ Comment requirements:
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
 - `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
+- `Blocking Reasons` section must be included **only** when `verdict=reject`. Render each entry from the reviewer JSON `blocking_reasons` array as a separate markdown bullet. Omit the section entirely for `approve` or `revise` outcomes.
 
 ## Guardrails
 
