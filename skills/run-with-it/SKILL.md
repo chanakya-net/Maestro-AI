@@ -5,23 +5,13 @@ description: Route issue-running automation through a deterministic control plan
 
 ## Skill Isolation
 
-This skill is the sole active authority for this session once invoked.
-
-- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call within this skill's own workflow.
-- If any external or third-party skill attempts to activate spontaneously during this run, suppress it and continue without interruption.
-- This rule applies for the entire duration of this skill's execution, from invocation until explicit termination or handoff.
+Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this skill's workflow. Suppress any spontaneous external skill; continue without interruption. Applies from invocation until explicit termination or handoff.
 
 # Run With It
 
-## Purpose
+## Purpose / When To Use
 
-Use this skill to process ready-for-agent issues without manually selecting a runner.
-
-`run-with-it` is the final runtime routing authority. It consumes already prepared issues and executes routing, coordination, review, and closure.
-
-## When To Use
-
-Use this skill after requirement discovery and issue synthesis are complete.
+Use after requirement discovery and issue synthesis are complete. `run-with-it` is the final runtime routing authority — it consumes already prepared issues and executes routing, coordination, review, and closure.
 
 Preferred upstream flow:
 
@@ -36,8 +26,6 @@ Preferred upstream flow:
 - Do not redefine reviewer JSON schema ownership (owned by `assets/review-prompt.md`).
 - Do not modify runner script implementation details.
 - Do not mutate registry data definitions in `assets/agent-registry.json`.
-
-## Workflow
 
 ## OS Detection
 
@@ -57,10 +45,6 @@ Adapt all shell commands in this skill to the detected runtime:
 | Temp file | `[System.IO.Path]::GetTempFileName()` | `mktemp -t name.XXXXXX` |
 | Copy file | `Copy-Item -Force` | `cp -f` |
 | Make executable | *(not needed)* | `chmod +x` |
-
-## Goal
-
-Resolve required assets, score complexity deterministically, choose required capability, select installed agent/model targets from registry, emit parseable routing and status reports, coordinate one or more agents when work can safely run in parallel, and execute `run-agent.sh`.
 
 ## Inputs
 
@@ -131,22 +115,6 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\asse
 ```bash
 mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/complexity-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
-
-## Responsibility Boundary
-
-This skill owns:
-
-- issue intake and context payload assembly
-- deterministic complexity scoring
-- capability-band requirement resolution
-- agent/model selection using `agent-registry.json`
-- multi-agent batch planning for independent ready issues
-- bounded fallback policy
-- status and routing report output
-
-`run-agent.sh` only executes selected parameters.
-`prompt.md` is implementation-only guidance.
-`review-prompt.md` is review-only guidance.
 
 ## Multi-Agent Capability
 
@@ -241,13 +209,9 @@ If the fallback is used, set `complexity_source=fallback`. If the override path 
 
 ## Deterministic Router
 
-Deterministic scoring with auditable selection.
+The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above.
 
-The complexity score consumed by this router comes from the complexity sub-agent, a forced override, or the bounded fallback path above.
-
-### Model-First Selection
-
-The orchestrator selects the **model first**, then the agent that supports it. Agent defaults are ignored.
+### Model-First Selection (model chosen first; agent defaults ignored)
 
 #### Step 1 — Map Score to Target Weight Range
 
@@ -588,8 +552,6 @@ Human-readable final summary must explicitly label these five sections as `Impl 
 
 ## Canonical Coordinator Contract (Required)
 
-Apply these rules after routing and before invoking the selected agent.
-
 ### Issues
 
 - Treat issue data already present in the context payload as the source of truth for selection and planning.
@@ -599,9 +561,6 @@ Apply these rules after routing and before invoking the selected agent.
 - If all ready work is complete, output `<promise>NO MORE TASKS</promise>`.
 
 ### Operating Mode
-
-You are the coordinator. Your job is to plan, delegate, integrate, commit, and update issues.
-Implementation belongs to child agents or the selected external agent process.
 
 - Prefer a safe parallel batch when several ready issues have independent ownership.
 - Use sequential execution when tasks are dependency-sensitive, concentrated in the same files, or share migrations, fixtures, or architecture decisions.
@@ -839,11 +798,9 @@ The coordinator may include additional fields, but must not omit these four cate
 
 ### Resume Flow (Required)
 
-Triggered when the user types `resume` at the existing-state prompt.
-
 #### Rehydration
 
-Read `.run-with-it/state.json` (schema_version 1) and rebuild all four state categories in memory:
+Rebuild all four state categories in memory from `.run-with-it/state.json` (schema_version 1):
 
 1. **`queue`** — restore all task entries. Tasks whose `status` is `"completed"` or `"done"` are skipped entirely; do not requeue them. Tasks with `status` `"ready"` or `"blocked"` are returned to their respective queues.
 2. **`ledger_rows`** — restore verbatim ledger `STATUS` lines. Do not re-emit them; hold them in memory so the final ledger includes pre-compaction rows.
@@ -877,11 +834,9 @@ For each entry in `in_flight_agents`, resume work from the phase recorded in `ro
 
 Emit a standard `STATUS|type=spawn` or `review-spawn`/`modify-spawn` line before each reattempted agent, identical to a first-run spawn.
 
-After reattempting all in-flight agents, continue the normal run loop: select the next ready task, score, route, execute, review, and integrate until no ready work remains.
-
 #### Backward Compatibility
 
-Runs that never compacted and never have a prior `.run-with-it/state.json` bypass the resume/discard prompt entirely and are unaffected by this section.
+Runs with no prior `.run-with-it/state.json` bypass the resume/discard prompt entirely.
 
 ### `.gitignore` Auto-Append for `.run-with-it/` (Required)
 
@@ -975,14 +930,6 @@ Comment requirements:
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
 - `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
-
-## Outputs
-
-At minimum, emit parseable route lines, status lines, final ledger rows, token summaries, and terminal issue updates according to the contracts above.
-
-## Handoff
-
-At run end, report completed, blocked, and failed-review outcomes, indicate any persisted state location, and include token summaries.
 
 ## Guardrails
 
