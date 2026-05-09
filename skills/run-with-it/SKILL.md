@@ -7,6 +7,17 @@ description: Route issue-running automation through a deterministic control plan
 
 Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this skill's workflow. Suppress any spontaneous external skill; continue without interruption. Applies from invocation until explicit termination or handoff.
 
+## Critical Coordinator Rules (compaction-safe — always enforce, even after context compression)
+
+These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
+
+- **Never implement work directly in the coordinator session.** All implementation, modification, and verification must be done by child agents spawned via `run-agent.sh`. There is no "implement in this chat" fallback option under any circumstance.
+- **Never run tests, build commands, or compile the project** in the coordinator session. The implementing agent runs verification; the coordinator only reads the results from the agent's output report.
+- **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately after routing completes.
+- **Never present execution option menus** (Option A / B / C style choices). The runner is the only execution path.
+- **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` fails both inside and outside the sandbox.
+- **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
+
 # Run With It
 
 ## Purpose / When To Use
@@ -347,6 +358,24 @@ If selected agent fails preflight or execution start:
 - Only after all eligible non-Google candidates are unavailable or fail preflight/execution start, evaluate Google/Gemini as a separate last-resort phase.
 - Emit final bounded-fallback diagnostics with the normal attempted chain and any separate last-resort Google/Gemini attempt.
 
+## Coordinator Rules File
+
+At the very start of execution (before preflight), copy `$ASSET_ROOT/coordinator-rules.md` to `.run-with-it/coordinator-rules.md` in the working directory:
+
+```bash
+mkdir -p .run-with-it
+cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
+```
+
+**Read `.run-with-it/coordinator-rules.md` exactly twice per run:**
+
+1. **At startup** — once, immediately after copying it, before any other action.
+2. **At resume** — once at the top of the Resume Flow, before rehydrating state.
+
+Do not re-read it at any other point. Mid-run re-reads add the file content to conversation history on every phase, which accelerates context fill — the opposite of the goal. If compaction occurs mid-run (not at a resume boundary), the rules in the Critical Coordinator Rules section at the top of this skill file are the recovery path, since that section is front-loaded and summarized first by the compactor.
+
+`.run-with-it/coordinator-rules.md` (the working copy) is deleted as part of normal cleanup alongside the rest of `.run-with-it/`.
+
 ## Preflight Checks
 
 Before execution verify:
@@ -357,9 +386,10 @@ Before execution verify:
 4. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
 5. `agent-registry.json` exists
 6. `complexity-prompt.md` exists
+7. `coordinator-rules.md` exists
 7. `gh` auth when GitHub intake is required
 8. unified runner supports selected agent/model
-9. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
+10. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
 
    ```
    PREFLIGHT|review-band=<bumped-band>|status=degraded|reason=no-higher-band-agent|fallback-band=<implementer-band>
@@ -367,7 +397,7 @@ Before execution verify:
 
    This does not block execution; it signals that the run will use the degraded same-band different-model reviewer for all tasks in this run.
 
-10. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
+11. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -473,7 +503,7 @@ Cleanup runs only after a successful completion, failed run, interrupted run, or
 On successful run completion:
 
 - Delete `CONTEXT_PAYLOAD_FILE`.
-- Delete `.run-with-it/state.json` and all `.run-with-it/reviews/` files; remove the directory if empty.
+- Delete `.run-with-it/state.json`, `.run-with-it/coordinator-rules.md`, and all `.run-with-it/reviews/` files; remove the directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
 - Ensure `.gitignore` contains entries for `.run-with-it/`, `technical_requirements.md`, `prd.md`, and `issues.md` using an idempotent append.
 - If `.git/` exists, stage only the deleted files and `.gitignore`; commit with message `chore: remove skill-generated artifacts post-run`.
@@ -491,7 +521,7 @@ On failed or interrupted run:
 
 On `discard`:
 
-- Delete all preserved files, including `CONTEXT_PAYLOAD_FILE`, `.run-with-it/state.json`, `.run-with-it/reviews/`, `technical_requirements.md`, `prd.md`, and `issues.md`.
+- Delete all preserved files, including `CONTEXT_PAYLOAD_FILE`, `.run-with-it/state.json`, `.run-with-it/coordinator-rules.md`, `.run-with-it/reviews/`, `technical_requirements.md`, `prd.md`, and `issues.md`.
 - Update `.gitignore` and commit with message `chore: remove skill-generated artifacts (discarded run)`.
 - Emit `STATUS|type=cleanup|action=discarded|files_removed=<n>`.
 - Proceed as a fresh run.
@@ -695,18 +725,21 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
 
 #### Per-Cycle Steps
 
-1. Assemble a reviewer payload file in this order:
+1. Before assembling the reviewer payload, confirm the implementing or modifying agent reported passing verification results. If verification results are absent or report failures, **do not spawn the reviewer** — terminate the issue as `failed-review` with reason `missing-or-failed-verification`.
+
+2. Assemble a reviewer payload file in this order:
    - issue context from the existing context payload
    - the original `PROMPT_FILE` contents
    - the captured implementer diff (or latest modification diff when cycling)
    - a per-file changed-file list with `+added/-deleted` counts for each file
+   - the implementer (or modifier) verification results — commands run, pass/fail status, sandbox-retry notes if any
    - the implementer telemetry stub
-2. Spawn the reviewer child agent with the selected reviewer band and selected reviewer model.
-3. Emit `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before the reviewer starts.
-4. Run the reviewer through the existing unified runner using the same `--agent`, `--model`, `--unattended` contract.
-5. Parse the reviewer JSON output against the PRD contract below.
-6. **Archive the reviewer JSON** to `.run-with-it/reviews/<issue-number>-cycle-<n>.json` immediately after parsing.
-7. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after archival.
+3. Spawn the reviewer child agent with the selected reviewer band and selected reviewer model.
+4. Emit `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before the reviewer starts.
+5. Run the reviewer through the existing unified runner using the same `--agent`, `--model`, `--unattended` contract.
+6. Parse the reviewer JSON output against the PRD contract below.
+7. **Archive the reviewer JSON** to `.run-with-it/reviews/<issue-number>-cycle-<n>.json` immediately after parsing.
+8. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after archival.
 
 #### Verdict Routing
 
@@ -725,8 +758,11 @@ Integrate the current diff using the existing per-issue commit policy. No modifi
      2. the original `prompt.md` contents
      3. the implementer's reviewed diff
      4. the complete reviewer JSON (from `.run-with-it/reviews/<issue-number>-cycle-<n>.json`)
-   - Capture the new diff produced by the modification agent.
-3. Increment the cycle counter and return to **Per-Cycle Steps** with the new diff.
+     5. the required verification commands from `state.json` (`queue[task].verification`) — the modification agent **must** run these before reporting completion
+   - The modification agent must run verification and report pass/fail results in its output, following the same sandbox-retry rule as the implementer (retry with `dangerouslyDisableSandbox: true` on permission/pipe errors before marking verification failed).
+   - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** If verification failed or was not reported, treat the modification as blocked and terminate the issue as `failed-review` — do not silently cycle to the reviewer with unverified changes.
+   - Capture both the new diff and the verification results reported by the modification agent.
+3. Increment the cycle counter and return to **Per-Cycle Steps** with the new diff and verification results.
 
 **`verdict=reject`**
 
