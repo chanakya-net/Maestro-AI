@@ -413,6 +413,68 @@ These are audit seeds, not final conclusions:
   - The output checklist covers publish/fallback status, PRD and issue approval gates, labels, parent/blocked-by links, technical snapshot completeness, routing-advisory language, and handoff to `run-with-it`.
   - No production skill or prompt file rewrite is included in this audit output.
 
+## Per-File Audit Plan: `assets/review-prompt.md`
+
+- current role: Review-only prompt asset consumed by `run-with-it` after an implementation or modification diff exists. It instructs a reviewer agent to inspect provided task context and diff, treat the repository as read-only, avoid all mutation and GitHub operations, and write exactly one JSON reviewer artifact at a coordinator-provided path.
+- target role: Reviewer-agent prompt, matching the responsibility map. It should own read-only reviewer behavior, expected reviewer inputs, review decision rules, and the reviewer JSON artifact shape. It should not own when review runs, reviewer model selection, review cycle counting, archive destination, verdict routing, modification-agent spawning, persisted state, status/ledger output, terminal issue updates, commits, or any working-tree mutation.
+- authority boundary: Owns the reviewer agent's local obligations only: read provided context and diff, apply approval/revision/rejection rules, and write the required JSON file to the output path supplied by the coordinator. `skills/run-with-it/SKILL.md` owns the coordinator lifecycle around that artifact, including assembling the payload, selecting and spawning the reviewer, parsing and archiving JSON under `.run-with-it/reviews/`, routing `approve`/`revise`/`reject`, spawning modification agents, committing accepted work, and updating issues.
+- primary verdict: `tighten`
+- front matter assessment: This prompt asset has no YAML front matter, which is appropriate because it is not a skill trigger and should not activate from user intent. A rewrite should not add skill-style front matter unless prompt assets adopt metadata repo-wide. The prompt should instead use the prompt-specific structure from this requirements document: `Role`, `Scope`, `Inputs Expected`, `Hard Restrictions`, `Workflow`, `Verification / Validation`, and `Output Contract`.
+- passages to keep:
+  - "# Review Prompt" or an equivalent `Role` section naming the reviewer-agent role.
+  - "This prompt is review-only guidance for `run-with-it`." Keep the dependency direction, but tighten it to say the reviewer consumes coordinator-provided inputs and does not coordinate the run.
+  - The scope bullets requiring review of the provided implementation diff and task context, validation against issue requirements and acceptance criteria, and production of exactly one JSON file.
+  - Runtime assumptions that the reviewer uses the same OS and path-handling assumptions as `prompt.md` when interpreting platform-specific paths.
+  - The repository-as-read-only assumption.
+  - All hard restrictions: no working-tree edits, no `git`, no `gh`, no issue updates, no commits, no branches, no tags, and no narrative/status/markdown output after review completion.
+  - The JSON output fields: `verdict`, `summary`, `comments`, and `blocking_reasons`.
+  - The closed reviewer verdict vocabulary: `approve`, `revise`, and `reject`.
+  - The review rules for when to approve, request revision, or reject, because they give the reviewer enforceable decision boundaries.
+  - "The JSON file is the only required artifact." Keep as the no-narrative-output reinforcement.
+- passages to tighten:
+  - Add an `Inputs Expected` section that lists coordinator-provided issue/task context, original implementation prompt context, implementation or modification diff, changed-file summary with line counts when available, telemetry stub if present, and the mandatory output path for the reviewer JSON.
+  - Replace "if the coordinator provides an output path" with mandatory wording. The reviewer should write to the supplied output path and must not invent a default path, archive location, or issue comment destination.
+  - Clarify that same-OS/path assumptions are for interpreting provided paths and writing the JSON output file only; they are not permission to run shell probes, `git`, `gh`, or filesystem mutation outside the output artifact.
+  - Tighten repository read-only language so reading provided payload and source files is allowed, while editing, formatting, checkout/reset, generated-file refreshes, dependency installs that mutate files, and any repository writes are forbidden.
+  - Organize the prompt under `Role`, `Scope`, `Inputs Expected`, `Hard Restrictions`, `Workflow`, `Verification / Validation`, and `Output Contract`.
+  - Clarify workflow order: inspect task requirements and acceptance criteria, inspect the diff and changed-file summary, validate behavior and verification evidence, produce JSON, then stop.
+  - Clarify that `comments` entries should use repo-relative file paths, concrete line numbers when the finding is line-specific, closed severity values `info`, `warning`, or `critical`, and a concrete `fix` string. Allow an empty comments array for a clean approval if no actionable findings remain.
+  - Clarify `blocking_reasons`: keep the field mandatory in the JSON shape, require it to be non-empty when `verdict` is `reject`, and require an empty array for `approve` or `revise`.
+  - Clarify that `summary` is a concise rationale inside the JSON, not narrative output printed after the artifact is written.
+  - Clarify that `revise` means targeted fixes are likely sufficient within the current issue scope, while `reject` means the work is fundamentally off-scope, unsafe, or not repairable through a small modification cycle.
+  - Tighten the internal-only note so it does not imply the reviewer controls archival or consumption. The artifact is internal to the coordinator; `run-with-it` decides where to archive it and how to route its verdict.
+- passages to move, with destination:
+  - Move any future wording about when reviewers run, reviewer band/model selection, cycle caps, degraded review fallback, review-spawn or review-result status lines, modification-agent spawning, archive paths, terminal issue comments, commits, queue state, or `.run-with-it/state.json` to `skills/run-with-it/SKILL.md`.
+  - Move any future implementation guidance, code-edit instructions, TDD workflow detail, verification command selection for implementers, or completion-report format to `assets/prompt.md` or `skills/tdd-implementation/SKILL.md` depending on whether it is implementation prompt guidance or test-discipline methodology.
+  - Move any future issue creation, PRD, initial issue template, label, or advisory routing-hint guidance to `skills/create-git-issue/SKILL.md`.
+- passages to remove:
+  - Remove the conditional implication in "If the coordinator provides an output path"; the output path should be a required input.
+  - Remove any future permission to run `git`, call `gh`, edit files, update issues, create commits/branches/tags, post markdown summaries, or print status after completion.
+  - Remove any future coordinator lifecycle detail that duplicates `run-with-it`, especially review cycle counting, archival paths, status/ledger formats, verdict routing, modification-agent behavior, terminal issue updates, or commit policy.
+  - Remove any duplicate full implementation prompt or TDD methodology if it appears during rewrite; the reviewer should evaluate implementation quality, not become an implementer.
+- duplicated contracts and source-of-truth handling:
+  - Reviewer JSON artifact shape: `assets/review-prompt.md` should remain the authoritative owner of the reviewer JSON fields, reviewer verdict vocabulary, comment object shape, blocking-reasons requirement, and no-narrative artifact behavior.
+  - Coordinator review lifecycle: `skills/run-with-it/SKILL.md` is the authoritative owner of when the reviewer runs, what payload is assembled, which model/agent is selected, cycle counting, degraded fallback, where the JSON is archived, how verdicts are routed, whether a modification agent runs, and terminal issue updates.
+  - JSON schema duplication in `skills/run-with-it/SKILL.md`: the current full schema copy in the review handoff JSON contract area, around lines 613-628 in the current file, is duplicated against the review prompt. A future `run-with-it` rewrite should either keep only a compact parse/validation summary that explicitly references `assets/review-prompt.md` as the source of truth, or justify a small inline mirror as obedience-critical for coordinator parsing. The authoritative artifact shape should not move out of the review prompt.
+  - Output path ownership: `run-with-it` owns supplying the output path and later archiving the parsed JSON. `assets/review-prompt.md` owns the reviewer obligation to write exactly one JSON artifact at that supplied path and stop.
+  - Read-only restrictions: `assets/review-prompt.md` is the reviewer-runtime source of truth for no edits, no `git`, no `gh`, no issue updates, no commits/branches/tags, and no narrative output. `run-with-it` may summarize those restrictions when spawning reviewers, but should not broaden reviewer authority.
+  - Verdict handling: `assets/review-prompt.md` owns how a reviewer chooses `approve`, `revise`, or `reject`. `skills/run-with-it/SKILL.md` owns what the coordinator does after each verdict.
+- authority changes, if any: None. The rewrite should preserve `assets/review-prompt.md` as the owner of read-only reviewer behavior and reviewer JSON artifact requirements, while making the boundary with `run-with-it` explicit. Any future coordinator lifecycle or archive-path detail should be rehomed to `skills/run-with-it/SKILL.md`; that is a clarification of existing ownership, not a change to reviewer authority.
+- acceptance checks for the rewrite:
+  - The prompt remains a prompt asset with no YAML front matter unless prompt metadata is adopted consistently across assets.
+  - The prompt uses or clearly maps to the prompt-specific structure: `Role`, `Scope`, `Inputs Expected`, `Hard Restrictions`, `Workflow`, `Verification / Validation`, and `Output Contract`.
+  - `Inputs Expected` names coordinator-provided task context, implementation or modification diff, changed-file summary when available, verification evidence when present, and a mandatory reviewer JSON output path.
+  - The prompt states the repository is read-only input and forbids edits, formatting writes, generated-file refreshes, dependency-install writes, `git`, `gh`, issue updates, commits, branches, and tags.
+  - Same-OS/path assumptions are limited to interpreting provided paths and writing the JSON artifact at the supplied output path.
+  - The prompt requires exactly one JSON artifact and no narrative, status text, or markdown after review completion.
+  - The JSON contract includes `verdict`, `summary`, `comments`, and `blocking_reasons`, with reviewer verdicts limited to `approve`, `revise`, and `reject`.
+  - The comments contract specifies repo-relative file paths, line numbers when applicable, severity values `info`, `warning`, or `critical`, and concrete fix text.
+  - The blocking-reasons rule is explicit for `reject` and unambiguous for `approve` and `revise`.
+  - Review rules distinguish `approve`, `revise`, and `reject` by issue satisfaction, targeted fixability, and off-scope or unsafe failure.
+  - The prompt says `run-with-it` owns reviewer scheduling, model/agent selection, cycle counting, JSON archival, verdict routing, modification-agent spawning, terminal issue updates, persisted state, status/ledger output, and commits.
+  - Any duplicated reviewer JSON schema in `run-with-it` is treated as a coordinator parse summary or duplication to tighten, not as the authoritative artifact owner.
+  - No production skill or prompt file rewrite is included in this audit output.
+
 ## Acceptance Criteria
 
 - The audit output covers exactly the seven scoped files.
