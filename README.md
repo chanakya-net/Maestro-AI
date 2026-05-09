@@ -19,6 +19,7 @@ It also installs shared assets required by workflow skills:
 
 - `prompt.md`
 - `run-agent.sh`
+- `run-agent.ps1` on Windows
 - `agent-registry.json`
 
 Default asset location:
@@ -37,6 +38,19 @@ PowerShell (Windows):
 - `run-agent.ps1 --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
 
 `run-with-it` prepares context and invokes the runner. The runner does not fetch GitHub issues or git history itself.
+
+## Codebase Overview
+
+This repository packages a small skill collection plus the shared runner assets those skills need.
+
+The codebase has four main surfaces:
+
+- `skills/` contains the agent-facing skill instructions. Each skill is a standalone `SKILL.md` with YAML front matter.
+- `assets/` contains runtime assets used by `run-with-it`, especially the unified runner scripts and agent/model registry.
+- `install.sh` / `install.ps1` detect local agent tools and install the collection for each supported environment.
+- `uninstall.sh` / `uninstall.ps1` remove agent registrations, shared assets, and this collection's installed skill directories for a clean reinstall.
+
+The repository intentionally keeps the runtime contract simple: skills prepare context, then `run-with-it` selects an agent/model and invokes `assets/run-agent.sh` or `assets/run-agent.ps1`. The runner executes a prepared payload; it does not create issues, fetch issue bodies, or infer project history on its own.
 
 ## Unified Routing Workflow
 
@@ -110,7 +124,52 @@ PowerShell: `.\install.ps1`
 
 ## Uninstall
 
-Remove skills per agent, then delete shared assets.
+Run the full uninstaller to remove skills per agent and delete shared assets. This leaves the machine ready for a clean install.
+
+macOS / Linux / Git Bash:
+```bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
+```
+
+Windows (PowerShell):
+```powershell
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
+```
+
+Fresh reinstall from this repository root:
+
+Bash:
+```bash
+bash uninstall.sh && bash install.sh
+```
+
+PowerShell:
+```powershell
+.\uninstall.ps1; .\install.ps1
+```
+
+The uninstaller deletes shared assets by default:
+
+```
+macOS/Linux:  ~/.ai-skill-collections
+Windows:      %USERPROFILE%\.ai-skill-collections
+```
+
+It also removes this collection's installed skill directories from standard skill roots such as `~/.agents/skills`, `~/.codex/skills`, and `~/.Codex/skills`.
+
+To preview removals:
+
+Bash:
+```bash
+bash uninstall.sh --dry-run
+```
+
+PowerShell:
+```powershell
+.\uninstall.ps1 -DryRun
+```
+
+Manual commands are also available if you want to remove one agent by hand.
 
 ### Claude Code
 
@@ -192,21 +251,33 @@ npx -y skills add chanakya-net/AI-Skills -a github-copilot
 | [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Enforces red-green-refactor with behavior-focused tests and thin vertical implementation slices |
 | [`run-with-it`](skills/run-with-it/SKILL.md) | Routes execution by complexity/capability, selects agent+model from registry, and invokes the unified `run-agent.sh` runner |
 
----
+## Runtime Assets
 
-## Minimal Calculator CLI
+| File | Purpose |
+|------|---------|
+| [`assets/agent-registry.json`](assets/agent-registry.json) | Agent aliases, detection commands, invocation templates, model catalog, and routing metadata. |
+| [`assets/run-agent.sh`](assets/run-agent.sh) | Bash runner used by macOS, Linux, Git Bash, and GUI-launched Unix-like agent workflows. |
+| [`assets/run-agent.ps1`](assets/run-agent.ps1) | PowerShell runner for Windows workflows. |
+| [`assets/prompt.md`](assets/prompt.md) | Shared execution prompt used by the runner workflow. |
+| [`assets/review-prompt.md`](assets/review-prompt.md) | Review prompt material for follow-up quality gates. |
+| [`assets/complexity-prompt.md`](assets/complexity-prompt.md) | Complexity scoring prompt material used by routing workflows. |
 
-The repo includes a tiny Bash tracer-bullet for adding two numbers:
+## Tests
+
+The test suite is mostly shell-based contract coverage around installer behavior, runner behavior, routing documentation, and skill workflow rules.
+
+Focused commands:
 
 ```bash
-./add-two-numbers.sh 1.5 2
+bash tests/install-assets-contract.test.sh
+bash tests/uninstall-contract.test.sh
+bash tests/run-agent.test.sh
+bash tests/break-req-contract.test.sh
+bash tests/create-git-issue-routing.test.sh
+bash tests/run-with-it-routing.test.sh
 ```
 
-Run its focused tests with:
-
-```bash
-bash tests/add-two-numbers.test.sh
-```
+Note: `tests/add-two-numbers.test.sh` is a legacy tracer-bullet test file; the calculator script it references is not part of the current codebase.
 
 ---
 
@@ -232,11 +303,38 @@ description: What this skill does and when to use it
 
 ```
 AI-Skills/
+├── README.md               # Project overview, install docs, and repo map
+├── LICENSE
 ├── install.sh              # Smart one-liner installer
+├── install.ps1             # Windows installer
+├── uninstall.sh            # Full uninstaller for fresh reinstalls
+├── uninstall.ps1           # Windows uninstaller
 ├── gemini-extension.json   # Gemini CLI extension manifest
+├── technical_requirements.md
 ├── assets/                 # Shared prompt + runner scripts
+│   ├── agent-registry.json
+│   ├── complexity-prompt.md
+│   ├── prompt.md
+│   ├── review-prompt.md
+│   ├── run-agent.ps1
+│   └── run-agent.sh
 ├── skills/
-│   └── save-tokens/
-│       └── SKILL.md        # Skill definition with front-matter
-└── docs/                   # Additional documentation
+│   ├── break-req/
+│   │   └── SKILL.md
+│   ├── create-git-issue/
+│   │   └── SKILL.md
+│   ├── run-with-it/
+│   │   └── SKILL.md
+│   ├── save-tokens/
+│   │   └── SKILL.md
+│   └── tdd-implementation/
+│       └── SKILL.md
+└── tests/
+    ├── add-two-numbers.test.sh       # Legacy tracer-bullet test
+    ├── break-req-contract.test.sh
+    ├── create-git-issue-routing.test.sh
+    ├── install-assets-contract.test.sh
+    ├── run-agent.test.sh
+    ├── run-with-it-routing.test.sh
+    └── uninstall-contract.test.sh
 ```
