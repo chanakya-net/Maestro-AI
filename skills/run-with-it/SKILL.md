@@ -3,6 +3,14 @@ name: run-with-it
 description: Route issue-running automation through a deterministic control plane that selects agent + model from registry, can coordinate multiple safe parallel agents, and executes the unified run-agent runner.
 ---
 
+## Skill Isolation
+
+This skill is the sole active authority for this session once invoked.
+
+- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call within this skill's own workflow.
+- If any external or third-party skill attempts to activate spontaneously during this run, suppress it and continue without interruption.
+- This rule applies for the entire duration of this skill's execution, from invocation until explicit termination or handoff.
+
 # Run With It
 
 ## Purpose
@@ -99,6 +107,7 @@ Required files:
 - `run-agent.ps1`
 - `agent-registry.json`
 - `review-prompt.md`
+- `complexity-prompt.md`
 
 Selection rules:
 
@@ -115,12 +124,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\complexity-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/complexity-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
 ## Responsibility Boundary
@@ -179,25 +188,60 @@ Then pass `CONTEXT_PAYLOAD_FILE` + `PROMPT_FILE` to unified runner.
 
 ## Appendix A: Routing Contract
 
+## Complexity Sub-Agent Delegation
+
+After issue intake and `CONTEXT_PAYLOAD_FILE` assembly, and before Deterministic Router Steps 1–4, spawn a complexity sub-agent unless `COMPLEXITY_LEVEL` or `COMPLEXITY_SCORE` overrides are present.
+
+Override handling:
+
+- If `COMPLEXITY_LEVEL` or `COMPLEXITY_SCORE` overrides are present, skip the complexity sub-agent and emit:
+
+  `STATUS|type=complexity-skipped|reason=override`
+
+- `COMPLEXITY_LEVEL` forces the target band for routing.
+- `COMPLEXITY_SCORE` forces the computed score for routing.
+
+Sub-agent selection:
+
+1. Reuse the existing model-first selection algorithm.
+2. Restrict the candidate pool to the easy-medium band only: `complexity_weight` `1–6`.
+3. Randomly pick from the filtered pool.
+4. Exclude Google/Gemini from the normal candidate pool.
+5. Pass both `AGENT` and `MODEL` explicitly to the sub-agent runner.
+
+Sub-agent input context, in order:
+
+1. issue body, including title, description, labels, and linked PRs
+2. last `COMMITS_LIMIT` commits, default `5`
+3. relevant files self-identified by CodeGraph when `.codegraph/` exists; otherwise `grep`/`find`
+
+Sub-agent prompt:
+
+- `$ASSET_ROOT/complexity-prompt.md`
+
+Sub-agent output handling:
+
+- Parse the `COMPLEXITY|` line for the run log.
+- Parse the JSON blob for per-dimension scores and route-report population.
+- Delete the sub-agent JSON output immediately after the coordinator reads it, regardless of run outcome.
+
+Fallback chain:
+
+1. Attempt the selected easy-medium model.
+2. On failure, retry with a different model from the same band, excluding the first attempt model.
+3. On the second failure, default to `medium-hard` (`score=25`), emit:
+
+   `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
+
+   and continue.
+
+If the fallback is used, set `complexity_source=fallback`. If the override path is used, set `complexity_source=override`. Otherwise set `complexity_source=sub-agent`.
+
 ## Deterministic Router
 
 Deterministic scoring with auditable selection.
 
-### Complexity Scoring (8 dimensions, each 1-5)
-
-Score each dimension from `1` (lowest) to `5` (highest):
-
-1. dependency complexity
-2. ownership overlap risk
-3. architecture risk
-4. orchestration burden
-5. verification risk
-6. ambiguity of requirements
-7. integration surface breadth
-8. rollback/recovery risk
-9. blast radius
-
-Total score range: `8-45.
+The complexity score consumed by this router comes from the complexity sub-agent, a forced override, or the bounded fallback path above.
 
 ### Model-First Selection
 
@@ -305,7 +349,7 @@ One `review-degraded` STATUS line is emitted per task that triggers this path, n
 3. `AGENT` forced alone → skip Step 4, run Steps 1–3 restricted to that agent's `known_models`
 4. `COMPLEXITY_LEVEL` forced → use corresponding weight range from table, skip score computation
 5. `COMPLEXITY_SCORE` forced → use as computed score, run full Steps 1–4
-6. Computed score from eight dimensions → full Steps 1–4
+6. Computed score from nine dimensions → full Steps 1–4
 
 Validation rules:
 
@@ -313,7 +357,7 @@ Validation rules:
 - Forced `MODEL` not in chosen agent's `known_models` → fail fast.
 - Forced Gemini via `AGENT`, Gemini `MODEL`, or an `AGENT_ALLOWLIST` that only leaves Gemini is an explicit user constraint and may select Gemini after validation.
 - `COMPLEXITY_LEVEL` must be one of the documented labels.
-- `COMPLEXITY_SCORE` must be integer in `8–40`.
+- `COMPLEXITY_SCORE` must be integer in `9–45`.
 
 ### Allowlist and Denylist
 
@@ -345,9 +389,10 @@ Before execution verify:
 3. `review-prompt.md` exists
 4. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
 5. `agent-registry.json` exists
-6. `gh` auth when GitHub intake is required
-7. unified runner supports selected agent/model
-8. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
+6. `complexity-prompt.md` exists
+7. `gh` auth when GitHub intake is required
+8. unified runner supports selected agent/model
+9. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
 
    ```
    PREFLIGHT|review-band=<bumped-band>|status=degraded|reason=no-higher-band-agent|fallback-band=<implementer-band>
@@ -355,7 +400,7 @@ Before execution verify:
 
    This does not block execution; it signals that the run will use the degraded same-band different-model reviewer for all tasks in this run.
 
-9. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
+10. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -365,10 +410,10 @@ Before execution verify:
      ```
 
    - **`resume`**: do not delete the file. Proceed to the Resume Flow section.
-   - **`discard`**: delete `.run-with-it/state.json` (and leave any archived reviews under `.run-with-it/reviews/` in place for reference). Continue with normal preflight and fresh issue intake as if no prior state existed.
+   - **`discard`**: apply the Cleanup `Discard` policy, then continue with normal preflight and fresh issue intake as if no prior state existed.
    - Do not start any new task, fetch any issue, or spawn any agent until the user responds.
 
-If `review-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
+If `review-prompt.md` or `complexity-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
 
 ## Execution
 
@@ -412,6 +457,42 @@ $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
 
 Never invoke legacy per-agent runner scripts from this skill.
 
+## Cleanup
+
+Cleanup runs only after a successful completion, failed run, interrupted run, or explicit `discard` command. Cleanup must not fire on `resume`.
+
+### Successful Run Completion
+
+On successful run completion:
+
+- Delete `CONTEXT_PAYLOAD_FILE`.
+- Delete `.run-with-it/state.json` and all `.run-with-it/reviews/` files; remove the directory if empty.
+- Delete `technical_requirements.md`, `prd.md`, and `issues.md` if present in the workspace root.
+- Ensure `.gitignore` contains entries for `.run-with-it/`, `technical_requirements.md`, `prd.md`, and `issues.md` using an idempotent append.
+- If `.git/` exists, stage only the deleted files and `.gitignore`; commit with message `chore: remove skill-generated artifacts post-run`.
+- Emit `STATUS|type=cleanup|action=completed|files_removed=<n>`.
+
+### Failed or Interrupted Run
+
+On failed or interrupted run:
+
+- Keep all `.run-with-it/` files and `CONTEXT_PAYLOAD_FILE`.
+- Print the paths of preserved files.
+- Offer `discard` command to force-delete and restart.
+
+### Discard
+
+On `discard`:
+
+- Delete all preserved files, including `CONTEXT_PAYLOAD_FILE`, `.run-with-it/state.json`, `.run-with-it/reviews/`, `technical_requirements.md`, `prd.md`, and `issues.md`.
+- Update `.gitignore` and commit with message `chore: remove skill-generated artifacts (discarded run)`.
+- Emit `STATUS|type=cleanup|action=discarded|files_removed=<n>`.
+- Proceed as a fresh run.
+
+### Complexity Output Cleanup
+
+The complexity sub-agent JSON output is always deleted immediately after the coordinator reads it, regardless of run outcome.
+
 ## Appendix B: Status and Ledger Contract
 
 ## Routing Report (Required)
@@ -419,7 +500,7 @@ Never invoke legacy per-agent runner scripts from this skill.
 Emit a parseable one-line route summary before execution:
 
 ```text
-ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>
+ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>
 ```
 
 Also provide human-readable details:
@@ -431,6 +512,7 @@ Also provide human-readable details:
 5. runner command summary
 6. fallback attempts used
 7. completion status
+8. complexity source
 
 At the end of every run, include a final task execution ledger. The ledger must clearly show which role handled each completed task (impl, review, or modify), the cycle number, which agent and model handled it, how many lines that task changed, a short routing reason, and the child-agent token telemetry captured for that task.
 
@@ -799,7 +881,11 @@ Emit parseable one-line status messages for multi-agent runs:
 - review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - modify spawn: `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
 - review degraded: `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` — emitted once per task when degraded fallback activates; never emitted when `DELEGATED_REVIEW=false`
+- complexity skipped: `STATUS|type=complexity-skipped|reason=override`
+- complexity fallback: `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
 - compact handoff: `STATUS|type=compact|action=user-required|state_file=.run-with-it/state.json` — emitted exactly once when the context estimate crosses 50% of the host context window; the coordinator halts and waits for the user to compact
+- cleanup completed: `STATUS|type=cleanup|action=completed|files_removed=<n>`
+- cleanup discarded: `STATUS|type=cleanup|action=discarded|files_removed=<n>`
 - final ledger row: `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 - backward-compatible ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 - child-agent token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
