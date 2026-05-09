@@ -167,7 +167,7 @@ Use sequential execution when any are true:
 - migrations, fixtures, generated assets, or shared contracts are involved
 - requirements are ambiguous enough that one result may change the next issue
 
-For multi-agent batches, keep one coordinator in the main session. The coordinator selects issues, assigns ownership, reviews each result, integrates accepted changes, runs verification, commits per issue unless told otherwise, and updates or closes issues.
+For multi-agent batches, keep one coordinator in the main session. The coordinator selects issues, assigns ownership, reviews each result, integrates accepted changes, commits per issue unless told otherwise, and updates or closes issues. The coordinator never runs tests, compiles the project, or executes build commands — those are always the responsibility of the agent that wrote the code.
 
 ## Issue Intake
 
@@ -679,7 +679,7 @@ When multiple ready issues are available, build the largest safe batch.
 - Assign one issue per child agent.
 - Group only issues with minimal file overlap and low coordination cost.
 - Avoid batching issues that edit the same files unless one agent owns those files.
-- Keep one coordinator responsible for final integration, review, tests, commits, and issue updates.
+- Keep one coordinator responsible for final integration, review, commits, and issue updates. Tests and compilation are always run by the implementing agent, never the coordinator.
 
 ### Coordination
 
@@ -689,12 +689,13 @@ Each child agent receives a self-contained prompt with:
 - exact ownership scope
 - paths it must not edit
 - relevant repo conventions copied directly into the prompt
-- required verification commands
+- required verification commands (the agent must run these; the coordinator must not)
 - instruction to keep changes minimal and compatible with other agents
 - TDD requirement when the issue requests test-first implementation
 
 Review handoff every child-agent result before accepting it.
 Reject or revise work that violates ownership, skips required tests, duplicates domain logic, or makes unrelated edits.
+The coordinator reads verification results from the agent's output report — it does not re-run tests or build commands itself.
 
 Child agent lifecycle rules:
 
@@ -926,7 +927,7 @@ Keep `progress` values under 8 words and `next` values under 5 words.
 ### Quality and Closure Loop
 
 - Review each agent diff individually, then review the combined batch diff.
-- Run issue-specific checks before broader suites.
+- Read the verification results reported by the implementing agent; do not re-run tests, build commands, or compile the project.
 - Commit per issue by default.
 - Update each terminal-state issue with the standardized final comment before closing or leaving it blocked.
 - Close completed issues with `gh issue close` unless explicitly left open.
@@ -991,3 +992,4 @@ At run end, report completed, blocked, and failed-review outcomes, indicate any 
 - **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately.
 - **Never offer to implement work directly in the coordinator session.** Implementation belongs to child agents via the runner. There is no "implement in this chat" option.
 - **Never present execution option menus** (Option A / B / C style choices). The runner is the only execution path.
+- **Never run tests, build commands, or compile the project** in the coordinator session. The implementing agent runs verification; the coordinator only reads the results from the agent's output report.
