@@ -35,22 +35,28 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 
 ## Verification
 
-Run issue-specific fast checks first, then broader suites when relevant.
+Run tests before declaring work complete. All tests must pass. Do not mark work done if any test is failing.
+
+1. Run the narrowest test scope that covers the changed code first.
+2. Then run the full test suite.
+3. Fix any failures before reporting completion — do not report results and move on.
 
 Examples:
 
 - `bun run test` (frontend scope when applicable)
 - `dotnet test` (backend scope when applicable)
 
-If full-suite checks are too costly for a narrow change, document what was run and why.
+If a full-suite run is prohibitively slow, run the narrowest passing scope, document exactly which suite was skipped and why, and flag it as a follow-up risk in your output report. Skipping must be the exception, not the default.
 
 ## Output Contract
+
+Do not output this report until all tests pass. If tests are failing, fix them first.
 
 Report:
 
 1. Files changed
 2. Key implementation decisions
-3. Tests/checks run and results
+3. Tests run, suites executed, and pass/fail results (required — must show tests passed)
 4. Remaining risks or follow-up notes
 
 If all assigned work is complete and no further ready work is provided in context, output:
