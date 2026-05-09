@@ -475,6 +475,63 @@ These are audit seeds, not final conclusions:
   - Any duplicated reviewer JSON schema in `run-with-it` is treated as a coordinator parse summary or duplication to tighten, not as the authoritative artifact owner.
   - No production skill or prompt file rewrite is included in this audit output.
 
+## Per-File Audit Plan: `skills/tdd-implementation/SKILL.md`
+
+- current role: Test-first implementation discipline skill that defines red/green/refactor, behavior-first testing through public interfaces, positive and negative path expectations, vertical tracer-bullet sequencing, green-only refactoring, stack alignment, dependency discipline, and a per-cycle checklist.
+- target role: Test-first implementation discipline, matching the responsibility map. The skill should own how an implementer tests and evolves an already selected feature or bugfix slice, especially red/green/refactor and observable-behavior testing, without selecting issues, routing agents/models, coordinating execution, or owning repo-specific runtime queue behavior.
+- authority boundary: Owns implementation-time TDD methodology only. It may guide test planning for assigned work, public-interface test design, per-behavior positive and negative coverage, minimal implementation, green-only refactors, and tech-stack alignment. It must not own issue selection, dependency readiness, final routing, runner/model selection, multi-agent orchestration, delegated review, GitHub updates, persisted run state, commits, terminal ledgers, or broader product planning.
+- primary verdict: `tighten`
+- front matter assessment: `name: tdd-implementation` is accurate and should stay. The description correctly triggers on TDD, test-first implementation, and stronger integration tests, but "build features or fix bugs using TDD" should be scoped to implementation discipline for assigned work so it does not imply broad feature-planning, issue-selection, or orchestration authority. Rewrite should keep activation on explicit TDD/test-first requests and implementation-prompt invocation, while clarifying that the skill governs test methodology, not runtime coordination or queue planning.
+- passages to keep:
+  - "Use a strict red-green-refactor cycle with thin vertical slices." Keep as the opening methodology contract.
+  - The philosophy that tests should validate behavior through public interfaces rather than implementation details. This is the core source of truth for public-interface testing.
+  - The good-test and bad-test examples around public APIs, specification-like assertions, refactor resilience, excessive internal mocking, private methods, and internal call order.
+  - The horizontal-slice anti-pattern and vertical tracer-bullet examples. They are short, enforceable, and directly preserve the thin vertical-slice rule.
+  - The first tracer-bullet sequence: write one failing test, confirm red, write minimal code, confirm green, then add the matching negative-path test for the same behavior.
+  - The incremental loop rules: one test at a time, positive and negative path coverage before moving on, no speculative features, and assertions on observable behavior only.
+  - "Never refactor while red." Keep as the green-only refactor rule, along with the requirement to re-run tests after refactor steps.
+  - Tech-stack alignment rules to reuse existing test framework, assertion style, package ecosystem, architecture, and module boundaries, and to add dependencies only with explicit justification.
+  - The per-cycle checklist, especially behavior-not-implementation, public interface only, refactor resilience, minimal code, positive and negative coverage, and no speculative features.
+- passages to tighten:
+  - Rewrite "Plan with user" into assigned-work test-plan calibration. The current wording can imply broad planning authority and mandatory user approval; the rewrite should instead say to derive the test plan from the assigned issue/context, confirm public interface or behavior ambiguities only when blocking, and avoid selecting or reshaping work outside the assigned slice.
+  - Clarify that identifying deep modules, architecture constraints, and ADRs is read-only implementation alignment for the current slice, not architecture discovery with authority to re-plan the project.
+  - Tighten "stronger integration tests" in the front matter so it triggers behavior-first implementation testing, not generic test-audit or coverage-improvement work unrelated to an assigned implementation.
+  - Add explicit no-orchestration boundary language near the top: this skill does not select issues, route agents/models, manage queues, coordinate parallel agents, run delegated review, update GitHub, create commits, or own `.run-with-it` state.
+  - Rename or restructure sections to fit the light skill template: `Purpose`, `When To Use`, `Inputs`, `Hard Boundaries`, `Workflow`, `Outputs`, and `Handoff`, while preserving the existing concise examples.
+  - Make the negative-path rule cover invalid input, rejected state, permission failure, boundary violation, and error paths as examples rather than an exhaustive mandatory list for every behavior.
+  - Clarify that dependency additions require explicit justification against existing stack options and must follow the assigned issue's architecture constraints.
+  - Add a final handoff/output expectation that the implementer reports tests/checks run and any coverage limits, without taking over coordinator ledgers or issue-update formats.
+- passages to move, with destination:
+  - Move no current passages out as mandatory rehomes. The testing methodology belongs in `skills/tdd-implementation/SKILL.md`.
+  - If a future rewrite expands issue selection, dependency readiness, runtime routing, runner/model choice, queue behavior, multi-agent coordination, review lifecycle, status/ledger output, commits, or terminal issue updates, move that content to `skills/run-with-it/SKILL.md`.
+  - If a future rewrite expands implementation-agent scope discipline, completion-report fields, or generic assigned-issue guardrails beyond TDD methodology, move that content to `assets/prompt.md`.
+  - If a future rewrite adds initial issue acceptance-criteria templates or technical-context snapshot requirements, move that content to `skills/create-git-issue/SKILL.md`.
+- passages to remove:
+  - Remove any future wording that makes user approval of a test plan mandatory in unattended implementation-agent runs. Keep a blocker-only clarification rule instead.
+  - Remove or reword any implication that this skill can choose what issue to work on, reprioritize the queue, assign models/agents, coordinate multiple implementers, run delegated review, post GitHub updates, create commits, or manage runtime state.
+  - Remove any copied implementation prompt completion format, reviewer JSON contract, routing table, status ledger, or issue template if added during rewrite.
+  - Remove any testing guidance that encourages private-method assertions, internal call-order assertions, excessive internal mocking, speculative coverage, or broad horizontal test batches before implementation.
+- duplicated contracts and source-of-truth handling:
+  - Implementation test discipline: `skills/tdd-implementation/SKILL.md` is the authoritative owner of red/green/refactor, public-interface testing, behavior-first assertions, positive and negative path coverage, vertical tracer-bullet sequencing, green-only refactoring, and per-cycle TDD checks.
+  - `assets/prompt.md` overlap: The implementation prompt may intentionally invoke `tdd-implementation` and keep compact reinforcement that each behavior needs positive and negative coverage and public-interface tests. Full TDD workflow detail in `assets/prompt.md` is duplication to tighten or rehome; the authoritative methodology stays in this skill.
+  - Vertical-slice language: `skills/tdd-implementation/SKILL.md` owns vertical sequencing inside the implementation cycle. `skills/create-git-issue/SKILL.md` owns dependency-aware issue slicing and initial issue templates. The shared "tracer-bullet" vocabulary is permitted local reinforcement when each file's stop point is explicit.
+  - Tech-stack alignment and dependency policy: `skills/tdd-implementation/SKILL.md` owns per-cycle implementation discipline to reuse the repo's test framework, package ecosystem, and architecture. `assets/prompt.md` may keep broader implementation guardrails, and `skills/create-git-issue/SKILL.md` owns initial technical-context snapshots and dependency-policy hints in generated issues.
+  - Runtime coordination: `skills/run-with-it/SKILL.md` remains the source of truth for issue selection, dependency readiness, final routing, model/agent selection, multi-agent coordination, delegated review, status/ledger output, persisted state, commits, and terminal issue updates. `skills/tdd-implementation/SKILL.md` should name this boundary only as a hard stop.
+- authority changes, if any: None. The rewrite should preserve current TDD methodology ownership while removing any ambiguity from "Plan with user" and front matter trigger wording. The skill should become narrower and clearer, not gain planning, routing, orchestration, review, GitHub, commit, or runtime-state authority.
+- acceptance checks for the rewrite:
+  - YAML front matter name remains `tdd-implementation`.
+  - YAML description triggers on explicit TDD/test-first implementation discipline and implementation-prompt invocation, without implying broad planning, issue selection, routing, or orchestration authority.
+  - The body states the skill owns red/green/refactor and behavior-first testing for assigned implementation work before workflow details.
+  - The body says tests should exercise public interfaces and observable behavior, not private methods, internal call order, or excessive internal mocks.
+  - Each behavior is handled as a vertical tracer bullet: failing test, minimal implementation to green, matching negative path, then next behavior.
+  - Positive and negative path expectations remain explicit, with invalid input, rejected state, permission failure, boundary violation, and error path treated as examples of negative coverage.
+  - Refactoring is allowed only while tests are green, and tests are re-run after refactor steps.
+  - Tech-stack alignment requires existing test framework, assertion style, package ecosystem, architecture, and module boundaries, with new dependencies allowed only with explicit justification.
+  - The per-cycle checklist remains present and checks behavior focus, public-interface testing, refactor resilience, minimal code, positive and negative coverage, and no speculative features.
+  - Any overlap with `assets/prompt.md` is classified as intentional invocation/reinforcement or duplication to tighten/rehome, with `skills/tdd-implementation/SKILL.md` as the authoritative methodology owner.
+  - The rewrite adds no issue selection, dependency readiness, runtime routing, runner/model selection, multi-agent orchestration, delegated review, GitHub update, commit, persisted-state, status-ledger, or repo-specific queue behavior authority.
+  - No production skill or prompt file rewrite is included in this audit output.
+
 ## Acceptance Criteria
 
 - The audit output covers exactly the seven scoped files.
