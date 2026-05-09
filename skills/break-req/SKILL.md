@@ -1,11 +1,21 @@
 ---
 name: break-req
-description: Recursive tech-audit & decision-tree mapping. Use when the user wants to break down a requirement, audit a tech stack, map dependencies, or capture implementation requirements.
+description: Requirements discovery, dependency mapping, and technical constraint capture before implementation planning.
 ---
 
 # Break Req
 
+## Purpose
+
 This skill is requirements-only.
+
+Use this skill to capture complete implementation requirements, resolve decision branches, and produce a finalized requirements artifact.
+
+## When To Use
+
+- The user wants to break down a requirement into implementation-ready decisions.
+- The team needs dependency mapping and technical constraints before planning or execution.
+- The user needs a complete requirements artifact before issue creation.
 
 ## Hard Stop
 
@@ -13,7 +23,11 @@ Never implement code, edit product files, create issues, publish to GitHub, run 
 
 The only file this skill may create or update is `technical_requirements.md`.
 
-Interrogate me relentlessly about every aspect of this requirement (both functional and non functional) until we have a complete technical picture. Walk down each branch of the decision tree, resolving blockers and dependencies one at a time. For each question, provide your recommended answer.
+Do read-only exploration to answer questions from the existing codebase when possible.
+
+## Workflow
+
+Interrogate me about every aspect of this requirement (both functional and non functional) until we have a complete technical picture. Walk down each branch of the decision tree, resolving blockers and dependencies one at a time. For each question, provide your recommended answer.
 
 Ask the questions one at a time.
 
@@ -23,6 +37,8 @@ Cover all relevant layers as you go:
 - **UI**: frameworks, third-party libraries, component state management.
 - **Backend**: packages, API contracts, service architecture.
 - **Data**: schemas, migrations, contracts between layers.
+
+## Outputs
 
 Once all branches are resolved:
 

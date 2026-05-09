@@ -1,11 +1,30 @@
 ---
 name: create-git-issue
-description: Create a PRD from current context, then break it into tracer-bullet issues and publish everything to the project issue tracker. Use when user wants end-to-end issue creation from a plan, idea, or requirement.
+description: Create a PRD from resolved requirements, break it into tracer-bullet implementation issues, and publish via GitHub when available or local files when not.
 ---
 
 # Create Git Issue
 
+## Purpose
+
 Turn the current conversation context into a PRD and then publish implementation issues as thin, dependency-aware vertical slices.
+
+## When To Use
+
+Use this skill after requirements are resolved and before runtime execution.
+
+## Inputs
+
+- Resolved requirements from `technical_requirements.md` and conversation context.
+- Repository context from codebase exploration.
+- Optional issue references (number, URL, or path) provided by the user.
+
+## Hard Boundaries
+
+- Do not execute implementation work.
+- Do not assign concrete runtime agent/model pairs.
+- Do not coordinate multi-agent execution, review cycles, state persistence, or terminal issue updates.
+- Do not close issues as part of this skill.
 
 Workflow position:
 
@@ -14,6 +33,11 @@ Workflow position:
 3. `run-with-it` third, to perform final runtime routing and execution.
 
 `create-git-issue` must never claim final routing authority.
+
+Approval gates:
+
+1. PRD approval before publishing parent issue.
+2. Slice breakdown approval before publishing implementation issues.
 
 ## Issue Tracker Vocabulary
 
@@ -44,7 +68,7 @@ Labeling rules:
 
 Prefer the GitHub CLI for all tracker writes.
 
-Before publishing any PRD or implementation issue, check whether `gh` can be used:
+Before publishing any PRD or implementation issue, check whether `gh` can be used. if it fails in sandbox try executing it outsise sandbox to confirm:
 
 ```bash
 command -v gh >/dev/null 2>&1 && gh repo view >/dev/null 2>&1
@@ -168,6 +192,8 @@ Capture the created PRD issue URL or number. Use it as the parent reference for 
 
 If GitHub publishing is unavailable, write the PRD body to `prd.md` and continue preparing the implementation slice issues for `issues.md`.
 
+Do not publish until the user approves the synthesized PRD.
+
 For every implementation slice, the initial issue body must use the exact Markdown template headings below in the exact order shown, with no extra top-level sections inserted before, between, or after them:
 
 1. `## Parent`
@@ -182,6 +208,8 @@ Do not close or modify unrelated issues.
 ### 6. Break PRD into tracer-bullet slices
 
 Convert the approved PRD into thin vertical-slice issues.
+
+Try to capture requirment in detils
 
 Each slice must be end-to-end (schema, API, UI, tests), demoable on its own, and as small as possible.
 
@@ -210,6 +238,8 @@ Ask:
 - Are HITL and AFK assignments correct?
 
 Iterate until approved.
+
+Do not publish implementation slice issues until this review step is approved.
 
 ### 8. Publish implementation issues
 
@@ -312,5 +342,16 @@ Or "None - can start immediately".
 ## Output Checklist
 
 - `gh` availability checked before publishing
+- PRD approval captured before parent issue publish attempt
+- Issue breakdown approval captured before implementation issue publish attempt
 - Each implementation issue includes a technical context snapshot (stack, dependencies, architecture, integration touchpoints)
 - Parent/blocked-by relationships set correctly
+
+## Handoff
+
+At completion, report:
+
+- Whether publishing happened via `gh` or local fallback files.
+- Parent reference used by implementation slices.
+- Which issues are ready for runtime execution by `run-with-it`.
+- Any unresolved decisions that block runtime execution.
