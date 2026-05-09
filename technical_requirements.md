@@ -328,6 +328,91 @@ These are audit seeds, not final conclusions:
   - The `<promise>NO MORE TASKS</promise>` sentinel remains conditional on assigned work being complete and no further ready work being provided in context.
   - The rewrite does not add issue selection, dependency planning, runtime routing, runner or agent/model selection, orchestration, multi-agent coordination, GitHub issue updating, persisted state, or reviewer JSON authority.
 
+## Per-File Audit Plan: `skills/create-git-issue/SKILL.md`
+
+- current role: Hotspot planning-and-publishing skill that turns resolved context into a PRD, creates dependency-aware tracer-bullet implementation issues, applies initial label guidance, writes local fallback artifacts when GitHub publishing is unavailable, and embeds advisory routing hints plus technical context snapshots in each implementation issue.
+- target role: Convert resolved requirements into a PRD and dependency-aware implementation issue slices, matching the responsibility map. The skill should remain the owner of PRD synthesis, initial issue body templates, initial label guidance, local `prd.md`/`issues.md` fallback, dependency ordering, and advisory routing metadata before handing execution to `run-with-it`.
+- authority boundary: Owns issue creation planning and initial publication only. It may synthesize PRDs, ask for user approval of PRD and slice breakdowns, publish parent and implementation issues with `gh`, or write `prd.md` and `issues.md` as fallback. It must not execute implementation work, select concrete agents or models, run downstream implementation agents, coordinate multi-agent work, manage persisted run state, emit runtime ledgers/status lines, perform delegated review, close issues, or make terminal issue updates. `run-with-it` remains the final runtime routing authority.
+- primary verdict: `tighten`
+- front matter assessment: `name: create-git-issue` is accurate and should stay. The description correctly captures PRD creation and tracer-bullet issue creation, but "publish everything to the project issue tracker" should be qualified because the body also owns a required local fallback to `prd.md` and `issues.md`. Rewrite the description to trigger on converting resolved requirements, plans, or issue context into a PRD plus implementation issue slices, using GitHub when available and local files when not. The front matter should not imply final runtime routing, concrete agent/model assignment, implementation execution, or terminal issue updates.
+- passages to keep:
+  - The workflow position list placing `break-req` first, `create-git-issue` second, and `run-with-it` third. Keep the explicit statement that this skill must never claim final routing authority.
+  - The canonical label vocabulary with category roles `bug` and `enhancement`, state roles `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`, plus the rule that each published issue gets exactly one category role and one state role.
+  - The label mapping rule for trackers with different label strings, including one focused clarification question when the mapping is ambiguous.
+  - The GitHub CLI preflight check and body-file publishing policy. Keeping body files is important because the skill owns multiline Markdown issue bodies.
+  - The policy that GitHub publishing failures fall back to local files rather than retrying through another GitHub integration.
+  - The local fallback contract requiring exactly two workspace-root files: `prd.md` for the parent PRD body and `issues.md` for every approved implementation slice in dependency order.
+  - The fallback details requiring title, intended labels, parent relationship, technical context snapshots, acceptance criteria, blocked-by content, and the `prd.md` local parent reference.
+  - The `break-req` artifact reuse priority order and the rule not to ask the user to repeat decisions already resolved in `technical_requirements.md` or conversation history.
+  - The instruction to synthesize a PRD before interviewing the user. This keeps the skill from re-running `break-req` and makes review gates delta-focused.
+  - The PRD template sections and the restriction that implementation decisions in the PRD should not include file paths or code snippets.
+  - The parent PRD issue publishing step, including `enhancement` and `needs-triage` labels and capturing the parent issue URL or number for implementation slices.
+  - The exact implementation issue top-level heading order: `## Parent`, `## What to build`, `## Agent Routing`, `## Technical Context Snapshot`, `## Acceptance criteria`, and `## Blocked by`.
+  - The tracer-bullet slice rules requiring narrow end-to-end slices that are independently verifiable, demoable, dependency-aware, and preferably many thin slices over few thick slices.
+  - The user issue-breakdown review gate covering granularity, dependencies, merge/split decisions, and HITL/AFK assignment.
+  - The technical context snapshot requirements for stack, dependencies, architecture alignment, integration touchpoints, dependency policy, and reusable existing libraries.
+  - The machine-readable `agent_routing` YAML block as advisory planning metadata, including complexity hint, capability hint, parallel-safety hint, cost/speed preferences, ownership scope, and verification hints.
+  - The explicit advisory-only routing language: the skill provides routing hints only, must not assign concrete agent/model names, and `run-with-it` remains the final runtime routing authority.
+  - The output checklist requirement that `gh` availability is checked, technical snapshots are included, and parent/blocked-by relationships are set correctly.
+- passages to tighten:
+  - Reorganize the body under the standard skill structure: `Purpose`, `When To Use`, `Inputs`, `Hard Boundaries`, `Workflow`, `Outputs`, and `Handoff`. The current body has the right contracts but interleaves policy, workflow, templates, and handoff details.
+  - Tighten the opening workflow position into an enforceable phase boundary: this skill consumes `break-req` outputs when present and hands off ready issues or local issue files to `run-with-it`; it does not invoke either downstream skill.
+  - Clarify that codebase exploration is read-only and used to produce accurate PRDs, technical context snapshots, labels, dependency ordering, and issue templates. It should not inspect with intent to implement or modify production files.
+  - Make the PRD review gate explicit before publishing the parent issue. The current text says to check deltas with the user, but the publish step should state that the PRD must be approved or only needs no-op confirmation before `gh issue create` or `prd.md` fallback output.
+  - Keep the issue-breakdown review gate explicit before publishing implementation issues. The rewrite should make approval of slice titles, dependencies, and HITL/AFK classification a hard gate, not only a quiz.
+  - Clarify partial publishing behavior. If the PRD issue is created but an implementation issue publish fails, the skill should stop creating more GitHub issues, write the complete approved plan to `prd.md` and `issues.md` with any already-published issue references included, and tell the user exactly what was published and what was written locally.
+  - Clarify local fallback idempotence. The rewrite should say whether existing `prd.md` or `issues.md` are overwritten only after confirmation, regenerated from the current approved plan, or treated as stale outputs to replace. The current "create exactly two files" contract is strong but does not define collision handling.
+  - Tighten the `gh` policy to check availability and repository inference before publishing, use body files for every multiline issue, and avoid alternate GitHub integrations unless a later skill explicitly owns them.
+  - Clarify that canonical labels are planning labels for newly created PRD and slice issues. Runtime state transitions, closing, terminal comments, and ledger-related issue updates belong to `run-with-it`.
+  - Add a compact definition or reference for HITL versus AFK assignment because the skill asks the user to validate those assignments but does not define the terms locally.
+  - Keep the top-level issue template order as a hard contract, but move the duplicated order statement and full template closer together so future rewrites do not accidentally diverge.
+  - Strengthen the `Agent Routing` section so every generated issue states in prose, outside the YAML block, that routing hints are advisory, concrete agent/model assignment belongs outside this skill, and `run-with-it` is the final runtime routing authority.
+  - Tighten `complexity_hint` usage to the closed labels already consumed by `run-with-it` without copying the full deterministic router. The issue should carry the hint, not the scoring algorithm.
+  - Require technical context snapshots to cite observable repo facts when possible and mark unknowns explicitly instead of inventing stack details.
+  - Expand the output checklist to include PRD approval, issue-breakdown approval, publishing or fallback result, exact template order, advisory routing language, technical snapshot completeness, dependency order, and the handoff to `run-with-it`.
+  - Add a final handoff section that tells the user what was created, where local fallback files are if used, which issues are ready for `run-with-it`, and which decisions remain unresolved. The handoff must not start execution.
+- passages to move, with destination:
+  - Move any future concrete agent/model selection rules, model catalogs, score-to-weight tables, fallback budgets, parallel-agent coordination, or route line formats to `skills/run-with-it/SKILL.md`. Keep only the compact advisory routing-hint schema in this skill.
+  - Move any future runtime status, final ledger, token telemetry, persisted `.run-with-it/state.json`, resume/discard, review-cycle, or terminal issue-update contracts to `skills/run-with-it/SKILL.md`.
+  - Move any future reviewer JSON schema, read-only review behavior, or delegated review verdict handling to `assets/review-prompt.md` or `skills/run-with-it/SKILL.md`, depending on whether the content is reviewer artifact shape or coordinator lifecycle.
+  - Move any expanded red/green/refactor, happy-path/negative-path, or public-interface testing methodology to `skills/tdd-implementation/SKILL.md`. Implementation issues may include acceptance criteria and verification hints, but the methodology source of truth stays in the TDD skill.
+  - Move any requirements-interview decision-tree behavior that goes beyond resolving missing PRD or publishing details to `skills/break-req/SKILL.md`. `create-git-issue` should ask only focused follow-ups needed to publish accurate issues.
+- passages to remove:
+  - Remove or reword front matter and body phrases that imply GitHub publishing is mandatory when local fallback is a first-class contract.
+  - Remove any future wording that lets this skill choose concrete agents or models, execute work, spawn implementation agents, coordinate multi-agent batches, manage review cycles, close issues, or update terminal issue status.
+  - Remove duplicated full routing algorithms if they are added during rewrite. The generated issues only need advisory fields and a pointer that final routing belongs to `run-with-it`.
+  - Remove speculative technical context not grounded in codebase evidence, user-approved requirements, or explicit unknown markers.
+  - Remove any extra top-level sections in the implementation issue template. New detail must live under the six approved headings unless the template contract is intentionally changed in a later requirements pass.
+  - Remove any repeated PRD or issue template fragments that can drift from the authoritative template in this skill.
+- duplicated contracts and source-of-truth handling:
+  - PRD synthesis and initial implementation issue body templates: `skills/create-git-issue/SKILL.md` is the authoritative owner. Other prompts and skills may consume generated issue bodies but should not duplicate or redefine the parent PRD or implementation issue template.
+  - Routing hints versus final routing authority: `skills/create-git-issue/SKILL.md` owns advisory routing-hint fields in generated issues. `skills/run-with-it/SKILL.md` owns final runtime routing, model/agent selection, queue decisions, fallback behavior, and execution. The current advisory wording is intentional reinforcement and should be kept; any concrete agent/model assignment outside `run-with-it` should be removed.
+  - Complexity labels: `create-git-issue` may use the closed `complexity_hint` labels as issue metadata because `run-with-it` consumes those labels. The deterministic scoring and model-weight mapping remain owned by `run-with-it` and should not be copied into this skill.
+  - Label vocabulary: Within the scoped audit, `skills/create-git-issue/SKILL.md` owns the initial category/state label guidance for PRD and slice creation. Later runtime status updates, terminal comments, and issue closure behavior belong to `skills/run-with-it/SKILL.md`.
+  - GitHub CLI publishing: `create-git-issue` owns initial PRD and implementation issue creation with `gh issue create` and body files. `run-with-it` owns execution-time issue intake and terminal issue updates. Do not merge these policies.
+  - Local fallback: `create-git-issue` owns generation of `prd.md` and `issues.md`. `run-with-it` may consume local `issues.md` as an intake fallback, but it should not own the authoring template or PRD synthesis rules.
+  - Technical context snapshot: `create-git-issue` owns the initial snapshot embedded in each issue. Implementation agents may verify or update code during execution, but they should not redefine the required snapshot structure.
+  - User review gates: `create-git-issue` owns PRD approval and issue-breakdown approval before publishing. `run-with-it` owns delegated review after implementation. These are different review gates and should stay named distinctly.
+  - TDD and implementation verification: `skills/tdd-implementation/SKILL.md` owns test-first implementation discipline. `create-git-issue` may include acceptance criteria and verification hints in issues as intentional reinforcement, not as a copied testing methodology contract.
+- authority changes, if any: None. The rewrite should preserve `create-git-issue` as the owner of PRD synthesis, initial issue templates, publishing/fallback, label guidance, dependency ordering, and advisory routing hints while making the downstream boundary with `run-with-it` more explicit.
+- acceptance checks for the rewrite:
+  - YAML front matter triggers on PRD synthesis and implementation issue creation from resolved requirements, plans, or issue context, and it mentions local fallback or avoids implying GitHub publishing is always available.
+  - The body clearly places the skill after `break-req` and before `run-with-it`, without instructing the agent to invoke either skill.
+  - The hard boundaries say this skill must not execute implementation work, select concrete agents or models, coordinate multi-agent execution, manage review cycles, persist `.run-with-it` state, emit runtime ledgers/status lines, close issues, or perform terminal issue updates.
+  - Canonical label vocabulary remains exactly scoped to one category role and one state role per new issue, with clear mapping behavior for trackers that use different label strings.
+  - GitHub publishing uses `gh issue create` with body files after availability/repository checks, and failures use the documented local fallback rather than another GitHub integration.
+  - Local fallback still creates exactly `prd.md` and `issues.md` in the workspace root, preserving approved titles, labels, parent references, section order, routing hints, technical snapshots, acceptance criteria, and blocked-by content.
+  - Existing `break-req` artifacts are reused before asking follow-up questions, and follow-ups are limited to unresolved, contradictory, or missing decisions needed for publication.
+  - PRD synthesis happens before user questioning, and PRD approval is required before publishing the parent PRD issue or writing `prd.md`.
+  - Implementation issue breakdown approval is required before publishing slice issues or writing `issues.md`.
+  - Every initial implementation issue uses the exact top-level section order: `## Parent`, `## What to build`, `## Agent Routing`, `## Technical Context Snapshot`, `## Acceptance criteria`, `## Blocked by`.
+  - Tracer-bullet slice rules remain end-to-end, dependency-aware, independently verifiable, and as thin as practical.
+  - Technical context snapshots cover stack, dependencies, architecture alignment, integration touchpoints, and dependency policy, with unknowns marked rather than invented.
+  - Every implementation issue includes machine-readable routing hints that remain advisory planning metadata only.
+  - The issue body states that concrete agent/model assignment belongs outside this skill and `run-with-it` remains the final runtime routing authority.
+  - The output checklist covers publish/fallback status, PRD and issue approval gates, labels, parent/blocked-by links, technical snapshot completeness, routing-advisory language, and handoff to `run-with-it`.
+  - No production skill or prompt file rewrite is included in this audit output.
+
 ## Acceptance Criteria
 
 - The audit output covers exactly the seven scoped files.
