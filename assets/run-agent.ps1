@@ -11,17 +11,21 @@
 
 $ErrorActionPreference = "Stop"
 
-foreach ($pathDir in @(
-    "$env:USERPROFILE\.npm-global\bin",
-    "$env:USERPROFILE\.local\bin",
-    "$env:USERPROFILE\.cargo\bin",
-    "$env:USERPROFILE\.bun\bin",
-    "$env:USERPROFILE\.dotnet\tools"
-)) {
-    if ($pathDir -and (Test-Path $pathDir) -and (($env:PATH -split ';') -notcontains $pathDir)) {
-        $env:PATH = "$pathDir;$env:PATH"
+$_bootstrapPath = if ($env:RUN_AGENT_BOOTSTRAP_PATH) { $env:RUN_AGENT_BOOTSTRAP_PATH } else { "1" }
+if ($_bootstrapPath -ne "0") {
+    foreach ($pathDir in @(
+        "$env:USERPROFILE\.npm-global\bin",
+        "$env:USERPROFILE\.local\bin",
+        "$env:USERPROFILE\.cargo\bin",
+        "$env:USERPROFILE\.bun\bin",
+        "$env:USERPROFILE\.dotnet\tools"
+    )) {
+        if ($pathDir -and (Test-Path $pathDir) -and (($env:PATH -split ';') -notcontains $pathDir)) {
+            $env:PATH = "$pathDir;$env:PATH"
+        }
     }
 }
+Remove-Variable _bootstrapPath
 
 $SCRIPT_DIR        = $PSScriptRoot
 $REPO_ROOT         = if ($env:REPO_ROOT) { $env:REPO_ROOT } else { $PWD.Path }
@@ -324,9 +328,9 @@ try {
             default {
                 $rendered = $tpl `
                     -replace '\{\{repo_root\}\}',       $REPO_ROOT `
-                    -replace '\{\{permission_mode\}\}', ($AGENT_PERM_MODE ?? "") `
+                    -replace '\{\{permission_mode\}\}', $(if ($AGENT_PERM_MODE) { $AGENT_PERM_MODE } else { "" }) `
                     -replace '\{\{model_flag\}\}',      $modelFlag `
-                    -replace '\{\{extra_args\}\}',      ($AGENT_EXTRA_ARGS ?? "") `
+                    -replace '\{\{extra_args\}\}',      $(if ($AGENT_EXTRA_ARGS) { $AGENT_EXTRA_ARGS } else { "" }) `
                     -replace '\{\{prompt\}\}',          $promptPayload
                 if ($rendered) { $cmdArgs.Add($rendered) }
             }

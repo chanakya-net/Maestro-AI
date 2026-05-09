@@ -201,6 +201,29 @@ Sub-agent prompt:
 
 - `$ASSET_ROOT/complexity-prompt.md`
 
+Sub-agent invocation — use the platform-appropriate form exactly as shown. On Windows the Bash tool shell is pwsh; bash-style `VAR=value` prefix syntax is invalid there.
+
+Bash (macOS / Linux / Git Bash):
+
+```bash
+GUI_MODE="${GUI_MODE:-1}" \
+AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+"$ASSET_ROOT/run-agent.sh" \
+  --agent "$AGENT" \
+  --model "$MODEL" \
+  --context-file "$CONTEXT_PAYLOAD_FILE" \
+  --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
+  --unattended
+```
+
+PowerShell (Windows — Bash tool shell is pwsh; never use `VAR=value` prefix):
+
+```powershell
+$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
+$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
+& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\complexity-prompt.md" --unattended
+```
+
 Sub-agent output handling:
 
 - Parse the `COMPLEXITY|` line for the run log.
@@ -456,6 +479,8 @@ Additional env vars (no flag equivalents):
 
 ### Canonical Invocation
 
+**Platform rule**: On Windows the Bash tool shell is pwsh. Bash-style `VAR=value` prefix syntax (`AGENT=claude ./run-agent.ps1`) is not valid in PowerShell and will fail with `'=' is not recognized`. Always use the PowerShell form on Windows.
+
 Bash (macOS / Linux / Git Bash):
 
 ```bash
@@ -469,7 +494,7 @@ AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
   --unattended
 ```
 
-PowerShell (Windows):
+PowerShell (Windows — never use `VAR=value` prefix; set `$env:` vars first):
 
 ```powershell
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
