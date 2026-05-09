@@ -419,42 +419,66 @@ If `review-prompt.md` or `complexity-prompt.md` is missing at the resolved asset
 
 ## Execution
 
-Use unified runner only. Select runner based on detected OS (see OS Detection table above).
+**Execute immediately and unconditionally via `run-agent.sh`.** After routing completes, invoke the runner. Never pause, never present execution options, never ask the user how they want to proceed, never implement work directly in the coordinator session. The runner is the only execution path. If it cannot be found or is not executable, fail fast — do not fall back to in-chat implementation.
 
-Required environment/flags:
+### `run-agent.sh` — Full Syntax Reference
 
-- `AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json"`
-- `CONTEXT_PAYLOAD_FILE`
-- `PROMPT_FILE="$ASSET_ROOT/prompt.md"` (or override)
-- selected `AGENT`
-- selected `MODEL` (required)
-- `GUI_MODE=1` when running from GUI-hosted agents such as VS Code, Codex GUI, Copilot in VS Code, Claude Code app, Cursor, or Antigravity
+```
+run-agent.sh --agent <agent> [--model <model>] --context-file <file> [--prompt-file <file>]
+             [--permission-mode <mode>] [--extra-arg <arg>] [--unattended] [--dry-run]
+run-agent.sh --list-agents [--detected-only]
+run-agent.sh --list-models <agent>
+```
+
+| Flag | Env var equivalent | Required | Description |
+|------|--------------------|----------|-------------|
+| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `gemini`) |
+| `--model <model>` | `MODEL` | Yes (always pass explicitly) | Model id to use |
+| `--context-file <file>` | `CONTEXT_PAYLOAD_FILE` | Yes | Path to the assembled context payload file |
+| `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `<script-dir>/prompt.md`) | Path to the prompt file |
+| `--permission-mode <mode>` | `AGENT_PERMISSION_MODE` | No | Override agent permission mode |
+| `--extra-arg <arg>` | `AGENT_EXTRA_ARGS` | No | Repeatable; appended to agent invocation |
+| `--unattended` | `UNATTENDED=1` | Yes (always pass) | Required when any permission mode is set |
+| `--dry-run` | — | No | Print the resolved command without executing |
+| `--list-agents` | — | — | List all agents and detection status; add `--detected-only` to filter |
+| `--list-models <agent>` | — | — | List known models for an agent |
+
+Additional env vars (no flag equivalents):
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `AGENT_REGISTRY_FILE` | `<script-dir>/agent-registry.json` | Path to agent registry |
+| `GUI_MODE` | `auto` | `auto` detects GUI env vars; `1` forces GUI-safe noninteractive mode; `0` forces CLI/CI mode |
+| `REPO_ROOT` | `$(pwd)` | Working directory passed to agent |
+| `PRINT_PROMPT` | `0` | Set to `1` to print assembled prompt without running |
 
 `GUI_MODE` behavior:
 
-- `GUI_MODE=auto` is the runner default and detects common GUI environment variables.
-- `GUI_MODE=1` explicitly uses GUI-safe noninteractive permissions and bootstrapped GUI PATH lookup.
-- `GUI_MODE=0` preserves CLI/CI behavior.
-- In GUI mode, the runner still allows noninteractive execution but downgrades dangerous full-bypass flags where the target CLI supports a safer mode.
+- `auto` — detects `VSCODE_PID`, `TERM_PROGRAM=vscode`, `ELECTRON_RUN_AS_NODE`, `ANTIGRAVITY_APP`, `CURSOR_TRACE_ID`, `CLAUDE_CODE_ENTRYPOINT`; sets `GUI_MODE=1` if any match.
+- `1` — forces `UNATTENDED=1` and downgrades dangerous full-bypass permission flags to safer per-agent equivalents (`codex`: `--sandbox=workspace-write`; `claude`: `--permission-mode=acceptEdits`; `github-copilot`: `--allow-all-tools`; `gemini`: `--approval-mode=auto_edit`).
+- `0` — preserves CLI/CI behavior with no permission downgrades.
+
+### Canonical Invocation
 
 Bash (macOS / Linux / Git Bash):
 
 ```bash
 GUI_MODE="${GUI_MODE:-1}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-CONTEXT_PAYLOAD_FILE="$CONTEXT_PAYLOAD_FILE" \
-PROMPT_FILE="$ASSET_ROOT/prompt.md" \
-"$ASSET_ROOT/run-agent.sh" --agent "$AGENT" --model "$MODEL" --unattended
+"$ASSET_ROOT/run-agent.sh" \
+  --agent "$AGENT" \
+  --model "$MODEL" \
+  --context-file "$CONTEXT_PAYLOAD_FILE" \
+  --prompt-file "$ASSET_ROOT/prompt.md" \
+  --unattended
 ```
 
 PowerShell (Windows):
 
 ```powershell
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:CONTEXT_PAYLOAD_FILE = $CONTEXT_PAYLOAD_FILE
-$env:PROMPT_FILE = "$ASSET_ROOT\prompt.md"
 $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
-& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --unattended
+& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
 ```
 
 Never invoke legacy per-agent runner scripts from this skill.
@@ -964,3 +988,6 @@ At run end, report completed, blocked, and failed-review outcomes, indicate any 
 - Keep prompt content implementation-only.
 - Preserve local fallback behavior when GitHub or git is unavailable.
 - Keep changes minimal and focused to routing/control-plane behavior.
+- **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately.
+- **Never offer to implement work directly in the coordinator session.** Implementation belongs to child agents via the runner. There is no "implement in this chat" option.
+- **Never present execution option menus** (Option A / B / C style choices). The runner is the only execution path.
