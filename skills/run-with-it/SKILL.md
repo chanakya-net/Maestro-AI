@@ -5,13 +5,31 @@ description: Route issue-running automation through a deterministic control plan
 
 # Run With It
 
+## Purpose
+
 Use this skill to process ready-for-agent issues without manually selecting a runner.
+
+`run-with-it` is the final runtime routing authority. It consumes already prepared issues and executes routing, coordination, review, and closure.
+
+## When To Use
+
+Use this skill after requirement discovery and issue synthesis are complete.
 
 Preferred upstream flow:
 
 1. `break-req` resolves requirements and constraints.
 2. `create-git-issue` publishes PRD + implementation slices with routing hints.
 3. `run-with-it` performs final runtime routing and executes the selected run.
+
+## Hard Boundaries
+
+- Do not synthesize PRDs.
+- Do not author initial issue templates.
+- Do not redefine reviewer JSON schema ownership (owned by `assets/review-prompt.md`).
+- Do not modify runner script implementation details.
+- Do not mutate registry data definitions in `assets/agent-registry.json`.
+
+## Workflow
 
 ## OS Detection
 
@@ -78,6 +96,7 @@ Required files:
 
 - `prompt.md`
 - `run-agent.sh`
+- `run-agent.ps1`
 - `agent-registry.json`
 - `review-prompt.md`
 
@@ -101,7 +120,7 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\asse
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json ./assets/review-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
 ## Responsibility Boundary
@@ -158,7 +177,11 @@ Build `CONTEXT_PAYLOAD_FILE` with:
 
 Then pass `CONTEXT_PAYLOAD_FILE` + `PROMPT_FILE` to unified runner.
 
+## Appendix A: Routing Contract
+
 ## Deterministic Router
+
+Deterministic scoring with auditable selection.
 
 ### Complexity Scoring (8 dimensions, each 1-5)
 
@@ -172,8 +195,9 @@ Score each dimension from `1` (lowest) to `5` (highest):
 6. ambiguity of requirements
 7. integration surface breadth
 8. rollback/recovery risk
+9. blast radius
 
-Total score range: `8-40`.
+Total score range: `8-45.
 
 ### Model-First Selection
 
@@ -190,9 +214,9 @@ Look up the score in `model_routing.score_to_weight` from `agent-registry.json`:
 | 18–22 | `medium`      | 4–6 |
 | 23–27 | `medium-hard` | 6–7 |
 | 28–32 | `complex`     | 7–9 |
-| 33–40 | `holy-fuck`   | 9–10 |
+| 33–45 | `holy-fuck`   | 9–10 |
 
-Canonical score labels: `8-12` => `quite-easy`, `13-17` => `easy`, `18-22` => `medium`, `23-27` => `medium-hard`, `28-32` => `complex`, `33-40` => `holy-fuck`.
+Canonical score labels: `8-12` => `quite-easy`, `13-17` => `easy`, `18-22` => `medium`, `23-27` => `medium-hard`, `28-32` => `complex`, `33-45` => `holy-fuck`.
 
 #### Step 2 — Apply Hard Minimum Overrides
 
@@ -202,6 +226,8 @@ Before proceeding, raise `weight_min` if any condition is true:
 - heavy shared-file ownership conflict risk → `weight_min = 9`
 - broad cross-module integration change → `weight_min = 7`
 - explicit user request for deep/complex orchestration → `weight_min = 9`
+- ambiguous requirements with high risk of misinterpretation → `weight_min = 9`
+- large blast radius with limited rollback options → `weight_min = 9`
 
 Use the higher of the table `weight_min` and any override.
 
@@ -354,7 +380,7 @@ Required environment/flags:
 - `CONTEXT_PAYLOAD_FILE`
 - `PROMPT_FILE="$ASSET_ROOT/prompt.md"` (or override)
 - selected `AGENT`
-- selected `MODEL` (optional; default from registry)
+- selected `MODEL` (required)
 - `GUI_MODE=1` when running from GUI-hosted agents such as VS Code, Codex GUI, Copilot in VS Code, Claude Code app, Cursor, or Antigravity
 
 `GUI_MODE` behavior:
@@ -385,6 +411,8 @@ $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
 ```
 
 Never invoke legacy per-agent runner scripts from this skill.
+
+## Appendix B: Status and Ledger Contract
 
 ## Routing Report (Required)
 
@@ -426,12 +454,17 @@ Calculate line changes per task from the accepted diff for that task. Prefer `gi
 
 Preserve all existing parseable ledger fields and append token telemetry fields in this order for backward compatibility: `input_tokens`, `output_tokens`, `cache_hit_tokens`, `telemetry_source`.
 
+Required parseable final ledger row format:
+
+`STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
+
 For multi-agent batches, emit one ledger row per child agent task and do not collapse rows by batch. For sequential runs, emit one row per completed issue/task. If a task is blocked or rejected and no diff is accepted, list `+0/-0 (0 total)` with the final status.
 
 Normalize child-agent token telemetry from the selected runner's final telemetry contract. When a child agent does not expose token counts, emit `unknown` for the missing values and keep the original ledger row.
 
 After the ledger, emit a final human-readable token summary aligned with the parseable rows. Include:
 
+- Child-agent totals
 - implementation-role aggregate totals across completed tasks: input, output, and cache-hit tokens
 - review-role aggregate totals across all review passes
 - modify-role aggregate totals across all modification passes
@@ -439,7 +472,11 @@ After the ledger, emit a final human-readable token summary aligned with the par
 - a combined run total when both child-agent and coordinator totals are available
 - `unknown` for any total that cannot be computed from captured telemetry
 
+Also include explicit section labels for `Coordinator totals` and `Run totals`.
+
 Human-readable final summary must explicitly label these five sections as `Impl totals`, `Review totals`, `Modify totals`, `Coordinator totals`, and `Run totals`. Sections with zero rows may still be emitted with `unknown` if no telemetry was captured for that role.
+
+## Appendix C: Review Orchestration Contract
 
 ## Canonical Coordinator Contract (Required)
 
@@ -455,7 +492,7 @@ Apply these rules after routing and before invoking the selected agent.
 
 ### Operating Mode
 
-You are the coordinator. Your job is to plan, delegate, review, integrate, commit, and update issues.
+You are the coordinator. Your job is to plan, delegate, integrate, commit, and update issues.
 Implementation belongs to child agents or the selected external agent process.
 
 - Prefer a safe parallel batch when several ready issues have independent ownership.
@@ -548,7 +585,7 @@ Each child agent receives a self-contained prompt with:
 - instruction to keep changes minimal and compatible with other agents
 - TDD requirement when the issue requests test-first implementation
 
-Review every child-agent result before accepting it.
+Review handoff every child-agent result before accepting it.
 Reject or revise work that violates ownership, skips required tests, duplicates domain logic, or makes unrelated edits.
 
 Child agent lifecycle rules:
@@ -627,6 +664,10 @@ Reviewer JSON contract from the PRD:
   "blocking_reasons": ["list when verdict=reject"]
 }
 ```
+
+Authoritative reviewer JSON output shape is owned by `assets/review-prompt.md`. This section describes parse/validation expectations only.
+
+## Appendix D: Resume and State Contract
 
 ### Persistent State (Required)
 
@@ -760,6 +801,8 @@ Emit parseable one-line status messages for multi-agent runs:
 - review degraded: `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` — emitted once per task when degraded fallback activates; never emitted when `DELEGATED_REVIEW=false`
 - compact handoff: `STATUS|type=compact|action=user-required|state_file=.run-with-it/state.json` — emitted exactly once when the context estimate crosses 50% of the host context window; the coordinator halts and waits for the user to compact
 - final ledger row: `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
+- backward-compatible ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
+- child-agent token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - impl token totals: `STATUS|type=summary|scope=impl|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - review token totals: `STATUS|type=summary|scope=review|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 - modify token totals: `STATUS|type=summary|scope=modify|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
@@ -775,6 +818,8 @@ Keep `progress` values under 8 words and `next` values under 5 words.
 - Commit per issue by default.
 - Update each terminal-state issue with the standardized final comment before closing or leaving it blocked.
 - Close completed issues with `gh issue close` unless explicitly left open.
+
+## Appendix E: Terminal Issue Comment Contract
 
 ### Terminal Issue Comments
 
@@ -817,6 +862,14 @@ Comment requirements:
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
 - `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
+
+## Outputs
+
+At minimum, emit parseable route lines, status lines, final ledger rows, token summaries, and terminal issue updates according to the contracts above.
+
+## Handoff
+
+At run end, report completed, blocked, and failed-review outcomes, indicate any persisted state location, and include token summaries.
 
 ## Guardrails
 

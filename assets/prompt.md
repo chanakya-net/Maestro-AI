@@ -1,6 +1,10 @@
 # IMPLEMENTATION INSTRUCTIONS
-This prompt is implementation-only.
-Issue selection, dependency planning, runner selection, and orchestration are handled by the `run-with-it` skill.
+
+## Role
+
+This prompt is implementation-only for already assigned work.
+
+Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
 ## Scope
 
@@ -8,47 +12,39 @@ Issue selection, dependency planning, runner selection, and orchestration are ha
 - Keep changes minimal and focused.
 - Do not add unrelated refactors or architecture changes.
 
-## Exploration Before Code
+## Inputs Expected
 
-- Read nearby code before editing.
-- Reuse existing patterns, naming, and helpers.
-- Respect existing boundaries and dependency direction.
-- Prefer smallest compatible extension if a gap is found.
+- Assigned issue context and acceptance criteria.
+- Scope limits and constraints provided by the coordinator.
+- Relevant repository context discovered during local exploration.
 
-## Required Delivery Style
+## Hard Restrictions
 
-- Use one thin vertical slice at a time.
-- Invoke `tdd-implementation` first and follow it.
-- For each behavior, cover both happy path and negative path.
-- Test through public interfaces, not internal implementation details.
+- Do not select new issues or reprioritize dependencies.
+- Do not assign agents/models or coordinate parallel execution.
+- Do not emit reviewer JSON artifacts.
+- Do not update issue trackers or runtime state records.
 
-## Implementation Guardrails
+## Workflow
 
-- Keep code compatible with current architecture.
-- Avoid creating new abstractions unless required by the issue.
-- Preserve existing API contracts unless explicitly requested.
-- Do not overwrite unrelated changes.
+1. Read nearby code before editing.
+2. Reuse existing patterns, naming, and helpers.
+3. Respect existing boundaries and dependency direction.
+4. Prefer the smallest compatible extension if a gap is found.
+5. Invoke `tdd-implementation` and `save-tokens` and follow it as the source of truth for test-first workflow and saving tokens.
 
 ## Verification
 
-Run issue-specific fast checks first, then broader suites when relevant:
+Run issue-specific fast checks first, then broader suites when relevant.
+
+Examples:
 
 - `bun run test` (frontend scope when applicable)
 - `dotnet test` (backend scope when applicable)
 
 If full-suite checks are too costly for a narrow change, document what was run and why.
 
-## Review Standard
-
-Before marking complete, confirm:
-
-- behavior matches issue intent
-- naming matches domain language
-- failure paths are covered
-- tests validate the right layer
-- no unrelated files were changed
-
-## Completion Output
+## Output Contract
 
 Report:
 
@@ -58,4 +54,4 @@ Report:
 4. Remaining risks or follow-up notes
 
 If all assigned work is complete and no further ready work is provided in context, output:
-`<promise>NO MORE TASKS</promise>`
+`<promise>NO_MORE_TASKS</promise>`

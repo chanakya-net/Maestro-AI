@@ -1,11 +1,30 @@
 ---
 name: tdd-implementation
-description: Test-driven development with red-green-refactor loop. Use when user wants to build features or fix bugs using TDD, asks for test-first development, or wants stronger integration tests.
+description: Test-first implementation discipline for assigned work using a strict red-green-refactor loop.
 ---
 
 # Test-Driven Development
 
+## Purpose
+
 Use a strict red-green-refactor cycle with thin vertical slices.
+
+## When To Use
+
+Use this skill after work is already assigned and implementation is ready to begin.
+
+## Inputs
+
+- Assigned issue scope and acceptance criteria.
+- Existing architecture constraints and ADRs in scope.
+- Repository testing stack and conventions.
+
+## Hard Boundaries
+
+- Do not select issues or reorder queue priorities.
+- Do not route agents/models or coordinate multi-agent execution.
+- Do not own review orchestration, issue updates, or runtime state.
+- Do not create commits as policy decisions.
 
 ## Philosophy
 
@@ -40,15 +59,15 @@ RED->GREEN: test3->impl3
 
 ## Workflow
 
-### 1. Plan with user
+### 1. Calibrate only on blockers
 
 Before writing code:
 
-- Confirm required public interface changes
-- Confirm priority behaviors to test
+- Confirm required public interface changes from assigned scope
+- Confirm priority behaviors to test from assigned acceptance criteria
 - Identify deep modules (small surface, rich internals)
 - Identify architecture constraints and ADRs in scope
-- Get approval on test plan
+- Ask focused questions only when required inputs are missing or contradictory
 
 Ask:
 
@@ -97,6 +116,10 @@ When implementing each slice:
 - Reuse current package ecosystem (for example npm, NuGet, pip, Maven, Gradle)
 - Follow current architecture and module boundaries
 - Add new dependencies only with explicit justification
+
+## Outputs
+
+At completion, report tests run, observed behavior coverage, and remaining risks in assigned scope.
 
 ## Per-Cycle Checklist
 
