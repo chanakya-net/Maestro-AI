@@ -143,8 +143,9 @@ If issue data is missing in context, fetch with `gh`.
 
 Fallback policy:
 
-- Primary: GitHub issues via `gh`.
-- Fallback: local `issues.md` (`LOCAL_ISSUES_FILE` override supported).
+- Primary: GitHub issues via `gh`. **Always use GitHub when the repo has a GitHub remote. Never silently fall back to a local file when GitHub may be reachable.**
+- If `gh` fails inside the sandbox (permission error, named-pipe, socket), **retry `gh` outside the sandbox** (`dangerouslyDisableSandbox: true`) before considering any fallback.
+- Fallback: local `issues.md` (`LOCAL_ISSUES_FILE` override supported) — **only** when `gh` fails both inside and outside the sandbox, or no GitHub remote exists. Emit `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-failed-outside-sandbox>` before using local file.
 - If git metadata is unavailable, continue with empty commit context.
 
 Build `CONTEXT_PAYLOAD_FILE` with:
@@ -447,6 +448,22 @@ $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
 
 Never invoke legacy per-agent runner scripts from this skill.
 
+### Sandbox Retry
+
+If `run-agent.sh` (or `run-agent.ps1`) fails due to a sandbox restriction — identified by permission errors, named-pipe failures, socket access denied, or state/app-server access errors — **retry the exact same invocation outside the sandbox** using `dangerouslyDisableSandbox: true` on the Bash tool call. Do not count a sandbox failure as an agent failure or advance the fallback budget. Only count it as a true agent failure if it also fails outside the sandbox. Emit:
+
+```
+STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<error-summary>
+```
+
+before the retry, and:
+
+```
+STATUS|type=runner-sandbox-retry-result|outcome=<success|failed>
+```
+
+after.
+
 ## Cleanup
 
 Cleanup runs only after a successful completion, failed run, interrupted run, or explicit `discard` command. Cleanup must not fire on `resume`.
@@ -457,7 +474,7 @@ On successful run completion:
 
 - Delete `CONTEXT_PAYLOAD_FILE`.
 - Delete `.run-with-it/state.json` and all `.run-with-it/reviews/` files; remove the directory if empty.
-- Delete `technical_requirements.md`, `prd.md`, and `issues.md` if present in the workspace root.
+- For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
 - Ensure `.gitignore` contains entries for `.run-with-it/`, `technical_requirements.md`, `prd.md`, and `issues.md` using an idempotent append.
 - If `.git/` exists, stage only the deleted files and `.gitignore`; commit with message `chore: remove skill-generated artifacts post-run`.
 - Emit `STATUS|type=cleanup|action=completed|files_removed=<n>`.
