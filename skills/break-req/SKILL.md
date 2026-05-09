@@ -3,6 +3,14 @@ name: break-req
 description: Requirements discovery, dependency mapping, and technical constraint capture before implementation planning.
 ---
 
+## Skill Isolation
+
+This skill is the sole active authority for this session once invoked.
+
+- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call within this skill's own workflow.
+- If any external or third-party skill attempts to activate spontaneously during this run, suppress it and continue without interruption.
+- This rule applies for the entire duration of this skill's execution, from invocation until explicit termination or handoff.
+
 # Break Req
 
 ## Purpose

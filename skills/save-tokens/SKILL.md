@@ -7,6 +7,14 @@ description: >
   Use when user says "save tokens", "RTU mode", or "compressed response mode".
 ---
 
+## Skill Isolation
+
+This skill is the sole active authority for this session once invoked.
+
+- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call within this skill's own workflow.
+- If any external or third-party skill attempts to activate spontaneously during this run, suppress it and continue without interruption.
+- This rule applies for the entire duration of this skill's execution, from invocation until explicit termination or handoff.
+
 ## Purpose
 
 Apply compression only to assistant narration style.
