@@ -633,6 +633,100 @@ These are audit seeds, not final conclusions:
   - Split candidates are handled under the reliable-loading rule: no external sub-doc dependency unless loading/inclusion is guaranteed; otherwise use compact inline appendices.
   - No production skill, prompt, runner, registry, or test file rewrite is included in this audit output.
 
+## Consolidated Final Rewrite Plan
+
+| Scoped file | Target role | Authority boundary |
+| --- | --- | --- |
+| `skills/break-req/SKILL.md` | Requirements discovery and decision-tree resolution before implementation planning. | May create or update only `technical_requirements.md`; must not implement, create issues, run downstream skills, invoke external coding agents, or proceed past requirements handoff. |
+| `skills/create-git-issue/SKILL.md` | Convert resolved requirements into a PRD and dependency-aware implementation issue slices. | Owns PRD synthesis, issue templates, labeling guidance, local `prd.md`/`issues.md` fallback, dependency ordering, and advisory routing hints; must not assign concrete agents/models or execute work. |
+| `skills/run-with-it/SKILL.md` | Runtime execution coordinator for ready issues. | Owns issue intake for execution, final agent/model routing, queue/dependency decisions, safe multi-agent coordination, runner invocation contract, delegated review lifecycle, persisted run state and resume behavior, status/ledger/token output, terminal issue comments, issue closure, and per-issue commits. |
+| `skills/save-tokens/SKILL.md` | Response compression mode. | Owns wording style for compressed assistant responses only; must not change planning, routing, review, implementation, code blocks, commit messages, PR descriptions, formal plans, issue bodies, review artifacts, prompts, command output requiring fidelity, or persisted artifacts. |
+| `skills/tdd-implementation/SKILL.md` | Test-first implementation discipline for already assigned work. | Owns red/green/refactor workflow, behavior-first public-interface testing rules, positive and negative path coverage, green-only refactoring, and per-cycle checks; must not select issues, route agents/models, manage queues, coordinate execution, update GitHub, create commits, or own repo-specific runtime state. |
+| `assets/prompt.md` | Implementation-agent prompt for an already assigned issue and scope. | Owns implementation guardrails, local exploration, verification expectations, implementer self-checks, and completion reporting; must not perform issue selection, dependency planning, runtime routing, orchestration, persisted status/ledger behavior, issue updates, delegated review lifecycle, or reviewer JSON output. |
+| `assets/review-prompt.md` | Reviewer-agent prompt. | Owns read-only reviewer behavior and the authoritative reviewer JSON artifact shape; must not edit the working tree, run git or `gh`, update issues, create commits, coordinate review lifecycle, manage archive paths, or emit narrative output after review completion. |
+
+This table is the complete rewrite scope. Later references to runner scripts, registry JSON, tests, README, generated issues, or local artifacts are boundary notes only and do not add those files to the rewrite scope.
+
+### Final Verdicts
+
+| Scoped file | Primary verdict | Rewrite result |
+| --- | --- | --- |
+| `skills/break-req/SKILL.md` | `tighten` | Keep the requirements-only workflow, make triggers and handoff language narrower, and preserve `technical_requirements.md` as the only writable artifact. |
+| `skills/create-git-issue/SKILL.md` | `tighten` | Keep PRD and initial issue creation authority, make GitHub/local fallback, approval gates, labels, dependencies, and advisory routing hints explicit, and prevent execution-time authority. |
+| `skills/run-with-it/SKILL.md` | `split` | Keep runtime coordination authority, reorganize the large file into a compact core plus reliable inline appendices, and remove or demote duplicated contracts owned elsewhere. |
+| `skills/save-tokens/SKILL.md` | `tighten` | Keep compressed response style, narrow triggers to response-mode intent, and explicitly protect durable artifacts and exact technical content from transformation. |
+| `skills/tdd-implementation/SKILL.md` | `tighten` | Keep the TDD methodology, scope it to assigned implementation work, and remove ambiguity around planning, routing, review, GitHub, commit, or runtime-state authority. |
+| `assets/prompt.md` | `tighten` | Keep implementation guardrails for assigned work, add expected inputs, reference TDD as the methodology owner, and keep coordinator and reviewer contracts out. |
+| `assets/review-prompt.md` | `tighten` | Keep read-only review behavior and the JSON artifact contract, require a coordinator-supplied output path, and keep lifecycle and archive behavior in the coordinator. |
+
+### Rewrite Order
+
+1. Rewrite `skills/break-req/SKILL.md` first so the upstream requirements boundary is crisp before downstream planning text is rewritten.
+2. Rewrite `skills/create-git-issue/SKILL.md` next so PRD synthesis, initial issue templates, labels, local fallback, dependency ordering, and advisory routing hints are settled before runtime coordination is rewritten.
+3. Rewrite `skills/tdd-implementation/SKILL.md` and `assets/prompt.md` together as one implementation-discipline pass: the TDD skill owns methodology, and the implementation prompt owns assigned-scope guardrails plus completion reporting.
+4. Rewrite `assets/review-prompt.md` before the final `run-with-it` pass so the reviewer JSON artifact shape and read-only reviewer behavior are authoritative before the coordinator references them.
+5. Rewrite `skills/save-tokens/SKILL.md` as a small independent pass, preserving response style only and denying durable artifact transformation.
+6. Rewrite `skills/run-with-it/SKILL.md` last because it consumes the settled upstream, implementation, review, runner, registry, status, resume, and terminal-update boundaries.
+
+### Authority Changes
+
+Rows naming out-of-scope owners are boundary assignments only; they prevent accidental rewrites and do not expand the seven-file rewrite scope.
+
+| Contract or duplicated authority | Old owner | Proposed new owner | Reason | Expected behavior |
+| --- | --- | --- | --- | --- |
+| Requirements discovery and handoff | Ambiguous pressure between `skills/break-req/SKILL.md` and downstream planning skills. | `skills/break-req/SKILL.md` | Requirements must be resolved before PRD or runtime work, and the skill already has the only-write-`technical_requirements.md` hard stop. | `break-req` produces or updates `technical_requirements.md` and stops; downstream skills consume resolved requirements and ask only focused follow-ups for their own phase. |
+| PRD synthesis, initial issue templates, labels, local fallback, dependencies, and advisory routing hints | Ambiguous overlap between `skills/create-git-issue/SKILL.md` and runtime coordinator wording. | `skills/create-git-issue/SKILL.md` | Initial issue authoring is a planning/publishing phase, not runtime execution. | `create-git-issue` creates or locally writes approved PRD and implementation issue bodies; `run-with-it` consumes ready issues but does not author PRDs or initial templates. |
+| Final issue intake, queue/dependency decisions, final agent/model routing, and safe multi-agent coordination | Advisory routing hints in `skills/create-git-issue/SKILL.md` plus runtime rules in `skills/run-with-it/SKILL.md`. | `skills/run-with-it/SKILL.md` | Routing hints are static planning metadata; runtime routing must evaluate current issue context, constraints, registry data, and available agents. | Generated issue routing hints remain advisory and never name binding concrete agents/models; `run-with-it` makes final runtime routing and queue decisions. |
+| Implementation-agent scope discipline and completion report shape | Duplicated or at risk of duplication between `assets/prompt.md` and coordinator text. | `assets/prompt.md` | The implementation prompt is the assigned worker's local behavioral contract; the coordinator should assemble and interpret payloads, not restate coding workflow. | `assets/prompt.md` defines assigned-scope implementation guardrails and completion fields; `run-with-it` supplies context, evaluates results, and owns status/ledger/issue updates. |
+| Test-first methodology | Duplicated between `skills/tdd-implementation/SKILL.md`, `assets/prompt.md`, issue templates, and potential coordinator wording. | `skills/tdd-implementation/SKILL.md` | Red/green/refactor, public-interface testing, and positive/negative path coverage need one methodology source of truth. | Implementation prompt and issue templates may invoke or reinforce TDD briefly; detailed workflow stays in the TDD skill. |
+| Reviewer JSON artifact shape and reviewer verdict vocabulary | Duplicated between `assets/review-prompt.md` and `skills/run-with-it/SKILL.md`. | `assets/review-prompt.md` | The reviewer prompt is the only component that writes the artifact and must own exact fields, verdict values, comment shape, and blocking-reason rules. | `assets/review-prompt.md` defines the authoritative JSON; `run-with-it` keeps only compact parse/validation expectations and routes parsed verdicts. |
+| Delegated review lifecycle, archive handling, verdict routing, modification agents, and terminal review outcomes | Ambiguous overlap between `assets/review-prompt.md` and `skills/run-with-it/SKILL.md`. | `skills/run-with-it/SKILL.md` | Lifecycle and issue updates are coordinator responsibilities; reviewer agents must stay read-only and artifact-only. | `review-prompt` produces exactly one JSON artifact and stops; `run-with-it` schedules review, supplies output paths, archives artifacts, routes verdicts, spawns modification agents when allowed, and updates terminal issues. |
+| Status lines, route output, ledgers, token summaries, persisted state, resume behavior, terminal issue comments, issue closure, and per-issue commits | At risk of drifting into implementation prompts, review prompts, or generated issue templates. | `skills/run-with-it/SKILL.md` | These are execution-time coordinator contracts and must remain parseable and phase-specific. | Prompts and generated issues do not duplicate coordinator formats; `run-with-it` owns runtime status, ledger, token, state, terminal comment, closure, and commit behavior. |
+| Response compression behavior | Broad trigger wording in `skills/save-tokens/SKILL.md` could be read as permission to compress durable artifacts. | `skills/save-tokens/SKILL.md` for assistant response wording only. | Token reduction must not weaken formal contracts or mutate content intended to be saved, copied, parsed, or executed. | Save-token mode affects only assistant narration; code blocks, formal plans, issue bodies, review JSON, prompts, commit messages, PR descriptions, command output needing fidelity, and persisted artifacts remain exact. |
+| Runner execution mechanics | Coordinator wording may over-describe command construction or runner internals. | `run-agent.sh` and `run-agent.ps1` as external non-rewrite owners. | Runtime coordination chooses the selected agent/model and invokes the OS-selected runner, but the runner scripts own execution mechanics. | `run-with-it` keeps a platform-neutral invocation and preflight contract, passes explicit `AGENT` and `MODEL`, and does not rewrite runner mechanics in this plan. |
+| Registry data and model catalog facts | Coordinator wording may duplicate registry tables or provider/model data. | `assets/agent-registry.json` as external non-rewrite owner. | Registry data must not drift between the coordinator and the data file. | `run-with-it` owns the algorithm consuming registry data, but model catalog, score bands, provider rules, fallback order, detection metadata, and known models stay registry-owned. |
+
+### Duplicated Contract Ownership
+
+| Contract | Authoritative owner | Allowed local reinforcement |
+| --- | --- | --- |
+| Requirements-only discovery and handoff | `skills/break-req/SKILL.md` | A downstream skill may say it consumes resolved requirements; it must not re-run the requirements phase. |
+| PRD and initial implementation issue body templates | `skills/create-git-issue/SKILL.md` | Runtime execution may consume issue bodies but must not redefine their template or label policy. |
+| Advisory routing hints | `skills/create-git-issue/SKILL.md` | `run-with-it` may read hints as inputs while stating they are non-binding. |
+| Final runtime routing and queue decisions | `skills/run-with-it/SKILL.md` | Issue bodies may carry advisory metadata; prompts must not choose new work. |
+| Implementation TDD methodology | `skills/tdd-implementation/SKILL.md` | `assets/prompt.md` may invoke the skill and keep one compact positive/negative-path reminder. |
+| Implementation assigned-scope guardrails | `assets/prompt.md` | `run-with-it` may summarize ownership boundaries in the payload it sends to an implementer. |
+| Reviewer JSON artifact shape | `assets/review-prompt.md` | `run-with-it` may keep a compact non-authoritative parse summary and must reference the review prompt as source of truth. |
+| Reviewer lifecycle and terminal review handling | `skills/run-with-it/SKILL.md` | `assets/review-prompt.md` may say the coordinator provides the output path and consumes the artifact. |
+| Status, ledger, token, persisted-state, terminal-comment, closure, and commit contracts | `skills/run-with-it/SKILL.md` | Child prompts and generated issues may mention that the coordinator owns these outputs; they should not duplicate parseable formats. |
+| Response compression mode | `skills/save-tokens/SKILL.md` | Other files may rely on their formal output contracts remaining exact under compressed assistant narration. |
+
+### File Rewrite Requirements
+
+- `skills/break-req/SKILL.md`: Use the light skill structure. Keep "requirements-only" and the single writable output before workflow steps. Tighten front matter around requirements discovery, dependency mapping, and technical constraint capture. Replace hostile or subjective phrasing with a completeness standard. Preserve the stop-and-handoff line to the user without invoking downstream skills.
+- `skills/create-git-issue/SKILL.md`: Use the light skill structure. Keep approval gates for the PRD and issue breakdown, exact local fallback files, exact implementation issue section order, canonical label roles, body-file publishing with `gh`, and advisory routing language. Clarify partial publish failure and fallback collision behavior. Do not copy the runtime router.
+- `skills/run-with-it/SKILL.md`: Use a short core workflow plus compact inline appendices unless reliable external loading is guaranteed. Required appendices are routing, status/ledger/token output, review orchestration, resume/state, and terminal issue comments. Keep final runtime routing authority, explicit `AGENT` plus `MODEL` runner invocation, safe multi-agent coordination, delegated review lifecycle, persisted state, terminal issue updates, issue closure, and per-issue commits. Demote reviewer schema, TDD methodology, implementation prompt, runner mechanics, and registry tables to references or compact summaries.
+- `skills/save-tokens/SKILL.md`: Keep the file small. Scope triggers to explicit compressed-response intent. State that compression affects only assistant wording and never durable artifacts, quoted source, code blocks, technical terms, parseable output, command output requiring fidelity, prompts, issue bodies, review JSON, commit messages, PR descriptions, or persisted files.
+- `skills/tdd-implementation/SKILL.md`: Use the light skill structure while preserving strict red/green/refactor, vertical tracer bullets, public-interface testing, positive and negative path coverage, green-only refactoring, tech-stack alignment, and the per-cycle checklist. Rewrite "Plan with user" as blocker-only calibration for already assigned work.
+- `assets/prompt.md`: Use the prompt-specific structure. Add expected inputs for already assigned issue context, scope limits, constraints, and coordinator-provided work. Keep exploration-before-code, minimal-scope implementation, verification, self-check, completion report, and conditional no-more-tasks sentinel. Reference TDD as the methodology owner instead of copying a full workflow.
+- `assets/review-prompt.md`: Use the prompt-specific structure. Add expected inputs including coordinator-provided task context, diff, changed-file summary when available, verification evidence when present, and mandatory output path. Keep read-only restrictions, forbid git/gh/issues/commits/branches/tags, require exactly one JSON artifact, and define `verdict`, `summary`, `comments`, and `blocking_reasons` as the authoritative reviewer output.
+
+### Rewrite Acceptance Checks
+
+- The rewrite pass changes only the seven scoped files named in the responsibility map; it does not rewrite runners, registry data, tests, generated issues, README, or other docs unless a later issue explicitly expands scope.
+- Each rewritten file states its phase boundary before detailed workflow steps.
+- Each rewritten skill uses the light structure or justifies a compact variant; each rewritten prompt uses or maps clearly to the prompt-specific structure.
+- Every duplicated contract names one authoritative owner and either uses a compact local reference, intentional reinforcement, or removes the duplicate.
+- Authority moves preserve behavior and improve obedience; token reduction is allowed only after hard stops, source-of-truth ownership, output contracts, and safety constraints remain enforceable.
+- `break-req` can only write `technical_requirements.md` and stops before PRD, issue creation, routing, implementation, review, external agents, or GitHub publishing.
+- `create-git-issue` can synthesize approved PRDs and initial issue slices, publish with `gh`, or write `prd.md` and `issues.md`; it cannot execute work, choose concrete agents/models, coordinate runtime agents, perform delegated review, close issues, or make terminal updates.
+- `run-with-it` consumes ready issues or local issue files, makes final runtime routing decisions, invokes the selected runner with explicit selected agent/model, coordinates safe parallel work, owns status/ledger/token/state/review lifecycle, posts terminal issue comments, closes completed issues when allowed, and commits per issue by default.
+- `save-tokens` affects only assistant response style and cannot transform durable artifacts or exact content.
+- `tdd-implementation` governs testing methodology for assigned work and cannot select issues, route agents/models, update GitHub, create commits, coordinate queues, or own runtime state.
+- `assets/prompt.md` governs implementation-agent behavior for assigned scope and cannot define reviewer JSON, issue selection, queue planning, final routing, terminal issue comments, ledgers, or persisted state.
+- `assets/review-prompt.md` governs read-only review and the reviewer JSON artifact; it cannot run git or `gh`, edit files, update issues, create commits, coordinate lifecycle, or print narrative output after completion.
+- The final rewritten Markdown remains sufficient for an implementation pass to proceed without re-interviewing the user about ownership, verdicts, rewrite order, or cross-file contract boundaries.
+
 ## Acceptance Criteria
 
 - The audit output covers exactly the seven scoped files.
