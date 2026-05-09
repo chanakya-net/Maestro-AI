@@ -367,12 +367,13 @@ mkdir -p .run-with-it
 cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 ```
 
-**Read `.run-with-it/coordinator-rules.md` exactly twice per run:**
-
-1. **At startup** — once, immediately after copying it, before any other action.
-2. **At resume** — once at the top of the Resume Flow, before rehydrating state.
-
-Do not re-read it at any other point. Mid-run re-reads add the file content to conversation history on every phase, which accelerates context fill — the opposite of the goal. If compaction occurs mid-run (not at a resume boundary), the rules in the Critical Coordinator Rules section at the top of this skill file are the recovery path, since that section is front-loaded and summarized first by the compactor.
+**Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
+- before issue intake
+- before routing
+- before each `run-agent.sh` invocation
+- before each review cycle step
+- before cleanup
+- at the top of the Resume Flow, before rehydrating state
 
 `.run-with-it/coordinator-rules.md` (the working copy) is deleted as part of normal cleanup alongside the rest of `.run-with-it/`.
 
