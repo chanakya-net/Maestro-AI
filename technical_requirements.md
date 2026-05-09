@@ -274,6 +274,60 @@ These are audit seeds, not final conclusions:
   - The rewrite fits the small-mode template concepts without bloating the file.
   - No production skill or prompt file rewrite is included in this audit output.
 
+## Per-File Audit Plan: `assets/prompt.md`
+
+- current role: Implementation-only agent prompt for executing an issue already assigned by `run-with-it`. It gives scope discipline, read-before-edit guidance, TDD invocation, implementation guardrails, verification expectations, a pre-completion review checklist, and the final completion report shape.
+- target role: Implementation-agent prompt, matching the responsibility map. It should tell an implementer how to execute the assigned scope cleanly after routing has already happened, including expected run context inputs, local exploration, verification, and completion reporting.
+- authority boundary: Owns execution guardrails for an already assigned issue and scope. Issue selection, dependency planning, runtime routing, orchestration, and reviewer JSON output stay outside this prompt; `skills/run-with-it/SKILL.md` owns runtime coordination and `assets/review-prompt.md` owns reviewer JSON output.
+- primary verdict: `tighten`
+- front matter assessment: This shared prompt has no YAML front matter, which is acceptable for a prompt asset rather than a skill trigger. Future rewrite should use the prompt-specific structure from this requirements document: `Role`, `Scope`, `Inputs Expected`, `Hard Restrictions`, `Workflow`, `Verification / Validation`, and `Output Contract`. If metadata is ever added, it must identify this as an implementation-agent prompt only and must not imply issue intake, routing, review, or orchestration authority.
+- passages to keep:
+  - "This prompt is implementation-only." Keep as the opening contract because it is short and phase-critical.
+  - The statement that issue selection, dependency planning, runner selection, and orchestration are handled by `run-with-it`; tighten "runner selection" into runtime routing wording if the rewrite standardizes terminology.
+  - The assigned-issue scope bullets: implement only assigned issue(s), keep changes minimal and focused, and avoid unrelated refactors or architecture changes.
+  - The exploration-before-code guidance to read nearby code, reuse existing patterns, respect boundaries and dependency direction, and choose the smallest compatible extension when a gap is found.
+  - The implementation guardrails around current architecture compatibility, avoiding unnecessary abstractions, preserving API contracts unless requested, and not overwriting unrelated changes.
+  - The verification expectation to run issue-specific fast checks first, then broader suites when relevant, and to document omitted expensive checks.
+  - The substance of the pre-completion self-check: behavior matches issue intent, naming matches domain language, failure paths are covered, tests validate the right layer, and no unrelated files were changed. Retitle it if needed so it is not confused with delegated reviewer behavior.
+  - The completion report fields for files changed, key implementation decisions, checks run with results, and remaining risks or follow-up notes.
+  - The `<promise>NO MORE TASKS</promise>` sentinel, but only as an implementation-run completion signal consumed by `run-with-it`, not as queue selection or orchestration authority.
+- passages to tighten:
+  - Add an `Inputs Expected` section that says the implementer receives an already assigned issue, scope/context, relevant files or constraints when available, and any coordinator-provided next tasks. It should not tell the implementer how to choose or discover new work.
+  - Replace "Issue selection, dependency planning, runner selection, and orchestration are handled by the `run-with-it` skill" with a fuller boundary line covering issue selection, dependency planning, runtime routing, orchestration, persisted status/ledger behavior, issue updates, reviewer invocation/lifecycle ownership by `run-with-it`, and reviewer JSON artifact-shape ownership by `assets/review-prompt.md`.
+  - Tighten "Invoke `tdd-implementation` first and follow it" into a short source-of-truth invocation that names `skills/tdd-implementation/SKILL.md` as the owner of red/green/refactor and behavior-first test discipline.
+  - Reduce the detailed testing bullets "For each behavior, cover both happy path and negative path" and "Test through public interfaces, not internal implementation details" into a compact reinforcement or move them under an explicit "TDD skill owns details" reference. These are useful guardrails but currently overlap with the TDD skill's methodology contract.
+  - Clarify that exploration before code is local codebase exploration after assignment, not issue discovery, dependency planning, or runtime queue inspection.
+  - Clarify that verification commands are examples to select when applicable, not an exhaustive or mandatory technology matrix for every repo.
+  - Clarify that the pre-completion review checklist is a self-check by the implementer, not delegated reviewer behavior and not reviewer JSON output.
+- passages to move, with destination:
+  - Move any expanded red/green/refactor, happy-path/negative-path, behavior-first, or public-interface testing methodology to `skills/tdd-implementation/SKILL.md` if that detail is missing there. In this prompt, keep only a short invocation plus minimal obedience reinforcement.
+  - Move any future wording about queued issue selection, dependency readiness, runtime agent/model choice, persisted state, status ledgers, terminal issue comments, or delegated review lifecycle to `skills/run-with-it/SKILL.md`.
+  - Move any future reviewer artifact shape, JSON schema, verdict vocabulary, or read-only review procedure to `assets/review-prompt.md`.
+- passages to remove:
+  - Remove any wording in a future rewrite that lets the implementation prompt select additional issues, decide dependency order, choose runners, route agents/models, coordinate multiple agents, update GitHub issues, or manage persisted state.
+  - Remove any copied full TDD workflow or repeated testing methodology that exceeds a compact invocation of `tdd-implementation`.
+  - Remove any reviewer JSON or review-only behavior if it appears during rewrite; the current prompt does not contain reviewer JSON and should stay that way.
+  - Remove technology-specific check examples if a future rewrite turns them into universal requirements rather than applicable examples.
+- duplicated contracts and source-of-truth handling:
+  - Implementation test discipline: `skills/tdd-implementation/SKILL.md` is the authoritative owner of red/green/refactor, behavior-first testing, negative-path coverage, and public-interface testing. The prompt's instruction to invoke `tdd-implementation` is intentional reinforcement. The prompt's detailed happy-path/negative-path and public-interface bullets are duplication to tighten or rehome into the TDD skill if the rewrite needs the detail preserved.
+  - Runtime routing and orchestration: `skills/run-with-it/SKILL.md` owns issue intake, dependency decisions, final routing, runner selection, multi-agent coordination, persisted state, status/ledger output, review lifecycle, and terminal issue updates. `assets/prompt.md` may keep only a short boundary reminder that those concerns are already handled before implementation starts.
+  - Reviewer JSON output: `assets/review-prompt.md` owns reviewer JSON artifact requirements. `assets/prompt.md` should not define reviewer JSON, review verdicts, or read-only reviewer behavior; its review checklist is only an implementer self-check before completion.
+  - Completion reporting: `assets/prompt.md` may own the implementer's local completion summary fields. `skills/run-with-it/SKILL.md` owns any parseable coordinator status, ledger, token report, issue comment, or persisted completion format.
+  - No-more-tasks sentinel: `assets/prompt.md` may emit the sentinel when assigned work is complete and no further ready work was provided in context. `skills/run-with-it/SKILL.md` remains the owner of deciding whether more ready work exists and how the sentinel affects orchestration.
+- authority changes, if any: None for current behavior. The rewrite should preserve the prompt's implementation-agent authority while making the TDD, coordinator, and reviewer source-of-truth boundaries explicit. Any future methodology expansion should be rehomed from `assets/prompt.md` to `skills/tdd-implementation/SKILL.md`; any future routing or review artifact expansion should be rehomed to `skills/run-with-it/SKILL.md` or `assets/review-prompt.md` respectively.
+- acceptance checks for the rewrite:
+  - The prompt states that it is implementation-only before workflow details.
+  - The prompt adopts the prompt-specific structure: `Role`, `Scope`, `Inputs Expected`, `Hard Restrictions`, `Workflow`, `Verification / Validation`, and `Output Contract`, or explicitly justifies any omitted section.
+  - The prompt has an `Inputs Expected` section for already assigned issue context, scope limits, relevant constraints, and coordinator-provided work context.
+  - The prompt says issue selection, dependency planning, runtime routing, orchestration, and reviewer JSON output stay outside this prompt.
+  - The prompt keeps exploration-before-code guidance limited to reading nearby implementation context and reusing existing codebase patterns after assignment.
+  - The prompt invokes `tdd-implementation` as the source of truth for test-first implementation discipline without copying a full red/green/refactor or test-methodology contract.
+  - Any overlap with `skills/tdd-implementation/SKILL.md` is classified as intentional reinforcement or duplication to tighten/rehome.
+  - Verification rules distinguish applicable fast checks, broader relevant suites, documented omissions for expensive checks, and technology-specific examples that must not become a mandatory matrix for every repo.
+  - Completion output remains a concise implementer report and does not define coordinator ledgers, terminal issue comments, or reviewer JSON.
+  - The `<promise>NO MORE TASKS</promise>` sentinel remains conditional on assigned work being complete and no further ready work being provided in context.
+  - The rewrite does not add issue selection, dependency planning, runtime routing, runner or agent/model selection, orchestration, multi-agent coordination, GitHub issue updating, persisted state, or reviewer JSON authority.
+
 ## Acceptance Criteria
 
 - The audit output covers exactly the seven scoped files.
