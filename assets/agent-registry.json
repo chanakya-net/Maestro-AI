@@ -22,6 +22,17 @@
       "strengths": ["speed", "high-throughput", "cost-sensitive"],
       "_note": "Copilot subscription multiplier: 0.33x. price_* fields are routing units, not API dollars."
     },
+    "claude-haiku-4.5": {
+      "provider": "anthropic",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
+      "complexity_weight": 2,
+      "context_window": 200000,
+      "strengths": ["speed", "high-throughput", "cost-sensitive"],
+      "_note": "GitHub Copilot CLI model ID for Haiku 4.5 (dot format). Same model as claude-haiku-4-5."
+    },
     "claude-sonnet-4-5": {
       "provider": "anthropic",
       "ability": "advanced",
@@ -33,6 +44,17 @@
       "strengths": ["coding", "reasoning", "balanced"],
       "_note": "Copilot subscription multiplier: 1x. price_* fields are routing units, not API dollars."
     },
+    "claude-sonnet-4.5": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
+      "complexity_weight": 6,
+      "context_window": 200000,
+      "strengths": ["coding", "reasoning", "balanced"],
+      "_note": "GitHub Copilot CLI model ID for Sonnet 4.5 (dot format). Same model as claude-sonnet-4-5."
+    },
     "claude-sonnet-4-6": {
       "provider": "anthropic",
       "ability": "advanced",
@@ -43,6 +65,17 @@
       "context_window": 1000000,
       "strengths": ["speed-intelligence-balance", "coding", "extended-thinking", "1M-context"],
       "_note": "Copilot subscription multiplier: 1x at High reasoning. price_* fields are routing units, not API dollars."
+    },
+    "claude-sonnet-4.6": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
+      "complexity_weight": 6,
+      "context_window": 1000000,
+      "strengths": ["speed-intelligence-balance", "coding", "extended-thinking", "1M-context"],
+      "_note": "GitHub Copilot CLI model ID for Sonnet 4.6 (dot format). Same model as claude-sonnet-4-6."
     },
     "claude-sonnet-4-6[1m]": {
       "provider": "anthropic",
@@ -115,6 +148,17 @@
       "context_window": 1000000,
       "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"],
       "_note": "Copilot subscription multiplier: 15x. Reserve for explicit use or hardest routing bands."
+    },
+    "claude-opus-4.7": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "extrahigh",
+      "price_input_per_1m": 15.00,
+      "price_output_per_1m": 15.00,
+      "complexity_weight": 9,
+      "context_window": 1000000,
+      "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"],
+      "_note": "GitHub Copilot CLI model ID for Opus 4.7 (dot format). Same model as claude-opus-4-7."
     },
     "claude-opus-4-7[1m]": {
       "provider": "anthropic",
@@ -387,9 +431,9 @@
     ],
     "agent_preference_rules": [
       {
-        "models": ["claude-haiku-4-5"],
+        "models": ["claude-haiku-4.5", "claude-haiku-4-5-20251001", "claude-haiku-4-5"],
         "preferred_agents": ["github-copilot", "claude"],
-        "_note": "If Haiku 4.5 is selected and both GitHub Copilot and Claude are available, choose GitHub Copilot before direct Claude."
+        "_note": "If Haiku 4.5 is selected and both GitHub Copilot and Claude are available, choose GitHub Copilot before direct Claude. claude-haiku-4.5 = Copilot CLI ID; claude-haiku-4-5-20251001 = Claude CLI ID."
       },
       {
         "provider": "anthropic",
@@ -474,7 +518,7 @@
         "known_models": [
           "claude-opus-4-7",
           "claude-sonnet-4-6",
-          "claude-haiku-4-5"
+          "claude-haiku-4-5-20251001"
         ],
         "pricing_basis": "claude-subscription",
         "metered_api_cost": false,
@@ -482,9 +526,9 @@
         "routing_cost_overrides": {
           "claude-opus-4-7": 0.00,
           "claude-sonnet-4-6": 0.00,
-          "claude-haiku-4-5": 0.00
+          "claude-haiku-4-5-20251001": 0.00
         },
-        "_note": "Claude subscription model picker shows Opus 4.7, Sonnet 4.6, and Haiku 4.5 with no API-style multiplier. Keep Sonnet 4.6 as the default balanced model."
+        "_note": "Claude CLI uses Anthropic model IDs: hyphens, full versioned names. Haiku 4.5 requires date suffix (claude-haiku-4-5-20251001)."
       },
       "capability_band": "advanced",
       "fallback_order": ["github-copilot", "codex", "gemini"],
@@ -553,8 +597,10 @@
         "default": "gpt-5.3-codex",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-haiku-4-5",
-          "claude-sonnet-4-5",
+          "claude-haiku-4.5",
+          "claude-sonnet-4.5",
+          "claude-sonnet-4.6",
+          "claude-opus-4.7",
           "gemini-2.5-pro",
           "gemini-3-flash-preview",
           "gemini-3.1-pro-preview",
@@ -568,8 +614,6 @@
           "gpt-5.5",
           "grok-code-fast-1",
           "raptor-mini-preview",
-          "claude-opus-4-7",
-          "claude-sonnet-4-6",
           "gpt-5.4"
         ]
       },
