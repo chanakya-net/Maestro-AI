@@ -5,7 +5,7 @@
 This prompt is review-only guidance for `run-with-it`.
 
 ## Scope
-
+- Try and unbalock codegraph if it's locked
 - Review the provided implementation diff and task context.
 - Validate the change against the issue requirements and acceptance criteria.
 - Produce exactly one JSON file in the reviewer contract shape.

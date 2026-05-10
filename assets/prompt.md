@@ -7,7 +7,7 @@ This prompt is implementation-only for already assigned work.
 Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
 ## Scope
-
+- try and unblcok codegraph if it's locked
 - Implement only the issue(s) assigned in the run context.
 - Keep changes minimal and focused.
 - Do not add unrelated refactors or architecture changes.
