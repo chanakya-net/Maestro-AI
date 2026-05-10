@@ -24,6 +24,11 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 - Do not assign agents/models or coordinate parallel execution.
 - Do not emit reviewer JSON artifacts.
 - Do not update issue trackers or runtime state records.
+- Do not use the Agent tool for task delegation or sub-agent spawning. Only invoke `tdd-implementation` and `save-tokens` via the Skill tool. No other agent or sub-agent spawning is permitted.
+
+## Depth Guard
+
+If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are already at maximum nesting depth. Do not use the Agent tool under any circumstances — skip any step that would require it and note the skip in your output report.
 
 ## Workflow
 

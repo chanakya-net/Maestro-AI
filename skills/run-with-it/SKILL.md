@@ -86,6 +86,8 @@ Collect these values before execution:
   - `ALLOW_PARALLEL_AGENTS` (default `true`)
 - Optional review controls:
   - `DELEGATED_REVIEW` (default `true`): when `false`, bypasses the entire delegated-review path and reverts to today's inline-review behavior; no `review-spawn`, `review-result`, `modify-spawn`, or `review-degraded` STATUS lines are emitted and no per-role ledger rows are written
+- Optional depth guard:
+  - `MAX_AGENT_DEPTH` (default `1`): maximum agent nesting depth. Always inject `MAX_AGENT_DEPTH=1` into the context payload written for every child agent spawned via `run-agent.sh`. This tells the child it is already at max depth and must not spawn further sub-agents.
 
 ## Asset Discovery (Required)
 
