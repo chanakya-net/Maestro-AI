@@ -65,7 +65,7 @@ Use this sequence for issue-driven execution:
 ## Routing and Registry Overrides
 
 `run-with-it` uses `agent-registry.json` + complexity scoring to select agent/model.
-Automatic routing reserves Google/Gemini models for last-resort fallback only. Explicit `AGENT` or `MODEL` overrides can still select Gemini after normal validation.
+Automatic routing allows Google/Gemini only for `quite-easy` and `easy` tasks. Direct Claude is reserved as a fallback when Copilot/Codex-compatible models cannot perform the task; shared Claude models such as Haiku 4.5 prefer GitHub Copilot before direct Claude.
 
 Supported overrides and filters:
 

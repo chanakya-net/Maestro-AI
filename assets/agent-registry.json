@@ -15,21 +15,34 @@
       "provider": "anthropic",
       "ability": "fast",
       "price_tier": "low",
-      "price_input_per_1m": 1.00,
-      "price_output_per_1m": 5.00,
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
       "complexity_weight": 2,
       "context_window": 200000,
-      "strengths": ["speed", "high-throughput", "cost-sensitive"]
+      "strengths": ["speed", "high-throughput", "cost-sensitive"],
+      "_note": "Copilot subscription multiplier: 0.33x. price_* fields are routing units, not API dollars."
+    },
+    "claude-sonnet-4-5": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
+      "complexity_weight": 6,
+      "context_window": 200000,
+      "strengths": ["coding", "reasoning", "balanced"],
+      "_note": "Copilot subscription multiplier: 1x. price_* fields are routing units, not API dollars."
     },
     "claude-sonnet-4-6": {
       "provider": "anthropic",
       "ability": "advanced",
       "price_tier": "med",
-      "price_input_per_1m": 3.00,
-      "price_output_per_1m": 15.00,
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
       "complexity_weight": 6,
       "context_window": 1000000,
-      "strengths": ["speed-intelligence-balance", "coding", "extended-thinking", "1M-context"]
+      "strengths": ["speed-intelligence-balance", "coding", "extended-thinking", "1M-context"],
+      "_note": "Copilot subscription multiplier: 1x at High reasoning. price_* fields are routing units, not API dollars."
     },
     "claude-sonnet-4-6[1m]": {
       "provider": "anthropic",
@@ -95,12 +108,13 @@
     "claude-opus-4-7": {
       "provider": "anthropic",
       "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 5.00,
-      "price_output_per_1m": 25.00,
+      "price_tier": "extrahigh",
+      "price_input_per_1m": 15.00,
+      "price_output_per_1m": 15.00,
       "complexity_weight": 9,
       "context_window": 1000000,
-      "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"]
+      "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"],
+      "_note": "Copilot subscription multiplier: 15x. Reserve for explicit use or hardest routing bands."
     },
     "claude-opus-4-7[1m]": {
       "provider": "anthropic",
@@ -146,31 +160,45 @@
       "provider": "openai",
       "ability": "fast",
       "price_tier": "low",
-      "price_input_per_1m": 0.25,
-      "price_output_per_1m": 2.00,
+      "price_input_per_1m": 0.00,
+      "price_output_per_1m": 0.00,
       "complexity_weight": 2,
       "context_window": 400000,
-      "strengths": ["ultra-cheap", "high-throughput", "simple-tasks"]
+      "strengths": ["included-quota", "high-throughput", "simple-tasks"],
+      "_note": "Copilot subscription multiplier: 0x at Medium reasoning. price_* fields are routing units, not API dollars."
     },
     "gpt-5.4-mini": {
       "provider": "openai",
       "ability": "balanced",
       "price_tier": "low",
-      "price_input_per_1m": 0.75,
-      "price_output_per_1m": 4.50,
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
       "complexity_weight": 4,
       "context_window": 400000,
-      "strengths": ["coding", "computer-use", "subagents", "cost-efficient"]
+      "strengths": ["coding", "computer-use", "subagents", "cost-efficient"],
+      "_note": "Copilot subscription multiplier: 0.33x at Medium reasoning. price_* fields are routing units, not API dollars."
     },
     "gpt-4.1": {
       "provider": "openai",
       "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 2.00,
-      "price_output_per_1m": 8.00,
+      "price_tier": "low",
+      "price_input_per_1m": 0.00,
+      "price_output_per_1m": 0.00,
       "complexity_weight": 5,
       "context_window": 1047576,
-      "strengths": ["instruction-following", "tool-calling", "1M-context", "low-latency"]
+      "strengths": ["instruction-following", "tool-calling", "1M-context", "low-latency"],
+      "_note": "Copilot subscription multiplier: 0x. price_* fields are routing units, not API dollars."
+    },
+    "gpt-4o": {
+      "provider": "openai",
+      "ability": "balanced",
+      "price_tier": "low",
+      "price_input_per_1m": 0.00,
+      "price_output_per_1m": 0.00,
+      "complexity_weight": 4,
+      "context_window": 128000,
+      "strengths": ["multimodal", "low-latency", "included-quota"],
+      "_note": "Copilot subscription multiplier: 0x. price_* fields are routing units, not API dollars."
     },
     "gpt-5.1": {
       "provider": "openai",
@@ -186,31 +214,34 @@
       "provider": "openai",
       "ability": "advanced",
       "price_tier": "med",
-      "price_input_per_1m": 1.75,
-      "price_output_per_1m": 14.00,
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
       "complexity_weight": 7,
       "context_window": 400000,
-      "strengths": ["agentic", "long-context", "adaptive-reasoning"]
+      "strengths": ["agentic", "long-context", "adaptive-reasoning"],
+      "_note": "Copilot subscription multiplier: 1x at Medium reasoning. price_* fields are routing units, not API dollars."
     },
     "gpt-5.2-codex": {
       "provider": "openai",
       "ability": "advanced",
       "price_tier": "med",
-      "price_input_per_1m": 1.75,
-      "price_output_per_1m": 14.00,
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
       "complexity_weight": 7,
       "context_window": 400000,
-      "strengths": ["agentic-coding", "prior-codex-default", "swe-bench"]
+      "strengths": ["agentic-coding", "prior-codex-default", "swe-bench"],
+      "_note": "Copilot subscription multiplier: 1x at Medium reasoning. price_* fields are routing units, not API dollars."
     },
     "gpt-5.3-codex": {
       "provider": "openai",
       "ability": "advanced",
       "price_tier": "med",
-      "price_input_per_1m": 1.75,
-      "price_output_per_1m": 14.00,
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
       "complexity_weight": 8,
       "context_window": 400000,
-      "strengths": ["agentic-coding", "swe-bench-pro", "25pct-faster-than-5.2", "copilot-business-base"]
+      "strengths": ["agentic-coding", "swe-bench-pro", "25pct-faster-than-5.2", "copilot-business-base"],
+      "_note": "Copilot subscription multiplier: 1x at Medium reasoning. Use as the Copilot default for coding agents."
     },
     "gpt-5.3-codex-spark": {
       "provider": "openai",
@@ -225,44 +256,46 @@
     "gpt-5.4": {
       "provider": "openai",
       "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 2.50,
-      "price_output_per_1m": 15.00,
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
       "complexity_weight": 9,
       "context_window": 1050000,
-      "strengths": ["complex-professional", "variable-reasoning", "computer-use", "MCP", "web-search", "1M-context"]
+      "strengths": ["complex-professional", "variable-reasoning", "computer-use", "MCP", "web-search", "1M-context"],
+      "_note": "Copilot subscription multiplier: 1x at Medium reasoning. price_* fields are routing units, not API dollars."
     },
     "gpt-5.5": {
       "provider": "openai",
       "ability": "frontier",
       "price_tier": "high",
-      "price_input_per_1m": 5.00,
-      "price_output_per_1m": 30.00,
+      "price_input_per_1m": 7.50,
+      "price_output_per_1m": 7.50,
       "complexity_weight": 9,
       "context_window": 922000,
       "strengths": ["best-coding", "swe-bench-88.7pct", "professional-work", "computer-use", "MCP", "frontier"],
-      "_note": "20% pricier than claude-opus-4-7 on output ($30 vs $25). Marginally better SWE-bench (88.7% vs 87.6%). In Codex CLI requires ChatGPT Plus/Pro/Business account, NOT API-key auth."
-    },
-    "goldeneye": {
-      "provider": "openai",
-      "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 1.25,
-      "price_output_per_1m": 10.00,
-      "complexity_weight": 11,
-      "context_window": 400000,
-      "strengths": ["copilot-fine-tuned", "autocomplete", "coding"],
-      "_note": "Autocomplete fine-tune — excluded from agentic routing (w=11 is above all band ceilings). Copilot plan-based, not standalone API. Fine-tuned on GPT-5.1-Codex."
+      "_note": "Copilot subscription multiplier: 7.5x at Medium reasoning. Reserve for complex/high and above bands unless explicitly selected."
     },
     "gemini-3-flash-preview": {
       "provider": "google",
       "ability": "balanced",
       "price_tier": "low",
-      "price_input_per_1m": 0.50,
-      "price_output_per_1m": 3.00,
-      "complexity_weight": 5,
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
+      "complexity_weight": 4,
       "context_window": 1048576,
-      "strengths": ["multimodal", "thinking", "computer-use", "code-execution", "search-grounding"]
+      "strengths": ["multimodal", "thinking", "computer-use", "code-execution", "search-grounding"],
+      "_note": "Copilot subscription multiplier: 0.33x. Eligible only for quite-easy/easy automatic routing."
+    },
+    "gemini-2.5-pro": {
+      "provider": "google",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
+      "complexity_weight": 8,
+      "context_window": 1048576,
+      "strengths": ["long-context", "multimodal", "reasoning"],
+      "_note": "Copilot subscription multiplier: 1x. Available through Copilot; not re-added to Gemini CLI defaults."
     },
     "gemini-3.1-flash-lite-preview": {
       "provider": "google",
@@ -277,22 +310,35 @@
     "gemini-3.1-pro-preview": {
       "provider": "google",
       "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 2.00,
-      "price_output_per_1m": 12.00,
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
       "complexity_weight": 9,
       "context_window": 1000000,
-      "strengths": ["advanced-reasoning", "agentic", "multimodal", "frontier-gemini"]
+      "strengths": ["advanced-reasoning", "agentic", "multimodal", "frontier-gemini"],
+      "_note": "Copilot subscription multiplier: 1x. Explicit selection only for harder work; automatic Gemini routing is limited to quite-easy/easy tasks."
     },
-    "gemini-3.1-pro-preview-customtools": {
-      "provider": "google",
-      "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 2.00,
-      "price_output_per_1m": 12.00,
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": ["custom-tools", "agentic", "advanced-reasoning", "tool-calling"]
+    "grok-code-fast-1": {
+      "provider": "xai",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.25,
+      "price_output_per_1m": 0.25,
+      "complexity_weight": 5,
+      "context_window": 256000,
+      "strengths": ["coding", "speed", "cost-efficient"],
+      "_note": "Copilot subscription multiplier: 0.25x. price_* fields are routing units, not API dollars."
+    },
+    "raptor-mini-preview": {
+      "provider": "github-copilot",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.00,
+      "price_output_per_1m": 0.00,
+      "complexity_weight": 3,
+      "context_window": 128000,
+      "strengths": ["included-quota", "preview", "quick-edits"],
+      "_note": "Copilot subscription multiplier: 0x. Preview model available through GitHub Copilot."
     }
   },
   "model_routing": {
@@ -306,12 +352,19 @@
     ],
     "selection_strategy": "top-n-cheapest-random",
     "selection_pool_size": 4,
-    "_strategy_note": "Sort candidates by (complexity_weight ASC, price_tier ASC, price_output_per_1m ASC). Take the top selection_pool_size models. Randomly pick one from that pool. This ensures cost-efficiency while spreading load across agents and providers.",
+    "cost_basis": "agent-subscription-routing-units",
+    "_strategy_note": "Sort candidates by (complexity_weight ASC, price_tier ASC, price_output_per_1m ASC). For Copilot models, price_* fields represent subscription multipliers from the user's available model list, not API dollars. Agent-specific routing_cost_overrides take precedence when routing is constrained to that agent; Codex and Claude models are subscription-included because those agents do not expose per-model multipliers. Take the top selection_pool_size models, then randomly pick one from that pool.",
     "provider_routing_rules": {
       "google": {
-        "max_band": "medium",
-        "automatic_routing": "last_resort_only",
-        "_note": "Google/Gemini models are excluded from normal automatic routing. Use only as a last-resort automatic fallback after eligible non-Google routes are unavailable or fail, or when explicitly selected by AGENT/MODEL overrides."
+        "max_band": "easy",
+        "automatic_routing": "easy_only",
+        "_note": "Google/Gemini models may enter the normal automatic pool only for quite-easy and easy tasks. Do not use Gemini as a last-resort fallback for medium or harder work unless explicitly selected by AGENT/MODEL overrides."
+      },
+      "anthropic": {
+        "automatic_routing": "fallback_only_for_direct_claude",
+        "preferred_agents": ["github-copilot"],
+        "fallback_agents": ["claude"],
+        "_note": "Claude-provider models should use GitHub Copilot first when both Copilot and direct Claude support the model. Direct Claude is reserved for cases where other agents/models cannot perform the task or are filtered/unavailable."
       }
     },
     "hard_minimum_overrides": [
@@ -330,6 +383,20 @@
         "agents": ["codex", "github-copilot"],
         "selection": "random",
         "_note": "Both run GPT models identically. Pick randomly between whichever are detected and not filtered."
+      }
+    ],
+    "agent_preference_rules": [
+      {
+        "models": ["claude-haiku-4-5"],
+        "preferred_agents": ["github-copilot", "claude"],
+        "_note": "If Haiku 4.5 is selected and both GitHub Copilot and Claude are available, choose GitHub Copilot before direct Claude."
+      },
+      {
+        "provider": "anthropic",
+        "direct_agent": "claude",
+        "automatic_routing": "fallback_only",
+        "preferred_agents": ["github-copilot"],
+        "_note": "Use direct Claude only after non-Claude agents/models are unavailable, filtered out, or judged unable to perform the task."
       }
     ]
   },
@@ -356,10 +423,29 @@
       "model": {
         "default": "gpt-5.3-codex",
         "flag_template": "--model {{model}}",
-        "known_models": ["gpt-5.4-mini", "gpt-5.2", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.5"]
+        "known_models": [
+          "gpt-5.4-mini",
+          "gpt-5.3-codex",
+          "gpt-5.3-codex-spark",
+          "gpt-5.2",
+          "gpt-5.5",
+          "gpt-5.4"
+        ],
+        "pricing_basis": "codex-subscription",
+        "metered_api_cost": false,
+        "per_model_multipliers": false,
+        "routing_cost_overrides": {
+          "gpt-5.4-mini": 0.00,
+          "gpt-5.3-codex": 0.00,
+          "gpt-5.3-codex-spark": 0.00,
+          "gpt-5.2": 0.00,
+          "gpt-5.5": 0.00,
+          "gpt-5.4": 0.00
+        },
+        "_note": "Codex subscription model list has no visible per-model multiplier system; treat these models as plan-included routing options rather than API-metered choices."
       },
       "capability_band": "advanced",
-      "fallback_order": ["claude", "gemini", "github-copilot"],
+      "fallback_order": ["github-copilot", "gemini", "claude"],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
@@ -386,15 +472,22 @@
         "default": "claude-sonnet-4-6",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-sonnet-4-6",
-          "claude-sonnet-4-6[1m]",
           "claude-opus-4-7",
-          "claude-opus-4-7[1m]",
+          "claude-sonnet-4-6",
           "claude-haiku-4-5"
-        ]
+        ],
+        "pricing_basis": "claude-subscription",
+        "metered_api_cost": false,
+        "per_model_multipliers": false,
+        "routing_cost_overrides": {
+          "claude-opus-4-7": 0.00,
+          "claude-sonnet-4-6": 0.00,
+          "claude-haiku-4-5": 0.00
+        },
+        "_note": "Claude subscription model picker shows Opus 4.7, Sonnet 4.6, and Haiku 4.5 with no API-style multiplier. Keep Sonnet 4.6 as the default balanced model."
       },
       "capability_band": "advanced",
-      "fallback_order": ["codex", "gemini", "github-copilot"],
+      "fallback_order": ["github-copilot", "codex", "gemini"],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
@@ -433,7 +526,7 @@
         ]
       },
       "capability_band": "balanced",
-      "fallback_order": ["codex", "claude", "github-copilot"],
+      "fallback_order": ["github-copilot", "codex", "claude"],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
@@ -457,35 +550,31 @@
         "available": ["--allow-all-tools"]
       },
       "model": {
-        "default": "gpt-5.5",
+        "default": "gpt-5.3-codex",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-sonnet-4-6",
-          "claude-sonnet-4-5",
           "claude-haiku-4-5",
-          "claude-opus-4-7",
-          "claude-sonnet-4",
-          "gpt-5.5",
-          "gpt-5.4",
-          "gpt-5.3-codex",
-          "gpt-5.2-codex",
-          "gpt-5.2",
-          "gpt-5.4-mini",
-          "gpt-5-mini",
+          "claude-sonnet-4-5",
+          "gemini-2.5-pro",
+          "gemini-3-flash-preview",
+          "gemini-3.1-pro-preview",
           "gpt-4.1",
-          "claude-opus-4-7[1m]-internal",
-          "claude-opus-4-7-high",
-          "claude-opus-4-7-xhigh",
-          "claude-opus-4-6",
-          "claude-opus-4-6-fast",
-          "claude-opus-4-6[1m]",
-          "claude-opus-4-5",
-          "goldeneye",
-          "gpt-5.1"
+          "gpt-4o",
+          "gpt-5-mini",
+          "gpt-5.2",
+          "gpt-5.2-codex",
+          "gpt-5.3-codex",
+          "gpt-5.4-mini",
+          "gpt-5.5",
+          "grok-code-fast-1",
+          "raptor-mini-preview",
+          "claude-opus-4-7",
+          "claude-sonnet-4-6",
+          "gpt-5.4"
         ]
       },
       "capability_band": "balanced",
-      "fallback_order": ["gemini", "claude", "codex"],
+      "fallback_order": ["codex", "gemini", "claude"],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
@@ -514,7 +603,7 @@
         "known_models": []
       },
       "capability_band": "balanced",
-      "fallback_order": ["github-copilot", "gemini", "claude", "codex"],
+      "fallback_order": ["github-copilot", "codex", "gemini", "claude"],
       "user_model_configuration": {
         "requires_user_model_config": true,
         "config_paths": [

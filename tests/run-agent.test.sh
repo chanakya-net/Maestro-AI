@@ -49,6 +49,12 @@ if [[ ! -x "${RUNNER_PATH}" ]]; then
   fail "run-agent.sh exists and is executable"
 fi
 
+prompt_contract="$(<"${ROOT_DIR}/assets/prompt.md")"
+assert_contains "${prompt_contract}" "## Progress Heartbeats" "implementation prompt documents progress heartbeats"
+assert_contains "${prompt_contract}" "STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>" "implementation prompt includes child heartbeat contract"
+assert_contains "${prompt_contract}" "at least once every 60 seconds" "implementation prompt documents heartbeat cadence"
+assert_contains "${prompt_contract}" "Heartbeat lines are live progress updates, not the final report." "implementation prompt separates heartbeat from final report"
+
 runner_preamble="$(sed -n '1,8p' "${RUNNER_PATH}")"
 assert_not_contains "${runner_preamble}" "set -euo pipefail" "run-agent avoids nounset so VS Code zsh prompt hooks are not tripped"
 assert_not_contains "${runner_preamble}" "set -u" "run-agent avoids nounset shorthand"
@@ -72,7 +78,8 @@ def check(condition, message):
 agents = registry.get("agents", {})
 aliases = registry.get("aliases", {})
 model_catalog = registry.get("model_catalog", {})
-provider_rules = registry.get("model_routing", {}).get("provider_routing_rules", {})
+model_routing = registry.get("model_routing", {})
+provider_rules = model_routing.get("provider_routing_rules", {})
 required_agents = ["codex", "claude", "gemini", "github-copilot", "opencode"]
 
 for agent_id in required_agents:
@@ -100,20 +107,130 @@ for agent_id in ["codex", "claude", "gemini", "github-copilot"]:
     check(model.get("known_models"), f"{agent_id} has known model metadata")
     check(agents[agent_id]["user_model_configuration"]["requires_user_model_config"] is False, f"{agent_id} does not require user model config")
 
+check(model_routing.get("cost_basis") == "agent-subscription-routing-units", "routing costs are subscription-unit based")
+
+codex_model = agents["codex"]["model"]
+expected_codex_models = [
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
+    "gpt-5.5",
+    "gpt-5.4",
+]
+check(codex_model.get("default") == "gpt-5.3-codex", "codex defaults to coding model")
+check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
+check(codex_model.get("pricing_basis") == "codex-subscription", "codex declares subscription pricing basis")
+check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
+check(codex_model.get("per_model_multipliers") is False, "codex declares no per-model multiplier system")
+for model_id in expected_codex_models:
+    check(model_id in model_catalog, f"codex model catalog includes {model_id}")
+    check(codex_model.get("routing_cost_overrides", {}).get(model_id) == 0.0, f"{model_id} is plan-included for Codex routing")
+
+claude_model = agents["claude"]["model"]
+expected_claude_models = [
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+]
+check(claude_model.get("default") == "claude-sonnet-4-6", "claude defaults to selected balanced model")
+check(claude_model.get("known_models") == expected_claude_models, "claude known models match available Claude model list")
+check(claude_model.get("pricing_basis") == "claude-subscription", "claude declares subscription pricing basis")
+check(claude_model.get("metered_api_cost") is False, "claude is not treated as API-metered")
+check(claude_model.get("per_model_multipliers") is False, "claude declares no per-model multiplier system")
+for model_id in expected_claude_models:
+    check(model_id in model_catalog, f"claude model catalog includes {model_id}")
+    check(claude_model.get("routing_cost_overrides", {}).get(model_id) == 0.0, f"{model_id} is plan-included for Claude routing")
+
+copilot_model = agents["github-copilot"]["model"]
+expected_copilot_models = [
+    "claude-haiku-4-5",
+    "claude-sonnet-4-5",
+    "gemini-2.5-pro",
+    "gemini-3-flash-preview",
+    "gemini-3.1-pro-preview",
+    "gpt-4.1",
+    "gpt-4o",
+    "gpt-5-mini",
+    "gpt-5.2",
+    "gpt-5.2-codex",
+    "gpt-5.3-codex",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+    "grok-code-fast-1",
+    "raptor-mini-preview",
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "gpt-5.4",
+]
+check(copilot_model.get("default") == "gpt-5.3-codex", "github-copilot defaults to 1x coding model")
+check(copilot_model.get("known_models") == expected_copilot_models, "github-copilot known models match available Copilot model list")
+for model_id in expected_copilot_models:
+    check(model_id in model_catalog, f"copilot model catalog includes {model_id}")
+
+expected_copilot_multipliers = {
+    "claude-haiku-4-5": 0.33,
+    "claude-sonnet-4-5": 1.0,
+    "gemini-2.5-pro": 1.0,
+    "gemini-3-flash-preview": 0.33,
+    "gemini-3.1-pro-preview": 1.0,
+    "gpt-4.1": 0.0,
+    "gpt-4o": 0.0,
+    "gpt-5-mini": 0.0,
+    "gpt-5.2": 1.0,
+    "gpt-5.2-codex": 1.0,
+    "gpt-5.3-codex": 1.0,
+    "gpt-5.4-mini": 0.33,
+    "gpt-5.5": 7.5,
+    "grok-code-fast-1": 0.25,
+    "raptor-mini-preview": 0.0,
+    "claude-opus-4-7": 15.0,
+    "claude-sonnet-4-6": 1.0,
+    "gpt-5.4": 1.0,
+}
+for model_id, expected_multiplier in expected_copilot_multipliers.items():
+    catalog_entry = model_catalog[model_id]
+    check(catalog_entry.get("price_input_per_1m") == expected_multiplier, f"{model_id} input price uses Copilot multiplier")
+    check(catalog_entry.get("price_output_per_1m") == expected_multiplier, f"{model_id} output price uses Copilot multiplier")
+
 google_rules = provider_rules.get("google", {})
-check(google_rules.get("automatic_routing") == "last_resort_only", "google provider is last-resort-only for automatic routing")
-check("last-resort" in google_rules.get("_note", "").lower(), "google provider note documents last-resort routing")
+check(google_rules.get("automatic_routing") == "easy_only", "google provider is easy-only for automatic routing")
+check(google_rules.get("max_band") == "easy", "google provider is capped at easy band")
+check("quite-easy and easy" in google_rules.get("_note", "").lower(), "google provider note documents easy-only routing")
 check("explicit" in google_rules.get("_note", "").lower(), "google provider note documents explicit overrides")
+check(model_catalog["gemini-3.1-flash-lite-preview"]["complexity_weight"] == 3, "Gemini lite remains quite-easy/easy eligible")
+check(model_catalog["gemini-3-flash-preview"]["complexity_weight"] == 4, "Gemini flash is easy eligible but not medium automatic due provider cap")
+
+anthropic_rules = provider_rules.get("anthropic", {})
+check(anthropic_rules.get("automatic_routing") == "fallback_only_for_direct_claude", "direct Claude routing is fallback-only")
+check(anthropic_rules.get("preferred_agents") == ["github-copilot"], "Copilot is preferred for Claude-provider models")
+check(anthropic_rules.get("fallback_agents") == ["claude"], "direct Claude is the fallback agent for Claude-provider models")
+
+agent_preference_rules = model_routing.get("agent_preference_rules", [])
+haiku_rules = [rule for rule in agent_preference_rules if rule.get("models") == ["claude-haiku-4-5"]]
+check(haiku_rules, "Haiku has explicit agent preference rule")
+check(haiku_rules[0].get("preferred_agents") == ["github-copilot", "claude"], "Haiku prefers Copilot before Claude")
+anthropic_agent_rules = [rule for rule in agent_preference_rules if rule.get("provider") == "anthropic"]
+check(anthropic_agent_rules, "anthropic provider has explicit agent preference rule")
+check(anthropic_agent_rules[0].get("automatic_routing") == "fallback_only", "anthropic direct Claude rule is fallback-only")
+
+for agent_id, agent in agents.items():
+    fallback_order = agent.get("fallback_order", [])
+    if agent_id != "claude" and "claude" in fallback_order:
+        check(fallback_order[-1] == "claude", f"{agent_id} uses direct Claude only after other fallback agents")
 
 gemini_known_models = set(agents["gemini"]["model"].get("known_models", []))
-removed_gemini_models = {
+removed_gemini_catalog_models = {
     "auto-gemini-2.5",
     "gemini-2.5-flash-lite",
     "gemini-2.5-flash",
+}
+removed_gemini_cli_models = {
+    *removed_gemini_catalog_models,
     "gemini-2.5-pro",
 }
-check(not removed_gemini_models & set(model_catalog), "gemini 2.5 models are removed from model catalog")
-check(not removed_gemini_models & gemini_known_models, "gemini 2.5 models are removed from known models")
+check(not removed_gemini_catalog_models & set(model_catalog), "old gemini 2.5 flash models are removed from model catalog")
+check(not removed_gemini_cli_models & gemini_known_models, "gemini 2.5 models are removed from Gemini CLI known models")
 for model_id in ["auto-gemini-3", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"]:
     check(model_id in gemini_known_models, f"{model_id} remains in gemini known models")
 for model_id in ["auto", "pro", "flash", "flash-lite"]:
