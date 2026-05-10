@@ -56,6 +56,8 @@ Run tests before declaring work complete. All tests must pass. Do not mark work 
 2. Then run the full test suite.
 3. Fix any failures before reporting completion — do not report results and move on.
 
+**Out-of-scope test failures**: If tests outside your assigned scope are failing, fix them. Your changes may have introduced regressions or side effects that broke previously passing tests. Scope is not a reason to leave tests red — a broken test suite is a broken test suite regardless of where the failure originates.
+
 Examples:
 
 - `bun run test` (frontend scope when applicable)
