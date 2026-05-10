@@ -33,6 +33,13 @@ This prompt is review-only guidance for `run-with-it`.
 - Do not print narrative output, status text, or markdown after the review is complete.
 - Do not use the Agent tool. Do not spawn sub-agents for any purpose.
 
+## Test Execution
+
+- You MAY run the project's existing test suite to verify behavior when verification evidence is absent or incomplete.
+- Use read-only test invocations only (e.g. `npm test`, `pytest`, `go test ./...`). Do not mutate source files.
+- Record the test command and output in the `summary` field.
+- If tests fail and the failure is directly caused by the change under review, treat it as a blocking defect (`revise` or `reject`).
+
 ## Depth Guard
 
 If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are already at maximum nesting depth. Do not use the Agent tool under any circumstances.
@@ -74,9 +81,16 @@ Write exactly one JSON file at the path provided by the coordinator. The file mu
 - Use `reject` when the change is fundamentally off-scope, unsafe, or cannot be repaired with a small follow-up.
 - Keep comments actionable and grounded in the diff.
 
+## Nitpick Policy
+
+- A **nitpick** is a style, naming, or cosmetic preference that has no impact on correctness, security, or maintainability.
+- Mark nitpick comments with `"severity": "info"` and prefix the `fix` field with `[nitpick]`.
+- If the **only** issues found are nitpicks, set `verdict` to `"approve"`. Do not block or downgrade to `"revise"` for nitpicks alone.
+- Do not invent nitpicks. Only raise them when a genuine preference exists and the improvement is unambiguous.
+
 ## Verification / Validation
 
-- For `approve`, comments may be empty and `blocking_reasons` must be empty.
+- For `approve`, comments may be empty or contain only nitpick (`"severity": "info"`) entries. `blocking_reasons` must be empty.
 - For `revise`, provide targeted actionable comments and keep `blocking_reasons` empty.
 - For `reject`, include non-empty `blocking_reasons` that explain why the task cannot proceed in current scope.
 - Use repo-relative file paths in comments and line numbers when feedback is line-specific.

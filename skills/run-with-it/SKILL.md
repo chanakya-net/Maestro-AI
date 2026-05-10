@@ -758,7 +758,9 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
 
 #### Per-Cycle Steps
 
-1. Before assembling the reviewer payload, confirm the implementing or modifying agent reported passing verification results. If verification results are absent or report failures, **do not spawn the reviewer** — terminate the issue as `failed-review` with reason `missing-or-failed-verification`.
+1. Before assembling the reviewer payload, check the implementing or modifying agent's reported verification results:
+   - If verification **actively failed** (tests ran and produced failures), **do not spawn the reviewer** — terminate the issue as `failed-review` with reason `failed-verification`.
+   - If verification results are **absent or incomplete**, spawn the reviewer anyway. The reviewer runs under `review-prompt.md`, which permits it to execute the project's existing test suite for independent self-verification. Include whatever partial verification evidence is available in the reviewer payload and note the gap so the reviewer knows to run tests.
 
 2. Assemble a reviewer payload file in this order:
    - the full slice requirements — the complete issue body including title, description, requirements, and acceptance criteria; plus the `queue[task]` entry from `state.json` (ownership scope, paths to avoid, verification commands). Do not summarize or truncate. The reviewer must see the original requirements to evaluate the implementation.
@@ -769,7 +771,7 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
    - the implementer telemetry stub
 3. Spawn the reviewer child agent with the selected reviewer band and selected reviewer model.
 4. Emit `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before the reviewer starts.
-5. Run the reviewer through the existing unified runner using the same `--agent`, `--model`, `--unattended` contract.
+5. Run the reviewer through the existing unified runner using `--agent`, `--model`, `--unattended`, and `--prompt-file "$ASSET_ROOT/review-prompt.md"`. The reviewer runs under `review-prompt.md`, which permits it to execute the project's existing test suite (read-only invocations) for self-verification when verification evidence is absent or insufficient.
 6. Parse the reviewer JSON output against the PRD contract below.
 7. **Archive the reviewer JSON** to `.run-with-it/reviews/<issue-number>-cycle-<n>.json` immediately after parsing.
 8. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after archival.
@@ -779,6 +781,8 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
 **`verdict=approve`**
 
 Integrate the current diff using the existing per-issue commit policy. No modification agent is spawned.
+
+**Nitpick-only `approve`**: When the reviewer JSON verdict is `approve` and all comments have `"severity": "info"` with `"fix"` values prefixed `[nitpick]`, treat identically to a clean approve — integrate, no modification agent. In the terminal issue comment, list nitpick comments as a separate bullet block under `## Notes` after the review summary line. Do not downgrade the verdict or request changes for nitpicks alone.
 
 **`verdict=revise`**
 
@@ -1032,7 +1036,7 @@ Comment requirements:
 - `Token Usage` must report task-specific telemetry only. Do not include coordinator totals or combined run totals in the issue comment.
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
-- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
+- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a nitpick-only approval write `approve — nitpicks only (<N> info comments)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. When the verdict was nitpick-only, list each nitpick comment as a sub-bullet immediately after the review summary line. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
 - `Blocking Reasons` section must be included **only** when `verdict=reject`. Render each entry from the reviewer JSON `blocking_reasons` array as a separate markdown bullet. Omit the section entirely for `approve` or `revise` outcomes.
 
 ## Guardrails
