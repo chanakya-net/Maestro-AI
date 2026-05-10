@@ -188,7 +188,7 @@ Sub-agent selection:
 1. Reuse the existing model-first selection algorithm.
 2. Restrict the candidate pool to the easy-medium band only: `complexity_weight` `1–6`.
 3. Randomly pick from the filtered pool.
-4. Exclude Google/Gemini from the normal candidate pool.
+4. Apply provider routing rules: Gemini may enter only when the target band is `quite-easy` or `easy`; otherwise exclude it.
 5. Pass both `AGENT` and `MODEL` explicitly to the sub-agent runner.
 
 Sub-agent input context, in order:
@@ -284,13 +284,14 @@ From `model_catalog` in `agent-registry.json`:
 2. Keep only models available on at least one detected, non-filtered agent (check each agent's `known_models` list).
 3. Apply `model_routing.provider_routing_rules`:
    - remove any model whose `provider` exceeds its `max_band` for the current complexity level
-   - exclude any provider with `automatic_routing = "last_resort_only"` from the normal automatic model pool
-4. Google/Gemini is last-resort-only for automatic routing. Do not include Google/Gemini models in the normal candidate pool for any complexity band.
+   - include Google/Gemini only when `automatic_routing = "easy_only"` and the current complexity level is `quite-easy` or `easy`
+   - treat direct Claude (`agent=claude`) as fallback-only when `automatic_routing = "fallback_only_for_direct_claude"`
+4. Google/Gemini is not a last-resort provider. It may enter the normal candidate pool only for `quite-easy` and `easy` tasks; exclude it for `medium` and harder tasks unless explicitly forced.
 5. Sort remaining candidates by `(complexity_weight ASC, price_tier ASC, price_output_per_1m ASC)`, prioritizing the lowest `complexity_weight` before cost tie-breakers.
 6. Take the top `selection_pool_size` (default 4 from `model_routing`) — this is the **base pool**.
 7. Append any models listed in `model_routing.band_required_models[current_level]` that are not already in the base pool. These are always available regardless of price ranking.
-8. **Randomly pick one model** from the final pool. This distributes load across non-Google agents and providers on every run.
-9. If fewer than 2 candidates exist after filtering, expand `weight_max` by 1 and retry (up to 3 expansions) until pool reaches at least 2, then continue to bounded fallback diagnostics before considering last-resort providers.
+8. **Randomly pick one model** from the final pool. This distributes load across eligible agents and providers on every run.
+9. If fewer than 2 candidates exist after filtering, expand `weight_max` by 1 and retry (up to 3 expansions) until pool reaches at least 2, then continue to bounded fallback diagnostics without adding a special Gemini last-resort phase.
 
 #### Step 4 — Select Agent
 
@@ -298,16 +299,18 @@ From `model_catalog` in `agent-registry.json`:
 2. Apply `AGENT_ALLOWLIST` and `AGENT_DENYLIST`.
 3. Keep only detected (installed) agents.
 4. **Interchangeable group rule**: `codex` and `github-copilot` are identical runners for GPT models. If both are in the candidate set, pick one at random. Do not prefer either.
-5. If one agent remains, use it.
-6. If multiple non-interchangeable agents remain, prefer: `claude` for Claude models, random pick for GPT models.
-7. If no agent remains, fail with clear filter diagnostics before attempting fallback.
+5. If the chosen model is `claude-haiku-4-5` and both `github-copilot` and `claude` are available, choose `github-copilot` first.
+6. For any Claude-provider model available through both `github-copilot` and direct `claude`, prefer `github-copilot`; use direct `claude` only when other compatible agents/models cannot perform the task, are filtered out, or are unavailable.
+7. If one agent remains, use it.
+8. If multiple non-interchangeable agents remain, prefer registry `agent_preference_rules`; otherwise random pick for GPT models.
+9. If no agent remains, fail with clear filter diagnostics before attempting fallback.
 
 #### Step 5 — Pass to Runner
 
 Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
 
 ```bash
-run-agent.sh --agent "$AGENT" --model "$MODEL" --unattended
+"$ASSET_ROOT/run-agent.sh" --agent "$AGENT" --model "$MODEL" --unattended
 ```
 
 ### Reviewer Band Selection
@@ -356,7 +359,7 @@ Validation rules:
 
 - Forced `AGENT` not installed → fail fast.
 - Forced `MODEL` not in chosen agent's `known_models` → fail fast.
-- Forced Gemini via `AGENT`, Gemini `MODEL`, or an `AGENT_ALLOWLIST` that only leaves Gemini is an explicit user constraint and may select Gemini after validation.
+- Forced Gemini via `AGENT`, Gemini `MODEL`, or an `AGENT_ALLOWLIST` that only leaves Gemini is an explicit user constraint and may select Gemini after validation, but automatic Gemini routing is limited to `quite-easy` and `easy`.
 - `COMPLEXITY_LEVEL` must be one of the documented labels.
 - `COMPLEXITY_SCORE` must be integer in `9–45`.
 
@@ -375,11 +378,11 @@ Denylist wins on conflicts.
 
 If selected agent fails preflight or execution start:
 
-- Attempt next compatible non-Google agent from registry fallback order.
+- Attempt next compatible agent from registry fallback order.
 - Stop after `MAX_AGENT_FALLBACKS` attempts.
-- Do not spend `MAX_AGENT_FALLBACKS` on Google/Gemini last-resort attempts.
-- Only after all eligible non-Google candidates are unavailable or fail preflight/execution start, evaluate Google/Gemini as a separate last-resort phase.
-- Emit final bounded-fallback diagnostics with the normal attempted chain and any separate last-resort Google/Gemini attempt.
+- Do not add a special Google/Gemini last-resort phase.
+- For `medium` and harder tasks, skip Gemini during fallback unless explicitly forced.
+- Keep direct Claude as the final fallback after Copilot/Codex-compatible options; use it only when other models cannot perform the task or are unavailable.
 
 ## Coordinator Rules File
 
@@ -624,6 +627,8 @@ Human-readable final summary must explicitly label these five sections as `Impl 
 ## Appendix C: Review Orchestration Contract
 
 ## Canonical Coordinator Contract (Required)
+
+You are the coordinator.
 
 ### Issues
 
@@ -957,6 +962,20 @@ Emit parseable one-line status messages for multi-agent runs:
 - combined run token totals: `STATUS|type=summary|scope=run|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
 
 Keep `progress` values under 8 words and `next` values under 5 words.
+
+### Live Child-Agent Visibility
+
+The coordinator must surface child-agent progress while agents are running.
+
+- Require implementation and modification agents to emit child heartbeat lines from `assets/prompt.md`:
+  `STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>`
+- Capture child stdout and stderr while the runner executes. When a child heartbeat line appears, immediately relay it as a coordinator heartbeat with batch/task/agent context:
+  `STATUS|type=heartbeat|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=<phase>|progress=<short-text>|elapsed=<seconds>`
+- Also print one concise human-readable line next to the parseable heartbeat:
+  `Agent #<n>: <phase> - <short-text>`
+- Do not relay arbitrary raw child output as progress. Summarize only heartbeat lines and final reports; preserve raw output in the captured run log for debugging.
+- If no child heartbeat appears for 90 seconds, emit a stall-style visibility line using the last known phase:
+  `STATUS|type=heartbeat|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=<last-known-or-unknown>|progress=waiting for child update|elapsed=<seconds>`
 
 ### Quality and Closure Loop
 

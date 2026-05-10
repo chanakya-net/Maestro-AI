@@ -33,6 +33,16 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 4. Prefer the smallest compatible extension if a gap is found.
 5. Invoke `tdd-implementation` and `save-tokens` and follow it as the source of truth for test-first workflow and saving tokens.
 
+## Progress Heartbeats
+
+While working, emit short parseable progress lines so the coordinator can show what you are doing:
+
+`STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>`
+
+Emit a heartbeat when you enter each phase and at least once every 60 seconds during long-running work. Keep `progress` under 8 words, for example `reading nearby tests`, `patching runner docs`, or `running focused tests`.
+
+Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
+
 ## Verification
 
 Run tests before declaring work complete. All tests must pass. Do not mark work done if any test is failing.
