@@ -23,6 +23,9 @@ fi
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
 REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
+if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
+  (cd "${REPO_ROOT}" && codegraph unlock 2>/dev/null) || true
+fi
 AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${SCRIPT_DIR}/agent-registry.json}"
 
 AGENT="${AGENT:-}"
@@ -525,6 +528,10 @@ set +e
 "${cmd[@]}"
 command_status=$?
 set -e
+
+if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
+  (cd "${REPO_ROOT}" && codegraph mark-dirty 2>/dev/null) || true
+fi
 
 if [[ "${command_status}" == "0" ]]; then
   emit_telemetry "success"

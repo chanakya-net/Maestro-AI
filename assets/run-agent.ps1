@@ -29,6 +29,10 @@ Remove-Variable _bootstrapPath
 
 $SCRIPT_DIR        = $PSScriptRoot
 $REPO_ROOT         = if ($env:REPO_ROOT) { $env:REPO_ROOT } else { $PWD.Path }
+if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph -ErrorAction SilentlyContinue)) {
+    Push-Location $REPO_ROOT
+    try { & codegraph unlock 2>$null } catch {} finally { Pop-Location }
+}
 $AGENT             = $env:AGENT
 $MODEL             = $env:MODEL
 $CONTEXT_FILE      = $env:CONTEXT_PAYLOAD_FILE
@@ -346,6 +350,10 @@ try {
 
     & $invokeCmd @cmdArgs
     $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+    if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph -ErrorAction SilentlyContinue)) {
+        Push-Location $REPO_ROOT
+        try { & codegraph mark-dirty 2>$null } catch {} finally { Pop-Location }
+    }
     if ($commandExitCode -eq 0) {
         Write-Telemetry "success"
     } else {
