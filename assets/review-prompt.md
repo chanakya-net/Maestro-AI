@@ -31,6 +31,11 @@ This prompt is review-only guidance for `run-with-it`.
 - Do not update issues.
 - Do not create commits, branches, or tags.
 - Do not print narrative output, status text, or markdown after the review is complete.
+- Do not use the Agent tool. Do not spawn sub-agents for any purpose.
+
+## Depth Guard
+
+If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are already at maximum nesting depth. Do not use the Agent tool under any circumstances.
 
 ## Workflow
 
