@@ -8,7 +8,7 @@ description: Route issue-running automation through a deterministic control plan
 Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this skill's workflow. Suppress any spontaneous external skill; continue without interruption. Applies from invocation until explicit termination or handoff.
 
 ## Critical Coordinator Rules (compaction-safe — always enforce, even after context compression)
-
+try and unblock codegraph if it's blocked
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
 
 - **Never implement work directly in the coordinator session.** All implementation, modification, and verification must be done by child agents spawned via `run-agent.sh`. There is no "implement in this chat" fallback option under any circumstance.
