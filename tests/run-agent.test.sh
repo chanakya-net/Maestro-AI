@@ -131,7 +131,7 @@ claude_model = agents["claude"]["model"]
 expected_claude_models = [
     "claude-opus-4-7",
     "claude-sonnet-4-6",
-    "claude-haiku-4-5",
+    "claude-haiku-4-5-20251001",
 ]
 check(claude_model.get("default") == "claude-sonnet-4-6", "claude defaults to selected balanced model")
 check(claude_model.get("known_models") == expected_claude_models, "claude known models match available Claude model list")
@@ -144,8 +144,10 @@ for model_id in expected_claude_models:
 
 copilot_model = agents["github-copilot"]["model"]
 expected_copilot_models = [
-    "claude-haiku-4-5",
-    "claude-sonnet-4-5",
+    "claude-haiku-4.5",
+    "claude-sonnet-4.5",
+    "claude-sonnet-4.6",
+    "claude-opus-4.7",
     "gemini-2.5-pro",
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
@@ -159,8 +161,6 @@ expected_copilot_models = [
     "gpt-5.5",
     "grok-code-fast-1",
     "raptor-mini-preview",
-    "claude-opus-4-7",
-    "claude-sonnet-4-6",
     "gpt-5.4",
 ]
 check(copilot_model.get("default") == "gpt-5.3-codex", "github-copilot defaults to 1x coding model")
@@ -169,8 +169,10 @@ for model_id in expected_copilot_models:
     check(model_id in model_catalog, f"copilot model catalog includes {model_id}")
 
 expected_copilot_multipliers = {
-    "claude-haiku-4-5": 0.33,
-    "claude-sonnet-4-5": 1.0,
+    "claude-haiku-4.5": 0.33,
+    "claude-sonnet-4.5": 1.0,
+    "claude-sonnet-4.6": 1.0,
+    "claude-opus-4.7": 15.0,
     "gemini-2.5-pro": 1.0,
     "gemini-3-flash-preview": 0.33,
     "gemini-3.1-pro-preview": 1.0,
@@ -184,8 +186,6 @@ expected_copilot_multipliers = {
     "gpt-5.5": 7.5,
     "grok-code-fast-1": 0.25,
     "raptor-mini-preview": 0.0,
-    "claude-opus-4-7": 15.0,
-    "claude-sonnet-4-6": 1.0,
     "gpt-5.4": 1.0,
 }
 for model_id, expected_multiplier in expected_copilot_multipliers.items():
@@ -207,7 +207,7 @@ check(anthropic_rules.get("preferred_agents") == ["github-copilot"], "Copilot is
 check(anthropic_rules.get("fallback_agents") == ["claude"], "direct Claude is the fallback agent for Claude-provider models")
 
 agent_preference_rules = model_routing.get("agent_preference_rules", [])
-haiku_rules = [rule for rule in agent_preference_rules if rule.get("models") == ["claude-haiku-4-5"]]
+haiku_rules = [rule for rule in agent_preference_rules if any("haiku" in m for m in rule.get("models", []))]
 check(haiku_rules, "Haiku has explicit agent preference rule")
 check(haiku_rules[0].get("preferred_agents") == ["github-copilot", "claude"], "Haiku prefers Copilot before Claude")
 anthropic_agent_rules = [rule for rule in agent_preference_rules if rule.get("provider") == "anthropic"]

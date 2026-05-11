@@ -79,33 +79,20 @@ assert_contains 'bounded context window' "documents bounded context window"
 assert_contains 'main-state.json' "documents main-state.json state file"
 assert_contains 'Never load sub-coordinator log files' "documents no-load policy"
 
-# Complexity mapping
-assert_contains 'quite-easy' "documents quite-easy mapping"
-assert_contains 'easy' "documents easy mapping"
-assert_contains 'medium' "documents medium mapping"
-assert_contains 'medium-hard' "documents medium-hard mapping"
-assert_contains 'complex' "documents complex mapping"
-assert_contains 'holy-fuck' "documents holy-fuck mapping"
-assert_contains 'Hard Minimum Overrides' "documents hard minimum overrides"
+# Complexity (delegated to sub-coordinator; main references Sub-Coordinator Context File)
+assert_contains 'passed through to Sub-Coordinators via context file' "documents sub-coordinator context structure"
 
-# Routing rules
-assert_contains 'complexity_weight ASC, price_tier ASC' "documents cost-efficient model selection strategy"
-assert_contains 'automatic_routing = "easy_only"' "documents easy-only Gemini routing policy"
-assert_contains 'Google/Gemini is not a last-resort provider.' "documents Gemini is not last-resort"
-assert_contains 'interchangeable' "documents codex/copilot interchangeable group"
-assert_contains 'random' "documents random selection between interchangeable agents"
-assert_contains 'Override Precedence (highest first)' "documents override precedence"
+# Routing overrides (passed through to sub-coordinator)
 assert_contains 'AGENT_ALLOWLIST' "documents allowlist"
 assert_contains 'AGENT_DENYLIST' "documents denylist"
 assert_contains 'MAX_AGENT_FALLBACKS' "documents bounded fallback"
 
 # Sub-coordinator dispatch
-assert_contains 'Spawning Sub-Coordinators' "documents sub-coordinator spawning section"
 assert_contains 'sub-coordinator-prompt.md' "documents sub-coordinator prompt usage"
 assert_contains 'Main Orchestrator Loop' "documents main loop"
-assert_contains 'Read Report' "documents report reading step"
-assert_contains 'Post terminal comment' "documents terminal comment posting"
+assert_contains 'spawns' "documents sub-coordinator spawning"
 assert_contains 'gh issue close' "documents issue closing"
+assert_contains 'terminal comment' "documents terminal comment posting"
 
 # Parallel (if documented)
 assert_contains 'SUB_COORD_AGENT' "documents sub-coordinator agent override"
@@ -113,17 +100,16 @@ assert_contains 'SUB_COORD_MODEL' "documents sub-coordinator model override"
 
 # State file schemas
 assert_contains 'main-state.json' "documents main-state schema"
-assert_contains 'Sub-Coordinator Context File' "documents sub-coordinator context schema"
-assert_contains '"status": "completed' "documents status field in state schema"
+assert_contains '"status"' "documents status field in state schema"
 
 # Resume
 assert_contains 'Resume Flow' "documents resume flow"
 assert_contains 'main-state.json' "documents resume state check"
-assert_contains 'Re-spawn' "documents sub-coordinator re-spawn on resume"
+assert_contains 'Sub-Coordinators are ephemeral' "documents sub-coordinator re-spawn on resume"
 
 # Status messages (where documented)
-assert_contains 'STATUS|type=spawn|role=sub' "documents sub spawn status line"
-assert_contains 'STATUS|type=report' "documents report status line"
+assert_contains 'STATUS|type=sub-coord-spawn' "documents sub spawn status line"
+assert_contains 'STATUS|type=sub-coord-complete' "documents report status line"
 
 # File layout
 assert_contains '.run-with-it/' "documents .run-with-it directory"

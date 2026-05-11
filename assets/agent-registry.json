@@ -22,6 +22,17 @@
       "strengths": ["speed", "high-throughput", "cost-sensitive"],
       "_note": "Copilot subscription multiplier: 0.33x. price_* fields are routing units, not API dollars."
     },
+    "claude-haiku-4-5-20251001": {
+      "provider": "anthropic",
+      "ability": "fast",
+      "price_tier": "low",
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
+      "complexity_weight": 2,
+      "context_window": 200000,
+      "strengths": ["speed", "high-throughput", "cost-sensitive"],
+      "_note": "Claude CLI versioned model ID for Haiku 4.5 (date suffix required by Anthropic API). Same model as claude-haiku-4-5."
+    },
     "claude-haiku-4.5": {
       "provider": "anthropic",
       "ability": "fast",
