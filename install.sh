@@ -130,7 +130,7 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-agent.sh" "run-agent.ps1" "agent-registry.json")
+  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-agent.sh" "run-agent.ps1" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then
