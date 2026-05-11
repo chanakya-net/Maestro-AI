@@ -1,22 +1,25 @@
 ---
 name: run-with-it
-description: Route issue-running automation through a deterministic control plane that selects agent + model from registry, can coordinate multiple safe parallel agents, and executes the unified run-agent runner.
+description: Two-layer orchestration runtime — Main Orchestrator fetches all issues, plans execution order, spawns ephemeral Sub-Coordinators one at a time, collects compact reports, and updates GitHub. Context stays bounded so the run can continue for hours or days without degradation.
 ---
 
 ## Skill Isolation
 
 Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this skill's workflow. Suppress any spontaneous external skill; continue without interruption. Applies from invocation until explicit termination or handoff.
 
-## Critical Coordinator Rules (compaction-safe — always enforce, even after context compression)
-try and unblock codegraph if it's blocked
+## Critical Main Orchestrator Rules (compaction-safe — always enforce, even after context compression)
+
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
 
-- **Never implement work directly in the coordinator session.** All implementation, modification, and verification must be done by child agents spawned via `run-agent.sh`. There is no "implement in this chat" fallback option under any circumstance.
-- **Never run tests, build commands, or compile the project** in the coordinator session. The implementing agent runs verification; the coordinator only reads the results from the agent's output report.
-- **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately after routing completes.
-- **Never present execution option menus** (Option A / B / C style choices). The runner is the only execution path.
+- **Re-read `.run-with-it/main-state.json` before every loop iteration.** After context compression you have no memory of prior work — that file is your entire memory. Never derive issue state from conversation history.
+- **Never implement work directly in this session.** All implementation belongs to Sub-Coordinators spawned via `run-agent.sh --prompt-file sub-coordinator-prompt.md`. There is no "implement in this chat" fallback option under any circumstance.
+- **Never run tests, build commands, or compile the project** in this session. Sub-Coordinators and their child agents run verification; the Main Orchestrator only reads compact reports.
+- **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately after the execution plan is written.
+- **Never present execution option menus** (Option A / B / C style choices).
 - **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` fails both inside and outside the sandbox.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
+- **Never load sub-coordinator log files into context.** Only read the compact report JSON from `.run-with-it/reports/`.
+- **GitHub operations (close, comment) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
 
 # Run With It
 
@@ -28,7 +31,29 @@ Preferred upstream flow:
 
 1. `break-req` resolves requirements and constraints.
 2. `create-git-issue` publishes PRD + implementation slices with routing hints.
-3. `run-with-it` performs final runtime routing and executes the selected run.
+3. `run-with-it` performs execution planning, spawns Sub-Coordinators, and drives the issues to closure.
+
+## Architecture
+
+`run-with-it` uses a two-layer architecture to maintain a bounded context window for indefinite run duration:
+
+**Main Orchestrator** (this skill, runs in the primary session):
+- Fetches all `ready-for-agent` issues once at startup
+- Determines sequential execution order based on dependencies
+- Spawns one **Sub-Coordinator** per issue via `run-agent.sh`
+- Waits for each Sub-Coordinator to complete and write its compact report
+- Reads ONLY the compact report JSON — never the implementation diffs or log files
+- Updates `main-state.json` after each issue (its full external memory)
+- Posts terminal GitHub comments and closes/updates issues
+- Re-reads `main-state.json` at the top of every loop iteration to survive context compression
+
+**Sub-Coordinator** (spawned via `sub-coordinator-prompt.md`, runs in a child agent session):
+- Handles exactly ONE issue end-to-end
+- Runs complexity analysis, deterministic routing, implementation, review, and modification loops
+- Writes a compact report JSON and a full log file when done
+- Never touches GitHub; never updates `main-state.json`
+
+This isolation means each issue's implementation complexity is contained to its own isolated Sub-Coordinator session. The Main Orchestrator's context grows by only one compact JSON record per completed issue, allowing runs of hours or days without context degradation.
 
 ## Hard Boundaries
 
@@ -71,23 +96,24 @@ Collect these values before execution:
   - `ISSUE_STATE` (default `open`)
   - `COMMITS_LIMIT` (default `5`)
   - `MAX_ITERATIONS` (default `20`)
-- Optional routing overrides:
+- Optional sub-coordinator agent selection:
+  - `SUB_COORD_AGENT` (default `claude`) — fixed agent slug used to spawn every Sub-Coordinator
+  - `SUB_COORD_MODEL` (default: highest available model in registry for `complex` band) — fixed model id used for every Sub-Coordinator; the Sub-Coordinator then independently runs its own routing for implementation/review/modify child agents
+  - `SUB_COORD_TIMEOUT_SECONDS` (default `3600`) — seconds before the Main Orchestrator emits a stall alert for a non-completing Sub-Coordinator
+- Optional routing overrides (passed through to Sub-Coordinators via context file):
   - `AGENT`
   - `MODEL`
   - `COMPLEXITY_LEVEL`
   - `COMPLEXITY_SCORE`
-- Optional routing filters:
+- Optional routing filters (passed through to Sub-Coordinators):
   - `AGENT_ALLOWLIST` (comma-separated)
   - `AGENT_DENYLIST` (comma-separated)
-- Optional fallback bound:
+- Optional fallback bound (passed through):
   - `MAX_AGENT_FALLBACKS` (default `2`)
-- Optional multi-agent bound:
-  - `MAX_PARALLEL_AGENTS` (default `3`)
-  - `ALLOW_PARALLEL_AGENTS` (default `true`)
-- Optional review controls:
-  - `DELEGATED_REVIEW` (default `true`): when `false`, bypasses the entire delegated-review path and reverts to today's inline-review behavior; no `review-spawn`, `review-result`, `modify-spawn`, or `review-degraded` STATUS lines are emitted and no per-role ledger rows are written
+- Optional review controls (passed through):
+  - `DELEGATED_REVIEW` (default `true`)
 - Optional depth guard:
-  - `MAX_AGENT_DEPTH` (default `1`): maximum agent nesting depth. Always inject `MAX_AGENT_DEPTH=1` into the context payload written for every child agent spawned via `run-agent.sh`. This tells the child it is already at max depth and must not spawn further sub-agents.
+  - `MAX_AGENT_DEPTH` (default `1`): always inject `MAX_AGENT_DEPTH=1` into every Sub-Coordinator context file so the Sub-Coordinator's children cannot spawn further sub-agents.
 
 ## Asset Discovery (Required)
 
@@ -106,6 +132,9 @@ Required files:
 - `review-prompt.md`
 - `modifier-prompt.md`
 - `complexity-prompt.md`
+- `coordinator-rules.md`
+- `sub-coordinator-prompt.md`
+- `main-orchestrator-rules.md`
 
 Selection rules:
 
@@ -122,38 +151,62 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
-## Multi-Agent Capability
+## Main Orchestrator Rules File
 
-`run-with-it` may run a single issue or coordinate a batch of multiple agents.
+At the very start of execution (before preflight), copy `$ASSET_ROOT/main-orchestrator-rules.md` to `.run-with-it/main-orchestrator-rules.md`:
 
-Use multiple agents when all are true:
+```bash
+mkdir -p .run-with-it
+cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules.md
+```
 
-- two or more `ready-for-agent` issues are unblocked
-- ownership scopes do not overlap, or one agent has explicit ownership of shared files
-- verification can run independently before final integration
-- `ALLOW_PARALLEL_AGENTS` is not `false`
-- the batch size is within `MAX_PARALLEL_AGENTS`
+**Re-read `.run-with-it/main-orchestrator-rules.md` at the top of EVERY Main Loop iteration** (Step A), after any context compression, and before any GitHub operation.
 
-Use sequential execution when any are true:
+`.run-with-it/main-orchestrator-rules.md` (the working copy) is deleted as part of normal cleanup.
 
-- issues depend on one another
-- issues touch the same files without a clear owner
-- migrations, fixtures, generated assets, or shared contracts are involved
-- requirements are ambiguous enough that one result may change the next issue
+## Preflight Checks
 
-For multi-agent batches, keep one coordinator in the main session. The coordinator selects issues, assigns ownership, reviews each result, integrates accepted changes, commits per issue unless told otherwise, and updates or closes issues. The coordinator never runs tests, compiles the project, or executes build commands — those are always the responsibility of the agent that wrote the code.
+Before execution verify:
 
-## Issue Intake
+1. Resolved asset root exists
+2. `prompt.md` exists
+3. `review-prompt.md` exists
+4. `modifier-prompt.md` exists
+5. `complexity-prompt.md` exists
+6. `coordinator-rules.md` exists
+7. `sub-coordinator-prompt.md` exists
+8. `main-orchestrator-rules.md` exists
+9. Runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
+10. `agent-registry.json` exists
+11. `gh` auth when GitHub intake is required
+12. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears
+13. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`
+14. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
-If issue data is missing in context, fetch with `gh`.
+   - If it exists, pause and present exactly this prompt to the user:
+
+     ```
+     Existing run state found at .run-with-it/main-state.json.
+     Type "resume" to continue the previous run, or "discard" to delete it and start fresh.
+     ```
+
+   - **`resume`**: do not delete the file. Proceed to the Resume Flow section.
+   - **`discard`**: apply the Cleanup `Discard` policy, then continue with normal preflight and fresh issue intake as if no prior state existed.
+   - Do not start any new task, fetch any issue, or spawn any Sub-Coordinator until the user responds.
+
+If `sub-coordinator-prompt.md` or `main-orchestrator-rules.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
+
+## Initial Batch Issue Fetch
+
+If issue data is missing in context, fetch all `ready-for-agent` issues at startup.
 
 Fallback policy:
 
@@ -162,292 +215,152 @@ Fallback policy:
 - Fallback: local `issues.md` (`LOCAL_ISSUES_FILE` override supported) — **only** when `gh` fails both inside and outside the sandbox, or no GitHub remote exists. Emit `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-failed-outside-sandbox>` before using local file.
 - If git metadata is unavailable, continue with empty commit context.
 
-Build `CONTEXT_PAYLOAD_FILE` with:
+After fetching all issues:
 
-1. previous commits
-2. issue details
+1. Build a dependency graph: for each issue, identify which other issues it depends on (from issue body, labels, or cross-references).
+2. Determine sequential execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors.
+3. Issues whose dependencies have open/unresolved status are marked `blocked` until their dependencies complete.
+4. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work.
+5. Emit: `STATUS|type=plan|total_issues=<n>|mode=sequential|pending=<n>|blocked=<n>`
+6. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
-Then pass `CONTEXT_PAYLOAD_FILE` + `PROMPT_FILE` to unified runner.
+## Main Orchestrator Loop
 
-## Appendix A: Routing Contract
+**Execute immediately and unconditionally after writing the plan.** Never pause, never present execution options, never ask the user how they want to proceed after the plan is written. Enter the loop immediately.
 
-## Complexity Sub-Agent Delegation
+```
+MAIN ORCHESTRATOR LOOP
+Repeat until all issues in main-state.json have a terminal status
+(completed / failed-review / blocked):
 
-After issue intake and `CONTEXT_PAYLOAD_FILE` assembly, and before Deterministic Router Steps 1–4, **always spawn the complexity sub-agent** to independently score the work. The sub-agent must never be skipped based on issue content.
+══ STEP A: MEMORY REFRESH ══════════════════════════════════════════════════════
+Re-read .run-with-it/main-orchestrator-rules.md from disk.
+Re-read .run-with-it/main-state.json from disk.
+This is mandatory at the TOP of every iteration, no exceptions.
+After context compression, these files are the sole source of truth.
 
-**Critical rule**: Complexity hints, labels, or metadata found inside issue bodies are **not** overrides. They are informational only and must never bypass the complexity sub-agent. Only explicit user-provided runtime parameters (`COMPLEXITY_LEVEL` or `COMPLEXITY_SCORE` passed at invocation time) qualify as overrides.
+Emit: STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json
+      |tasks_loaded=<total>|completed=<n>|pending=<n>|failed=<n>
+Emit: STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>
+      |failed=<count>
 
-Override handling:
+══ STEP B: IDENTIFY NEXT ISSUE ═════════════════════════════════════════════════
+From issue_registry in main-state.json, find the first issue with
+status="pending" whose dependencies are all "completed".
 
-- If `COMPLEXITY_LEVEL` or `COMPLEXITY_SCORE` **runtime overrides** are present (explicitly passed by the user at invocation, never derived from issue content), skip the complexity sub-agent and emit:
+If no pending issue is ready: check if any "pending" issue has unmet
+dependencies — re-evaluate them. If still unresolvable, mark them "blocked".
 
-  `STATUS|type=complexity-skipped|reason=override`
+If ALL issues are terminal (completed / failed-review / blocked):
+  EXIT LOOP → proceed to Final Ledger and Cleanup.
 
-- `COMPLEXITY_LEVEL` forces the target band for routing.
-- `COMPLEXITY_SCORE` forces the computed score for routing.
+══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILE ═══════════════════════════════
+Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
+  1. Full issue body: re-fetch using:
+       gh issue view <n> --json number,title,body,labels,url,comments
+     (re-fetch even if pre-fetched at startup — ensures freshest data)
+     If gh fails: retry outside sandbox. If both fail and local file exists,
+     use cached issue body with a note.
+  2. Last COMMITS_LIMIT (default 5) recent commits:
+       git log --oneline -<COMMITS_LIMIT>
+  3. If .codegraph/ exists: CodeGraph context for the issue
+     Otherwise: basic grep/find to identify relevant files
+  4. Environment configuration block (append at end of context file):
+     SUB_COORD_ISSUE_NUMBER=<n>
+     SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/reports/sub-<n>-report.json>
+     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/logs/sub-<n>-log.txt>
+     MAX_AGENT_DEPTH=1
+     DELEGATED_REVIEW=<value>
+     MAX_ITERATIONS=<value>
+     COMMITS_LIMIT=<value>
+     AGENT=<value-if-set>
+     MODEL=<value-if-set>
+     COMPLEXITY_LEVEL=<value-if-set>
+     COMPLEXITY_SCORE=<value-if-set>
+     AGENT_ALLOWLIST=<value-if-set>
+     AGENT_DENYLIST=<value-if-set>
+     MAX_AGENT_FALLBACKS=<value>
 
-Sub-agent selection:
+Create directories before spawning:
+  mkdir -p .run-with-it/reports .run-with-it/logs
 
-1. Reuse the existing model-first selection algorithm.
-2. Restrict the candidate pool to the easy-medium band only: `complexity_weight` `1–6`.
-3. Randomly pick from the filtered pool.
-4. Apply provider routing rules: Gemini may enter only when the target band is `quite-easy` or `easy`; otherwise exclude it.
-5. Pass both `AGENT` and `MODEL` explicitly to the sub-agent runner.
+Mark issue status="in_progress" in main-state.json. Write to disk BEFORE spawning.
+Emit: STATUS|type=sub-coord-spawn|issue=<n>|agent=<SUB_COORD_AGENT>
+      |model=<SUB_COORD_MODEL>|report_file=<path>|log_file=<path>
 
-Sub-agent input context, in order:
+Print to user:
+  "Starting sub-coordinator for issue #<n>: <title>"
+  "Log: .run-with-it/logs/sub-<n>-log.txt"
+  "To watch live progress in a separate terminal:"
+  "  tail -f .run-with-it/logs/sub-<n>-log.txt"
 
-1. issue body, including title, description, labels, and linked PRs
-2. last `COMMITS_LIMIT` commits, default `5`
-3. relevant files self-identified by CodeGraph when `.codegraph/` exists; otherwise `grep`/`find`
-
-Sub-agent prompt:
-
-- `$ASSET_ROOT/complexity-prompt.md`
-
-Sub-agent invocation — use the platform-appropriate form exactly as shown. On Windows the Bash tool shell is pwsh; bash-style `VAR=value` prefix syntax is invalid there.
-
+══ STEP D: SPAWN SUB-COORDINATOR (BLOCKING) ════════════════════════════════════
 Bash (macOS / Linux / Git Bash):
+  GUI_MODE="${GUI_MODE:-1}" \
+  AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+  "$ASSET_ROOT/run-agent.sh" \
+    --agent "$SUB_COORD_AGENT" \
+    --model "$SUB_COORD_MODEL" \
+    --context-file "$SUB_COORD_CONTEXT_FILE" \
+    --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
+    --unattended
 
-```bash
-GUI_MODE="${GUI_MODE:-1}" \
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-"$ASSET_ROOT/run-agent.sh" \
-  --agent "$AGENT" \
-  --model "$MODEL" \
-  --context-file "$CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
-  --unattended
+PowerShell (Windows — never use VAR=value prefix):
+  $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
+  $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
+  & "$ASSET_ROOT\run-agent.ps1" --agent $SUB_COORD_AGENT --model $SUB_COORD_MODEL
+    --context-file $SUB_COORD_CONTEXT_FILE
+    --prompt-file "$ASSET_ROOT\sub-coordinator-prompt.md" --unattended
+
+Wait for run-agent.sh to complete (blocking call).
+
+If run-agent.sh fails due to sandbox restrictions, retry outside the sandbox:
+  dangerouslyDisableSandbox: true
+  Emit: STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<err>
+  Only count as failure if it also fails outside the sandbox.
+
+If run-agent.sh runs longer than SUB_COORD_TIMEOUT_SECONDS without producing the
+report file, emit:
+  STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user
+  Print: "Sub-coordinator for issue #<n> has not completed after <t>s."
+  Print: "Check log: .run-with-it/logs/sub-<n>-log.txt"
+  Wait for user: type 'continue' to keep waiting or 'skip' to mark as blocked.
+
+══ STEP E: COLLECT REPORT ══════════════════════════════════════════════════════
+Check: does .run-with-it/reports/sub-<n>-report.json exist with valid JSON?
+  YES: Read the compact report JSON into context (this is the ONLY file you read).
+  NO:  Mark issue status="blocked" with reason="report-missing".
+       Update main-state.json. Proceed to Step F with blocked status.
+
+Print to user (do NOT read into AI context):
+  "=== Sub-coordinator output for issue #<n> ==="
+  "Full log: .run-with-it/logs/sub-<n>-log.txt"
+  "Report:   .run-with-it/reports/sub-<n>-report.json"
+  "(Log is not loaded into context — use tail -f to inspect)"
+
+Parse from report JSON: outcome, summary, files_modified, verification,
+review_summary, token_usage, commit_sha, blocking_reasons.
+
+Delete $SUB_COORD_CONTEXT_FILE immediately after reading the report.
+
+══ STEP F: UPDATE STATE + GITHUB ════════════════════════════════════════════════
+1. Update issue_registry[<n>].status = report.outcome in main-state.json.
+2. Append to completed_summaries:
+     { issue, outcome, files_modified_count, lines_added, lines_deleted,
+       review_cycles, commit_sha }
+3. Append ledger rows derived from report.token_usage to ledger_rows.
+4. Write main-state.json to disk ← WRITE BEFORE any GitHub call.
+5. Post terminal comment to GitHub issue using Appendix E template,
+   populated from report JSON fields.
+6. If outcome="completed": gh issue close <n> --comment "<brief closing note>"
+   If outcome="failed-review" or "blocked": leave open (terminal comment already posted)
+7. Emit: STATUS|type=sub-coord-complete|issue=<n>|outcome=<outcome>
+         |report_file=<path>|commit_sha=<sha-or-none>
+
+══ GOTO STEP A ═════════════════════════════════════════════════════════════════
 ```
 
-PowerShell (Windows — Bash tool shell is pwsh; never use `VAR=value` prefix):
-
-```powershell
-$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
-& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\complexity-prompt.md" --unattended
-```
-
-Sub-agent output handling:
-
-- Parse the `COMPLEXITY|` line for the run log.
-- Parse the JSON blob for per-dimension scores and route-report population.
-- Delete the sub-agent JSON output immediately after the coordinator reads it, regardless of run outcome.
-
-Fallback chain:
-
-1. Attempt the selected easy-medium model.
-2. On failure, retry with a different model from the same band, excluding the first attempt model.
-3. On the second failure, default to `medium-hard` (`score=25`), emit:
-
-   `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
-
-   and continue.
-
-If the fallback is used, set `complexity_source=fallback`. If the override path is used, set `complexity_source=override`. Otherwise set `complexity_source=sub-agent`.
-
-## Deterministic Router
-
-The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above.
-
-### Model-First Selection (model chosen first; agent defaults ignored)
-
-#### Step 1 — Map Score to Target Weight Range
-
-Look up the score in `model_routing.score_to_weight` from `agent-registry.json`:
-
-| Score | Label | Weight range |
-|-------|-------|-------------|
-| 8–12  | `quite-easy`  | 1–3 |
-| 13–17 | `easy`        | 2–4 |
-| 18–22 | `medium`      | 4–6 |
-| 23–27 | `medium-hard` | 6–7 |
-| 28–32 | `complex`     | 7–9 |
-| 33–45 | `holy-fuck`   | 9–10 |
-
-Canonical score labels: `8-12` => `quite-easy`, `13-17` => `easy`, `18-22` => `medium`, `23-27` => `medium-hard`, `28-32` => `complex`, `33-45` => `holy-fuck`.
-
-#### Step 2 — Apply Hard Minimum Overrides
-
-Before proceeding, raise `weight_min` if any condition is true:
-
-- dependency state unknown or conflicting → `weight_min = 9`
-- heavy shared-file ownership conflict risk → `weight_min = 9`
-- broad cross-module integration change → `weight_min = 7`
-- explicit user request for deep/complex orchestration → `weight_min = 9`
-- ambiguous requirements with high risk of misinterpretation → `weight_min = 9`
-- large blast radius with limited rollback options → `weight_min = 9`
-
-Use the higher of the table `weight_min` and any override.
-
-#### Step 3 — Build Pool and Randomly Select Model
-
-From `model_catalog` in `agent-registry.json`:
-
-1. Collect all models where `complexity_weight` is within `[weight_min, weight_max]`.
-2. Keep only models available on at least one detected, non-filtered agent (check each agent's `known_models` list).
-3. Apply `model_routing.provider_routing_rules`:
-   - remove any model whose `provider` exceeds its `max_band` for the current complexity level
-   - include Google/Gemini only when `automatic_routing = "easy_only"` and the current complexity level is `quite-easy` or `easy`
-   - treat direct Claude (`agent=claude`) as fallback-only when `automatic_routing = "fallback_only_for_direct_claude"`
-4. Google/Gemini is not a last-resort provider. It may enter the normal candidate pool only for `quite-easy` and `easy` tasks; exclude it for `medium` and harder tasks unless explicitly forced.
-5. Sort remaining candidates by `(complexity_weight ASC, price_tier ASC, price_output_per_1m ASC)`, prioritizing the lowest `complexity_weight` before cost tie-breakers.
-6. Take the top `selection_pool_size` (default 4 from `model_routing`) — this is the **base pool**.
-7. Append any models listed in `model_routing.band_required_models[current_level]` that are not already in the base pool. These are always available regardless of price ranking.
-8. **Randomly pick one model** from the final pool. This distributes load across eligible agents and providers on every run.
-9. If fewer than 2 candidates exist after filtering, expand `weight_max` by 1 and retry (up to 3 expansions) until pool reaches at least 2, then continue to bounded fallback diagnostics without adding a special Gemini last-resort phase.
-
-#### Step 4 — Select Agent
-
-1. Find all agents that list the chosen model in their `known_models`.
-2. Apply `AGENT_ALLOWLIST` and `AGENT_DENYLIST`.
-3. Keep only detected (installed) agents.
-4. **Interchangeable group rule**: `codex` and `github-copilot` are identical runners for GPT models. If both are in the candidate set, pick one at random. Do not prefer either.
-5. If the chosen model is `claude-haiku-4-5` and both `github-copilot` and `claude` are available, choose `github-copilot` first.
-6. For any Claude-provider model available through both `github-copilot` and direct `claude`, prefer `github-copilot`; use direct `claude` only when other compatible agents/models cannot perform the task, are filtered out, or are unavailable.
-7. If one agent remains, use it.
-8. If multiple non-interchangeable agents remain, prefer registry `agent_preference_rules`; otherwise random pick for GPT models.
-9. If no agent remains, fail with clear filter diagnostics before attempting fallback.
-
-#### Step 5 — Pass to Runner
-
-Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
-
-```bash
-"$ASSET_ROOT/run-agent.sh" --agent "$AGENT" --model "$MODEL" --unattended
-```
-
-### Reviewer Band Selection
-
-For each review pass, bump the current implementation band up exactly one level and then reuse the same model-first selection logic. The current implementation band is the original implementer band for cycles 1-2, and the escalated modification band for cycles 3-4 when escalation has activated.
-
-| Implementer band | Reviewer band | Rule |
-|-------------------|---------------|------|
-| `quite-easy` | `easy` | bump one band |
-| `easy` | `medium` | bump one band |
-| `medium` | `medium-hard` | bump one band |
-| `medium-hard` | `complex` | bump one band |
-| `complex` | `holy-fuck` | bump one band |
-| `holy-fuck` | `holy-fuck` | stay at top band, but select a different model |
-
-Reviewer model selection rules:
-
-1. Set `current_level` to the bumped reviewer band.
-2. Reuse the main model-first algorithm.
-3. Exclude the current implementation `model_id` from the candidate pool before selection.
-4. If the current implementation model is already at `holy-fuck`, keep `current_level=holy-fuck` and pick a different model from that band instead of upgrading beyond the top band.
-5. Pass the chosen reviewer through the same unified runner contract as any other child agent.
-
-### Degraded Fallback
-
-If no installed agent supports any model in the bumped reviewer band after applying `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, and bounded fallback:
-
-1. Fall back to the **current implementation band** (`current_level` = original implementer band for cycles 1-2, escalated modification band for cycles 3-4).
-2. Exclude the current implementation `model_id` from the candidate pool.
-3. Select a different model from the current implementation band using the normal model-first algorithm.
-4. Emit `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` before spawning the reviewer.
-5. Continue with the normal per-cycle review steps. The run still completes.
-
-One `review-degraded` STATUS line is emitted per task that triggers this path, not per cycle.
-
-### Override Precedence (highest first)
-
-1. `AGENT` + `MODEL` forced together (both must be valid and installed)
-2. `MODEL` forced alone → skip Steps 1–3, run Step 4 with forced model
-3. `AGENT` forced alone → skip Step 4, run Steps 1–3 restricted to that agent's `known_models`
-4. `COMPLEXITY_LEVEL` forced → use corresponding weight range from table, skip score computation
-5. `COMPLEXITY_SCORE` forced → use as computed score, run full Steps 1–4
-6. Computed score from nine dimensions → full Steps 1–4
-
-Validation rules:
-
-- Forced `AGENT` not installed → fail fast.
-- Forced `MODEL` not in chosen agent's `known_models` → fail fast.
-- Forced Gemini via `AGENT`, Gemini `MODEL`, or an `AGENT_ALLOWLIST` that only leaves Gemini is an explicit user constraint and may select Gemini after validation, but automatic Gemini routing is limited to `quite-easy` and `easy`.
-- `COMPLEXITY_LEVEL` must be one of the documented labels.
-- `COMPLEXITY_SCORE` must be integer in `9–45`.
-
-### Allowlist and Denylist
-
-Apply filters before final selection:
-
-- Start from detected installed agents.
-- If `AGENT_ALLOWLIST` is set, keep only listed agents.
-- Then remove any in `AGENT_DENYLIST`.
-- If result is empty, fail with clear filter diagnostics.
-
-Denylist wins on conflicts.
-
-### Bounded Fallback
-
-If selected agent fails preflight or execution start:
-
-- Attempt next compatible agent from registry fallback order.
-- Stop after `MAX_AGENT_FALLBACKS` attempts.
-- Do not add a special Google/Gemini last-resort phase.
-- For `medium` and harder tasks, skip Gemini during fallback unless explicitly forced.
-- Keep direct Claude as the final fallback after Copilot/Codex-compatible options; use it only when other models cannot perform the task or are unavailable.
-
-## Coordinator Rules File
-
-At the very start of execution (before preflight), copy `$ASSET_ROOT/coordinator-rules.md` to `.run-with-it/coordinator-rules.md` in the working directory:
-
-```bash
-mkdir -p .run-with-it
-cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
-```
-
-**Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
-- before issue intake
-- before routing
-- before each `run-agent.sh` invocation
-- before each review cycle step
-- before cleanup
-- at the top of the Resume Flow, before rehydrating state
-
-`.run-with-it/coordinator-rules.md` (the working copy) is deleted as part of normal cleanup alongside the rest of `.run-with-it/`.
-
-## Preflight Checks
-
-Before execution verify:
-
-1. resolved asset root exists
-2. `prompt.md` exists
-3. `review-prompt.md` exists
-4. `modifier-prompt.md` exists
-5. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
-6. `agent-registry.json` exists
-7. `complexity-prompt.md` exists
-8. `coordinator-rules.md` exists
-9. `gh` auth when GitHub intake is required
-10. unified runner supports selected agent/model
-11. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
-
-   ```
-   PREFLIGHT|review-band=<bumped-band>|status=degraded|reason=no-higher-band-agent|fallback-band=<implementer-band>
-   ```
-
-   This does not block execution; it signals that the run will use the degraded same-band different-model reviewer for all tasks in this run.
-
-12. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
-
-   - If it exists, pause and present exactly this prompt to the user:
-
-     ```
-     Existing run state found at .run-with-it/state.json.
-     Type "resume" to continue the previous run, or "discard" to delete it and start fresh.
-     ```
-
-   - **`resume`**: do not delete the file. Proceed to the Resume Flow section.
-   - **`discard`**: apply the Cleanup `Discard` policy, then continue with normal preflight and fresh issue intake as if no prior state existed.
-   - Do not start any new task, fetch any issue, or spawn any agent until the user responds.
-
-If `review-prompt.md`, `modifier-prompt.md`, or `complexity-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
-
-## Execution
-
-**Execute immediately and unconditionally via `run-agent.sh`.** After routing completes, invoke the runner. Never pause, never present execution options, never ask the user how they want to proceed, never implement work directly in the coordinator session. The runner is the only execution path. If it cannot be found or is not executable, fail fast — do not fall back to in-chat implementation.
-
-### `run-agent.sh` — Full Syntax Reference
+## `run-agent.sh` — Full Syntax Reference
 
 ```
 run-agent.sh --agent <agent> [--model <model>] --context-file <file> [--prompt-file <file>]
@@ -479,53 +392,9 @@ Additional env vars (no flag equivalents):
 | `PRINT_PROMPT` | `0` | Set to `1` to print assembled prompt without running |
 
 `GUI_MODE` behavior:
-
 - `auto` — detects `VSCODE_PID`, `TERM_PROGRAM=vscode`, `ELECTRON_RUN_AS_NODE`, `ANTIGRAVITY_APP`, `CURSOR_TRACE_ID`, `CLAUDE_CODE_ENTRYPOINT`; sets `GUI_MODE=1` if any match.
-- `1` — forces `UNATTENDED=1` and downgrades dangerous full-bypass permission flags to safer per-agent equivalents (`codex`: `--sandbox=workspace-write`; `claude`: `--permission-mode=acceptEdits`; `github-copilot`: `--allow-all-tools`; `gemini`: `--approval-mode=auto_edit`).
+- `1` — forces `UNATTENDED=1` and downgrades dangerous full-bypass permission flags to safer per-agent equivalents.
 - `0` — preserves CLI/CI behavior with no permission downgrades.
-
-### Canonical Invocation
-
-**Platform rule**: On Windows the Bash tool shell is pwsh. Bash-style `VAR=value` prefix syntax (`AGENT=claude ./run-agent.ps1`) is not valid in PowerShell and will fail with `'=' is not recognized`. Always use the PowerShell form on Windows.
-
-Bash (macOS / Linux / Git Bash):
-
-```bash
-GUI_MODE="${GUI_MODE:-1}" \
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-"$ASSET_ROOT/run-agent.sh" \
-  --agent "$AGENT" \
-  --model "$MODEL" \
-  --context-file "$CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/prompt.md" \
-  --unattended
-```
-
-PowerShell (Windows — never use `VAR=value` prefix; set `$env:` vars first):
-
-```powershell
-$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
-& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
-```
-
-Never invoke legacy per-agent runner scripts from this skill.
-
-### Sandbox Retry
-
-If `run-agent.sh` (or `run-agent.ps1`) fails due to a sandbox restriction — identified by permission errors, named-pipe failures, socket access denied, or state/app-server access errors — **retry the exact same invocation outside the sandbox** using `dangerouslyDisableSandbox: true` on the Bash tool call. Do not count a sandbox failure as an agent failure or advance the fallback budget. Only count it as a true agent failure if it also fails outside the sandbox. Emit:
-
-```
-STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<error-summary>
-```
-
-before the retry, and:
-
-```
-STATUS|type=runner-sandbox-retry-result|outcome=<success|failed>
-```
-
-after.
 
 ## Cleanup
 
@@ -535,8 +404,10 @@ Cleanup runs only after a successful completion, failed run, interrupted run, or
 
 On successful run completion:
 
-- Delete `CONTEXT_PAYLOAD_FILE`.
-- Delete `.run-with-it/state.json`, `.run-with-it/coordinator-rules.md`, and all `.run-with-it/reviews/` files; remove the directory if empty.
+- Delete all `$SUB_COORD_CONTEXT_FILE` temp files (should already be deleted after each issue, but clean up any stragglers).
+- Delete `.run-with-it/main-state.json`, `.run-with-it/main-orchestrator-rules.md`, `.run-with-it/coordinator-rules.md`.
+- Delete all files under `.run-with-it/reports/`, `.run-with-it/logs/`, `.run-with-it/reviews/`.
+- Remove `.run-with-it/` directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
 - Ensure `.gitignore` contains entries for `.run-with-it/`, `technical_requirements.md`, `prd.md`, and `issues.md` using an idempotent append.
 - If `.git/` exists, stage only the deleted files and `.gitignore`; commit with message `chore: remove skill-generated artifacts post-run`.
@@ -546,392 +417,120 @@ On successful run completion:
 
 On failed or interrupted run:
 
-- Keep all `.run-with-it/` files and `CONTEXT_PAYLOAD_FILE`.
-- Print the paths of preserved files.
+- Keep all `.run-with-it/` files.
+- Print the paths of preserved files (state, reports, logs, reviews).
 - Offer `discard` command to force-delete and restart.
 
 ### Discard
 
 On `discard`:
 
-- Delete all preserved files, including `CONTEXT_PAYLOAD_FILE`, `.run-with-it/state.json`, `.run-with-it/coordinator-rules.md`, `.run-with-it/reviews/`, `technical_requirements.md`, `prd.md`, and `issues.md`.
+- Delete all preserved files including `.run-with-it/main-state.json`, all reports, logs, reviews, `technical_requirements.md`, `prd.md`, and `issues.md`.
 - Update `.gitignore` and commit with message `chore: remove skill-generated artifacts (discarded run)`.
 - Emit `STATUS|type=cleanup|action=discarded|files_removed=<n>`.
 - Proceed as a fresh run.
 
-### Complexity Output Cleanup
+## Appendix A: Main State Schema
 
-The complexity sub-agent JSON output is always deleted immediately after the coordinator reads it, regardless of run outcome.
-
-## Appendix B: Status and Ledger Contract
-
-## Routing Report (Required)
-
-Emit a parseable one-line route summary before execution:
-
-```text
-ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>
-```
-
-Also provide human-readable details:
-
-1. per-dimension scores
-2. final score and complexity level
-3. target weight range and selected model (with `complexity_weight` and `price_tier`)
-4. agent selection reason (sole match / interchangeable random pick / provider match)
-5. runner command summary
-6. fallback attempts used
-7. completion status
-8. complexity source
-
-At the end of every run, include a final task execution ledger. The ledger must clearly show which role handled each completed task (impl, review, or modify), the cycle number, which agent and model handled it, how many lines that task changed, a short routing reason, and the child-agent token telemetry captured for that task.
-
-Required final ledger columns:
-
-- Task: issue number/title or local task name
-- Role: `impl`, `review`, or `modify`
-- Cycle: integer cycle number (`0` for the impl row, `1` through `4` for each review/modify pair)
-- Agent: selected agent slug/display name
-- Model: selected model id
-- Line changes: `+<added>/-<deleted> (<total> total)`
-- Input tokens: child-agent prompt/input token count when available
-- Output tokens: child-agent completion/output token count when available
-- Cache hit tokens: child-agent cache-hit token count when available
-- Telemetry source: telemetry origin, such as `runner-default`, provider-native, or coordinator-estimated
-- Selection reasoning: one short sentence explaining why that agent/model was selected, such as score band match, forced override, sole compatible agent, interchangeable random pick, provider match, or fallback
-
-Cycle-numbering rule: the implementer always receives `cycle=0`. Each reviewer run and the modification agent it triggers (if any) share the same cycle number. The review loop may use cycles 1-4. If review is not approved twice, the modification triggered by the second non-approval and any later modification work must use the next higher implementation band before returning to review.
-
-Calculate line changes per task from the accepted diff for that task. Prefer `git diff --numstat` or commit stats after each task integration; sum added and deleted lines across files owned by that task. For binary files or unavailable stats, report `n/a` and explain why in the selection or notes text.
-
-Preserve all existing parseable ledger fields and append token telemetry fields in this order for backward compatibility: `input_tokens`, `output_tokens`, `cache_hit_tokens`, `telemetry_source`.
-
-Required parseable final ledger row format:
-
-`STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
-
-For multi-agent batches, emit one ledger row per child agent task and do not collapse rows by batch. For sequential runs, emit one row per completed issue/task. If a task is blocked or rejected and no diff is accepted, list `+0/-0 (0 total)` with the final status.
-
-Normalize child-agent token telemetry from the selected runner's final telemetry contract. When a child agent does not expose token counts, emit `unknown` for the missing values and keep the original ledger row.
-
-After the ledger, emit a final human-readable token summary aligned with the parseable rows. Include:
-
-- Child-agent totals
-- implementation-role aggregate totals across completed tasks: input, output, and cache-hit tokens
-- review-role aggregate totals across all review passes
-- modify-role aggregate totals across all modification passes
-- separate coordinator totals when the coordinator used measurable tokens during planning, review, or integration
-- a combined run total when both child-agent and coordinator totals are available
-- `unknown` for any total that cannot be computed from captured telemetry
-
-Also include explicit section labels for `Coordinator totals` and `Run totals`.
-
-Human-readable final summary must explicitly label these five sections as `Impl totals`, `Review totals`, `Modify totals`, `Coordinator totals`, and `Run totals`. Sections with zero rows may still be emitted with `unknown` if no telemetry was captured for that role.
-
-## Appendix C: Review Orchestration Contract
-
-## Canonical Coordinator Contract (Required)
-
-You are the coordinator.
-
-### Issues
-
-- Treat issue data already present in the context payload as the source of truth for selection and planning.
-- Use `gh` only when fresh issue data is needed or issue status must be updated.
-- Work only on `ready-for-agent` issues.
-- Continue selecting and completing ready tasks until no ready work remains for the run.
-- If all ready work is complete, output `<promise>NO MORE TASKS</promise>`.
-
-### Operating Mode
-
-- Prefer a safe parallel batch when several ready issues have independent ownership.
-- Use sequential execution when tasks are dependency-sensitive, concentrated in the same files, or share migrations, fixtures, or architecture decisions.
-- Do not stop after one issue if other ready work remains.
-- Reassess the queue after each completed issue or batch.
-
-### Context Budget and Compaction Handoff (Required)
-
-The coordinator must track a **running context budget estimate** and halt for a user-driven compaction handoff when the estimate crosses **50%** of the host model context window.
-
-#### Estimator
-
-- Maintain `context_bytes_total`: a running sum of the UTF-8 byte length of coordinator-visible content.
-- Estimate tokens as `context_tokens_est = floor(context_bytes_total / 4)`. (Heuristic: `bytes/4`.)
-- Increment the counter for coordinator-visible content including (non-exhaustive):
-  - issue context payloads (including any fetched issue bodies/comments included in the payload)
-  - any direct file reads (prompt files, registry reads, diffs, logs, etc.)
-  - any re-reads of archived review JSON files under `.run-with-it/reviews/`
-  - any ledger rows and STATUS lines the coordinator emits (count emitted text toward the estimate)
-
-#### Denominator (context window)
-
-- Resolve `host_context_window` by reading the active host model’s `context_window` from the resolved `agent-registry.json` `model_catalog`.
-- If the host model id cannot be detected, or if it is not present in the registry catalog, fall back to `host_context_window = 200000`.
-
-#### 50% Trigger Behavior
-
-When `context_tokens_est / host_context_window >= 0.50` (crossing the threshold for the first time in a run):
-
-1. Persist `.run-with-it/state.json` (schema version 1; see below).
-2. Emit exactly one parseable status line:
-
-   `STATUS|type=compact|action=user-required|state_file=.run-with-it/state.json`
-
-3. Print a human-readable handoff instruction block (per host below).
-4. **Stop**: halt new work (no new file reads, no new child-agent spawns, no new review cycles, no new integrations) and wait for the user.
-
-The coordinator must never invoke any host compaction command itself; compaction is always user-driven.
-
-#### User Instructions (human-readable)
-
-After emitting the `STATUS|type=compact...` line, present per-host instructions:
-
-- **Claude Code:** run `/compact`, then re-run the coordinator with the same run context payload, ensuring `.run-with-it/state.json` remains present.
-- **Codex GUI:** use the UI’s compaction control (equivalent to “compact”), then restart the run using the same run context payload and the persisted `.run-with-it/state.json`.
-- **GitHub Copilot (VS Code Chat):** use Copilot Chat’s “compact” / “summarize conversation” equivalent, then restart the run with the same run context payload and `.run-with-it/state.json`.
-
-Do not claim equivalence between hosts beyond the intent: reduce chat context while preserving the persisted state file.
-
-### Task Selection
-
-Before selecting a task, confirm dependencies are complete.
-If a task depends on another open or in-progress task, run the dependency first or mark the task blocked.
-
-Prioritize in this order:
-
-1. critical fixes
-2. development infrastructure
-3. tracer-bullet feature slices
-4. polish and quick wins
-5. refactors
-
-For each selected issue, define:
-
-- GitHub issue number and title
-- why it is ready now
-- dependency proof
-- expected file or module ownership
-- verification steps
-
-### Parallel Planning
-
-When multiple ready issues are available, build the largest safe batch.
-
-- Assign one issue per child agent.
-- Group only issues with minimal file overlap and low coordination cost.
-- Avoid batching issues that edit the same files unless one agent owns those files.
-- Keep one coordinator responsible for final integration, review, commits, and issue updates. Tests and compilation are always run by the implementing agent, never the coordinator.
-
-### Coordination
-
-Each child agent receives a self-contained prompt with:
-
-- issue number and goal
-- exact ownership scope
-- paths it must not edit
-- relevant repo conventions copied directly into the prompt
-- required verification commands (the agent must run these; the coordinator must not)
-- instruction to keep changes minimal and compatible with other agents
-- TDD requirement when the issue requests test-first implementation
-
-Review handoff every child-agent result before accepting it.
-Reject or revise work that violates ownership, skips required tests, duplicates domain logic, or makes unrelated edits.
-The coordinator reads verification results from the agent's output report — it does not re-run tests or build commands itself.
-
-Child agent lifecycle rules:
-
-- close completed or blocked agents after their result is captured
-- record the decision immediately: `integrate|revise|blocked`
-- do not keep agents open only because more tasks might appear later
-
-### Review Handoff
-
-When `DELEGATED_REVIEW=false`, skip this entire section. The coordinator performs inline review using today's behavior with no child agents spawned for review or modification. No `review-spawn`, `review-result`, `modify-spawn`, or `review-degraded` STATUS lines are emitted. No per-role ledger rows for reviewer or modifier are written.
-
-When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and the diff is captured, the coordinator performs the review and modification loop:
-
-#### Cycle Counter
-
-- Cycle 1 = first reviewer run after implementation.
-- Cycle 2 = reviewer run after first modification. If this is the second non-approval review result, the modification it triggers is the first escalated modification.
-- Cycle 3 = reviewer run after the first escalated modification.
-- Cycle 4 = reviewer run after the second escalated modification.
-- The cap is **4 cycles**, hardcoded (no env override in this iteration).
-- Cap exhaustion terminates the issue as `failed-review`.
-- **Compaction survival**: the authoritative cycle counter for each task is `review_history[task].cycles_used` in `.run-with-it/state.json`. On resume, restore this value and enforce the cap against it — a task that consumed cycles 1 and 2 before compaction may use only cycles 3 and 4 after resume.
-
-#### Implementation Model Escalation
-
-- Track non-approval review results per task. A `revise` verdict counts as non-approval and may trigger modification; a `reject` verdict still terminates immediately as `failed-review`.
-- The first modification request uses the original implementer band.
-- After two non-approval review results, select the modification agent triggered by that second non-approval from the next higher implementation band using the same model-first selection algorithm. Continue using that escalated band for later modification requests in the same issue.
-- If the original implementer band is already `holy-fuck`, stay at `holy-fuck` and select a different compatible model when available.
-- Emit the usual `STATUS|type=modify-spawn|...|model=<model-id>` line with the escalated model; the ledger selection reason must mention escalation after two non-approval reviews.
-
-#### Per-Cycle Steps
-
-1. Before assembling the reviewer payload, check the implementing or modifying agent's reported verification results:
-   - If verification **actively failed** (tests ran and produced failures), **do not spawn the reviewer** — terminate the issue as `failed-review` with reason `failed-verification`.
-   - If verification results are **absent or incomplete**, spawn the reviewer anyway. The reviewer runs under `review-prompt.md`, which permits it to execute the project's existing test suite for independent self-verification. Include whatever partial verification evidence is available in the reviewer payload and note the gap so the reviewer knows to run tests.
-
-2. Assemble a reviewer payload file in this order:
-   - the full slice requirements — the complete issue body including title, description, requirements, and acceptance criteria; plus the `queue[task]` entry from `state.json` (ownership scope, paths to avoid, verification commands). Do not summarize or truncate. The reviewer must see the original requirements to evaluate the implementation.
-   - the original `PROMPT_FILE` contents
-   - the captured implementer diff (or latest modification diff when cycling)
-   - a per-file changed-file list with `+added/-deleted` counts for each file
-   - the implementer (or modifier) verification results — commands run, pass/fail status, sandbox-retry notes if any
-   - the implementer telemetry stub
-3. Spawn the reviewer child agent with the selected reviewer band and selected reviewer model.
-4. Emit `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before the reviewer starts.
-5. Run the reviewer through the existing unified runner using `--agent`, `--model`, `--unattended`, and `--prompt-file "$ASSET_ROOT/review-prompt.md"`. The reviewer runs under `review-prompt.md`, which permits it to execute the project's existing test suite (read-only invocations) for self-verification when verification evidence is absent or insufficient.
-6. Parse the reviewer JSON output against the PRD contract below.
-7. **Archive the reviewer JSON** to `.run-with-it/reviews/<issue-number>-cycle-<n>.json` immediately after parsing.
-8. Emit `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>` after archival.
-
-#### Verdict Routing
-
-**`verdict=approve`**
-
-Integrate the current diff using the existing per-issue commit policy. No modification agent is spawned.
-
-**Nitpick-only `approve`**: When the reviewer JSON verdict is `approve` and all comments have `"severity": "info"` with `"fix"` values prefixed `[nitpick]`, treat identically to a clean approve — integrate, no modification agent. In the terminal issue comment, list nitpick comments as a separate bullet block under `## Notes` after the review summary line. Do not downgrade the verdict or request changes for nitpicks alone.
-
-**`verdict=revise`**
-
-1. If the current cycle equals the cap (4), terminate the issue as `failed-review` immediately — do not spawn a modification agent.
-2. Otherwise, spawn a modification agent for the current cycle:
-   - Select the modification agent at the **current implementation band** using the same model-first selection algorithm. Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band for the modification triggered by the second non-approval and any later modification request.
-   - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before spawning.
-   - Pass the modification agent a payload containing, in this order:
-     1. the original issue context
-     2. the original `prompt.md` contents
-     3. the implementer's reviewed diff
-     4. the complete reviewer JSON (from `.run-with-it/reviews/<issue-number>-cycle-<n>.json`)
-     5. the required verification commands from `state.json` (`queue[task].verification`) — the modification agent **must** run these before reporting completion
-   - Run the modification agent through the existing unified runner using `--agent`, `--model`, `--unattended`, and `--prompt-file "$ASSET_ROOT/modifier-prompt.md"`.
-   - Bash (macOS / Linux / Git Bash):
-     ```bash
-     "$ASSET_ROOT/run-agent.sh" \
-       --agent "$AGENT" \
-       --model "$MODEL" \
-       --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" \
-       --prompt-file "$ASSET_ROOT/modifier-prompt.md" \
-       --unattended
-     ```
-   - PowerShell (Windows):
-     ```powershell
-     & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $MODIFIER_CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\modifier-prompt.md" --unattended
-     ```
-   - The modifier prompt requires the modification agent to address reviewer comments, run the supplied verification commands after editing, and fix every failing test before reporting completion, even when a failing test appears outside the original issue scope.
-   - The modification agent must report pass/fail results in its output, following the same sandbox-retry rule as the implementer (retry with `dangerouslyDisableSandbox: true` on permission/pipe errors before marking verification failed).
-   - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** If verification failed or was not reported, treat the modification as blocked and terminate the issue as `failed-review` — do not silently cycle to the reviewer with unverified changes.
-   - Capture both the new diff and the verification results reported by the modification agent.
-3. Increment the cycle counter and return to **Per-Cycle Steps** with the new diff and verification results.
-
-**`verdict=reject`**
-
-Skip modification entirely. Terminate the issue as `failed-review` immediately. The reviewer JSON for this cycle is already archived. No modification agent is spawned.
-
-Reviewer JSON contract from the PRD:
+The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 2). This is the Main Orchestrator's entire persistent memory.
 
 ```json
 {
-  "verdict": "approve | revise | reject",
-  "summary": "one-paragraph rationale",
-  "comments": [
-    {
-      "file": "path/to/file",
-      "line": 42,
-      "severity": "info | warning | critical",
-      "fix": "concrete suggested change"
-    }
-  ],
-  "blocking_reasons": ["list when verdict=reject"]
-}
-```
-
-Authoritative reviewer JSON output shape is owned by `assets/review-prompt.md`. This section describes parse/validation expectations only.
-
-## Appendix D: Resume and State Contract
-
-### Persistent State (Required)
-
-When the coordinator persists any file under `.run-with-it/` (including `.run-with-it/state.json` and any archived review JSON), it owns that directory namespace for the run.
-
-#### `.run-with-it/state.json` (schema_version 1)
-
-Write a single JSON file at `.run-with-it/state.json` using this schema:
-
-```json
-{
-  "schema_version": 1,
-  "queue": {
-    "ready": [
-      {
-        "issue_number": 36,
-        "title": "example title",
-        "dependencies": [30],
-        "dependency_proof": "freeform string",
-        "ownership_scope": ["skills/run-with-it/SKILL.md"],
-        "paths_to_avoid": ["assets/prompt.md"],
-        "verification": ["freeform command list"],
-        "status": "ready | in_progress | blocked | completed"
-      }
-    ],
-    "blocked": [],
-    "completed": []
+  "schema_version": 2,
+  "run_id": "<uuid generated at run start>",
+  "started_at": "<iso8601>",
+  "execution_plan": {
+    "batches": [
+      { "batch_id": 1, "issues": [36, 37, 38], "mode": "sequential" }
+    ]
   },
+  "issue_registry": {
+    "36": {
+      "status": "completed | in_progress | pending | failed-review | blocked",
+      "title": "issue title",
+      "report_file": ".run-with-it/reports/sub-36-report.json",
+      "log_file": ".run-with-it/logs/sub-36-log.txt",
+      "commit_sha": "abc1234"
+    }
+  },
+  "current_batch_id": 1,
+  "current_issue_index": 0,
+  "completed_summaries": [
+    {
+      "issue": 36,
+      "outcome": "completed",
+      "files_modified_count": 3,
+      "lines_added": 42,
+      "lines_deleted": 7,
+      "review_cycles": 1,
+      "commit_sha": "abc1234"
+    }
+  ],
   "ledger_rows": [
-    "STATUS|type=ledger|task=... (verbatim line as emitted)"
-  ],
-  "in_flight_agents": [
-    {
-      "task": 36,
-      "role": "impl | review | modify | coordinator",
-      "cycle": 0,
-      "agent": "agent-name",
-      "model": "model-id",
-      "ownership_scope": ["path/owned"]
-    }
-  ],
-  "review_history": [
-    {
-      "task": 36,
-      "cycles_used": 1,
-      "non_approval_count": 0,
-      "review_files": [".run-with-it/reviews/36-cycle-1.json"]
-    }
+    "STATUS|type=ledger|task=36|... (verbatim line as emitted)"
   ]
 }
 ```
 
-State category requirements:
+Key invariants:
+- `issue_registry` has one entry per issue
+- `completed_summaries` accumulates one compact record per finished issue — this is what the main orchestrator reads back after compression
+- `ledger_rows` stores verbatim STATUS lines for the final ledger printout
+- `current_batch_id` + `current_issue_index` tell a resumed orchestrator exactly where to continue
 
-- `queue`: include dependencies, dependency proof, status, and ownership scope per task.
-- `ledger_rows`: store the coordinator-emitted `STATUS|type=ledger...` lines verbatim.
-- `in_flight_agents`: store role, cycle, and scope for any currently running or last-known active agents.
-- `review_history`: store total cycles used per task, the count of non-approval review results (`non_approval_count`), and the archived review JSON file paths. Increment `non_approval_count` on every `revise` verdict; a `reject` terminates immediately and does not increment it.
+### `.gitignore` Auto-Append for `.run-with-it/` (Required)
 
-The coordinator may include additional fields, but must not omit these four categories when `schema_version` is 1.
+On the first write of any file under `.run-with-it/`:
 
-### Resume Flow (Required)
+- If `.git/` exists in the current working directory, ensure `.run-with-it/` is in `.gitignore`:
+  - Create `.gitignore` if it does not exist
+  - Append `.run-with-it/` on its own line only if not already present (idempotent)
+  - Preserve existing `.gitignore` contents unchanged
+- If `.git/` is absent, skip `.gitignore` creation silently.
 
-#### Rehydration
+## Appendix B: Status and Ledger Contract
 
-Rebuild all four state categories in memory from `.run-with-it/state.json` (schema_version 1):
+### Status Messages
 
-1. **`queue`** — restore all task entries. Tasks whose `status` is `"completed"` or `"done"` are skipped entirely; do not requeue them. Tasks with `status` `"ready"` or `"blocked"` are returned to their respective queues.
-2. **`ledger_rows`** — restore verbatim ledger `STATUS` lines. Do not re-emit them; hold them in memory so the final ledger includes pre-compaction rows.
-3. **`in_flight_agents`** — restore each entry. These represent agents that were active or last-known-active at compaction time.
-4. **`review_history`** — restore `cycles_used` and `non_approval_count` per task. The 4-cycle cap is enforced against the restored `cycles_used` for every subsequent review pass. Tasks with a restored `non_approval_count` of 2 or more must resume with the escalated implementation band for the next modification request.
+Emit parseable one-line status messages:
 
-Emit one parseable line immediately after rehydration succeeds:
+- plan: `STATUS|type=plan|total_issues=<n>|mode=sequential|pending=<n>|blocked=<n>`
+- memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`
+- main loop: `STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>|failed=<count>`
+- sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>`
+- sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
+- stall: `STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user`
+- intake fallback: `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-failed-outside-sandbox>`
+- runner sandbox retry: `STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<error-summary>`
+- runner sandbox retry result: `STATUS|type=runner-sandbox-retry-result|outcome=<success|failed>`
+- cleanup completed: `STATUS|type=cleanup|action=completed|files_removed=<n>`
+- cleanup discarded: `STATUS|type=cleanup|action=discarded|files_removed=<n>`
+- final ledger row: `STATUS|type=ledger|task=<task-id>|role=impl|cycle=0|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=sub-coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=sub-coordinator-report`
 
-```
-STATUS|type=resume|state_file=.run-with-it/state.json|tasks_restored=<n>|in_flight=<n>|skipped_done=<n>
-```
+### Final Ledger
 
-If `.run-with-it/state.json` is missing or unparseable when the user types `resume`, emit:
+After the loop exits and before cleanup, print the aggregated final ledger by reading `ledger_rows` from `main-state.json`. This means the ledger survives compression and captures all issues including those completed before the context was compressed.
+
+Also print a final summary of all `completed_summaries` entries showing:
+- Total issues processed
+- Completed / failed-review / blocked counts
+- Total lines added/deleted across all issues
+- Aggregate token usage (sum `token_usage` fields from all report JSONs for issues that have completed)
+
+## Appendix C: Resume and State Contract
+
+### Resume Flow
+
+On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 14). On `resume`:
+
+1. Re-read `.run-with-it/main-state.json`.
+2. Identify all issues with `status="in_progress"` — these had a Sub-Coordinator that was interrupted mid-run. Reset them to `status="pending"` (Sub-Coordinators are ephemeral; re-run fresh).
+3. Identify all issues with `status="pending"` — these haven't started yet.
+4. Identify all issues with `status="completed"`, `"failed-review"`, or `"blocked"` — skip these entirely.
+5. Re-enter Main Loop at Step A.
+6. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|re_queued_in_progress=<m>`
+
+If `.run-with-it/main-state.json` is missing or unparseable when the user types `resume`, emit:
 
 ```
 STATUS|type=resume-error|reason=<missing|parse-error>|action=user-required
@@ -939,92 +538,24 @@ STATUS|type=resume-error|reason=<missing|parse-error>|action=user-required
 
 Then stop and ask the user whether to proceed as a fresh run.
 
-#### In-Flight Agent Reattempt
+### Compression Survival
 
-For each entry in `in_flight_agents`, resume work from the phase recorded in `role`:
+When the Main Orchestrator's context is compressed and the session resumes (conversation history is cleared):
 
-| Persisted `role` | Reattempt behavior |
-|---|---|
-| `impl` | Re-spawn the implementer for this task using the same band selection; treat as a fresh impl pass (cycle 0 stays 0). |
-| `review` | Re-spawn the reviewer for this task at the recorded `cycle`. Read the existing archived review JSON for prior cycles from `review_history.review_files` before spawning. |
-| `modify` | Re-spawn the modification agent for this task at the recorded `cycle`. Pass it the archived reviewer JSON for that cycle. |
-| `coordinator` | No child agent to reattempt; the coordinator itself was interrupted. Resume from task selection normally. |
+1. Re-read `.run-with-it/main-state.json` (Step A of the loop).
+2. The `completed_summaries` array gives the full bounded history.
+3. Issues with `status="completed"` are done — never re-run them.
+4. Issues with `status="in_progress"` are reset to `"pending"` — re-run their Sub-Coordinators fresh.
+5. Continue the Main Loop as if resuming from a clean slate.
 
-Emit a standard `STATUS|type=spawn` or `review-spawn`/`modify-spawn` line before each reattempted agent, identical to a first-run spawn.
+Never derive issue state from conversation history after compression. The state file is always authoritative.
 
-#### Backward Compatibility
-
-Runs with no prior `.run-with-it/state.json` bypass the resume/discard prompt entirely.
-
-### `.gitignore` Auto-Append for `.run-with-it/` (Required)
-
-On the first write of any file under `.run-with-it/` in a run:
-
-- If a `.git/` directory exists in the current working directory, ensure `.run-with-it/` is present in the repo `.gitignore`:
-  - create `.gitignore` if it does not exist
-  - append `.run-with-it/` on its own line only if not already present (idempotent)
-  - preserve existing `.gitignore` contents unchanged aside from the single appended entry when needed
-- If `.git/` is absent, skip `.gitignore` creation or modification silently.
-
-### Status Messages
-
-Emit parseable one-line status messages for multi-agent runs:
-
-- spawn: `STATUS|type=spawn|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=assigned|scope=<owned-paths>|eta=<rough-eta>`
-- heartbeat: `STATUS|type=heartbeat|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=<exploring|implementing|testing|review>|progress=<short-text>|elapsed=<seconds>`
-- completion: `STATUS|type=completion|batch=<batch-id>|agent=<agent-name>|issue=#<n>|result=<done|needs-revision|blocked>|verify=<pass|fail|partial>|next=<integrate|revise|blocked>`
-- stall: `STATUS|type=stall|batch=<batch-id>|agent=<agent-name>|issue=#<n>|idle_for=<seconds>|action=<ping|replan|deparallelize|abort-agent>`
-- batch summary: `STATUS|type=batch|batch=<batch-id>|running=<count>|completed=<count>|blocked=<count>|next=<text>`
-- integration: `STATUS|type=integration|batch=<batch-id>|issue=#<n>|action=<merge|conflict-fix|follow-up-agent>|state=<in-progress|done>`
-- close: `STATUS|type=close|batch=<batch-id>|agent=<agent-name>|issue=#<n>|reason=<completed|blocked|replaced|failed-review>`
-- review spawn: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
-- review result: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
-- modify spawn: `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>`
-- review degraded: `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` — emitted once per task when degraded fallback activates; never emitted when `DELEGATED_REVIEW=false`
-- complexity skipped: `STATUS|type=complexity-skipped|reason=override`
-- complexity fallback: `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
-- compact handoff: `STATUS|type=compact|action=user-required|state_file=.run-with-it/state.json` — emitted exactly once when the context estimate crosses 50% of the host context window; the coordinator halts and waits for the user to compact
-- cleanup completed: `STATUS|type=cleanup|action=completed|files_removed=<n>`
-- cleanup discarded: `STATUS|type=cleanup|action=discarded|files_removed=<n>`
-- final ledger row: `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
-- backward-compatible ledger row: `STATUS|type=ledger|task=<task-id>|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
-- child-agent token totals: `STATUS|type=summary|scope=child-agents|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
-- impl token totals: `STATUS|type=summary|scope=impl|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
-- review token totals: `STATUS|type=summary|scope=review|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
-- modify token totals: `STATUS|type=summary|scope=modify|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
-- coordinator token totals: `STATUS|type=summary|scope=coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
-- combined run token totals: `STATUS|type=summary|scope=run|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>`
-
-Keep `progress` values under 8 words and `next` values under 5 words.
-
-### Live Child-Agent Visibility
-
-The coordinator must surface child-agent progress while agents are running.
-
-- Require implementation agents to emit child heartbeat lines from `assets/prompt.md` and modification agents to emit child heartbeat lines from `assets/modifier-prompt.md`:
-  `STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>`
-- Capture child stdout and stderr while the runner executes. When a child heartbeat line appears, immediately relay it as a coordinator heartbeat with batch/task/agent context:
-  `STATUS|type=heartbeat|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=<phase>|progress=<short-text>|elapsed=<seconds>`
-- Also print one concise human-readable line next to the parseable heartbeat:
-  `Agent #<n>: <phase> - <short-text>`
-- Do not relay arbitrary raw child output as progress. Summarize only heartbeat lines and final reports; preserve raw output in the captured run log for debugging.
-- If no child heartbeat appears for 90 seconds, emit a stall-style visibility line using the last known phase:
-  `STATUS|type=heartbeat|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=<last-known-or-unknown>|progress=waiting for child update|elapsed=<seconds>`
-
-### Quality and Closure Loop
-
-- Review each agent diff individually, then review the combined batch diff.
-- Read the verification results reported by the implementing agent; do not re-run tests, build commands, or compile the project.
-- Commit per issue by default.
-- Update each terminal-state issue with the standardized final comment before closing or leaving it blocked.
-- Close completed issues with `gh issue close` unless explicitly left open.
-
-## Appendix E: Terminal Issue Comment Contract
+## Appendix D: Terminal Issue Comment Contract
 
 ### Terminal Issue Comments
 
 Post issue comments only for terminal outcomes: `completed`, `blocked`, or `failed-review`.
-Do not post this final template for non-terminal progress updates.
+Populate all fields from the Sub-Coordinator's compact report JSON.
 
 Use the same markdown template for every terminal outcome, with this fixed section order:
 
@@ -1041,10 +572,10 @@ Terminal comment template:
 <completed|blocked|failed-review>
 
 ## Summary
-<task outcome summary>
+<task outcome summary — from report.summary>
 
 ## Verification
-<task-specific verification results>
+<task-specific verification results — from report.verification.evidence>
 
 ## Token Usage
 - Input tokens: <n|unknown>
@@ -1056,23 +587,24 @@ Review: <approve|revise (N cycles)>, final verdict: <approve|reject>, reviewer m
 <follow-ups, blockers, or additional reviewer notes — omit line if none>
 
 ## Blocking Reasons
-<omit this section entirely when verdict is not reject; when verdict=reject, list each entry from the reviewer JSON `blocking_reasons` array as a separate bullet>
+<omit this section entirely when verdict is not reject; when verdict=reject, list each entry from report.blocking_reasons as a separate bullet>
 ```
 
 Comment requirements:
 
-- `Token Usage` must report task-specific telemetry only. Do not include coordinator totals or combined run totals in the issue comment.
+- `Token Usage` must report task-specific telemetry only (from `report.token_usage`).
 - If any token value is unavailable, render that value explicitly as `unknown`.
-- `Verification` must summarize the checks run for that issue and whether they passed, failed, or were blocked.
-- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a nitpick-only approval write `approve — nitpicks only (<N> info comments)`; for a revise-then-approve write `revise (N cycles)` where N is the total cycle count. When the verdict was nitpick-only, list each nitpick comment as a sub-bullet immediately after the review summary line. Omit the review summary line only when `DELEGATED_REVIEW=false`. Additional follow-up or blocker lines may follow after the review summary line.
-- `Blocking Reasons` section must be included **only** when `verdict=reject`. Render each entry from the reviewer JSON `blocking_reasons` array as a separate markdown bullet. Omit the section entirely for `approve` or `revise` outcomes.
+- `Verification` must summarize the checks run and whether they passed, failed, or were blocked (from `report.verification`).
+- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`.
+- `Blocking Reasons` section must be included **only** when `report.blocking_reasons` is non-empty. Render each entry as a separate markdown bullet. Omit the section entirely otherwise.
 
 ## Guardrails
 
-- Keep prompt content implementation-only.
+- **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately.
+- **Never load sub-coordinator log files into AI context.** Print their path; never cat or read_file them.
+- **Never implement work directly in this session.** Implementation belongs to Sub-Coordinators via the runner.
+- **Never present execution option menus.**
+- **Never run tests, build commands, or compile the project** in this session.
+- **Never derive issue state from conversation history.** Always read from `main-state.json`.
 - Preserve local fallback behavior when GitHub or git is unavailable.
-- Keep changes minimal and focused to routing/control-plane behavior.
-- **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately.
-- **Never offer to implement work directly in the coordinator session.** Implementation belongs to child agents via the runner. There is no "implement in this chat" option.
-- **Never present execution option menus** (Option A / B / C style choices). The runner is the only execution path.
-- **Never run tests, build commands, or compile the project** in the coordinator session. The implementing agent runs verification; the coordinator only reads the results from the agent's output report.
+- Keep changes minimal and focused to orchestration/control-plane behavior.

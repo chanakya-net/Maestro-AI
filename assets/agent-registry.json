@@ -33,28 +33,6 @@
       "strengths": ["speed", "high-throughput", "cost-sensitive"],
       "_note": "GitHub Copilot CLI model ID for Haiku 4.5 (dot format). Same model as claude-haiku-4-5."
     },
-    "claude-sonnet-4-5": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 1.00,
-      "price_output_per_1m": 1.00,
-      "complexity_weight": 6,
-      "context_window": 200000,
-      "strengths": ["coding", "reasoning", "balanced"],
-      "_note": "Copilot subscription multiplier: 1x. price_* fields are routing units, not API dollars."
-    },
-    "claude-sonnet-4.5": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 1.00,
-      "price_output_per_1m": 1.00,
-      "complexity_weight": 6,
-      "context_window": 200000,
-      "strengths": ["coding", "reasoning", "balanced"],
-      "_note": "GitHub Copilot CLI model ID for Sonnet 4.5 (dot format). Same model as claude-sonnet-4-5."
-    },
     "claude-sonnet-4-6": {
       "provider": "anthropic",
       "ability": "advanced",
@@ -87,26 +65,6 @@
       "context_window": 1000000,
       "strengths": ["long-context", "extended-thinking", "agentic"]
     },
-    "claude-sonnet-4": {
-      "provider": "anthropic",
-      "ability": "balanced",
-      "price_tier": "med",
-      "price_input_per_1m": 3.00,
-      "price_output_per_1m": 15.00,
-      "complexity_weight": 5,
-      "context_window": 200000,
-      "strengths": ["balanced", "general-purpose"]
-    },
-    "claude-opus-4-5": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 5.00,
-      "price_output_per_1m": 25.00,
-      "complexity_weight": 8,
-      "context_window": 200000,
-      "strengths": ["reasoning", "extended-thinking", "complex-tasks"]
-    },
     "claude-opus-4-6": {
       "provider": "anthropic",
       "ability": "frontier",
@@ -116,27 +74,6 @@
       "complexity_weight": 9,
       "context_window": 1000000,
       "strengths": ["1M-context", "long-doc-retrieval", "coding", "extended-thinking"]
-    },
-    "claude-opus-4-6-fast": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 5.00,
-      "price_output_per_1m": 25.00,
-      "complexity_weight": 8,
-      "context_window": 1000000,
-      "strengths": ["speed", "1M-context", "frontier-fast"]
-    },
-    "claude-opus-4-6[1m]": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "price_tier": "high",
-      "price_input_per_1m": 5.00,
-      "price_output_per_1m": 25.00,
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": ["1M-context", "deep-reasoning", "long-doc"],
-      "_note": "Long-context specialist — w=10 keeps it out of standard holy-fuck pool so gpt-5.5 and opus-4.7 can fill those slots."
     },
     "claude-opus-4-7": {
       "provider": "anthropic",
@@ -221,28 +158,6 @@
       "context_window": 400000,
       "strengths": ["coding", "computer-use", "subagents", "cost-efficient"],
       "_note": "Copilot subscription multiplier: 0.33x at Medium reasoning. price_* fields are routing units, not API dollars."
-    },
-    "gpt-4.1": {
-      "provider": "openai",
-      "ability": "advanced",
-      "price_tier": "low",
-      "price_input_per_1m": 0.00,
-      "price_output_per_1m": 0.00,
-      "complexity_weight": 5,
-      "context_window": 1047576,
-      "strengths": ["instruction-following", "tool-calling", "1M-context", "low-latency"],
-      "_note": "Copilot subscription multiplier: 0x. price_* fields are routing units, not API dollars."
-    },
-    "gpt-4o": {
-      "provider": "openai",
-      "ability": "balanced",
-      "price_tier": "low",
-      "price_input_per_1m": 0.00,
-      "price_output_per_1m": 0.00,
-      "complexity_weight": 4,
-      "context_window": 128000,
-      "strengths": ["multimodal", "low-latency", "included-quota"],
-      "_note": "Copilot subscription multiplier: 0x. price_* fields are routing units, not API dollars."
     },
     "gpt-5.1": {
       "provider": "openai",
@@ -361,28 +276,6 @@
       "context_window": 1000000,
       "strengths": ["advanced-reasoning", "agentic", "multimodal", "frontier-gemini"],
       "_note": "Copilot subscription multiplier: 1x. Explicit selection only for harder work; automatic Gemini routing is limited to quite-easy/easy tasks."
-    },
-    "grok-code-fast-1": {
-      "provider": "xai",
-      "ability": "fast",
-      "price_tier": "low",
-      "price_input_per_1m": 0.25,
-      "price_output_per_1m": 0.25,
-      "complexity_weight": 5,
-      "context_window": 256000,
-      "strengths": ["coding", "speed", "cost-efficient"],
-      "_note": "Copilot subscription multiplier: 0.25x. price_* fields are routing units, not API dollars."
-    },
-    "raptor-mini-preview": {
-      "provider": "github-copilot",
-      "ability": "fast",
-      "price_tier": "low",
-      "price_input_per_1m": 0.00,
-      "price_output_per_1m": 0.00,
-      "complexity_weight": 3,
-      "context_window": 128000,
-      "strengths": ["included-quota", "preview", "quick-edits"],
-      "_note": "Copilot subscription multiplier: 0x. Preview model available through GitHub Copilot."
     }
   },
   "model_routing": {
@@ -431,7 +324,7 @@
     ],
     "agent_preference_rules": [
       {
-        "models": ["claude-haiku-4.5", "claude-haiku-4-5-20251001", "claude-haiku-4-5"],
+        "models": ["claude-haiku-4.5", "claude-haiku-4-5"],
         "preferred_agents": ["github-copilot", "claude"],
         "_note": "If Haiku 4.5 is selected and both GitHub Copilot and Claude are available, choose GitHub Copilot before direct Claude. claude-haiku-4.5 = Copilot CLI ID; claude-haiku-4-5-20251001 = Claude CLI ID."
       },
@@ -517,18 +410,16 @@
         "flag_template": "--model {{model}}",
         "known_models": [
           "claude-opus-4-7",
-          "claude-sonnet-4-6",
-          "claude-haiku-4-5-20251001"
+          "claude-sonnet-4-6"
         ],
         "pricing_basis": "claude-subscription",
         "metered_api_cost": false,
         "per_model_multipliers": false,
         "routing_cost_overrides": {
           "claude-opus-4-7": 0.00,
-          "claude-sonnet-4-6": 0.00,
-          "claude-haiku-4-5-20251001": 0.00
+          "claude-sonnet-4-6": 0.00
         },
-        "_note": "Claude CLI uses Anthropic model IDs: hyphens, full versioned names. Haiku 4.5 requires date suffix (claude-haiku-4-5-20251001)."
+        "_note": "Claude CLI uses Anthropic model IDs: hyphens and full versioned names."
       },
       "capability_band": "advanced",
       "fallback_order": ["github-copilot", "codex", "gemini"],
@@ -598,22 +489,17 @@
         "flag_template": "--model {{model}}",
         "known_models": [
           "claude-haiku-4.5",
-          "claude-sonnet-4.5",
           "claude-sonnet-4.6",
           "claude-opus-4.7",
           "gemini-2.5-pro",
           "gemini-3-flash-preview",
           "gemini-3.1-pro-preview",
-          "gpt-4.1",
-          "gpt-4o",
           "gpt-5-mini",
           "gpt-5.2",
           "gpt-5.2-codex",
           "gpt-5.3-codex",
           "gpt-5.4-mini",
           "gpt-5.5",
-          "grok-code-fast-1",
-          "raptor-mini-preview",
           "gpt-5.4"
         ]
       },

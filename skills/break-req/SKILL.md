@@ -45,13 +45,15 @@ Cover all relevant layers as you go:
 - **UI**: frameworks, third-party libraries, component state management.
 - **Backend**: packages, API contracts, service architecture.
 - **Data**: schemas, migrations, contracts between layers.
+- **Implementation order**: for each decision area, identify the concrete steps an agent would take to implement it — specific files to create or modify, functions to add, migrations to write, tests to add. Capture these as an ordered list so they can feed directly into issue slices.
 
 ## Outputs
 
 Once all branches are resolved:
 
 1. Compile every decision and resolution into `technical_requirements.md`.
-2. Stop.
-3. Inform the user that requirements are ready and they can now run the `create-git-issue` skill.
+2. For each major functional area, include an **Implementation Steps** subsection: an ordered, numbered list of concrete tasks (file paths, function names, schema fields, test cases) an agent would execute. Flag any step that requires human input with `[HITL]`.
+3. Stop.
+4. Inform the user that requirements are ready and they can now run the `create-git-issue` skill.
 
 Do not proceed beyond `technical_requirements.md`, even if the next step is obvious.

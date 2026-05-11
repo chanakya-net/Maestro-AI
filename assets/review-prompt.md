@@ -13,10 +13,11 @@ This prompt is review-only guidance for `run-with-it`.
 ## Inputs Expected
 
 - Coordinator-provided issue/task context.
-- Coordinator-provided implementation or modification diff.
+- Coordinator-provided `REVIEW_FROM_SHA` — run `git diff <REVIEW_FROM_SHA>..HEAD` to fetch the diff.
 - Changed-file summary when available.
 - Verification evidence when available.
-- Required reviewer JSON output path.
+- Required reviewer status output path: `REVIEWER_STATUS_FILE`.
+- Required reviewer instructions output path: `REVIEWER_INSTRUCTIONS_FILE`.
 
 ## Runtime Assumptions
 
@@ -26,7 +27,6 @@ This prompt is review-only guidance for `run-with-it`.
 ## Hard Restrictions
 
 - Do not edit the working tree.
-- Do not run `git` commands.
 - Do not call `gh`.
 - Do not update issues.
 - Do not create commits, branches, or tags.
@@ -47,14 +47,35 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 ## Workflow
 
 1. Read issue/task requirements and acceptance criteria.
-2. Read the provided diff and changed-file summary.
+2. Fetch the diff: run `git diff <REVIEW_FROM_SHA>..HEAD`.
 3. Validate behavior, risk, and verification evidence against requirements.
-4. Produce exactly one JSON artifact at the required output path.
-5. Stop.
+4. Write the status file to `REVIEWER_STATUS_FILE`.
+5. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
+6. Stop.
 
 ## Output Contract
 
-Write exactly one JSON file at the path provided by the coordinator. The file must match this shape:
+Write exactly **two** JSON files.
+
+### Status File — write to `REVIEWER_STATUS_FILE`
+
+This is the only file the Sub-Coordinator reads. Keep it minimal:
+
+```json
+{
+  "verdict": "approve | revise | reject",
+  "comment_count": 3,
+  "nitpick_only": false
+}
+```
+
+- `verdict`: the routing decision.
+- `comment_count`: total number of comments (including nitpicks).
+- `nitpick_only`: `true` when all comments have `"severity": "info"` and `fix` prefixed `[nitpick]`; `false` otherwise.
+
+### Instructions File — write to `REVIEWER_INSTRUCTIONS_FILE`
+
+This is read directly by the modifier worker-agent (never by the Sub-Coordinator). Contains the full review detail:
 
 ```json
 {
@@ -97,6 +118,7 @@ Write exactly one JSON file at the path provided by the coordinator. The file mu
 
 ## Contract Notes
 
-- The reviewer output is internal only.
-- The JSON file is the only required artifact.
-- Write the JSON to the coordinator-provided output path and stop.
+- Both output files are internal artifacts — never shown to the end user directly.
+- The status file is the Sub-Coordinator's routing signal. Keep it small.
+- The instructions file is the modifier's working document. Make it complete and actionable.
+- Write both files before stopping.
