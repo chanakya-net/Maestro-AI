@@ -2,6 +2,75 @@
 
 > Personal AI skills for any coding agent — install once, use everywhere.
 
+## What This Repo Does
+
+AI-Skills is a reusable skill collection for coding agents (Copilot, Codex, Claude, Gemini, and others).
+It gives you a practical workflow from requirement discovery to issue planning to execution, with shared runner assets so behavior stays consistent across agents and operating systems.
+
+## Repository Structure
+
+```text
+AI-Skills/
+├── README.md
+├── LICENSE
+├── gemini-extension.json
+├── install.sh
+├── install.ps1
+├── uninstall.sh
+├── uninstall.ps1
+├── technical_requirements.md
+├── assets/
+│   ├── agent-registry.json
+│   ├── complexity-prompt.md
+│   ├── coordinator-rules.md
+│   ├── main-orchestrator-rules.md
+│   ├── modifier-prompt.md
+│   ├── prompt.md
+│   ├── review-prompt.md
+│   ├── run-agent.sh
+│   ├── run-agent.ps1
+│   └── sub-coordinator-prompt.md
+├── skills/
+│   ├── break-req/SKILL.md
+│   ├── create-git-issue/SKILL.md
+│   ├── run-with-it/SKILL.md
+│   ├── save-tokens/SKILL.md
+│   └── tdd-implementation/SKILL.md
+└── tests/
+    ├── add-two-numbers.test.sh
+    ├── break-req-contract.test.sh
+    ├── create-git-issue-routing.test.sh
+    ├── install-assets-contract.test.sh
+    ├── run-agent.test.sh
+    ├── run-with-it-routing.test.sh
+    └── uninstall-contract.test.sh
+```
+
+## Skills At A Glance
+
+- `break-req`: Discovers and resolves functional/non-functional decisions, constraints, and dependencies before planning starts.
+- `create-git-issue`: Turns approved requirements into a PRD plus dependency-aware vertical-slice implementation issues.
+- `tdd-implementation`: Implements assigned work in strict red-green-refactor cycles with behavior-first tests.
+- `run-with-it`: Orchestrates execution end-to-end by routing issues to the right agent/model and tracking progress safely.
+- `save-tokens`: Switches assistant narration into compact mode so long sessions consume fewer tokens.
+
+## How To Use Them Together
+
+1. Start with `break-req` to remove ambiguity and lock requirements.
+2. Run `create-git-issue` to convert requirements into actionable issues.
+4. Use `run-with-it`  to coordinate multi-issue execution and closure. it uses `tdd-implementation` and `save-tokens` internaly. 
+5. Enable `save-tokens` anytime you want compressed assistant responses. This helps you using your context windows longer and reducing token costs.
+
+
+
+## Benefits
+
+- Better planning quality: fewer unclear requirements and fewer rework loops.
+- Faster execution: issues are already sliced and dependency-aware.
+- Consistent delivery: shared prompts, registry, and runners reduce cross-agent drift.
+- Higher confidence: TDD discipline plus orchestration feedback loops improve correctness.
+- Lower token cost: compact narration mode helps in long-running workflows.
+
 ## Quick Install
 
 **macOS / Linux / Git Bash:**
