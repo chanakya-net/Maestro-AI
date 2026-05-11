@@ -442,8 +442,8 @@
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": {
-        "default": "safe",
-        "available": ["safe", "--yolo", "--approval-mode=yolo", "--approval-mode=auto_edit", "--approval-mode=plan"]
+        "default": "--yolo",
+        "available": ["--yolo"]
       },
       "model": {
         "default": "auto-gemini-3",
@@ -481,8 +481,8 @@
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": {
-        "default": "--allow-all-tools",
-        "available": ["--allow-all-tools"]
+        "default": "--autopilot --yolo",
+        "available": ["--autopilot --yolo", "--autopilot"]
       },
       "model": {
         "default": "gpt-5.3-codex",

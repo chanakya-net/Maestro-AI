@@ -133,8 +133,8 @@ apply_gui_permission_mode() {
       fi
       ;;
     github-copilot)
-      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--allow-all" || "${AGENT_PERMISSION_MODE}" == "--yolo" ]]; then
-        AGENT_PERMISSION_MODE="--allow-all-tools"
+      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--allow-all" || "${AGENT_PERMISSION_MODE}" == "--allow-all-tools" ]]; then
+        AGENT_PERMISSION_MODE="--autopilot --yolo"
       fi
       ;;
     gemini)
@@ -486,7 +486,10 @@ while IFS= read -r template_arg; do
       cmd+=("${REPO_ROOT}")
       ;;
     "{{permission_mode}}")
-      [[ -n "${AGENT_PERMISSION_MODE}" ]] && cmd+=("${AGENT_PERMISSION_MODE}")
+      if [[ -n "${AGENT_PERMISSION_MODE}" ]]; then
+        read -r -a permission_parts <<< "${AGENT_PERMISSION_MODE}"
+        cmd+=("${permission_parts[@]}")
+      fi
       ;;
     "{{model_flag}}")
       if [[ -n "${model_flag}" ]]; then
