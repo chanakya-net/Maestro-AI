@@ -17,7 +17,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never implement work directly in this session. All implementation must be done by worker-agents spawned via run-agent.sh using prompt.md (implementer), review-prompt.md (reviewer), or modifier-prompt.md (modifier).
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
-- Never store progress or agent output in memory. Read progress files line-by-line, print to console, and forget each line.
+- Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS/heartbeat line to `$SUB_COORD_LOG_FILE`, print to console, and forget each line.
 - Clear all in-memory issue state after writing the compact report JSON.
 - **Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
 
@@ -45,6 +45,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 ## Progress Monitoring Rules
 
 - Read progress files every 30 seconds. Print each new line to console, then forget it.
+- **Every STATUS/heartbeat line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - Do not accumulate progress lines in variables or memory.
 - After 180 seconds of silence, print a stall warning.
 

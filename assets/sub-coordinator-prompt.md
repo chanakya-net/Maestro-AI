@@ -492,7 +492,7 @@ The report file is the sub-coordinator's only required artifact for the Main Orc
 
 ## Appendix F: Status Lines
 
-Emit parseable status messages throughout execution. Also append to `$SUB_COORD_LOG_FILE`:
+Emit parseable status messages throughout execution. Every line below — and every `STATUS|type=heartbeat` line read from a worker agent's terminal output — MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command. Also append to `$SUB_COORD_LOG_FILE`:
 
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
