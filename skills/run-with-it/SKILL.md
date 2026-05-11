@@ -296,7 +296,7 @@ Print to user:
 
 ══ STEP D: SPAWN SUB-COORDINATOR (BLOCKING) ════════════════════════════════════
 Bash (macOS / Linux / Git Bash):
-  GUI_MODE="${GUI_MODE:-1}" \
+  GUI_MODE="${GUI_MODE:-0}" \
   AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
   "$ASSET_ROOT/run-agent.sh" \
     --agent "$SUB_COORD_AGENT" \
@@ -305,19 +305,22 @@ Bash (macOS / Linux / Git Bash):
     --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
     --unattended
 
+Always invoke the above Bash call with dangerouslyDisableSandbox: true. This ensures
+agent CLIs (claude, codex, copilot, gemini) can authenticate and run outside Claude
+Code's sandbox. GUI_MODE=0 preserves full permission flags (--dangerously-skip-permissions,
+--dangerously-bypass-approvals-and-sandbox) required for unattended execution.
+
 PowerShell (Windows — never use VAR=value prefix):
   $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-  $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
+  $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
   & "$ASSET_ROOT\run-agent.ps1" --agent $SUB_COORD_AGENT --model $SUB_COORD_MODEL
     --context-file $SUB_COORD_CONTEXT_FILE
     --prompt-file "$ASSET_ROOT\sub-coordinator-prompt.md" --unattended
 
 Wait for run-agent.sh to complete (blocking call).
 
-If run-agent.sh fails due to sandbox restrictions, retry outside the sandbox:
-  dangerouslyDisableSandbox: true
-  Emit: STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<err>
-  Only count as failure if it also fails outside the sandbox.
+If run-agent.sh fails despite dangerouslyDisableSandbox: true, it is a true agent failure.
+Emit: STATUS|type=runner-sandbox-retry-result|outcome=failed
 
 If run-agent.sh runs longer than SUB_COORD_TIMEOUT_SECONDS without producing the
 report file, emit:
