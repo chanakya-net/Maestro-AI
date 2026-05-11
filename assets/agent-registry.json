@@ -208,9 +208,9 @@
       "price_tier": "med",
       "price_input_per_1m": 1.75,
       "price_output_per_1m": 14.00,
-      "complexity_weight": 4,
+      "complexity_weight": 6,
       "context_window": 400000,
-      "strengths": ["agentic-coding", "code-speed", "easy-to-medium-complexity"]
+      "strengths": ["agentic-coding", "code-speed", "preferred-over-5.3-and-5.2-non-mini", "easy-to-medium-hard-complexity"]
     },
     "gpt-5.4": {
       "provider": "openai",
@@ -298,10 +298,10 @@
         "_note": "Google/Gemini models may enter the normal automatic pool only for quite-easy and easy tasks. Do not use Gemini as a last-resort fallback for medium or harder work unless explicitly selected by AGENT/MODEL overrides."
       },
       "anthropic": {
-        "automatic_routing": "fallback_only_for_direct_claude",
+        "automatic_routing": "copilot_only",
         "preferred_agents": ["github-copilot"],
-        "fallback_agents": ["claude"],
-        "_note": "Claude-provider models should use GitHub Copilot first when both Copilot and direct Claude support the model. Direct Claude is reserved for cases where other agents/models cannot perform the task or are filtered/unavailable."
+        "fallback_agents": [],
+        "_note": "Claude-provider models should use GitHub Copilot only for automatic routing. Direct Claude is temporarily disabled for automatic fallback and should be used only when explicitly forced."
       }
     },
     "hard_minimum_overrides": [
@@ -331,9 +331,9 @@
       {
         "provider": "anthropic",
         "direct_agent": "claude",
-        "automatic_routing": "fallback_only",
+        "automatic_routing": "explicit_only",
         "preferred_agents": ["github-copilot"],
-        "_note": "Use direct Claude only after non-Claude agents/models are unavailable, filtered out, or judged unable to perform the task."
+        "_note": "Direct Claude agent is temporarily disabled for automatic routing. Use only via explicit AGENT override."
       }
     ]
   },
@@ -358,12 +358,11 @@
         ]
       },
       "model": {
-        "default": "gpt-5.3-codex",
+        "default": "gpt-5.3-codex-spark",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "gpt-5.4-mini",
-          "gpt-5.3-codex",
           "gpt-5.3-codex-spark",
+          "gpt-5.3-codex",
           "gpt-5.2",
           "gpt-5.5",
           "gpt-5.4"
@@ -372,9 +371,8 @@
         "metered_api_cost": false,
         "per_model_multipliers": false,
         "routing_cost_overrides": {
-          "gpt-5.4-mini": 0.00,
-          "gpt-5.3-codex": 0.00,
           "gpt-5.3-codex-spark": 0.00,
+          "gpt-5.3-codex": 0.00,
           "gpt-5.2": 0.00,
           "gpt-5.5": 0.00,
           "gpt-5.4": 0.00
@@ -382,7 +380,7 @@
         "_note": "Codex subscription model list has no visible per-model multiplier system; treat these models as plan-included routing options rather than API-metered choices."
       },
       "capability_band": "advanced",
-      "fallback_order": ["github-copilot", "gemini", "claude"],
+      "fallback_order": ["github-copilot", "gemini"],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
@@ -485,7 +483,7 @@
         "available": ["--autopilot --yolo", "--autopilot"]
       },
       "model": {
-        "default": "gpt-5.3-codex",
+        "default": "gpt-5.3-codex-spark",
         "flag_template": "--model {{model}}",
         "known_models": [
           "claude-haiku-4.5",
@@ -494,17 +492,16 @@
           "gemini-2.5-pro",
           "gemini-3-flash-preview",
           "gemini-3.1-pro-preview",
-          "gpt-5-mini",
           "gpt-5.2",
           "gpt-5.2-codex",
+          "gpt-5.3-codex-spark",
           "gpt-5.3-codex",
-          "gpt-5.4-mini",
           "gpt-5.5",
           "gpt-5.4"
         ]
       },
       "capability_band": "balanced",
-      "fallback_order": ["codex", "gemini", "claude"],
+      "fallback_order": ["codex", "gemini"],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
