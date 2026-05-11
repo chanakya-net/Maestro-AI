@@ -209,6 +209,12 @@ $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
 ```
 
+After the implementer runner completes successfully, **immediately capture the commit SHA** and store it — do not read the diff text:
+```bash
+IMPL_COMMIT_SHA=$(git rev-parse HEAD)
+```
+Store `IMPL_COMMIT_SHA` in `.run-with-it/sub-<N>-state.json`. This SHA is the only diff reference passed to the reviewer. **Never read `git diff` output into the Sub-Coordinator context.**
+
 ### Reviewer Band Selection
 
 For each review pass, bump the current implementation band up exactly one level and reuse the same model-first selection logic:
@@ -278,8 +284,8 @@ The review and modification loop runs up to a cap of **4 cycles**, hardcoded.
 2. Assemble a reviewer payload file in this order:
    - The full slice requirements — complete issue body including title, description, requirements, and acceptance criteria
    - The original `PROMPT_FILE` contents
-   - The captured implementer diff (or latest modification diff when cycling)
-   - A per-file changed-file list with `+added/-deleted` counts for each file
+   - The commit SHA to review: `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` — the reviewer runs `git diff <SHA>..HEAD` itself to fetch the diff. **Do not read the diff into this payload.**
+   - A per-file `+added/-deleted` summary only (from `git diff --numstat <SHA>..HEAD`) — line counts, no diff text
    - The implementer (or modifier) verification results
    - The implementer telemetry stub
 
@@ -314,8 +320,9 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, implementer's reviewed diff, complete reviewer JSON, required verification commands.
+   - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), complete reviewer JSON, required verification commands.
    - Run via: `--prompt-file "$ASSET_ROOT/modifier-prompt.md"`
+   - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
 
@@ -333,11 +340,11 @@ Skip modification entirely. Terminate the issue as `failed-review` immediately. 
 
 ## Appendix C: File Tracking
 
-After each agent (implementer or modifier) completes, run:
+After each agent (implementer or modifier) completes, use the captured SHA to get per-file stats:
 ```bash
-git diff --numstat HEAD
+git diff --numstat <IMPL_COMMIT_SHA or MODIFY_COMMIT_SHA>..HEAD
 ```
-Aggregate per-file line changes (added/deleted) across all agents for this issue. Store the result in `files_modified` in the compact report (Appendix E).
+Read only the `--numstat` summary (file path + added + deleted counts) — never read full diff text into context. Aggregate per-file line changes across all agents for this issue. Store the result in `files_modified` in the compact report (Appendix E).
 
 ### Sandbox Retry
 
