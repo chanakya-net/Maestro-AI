@@ -206,10 +206,11 @@ For every implementation slice, the initial issue body must use the exact Markdo
 
 1. `## Parent`
 2. `## What to build`
-3. `## Agent Routing`
-4. `## Technical Context Snapshot`
-5. `## Acceptance criteria`
-6. `## Blocked by`
+3. `## Implementation Steps`
+4. `## Agent Routing`
+5. `## Technical Context Snapshot`
+6. `## Acceptance criteria`
+7. `## Blocked by`
 
 Do not close or modify unrelated issues.
 
@@ -289,6 +290,20 @@ A reference to the PRD parent issue.
 ## What to build
 
 A concise end-to-end description of this slice.
+
+## Implementation Steps
+
+Ordered, numbered steps an implementing agent must follow to deliver this slice. Each step must be concrete and actionable:
+
+1. **Step title** — specific action (file to create/modify/delete, function/method/component to add or change, migration to write, test to add). Include exact paths and symbol names derived from codebase exploration.
+2. ...
+
+Rules for this section:
+- Ordered by execution dependency (earlier steps must not depend on later ones).
+- Every step must reference a concrete artifact (file path, function name, API endpoint, schema field, test case name).
+- Include at least one test step per slice.
+- If a step requires human input or a decision at runtime, flag it: `[HITL]`.
+- Do not include steps that belong to other slices.
 
 ## Agent Routing
 
