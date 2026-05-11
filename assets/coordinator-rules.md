@@ -19,6 +19,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, print to console, and forget each line.
 - Clear all in-memory issue state after writing the compact report JSON.
+- **Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
 
 ## Issue Intake Rules
 
