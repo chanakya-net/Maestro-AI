@@ -288,6 +288,9 @@ The review and modification loop runs up to a cap of **4 cycles**, hardcoded.
    - A per-file `+added/-deleted` summary only (from `git diff --numstat <SHA>..HEAD`) — line counts, no diff text
    - The implementer (or modifier) verification results
    - The implementer telemetry stub
+   - Output paths (reviewer writes both files; Sub-Coordinator reads only the status file):
+     - `REVIEWER_STATUS_FILE=.run-with-it/reviews/<issue-number>-cycle-<n>-status.json`
+     - `REVIEWER_INSTRUCTIONS_FILE=.run-with-it/reviews/<issue-number>-cycle-<n>-instructions.json`
 
 3. Spawn the reviewer child agent:
 
@@ -302,9 +305,9 @@ The review and modification loop runs up to a cap of **4 cycles**, hardcoded.
    ```
 
 4. Emit before reviewer starts: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
-5. Parse the reviewer JSON output against the PRD contract.
-6. Archive reviewer JSON to `.run-with-it/reviews/<issue-number>-cycle-<n>.json` immediately after parsing.
-7. Emit after archival: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
+5. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never read `REVIEWER_INSTRUCTIONS_FILE`** — that file is for the modifier only.
+6. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `.run-with-it/sub-<N>-state.json` for this cycle. Do not read its contents.
+7. Emit after step 5: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 
 ### Verdict Routing
 
@@ -320,7 +323,7 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), complete reviewer JSON, required verification commands.
+   - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands.
    - Run via: `--prompt-file "$ASSET_ROOT/modifier-prompt.md"`
    - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
@@ -400,7 +403,7 @@ Write this file before every major phase transition:
 
 When resumed after compaction:
 1. Read `.run-with-it/sub-<N>-state.json` to rehydrate state.
-2. Read `.run-with-it/reviews/` for archived review JSONs if in review loop.
+2. If in the review loop, retrieve the `REVIEWER_INSTRUCTIONS_FILE` path for the current cycle from state. Do not re-read the status file — use the stored verdict from state instead.
 3. Continue from where you left off.
 4. The 4-cycle cap is enforced against the restored `cycles_used`.
 5. Tasks with a restored `non_approval_count` of 2 or more must resume with the escalated implementation band.
