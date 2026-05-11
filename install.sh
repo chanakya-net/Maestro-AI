@@ -178,6 +178,61 @@ install_assets() {
 }
 
 # ── Native: Claude Code ─────────────────────────────────────────────────────
+
+# Idempotent: adds run-with-it allowlist entries to ~/.claude/settings.json
+patch_claude_permissions() {
+  local settings="$HOME/.claude/settings.json"
+
+  if [ ! -f "$settings" ]; then
+    note "  ~/.claude/settings.json not found; skipping permission patch"
+    return 0
+  fi
+
+  if [ "$DRY" = 1 ]; then
+    note "  [dry-run] add run-agent allowlist entries to $settings"
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "  python3 not found; skipping permission patch (add these manually to $settings):"
+    note "    Bash(*run-agent.sh*)"
+    note "    Bash(*run-agent.ps1*)"
+    note "    Bash(codex *)"
+    note "    Bash(opencode *)"
+    note "    Bash(gemini *)"
+    return 0
+  fi
+
+  python3 - "$settings" <<'PY'
+import json, sys
+
+ENTRIES = [
+    "Bash(*run-agent.sh*)",
+    "Bash(*run-agent.ps1*)",
+    "Bash(codex *)",
+    "Bash(opencode *)",
+    "Bash(gemini *)",
+]
+
+path = sys.argv[1]
+with open(path, "r") as f:
+    cfg = json.load(f)
+
+cfg.setdefault("permissions", {}).setdefault("allow", [])
+allow = cfg["permissions"]["allow"]
+
+added = [e for e in ENTRIES if e not in allow]
+if added:
+    allow.extend(added)
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+    for e in added:
+        print(f"    + {e}")
+else:
+    print("    permissions already configured")
+PY
+}
+
 install_claude() {
   only_filter "claude" || return 0
   command -v claude >/dev/null 2>&1 || return 0
@@ -188,6 +243,8 @@ install_claude() {
     FAILED+=("claude")
     err "  claude plugin install failed"
   fi
+  note "  patching Claude Code permissions for run-with-it agents"
+  patch_claude_permissions
   echo
 }
 

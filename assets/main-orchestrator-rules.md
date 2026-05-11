@@ -21,7 +21,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 - Always spawn sub-coordinators via `run-agent.sh --prompt-file sub-coordinator-prompt.md`.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
-- Always inject `MAX_AGENT_DEPTH=1` into every sub-coordinator context file.
+- Always inject `MAX_AGENT_DEPTH=2` into every sub-coordinator context file.
 - Mark the issue as `in_progress` in `main-state.json` and write it to disk BEFORE spawning the sub-coordinator.
 
 ## GitHub Rules
