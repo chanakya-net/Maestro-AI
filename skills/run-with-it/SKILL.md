@@ -104,6 +104,7 @@ Required files:
 - `run-agent.ps1`
 - `agent-registry.json`
 - `review-prompt.md`
+- `modifier-prompt.md`
 - `complexity-prompt.md`
 
 Selection rules:
@@ -121,12 +122,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\complexity-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/complexity-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
 ## Multi-Agent Capability
@@ -317,7 +318,7 @@ Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's regis
 
 ### Reviewer Band Selection
 
-For the happy-path review pass, bump the implementer's band up exactly one level and then reuse the same model-first selection logic.
+For each review pass, bump the current implementation band up exactly one level and then reuse the same model-first selection logic. The current implementation band is the original implementer band for cycles 1-2, and the escalated modification band for cycles 3-4 when escalation has activated.
 
 | Implementer band | Reviewer band | Rule |
 |-------------------|---------------|------|
@@ -332,17 +333,17 @@ Reviewer model selection rules:
 
 1. Set `current_level` to the bumped reviewer band.
 2. Reuse the main model-first algorithm.
-3. Exclude the implementer's exact `model_id` from the candidate pool before selection.
-4. If the implementer is already at `holy-fuck`, keep `current_level=holy-fuck` and pick a different model from that band instead of upgrading beyond the top band.
+3. Exclude the current implementation `model_id` from the candidate pool before selection.
+4. If the current implementation model is already at `holy-fuck`, keep `current_level=holy-fuck` and pick a different model from that band instead of upgrading beyond the top band.
 5. Pass the chosen reviewer through the same unified runner contract as any other child agent.
 
 ### Degraded Fallback
 
 If no installed agent supports any model in the bumped reviewer band after applying `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, and bounded fallback:
 
-1. Fall back to the **implementer's original band** (`current_level` = implementer band).
-2. Exclude the implementer's exact `model_id` from the candidate pool.
-3. Select a different model from the implementer band using the normal model-first algorithm.
+1. Fall back to the **current implementation band** (`current_level` = original implementer band for cycles 1-2, escalated modification band for cycles 3-4).
+2. Exclude the current implementation `model_id` from the candidate pool.
+3. Select a different model from the current implementation band using the normal model-first algorithm.
 4. Emit `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent` before spawning the reviewer.
 5. Continue with the normal per-cycle review steps. The run still completes.
 
@@ -412,13 +413,14 @@ Before execution verify:
 1. resolved asset root exists
 2. `prompt.md` exists
 3. `review-prompt.md` exists
-4. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
-5. `agent-registry.json` exists
-6. `complexity-prompt.md` exists
-7. `coordinator-rules.md` exists
-7. `gh` auth when GitHub intake is required
-8. unified runner supports selected agent/model
-10. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
+4. `modifier-prompt.md` exists
+5. runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
+6. `agent-registry.json` exists
+7. `complexity-prompt.md` exists
+8. `coordinator-rules.md` exists
+9. `gh` auth when GitHub intake is required
+10. unified runner supports selected agent/model
+11. **review-band reachability** (when `DELEGATED_REVIEW=true`): confirm `agent-registry.json` contains at least one model in the bumped reviewer band whose supporting agent is also detected and installed. If not, log degraded mode at preflight rather than mid-run:
 
    ```
    PREFLIGHT|review-band=<bumped-band>|status=degraded|reason=no-higher-band-agent|fallback-band=<implementer-band>
@@ -426,7 +428,7 @@ Before execution verify:
 
    This does not block execution; it signals that the run will use the degraded same-band different-model reviewer for all tasks in this run.
 
-11. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
+12. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -439,7 +441,7 @@ Before execution verify:
    - **`discard`**: apply the Cleanup `Discard` policy, then continue with normal preflight and fresh issue intake as if no prior state existed.
    - Do not start any new task, fetch any issue, or spawn any agent until the user responds.
 
-If `review-prompt.md` or `complexity-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
+If `review-prompt.md`, `modifier-prompt.md`, or `complexity-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
 
 ## Execution
 
@@ -588,7 +590,7 @@ Required final ledger columns:
 
 - Task: issue number/title or local task name
 - Role: `impl`, `review`, or `modify`
-- Cycle: integer cycle number (`0` for the impl row, `1` for the first review/modify pair, `2` for the second review/modify pair if it occurs)
+- Cycle: integer cycle number (`0` for the impl row, `1` through `4` for each review/modify pair)
 - Agent: selected agent slug/display name
 - Model: selected model id
 - Line changes: `+<added>/-<deleted> (<total> total)`
@@ -598,7 +600,7 @@ Required final ledger columns:
 - Telemetry source: telemetry origin, such as `runner-default`, provider-native, or coordinator-estimated
 - Selection reasoning: one short sentence explaining why that agent/model was selected, such as score band match, forced override, sole compatible agent, interchangeable random pick, provider match, or fallback
 
-Cycle-numbering rule: the implementer always receives `cycle=0`. The first reviewer run and the modification agent it triggers (if any) share `cycle=1`. The second reviewer run and its modification agent (if any) share `cycle=2`. This means a full revise→approve flow emits exactly four ledger rows: `role=impl|cycle=0`, `role=review|cycle=1`, `role=modify|cycle=1`, `role=review|cycle=2`.
+Cycle-numbering rule: the implementer always receives `cycle=0`. Each reviewer run and the modification agent it triggers (if any) share the same cycle number. The review loop may use cycles 1-4. If review is not approved twice, the modification triggered by the second non-approval and any later modification work must use the next higher implementation band before returning to review.
 
 Calculate line changes per task from the accepted diff for that task. Prefer `git diff --numstat` or commit stats after each task integration; sum added and deleted lines across files owned by that task. For binary files or unavailable stats, report `n/a` and explain why in the selection or notes text.
 
@@ -751,10 +753,20 @@ When `DELEGATED_REVIEW=true` (the default), after the implementer finishes and t
 #### Cycle Counter
 
 - Cycle 1 = first reviewer run after implementation.
-- Cycle 2 = reviewer run after first modification.
-- The cap is **2 cycles**, hardcoded (no env override in this iteration).
+- Cycle 2 = reviewer run after first modification. If this is the second non-approval review result, the modification it triggers is the first escalated modification.
+- Cycle 3 = reviewer run after the first escalated modification.
+- Cycle 4 = reviewer run after the second escalated modification.
+- The cap is **4 cycles**, hardcoded (no env override in this iteration).
 - Cap exhaustion terminates the issue as `failed-review`.
-- **Compaction survival**: the authoritative cycle counter for each task is `review_history[task].cycles_used` in `.run-with-it/state.json`. On resume, restore this value and enforce the cap against it — a task that consumed cycle 1 before compaction may use only one more cycle (cycle 2) after resume.
+- **Compaction survival**: the authoritative cycle counter for each task is `review_history[task].cycles_used` in `.run-with-it/state.json`. On resume, restore this value and enforce the cap against it — a task that consumed cycles 1 and 2 before compaction may use only cycles 3 and 4 after resume.
+
+#### Implementation Model Escalation
+
+- Track non-approval review results per task. A `revise` verdict counts as non-approval and may trigger modification; a `reject` verdict still terminates immediately as `failed-review`.
+- The first modification request uses the original implementer band.
+- After two non-approval review results, select the modification agent triggered by that second non-approval from the next higher implementation band using the same model-first selection algorithm. Continue using that escalated band for later modification requests in the same issue.
+- If the original implementer band is already `holy-fuck`, stay at `holy-fuck` and select a different compatible model when available.
+- Emit the usual `STATUS|type=modify-spawn|...|model=<model-id>` line with the escalated model; the ledger selection reason must mention escalation after two non-approval reviews.
 
 #### Per-Cycle Steps
 
@@ -786,9 +798,9 @@ Integrate the current diff using the existing per-issue commit policy. No modifi
 
 **`verdict=revise`**
 
-1. If the current cycle equals the cap (2), terminate the issue as `failed-review` immediately — do not spawn a modification agent.
+1. If the current cycle equals the cap (4), terminate the issue as `failed-review` immediately — do not spawn a modification agent.
 2. Otherwise, spawn a modification agent for the current cycle:
-   - Select the modification agent at the **original implementer band** using the same model-first selection algorithm.
+   - Select the modification agent at the **current implementation band** using the same model-first selection algorithm. Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band for the modification triggered by the second non-approval and any later modification request.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<agent-name>|model=<model-id>` before spawning.
    - Pass the modification agent a payload containing, in this order:
      1. the original issue context
@@ -796,7 +808,22 @@ Integrate the current diff using the existing per-issue commit policy. No modifi
      3. the implementer's reviewed diff
      4. the complete reviewer JSON (from `.run-with-it/reviews/<issue-number>-cycle-<n>.json`)
      5. the required verification commands from `state.json` (`queue[task].verification`) — the modification agent **must** run these before reporting completion
-   - The modification agent must run verification and report pass/fail results in its output, following the same sandbox-retry rule as the implementer (retry with `dangerouslyDisableSandbox: true` on permission/pipe errors before marking verification failed).
+   - Run the modification agent through the existing unified runner using `--agent`, `--model`, `--unattended`, and `--prompt-file "$ASSET_ROOT/modifier-prompt.md"`.
+   - Bash (macOS / Linux / Git Bash):
+     ```bash
+     "$ASSET_ROOT/run-agent.sh" \
+       --agent "$AGENT" \
+       --model "$MODEL" \
+       --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" \
+       --prompt-file "$ASSET_ROOT/modifier-prompt.md" \
+       --unattended
+     ```
+   - PowerShell (Windows):
+     ```powershell
+     & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $MODIFIER_CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\modifier-prompt.md" --unattended
+     ```
+   - The modifier prompt requires the modification agent to address reviewer comments, run the supplied verification commands after editing, and fix every failing test before reporting completion, even when a failing test appears outside the original issue scope.
+   - The modification agent must report pass/fail results in its output, following the same sandbox-retry rule as the implementer (retry with `dangerouslyDisableSandbox: true` on permission/pipe errors before marking verification failed).
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** If verification failed or was not reported, treat the modification as blocked and terminate the issue as `failed-review` — do not silently cycle to the reviewer with unverified changes.
    - Capture both the new diff and the verification results reported by the modification agent.
 3. Increment the cycle counter and return to **Per-Cycle Steps** with the new diff and verification results.
@@ -871,6 +898,7 @@ Write a single JSON file at `.run-with-it/state.json` using this schema:
     {
       "task": 36,
       "cycles_used": 1,
+      "non_approval_count": 0,
       "review_files": [".run-with-it/reviews/36-cycle-1.json"]
     }
   ]
@@ -882,7 +910,7 @@ State category requirements:
 - `queue`: include dependencies, dependency proof, status, and ownership scope per task.
 - `ledger_rows`: store the coordinator-emitted `STATUS|type=ledger...` lines verbatim.
 - `in_flight_agents`: store role, cycle, and scope for any currently running or last-known active agents.
-- `review_history`: store total cycles used per task and the archived review JSON file paths.
+- `review_history`: store total cycles used per task, the count of non-approval review results (`non_approval_count`), and the archived review JSON file paths. Increment `non_approval_count` on every `revise` verdict; a `reject` terminates immediately and does not increment it.
 
 The coordinator may include additional fields, but must not omit these four categories when `schema_version` is 1.
 
@@ -895,7 +923,7 @@ Rebuild all four state categories in memory from `.run-with-it/state.json` (sche
 1. **`queue`** — restore all task entries. Tasks whose `status` is `"completed"` or `"done"` are skipped entirely; do not requeue them. Tasks with `status` `"ready"` or `"blocked"` are returned to their respective queues.
 2. **`ledger_rows`** — restore verbatim ledger `STATUS` lines. Do not re-emit them; hold them in memory so the final ledger includes pre-compaction rows.
 3. **`in_flight_agents`** — restore each entry. These represent agents that were active or last-known-active at compaction time.
-4. **`review_history`** — restore `cycles_used` per task. The 2-cycle cap is enforced against these restored values for every subsequent review pass.
+4. **`review_history`** — restore `cycles_used` and `non_approval_count` per task. The 4-cycle cap is enforced against the restored `cycles_used` for every subsequent review pass. Tasks with a restored `non_approval_count` of 2 or more must resume with the escalated implementation band for the next modification request.
 
 Emit one parseable line immediately after rehydration succeeds:
 
@@ -973,7 +1001,7 @@ Keep `progress` values under 8 words and `next` values under 5 words.
 
 The coordinator must surface child-agent progress while agents are running.
 
-- Require implementation and modification agents to emit child heartbeat lines from `assets/prompt.md`:
+- Require implementation agents to emit child heartbeat lines from `assets/prompt.md` and modification agents to emit child heartbeat lines from `assets/modifier-prompt.md`:
   `STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>`
 - Capture child stdout and stderr while the runner executes. When a child heartbeat line appears, immediately relay it as a coordinator heartbeat with batch/task/agent context:
   `STATUS|type=heartbeat|batch=<batch-id>|agent=<agent-name>|issue=#<n>|phase=<phase>|progress=<short-text>|elapsed=<seconds>`

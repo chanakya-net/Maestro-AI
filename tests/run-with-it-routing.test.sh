@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
+COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/coordinator-rules.md"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -13,7 +14,16 @@ fail() {
 assert_contains() {
   local needle="$1"
   local message="$2"
-  if ! grep -Fq "$needle" "$SKILL_FILE"; then
+  if ! grep -Fq -- "$needle" "$SKILL_FILE"; then
+    fail "${message} (missing: ${needle})"
+  fi
+}
+
+assert_file_contains() {
+  local file="$1"
+  local needle="$2"
+  local message="$3"
+  if ! grep -Fq -- "$needle" "$file"; then
     fail "${message} (missing: ${needle})"
   fi
 }
@@ -21,7 +31,7 @@ assert_contains() {
 assert_not_contains() {
   local needle="$1"
   local message="$2"
-  if grep -Fq "$needle" "$SKILL_FILE"; then
+  if grep -Fq -- "$needle" "$SKILL_FILE"; then
     fail "${message} (found forbidden: ${needle})"
   fi
 }
@@ -38,6 +48,7 @@ assert_not_present_in_active_files() {
 }
 
 [[ -f "$SKILL_FILE" ]] || fail "run-with-it skill file exists"
+[[ -f "$COORDINATOR_RULES_FILE" ]] || fail "coordinator rules file exists"
 
 assert_not_contains 'run-codex.sh' "legacy codex runner references removed"
 assert_not_contains 'run-copilot.sh' "legacy copilot runner references removed"
@@ -48,6 +59,7 @@ assert_not_present_in_active_files 'run-gemini\.sh' "legacy gemini runner refere
 assert_not_present_in_active_files 'run-opencode\.sh' "legacy opencode runner references removed from active docs/scripts"
 
 assert_contains 'prompt.md' "asset discovery includes prompt.md"
+assert_contains 'modifier-prompt.md' "asset discovery includes modifier-prompt.md"
 assert_contains 'run-agent.sh' "asset discovery includes run-agent.sh"
 assert_contains 'agent-registry.json' "asset discovery includes agent-registry.json"
 
@@ -93,6 +105,21 @@ assert_contains 'Agent #<n>: <phase> - <short-text>' "documents human-readable h
 assert_contains 'Do not relay arbitrary raw child output as progress.' "documents raw output suppression"
 assert_contains 'progress=waiting for child update' "documents stale heartbeat fallback"
 assert_contains 'At the end of every run, include a final task execution ledger.' "documents required final execution ledger"
+assert_contains 'The review loop may use cycles 1-4.' "documents four-cycle review cap"
+assert_contains 'If review is not approved twice, the modification triggered by the second non-approval and any later modification work must use the next higher implementation band before returning to review.' "documents implementation escalation trigger"
+assert_contains 'The cap is **4 cycles**, hardcoded' "documents four-cycle hard cap"
+assert_contains 'Implementation Model Escalation' "documents implementation model escalation section"
+assert_contains 'After two non-approval review results, select the modification agent triggered by that second non-approval from the next higher implementation band' "documents next-band modification selection"
+assert_contains '--prompt-file "$ASSET_ROOT/modifier-prompt.md"' "documents modifier prompt runner invocation"
+assert_contains 'The modifier prompt requires the modification agent to address reviewer comments, run the supplied verification commands after editing, and fix every failing test before reporting completion' "documents modifier verification responsibility"
+assert_contains 'The 4-cycle cap is enforced against the restored `cycles_used`' "documents resumed four-cycle cap"
+assert_contains 'non_approval_count' "documents non_approval_count in state schema"
+assert_contains 'Tasks with a restored `non_approval_count` of 2 or more must resume with the escalated implementation band' "documents non_approval_count resume escalation"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'The delegated-review cap is 4 cycles.' "coordinator rules preserve four-cycle cap"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'Track `review_history[task].non_approval_count`' "coordinator rules preserve non_approval_count tracking"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'After two non-approval review results, use the next higher implementation band' "coordinator rules preserve implementation escalation"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'Spawn modification agents with `modifier-prompt.md`' "coordinator rules preserve modifier prompt use"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'Modification agents must address reviewer comments, run verification after edits, and fix every failing test before reporting completion' "coordinator rules preserve modifier test mandate"
 assert_contains 'Line changes: `+<added>/-<deleted> (<total> total)`' "documents final ledger line change format"
 assert_contains 'Input tokens: child-agent prompt/input token count when available' "documents input token ledger column"
 assert_contains 'Output tokens: child-agent completion/output token count when available' "documents output token ledger column"

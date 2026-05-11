@@ -32,3 +32,8 @@ Re-read this file before every major phase: issue intake, routing, each agent sp
 
 - Never advance to the next review cycle without confirmed passing verification results from the implementing or modifying agent.
 - If the implementing or modifying agent's output does not include passing verification results, terminate the issue as failed-review — do not silently cycle.
+- The delegated-review cap is 4 cycles. Enforce `review_history[task].cycles_used` from `.run-with-it/state.json` across resumes.
+- Track `review_history[task].non_approval_count` in `state.json`. Increment it on every `revise` verdict. On resume, restore this value — tasks with `non_approval_count >= 2` must use the escalated implementation band for the next modification.
+- After two non-approval review results, use the next higher implementation band for the modification agent triggered by the second non-approval and any later modification request.
+- Spawn modification agents with `modifier-prompt.md`, not the implementation or review prompt.
+- Modification agents must address reviewer comments, run verification after edits, and fix every failing test before reporting completion, even outside the original issue scope.
