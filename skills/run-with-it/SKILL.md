@@ -97,7 +97,7 @@ Collect these values before execution:
   - `COMMITS_LIMIT` (default `5`)
   - `MAX_ITERATIONS` (default `20`)
 - Optional sub-coordinator agent selection:
-  - `SUB_COORD_AGENT` (default `claude`) — fixed agent slug used to spawn every Sub-Coordinator
+  - `SUB_COORD_AGENT` (default `github-copilot`) — fixed agent slug used to spawn every Sub-Coordinator
   - `SUB_COORD_MODEL` (default: highest available model in registry for `complex` band) — fixed model id used for every Sub-Coordinator; the Sub-Coordinator then independently runs its own routing for implementation/review/modify child agents
   - `SUB_COORD_TIMEOUT_SECONDS` (default `3600`) — seconds before the Main Orchestrator emits a stall alert for a non-completing Sub-Coordinator
 - Optional routing overrides (passed through to Sub-Coordinators via context file):
