@@ -104,9 +104,9 @@ Sub-agent input context, in order:
 2. Last `COMMITS_LIMIT` commits, default `5`
 3. Relevant files self-identified by CodeGraph when `.codegraph/` exists; otherwise `grep`/`find`
 
-Bash invocation:
+Bash invocation (use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
-GUI_MODE="${GUI_MODE:-1}" \
+GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 "$ASSET_ROOT/run-agent.sh" \
   --agent "$AGENT" \
@@ -119,7 +119,7 @@ AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 PowerShell (Windows):
 ```powershell
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
+$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\complexity-prompt.md" --unattended
 ```
 
@@ -190,9 +190,9 @@ From `model_catalog` in `agent-registry.json`:
 
 Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
 
-Bash (macOS / Linux / Git Bash):
+Bash (macOS / Linux / Git Bash — use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
-GUI_MODE="${GUI_MODE:-1}" \
+GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 "$ASSET_ROOT/run-agent.sh" \
   --agent "$AGENT" \
@@ -205,7 +205,7 @@ AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 PowerShell (Windows):
 ```powershell
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "1" }
+$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
 ```
 
@@ -292,10 +292,12 @@ The review and modification loop runs up to a cap of **4 cycles**, hardcoded.
      - `REVIEWER_STATUS_FILE=.run-with-it/reviews/<issue-number>-cycle-<n>-status.json`
      - `REVIEWER_INSTRUCTIONS_FILE=.run-with-it/reviews/<issue-number>-cycle-<n>-instructions.json`
 
-3. Spawn the reviewer child agent:
+3. Spawn the reviewer child agent (use dangerouslyDisableSandbox: true on this Bash call):
 
    Bash:
    ```bash
+   GUI_MODE="${GUI_MODE:-0}" \
+   AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
    "$ASSET_ROOT/run-agent.sh" \
      --agent "$REVIEWER_AGENT" \
      --model "$REVIEWER_MODEL" \
@@ -324,7 +326,7 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
    - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands.
-   - Run via: `--prompt-file "$ASSET_ROOT/modifier-prompt.md"`
+   - Run via: `GUI_MODE="${GUI_MODE:-0}" AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" "$ASSET_ROOT/run-agent.sh" --agent "$MODIFIER_AGENT" --model "$MODIFIER_MODEL" --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" --prompt-file "$ASSET_ROOT/modifier-prompt.md" --unattended` with `dangerouslyDisableSandbox: true`
    - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
@@ -349,11 +351,9 @@ git diff --numstat <IMPL_COMMIT_SHA or MODIFY_COMMIT_SHA>..HEAD
 ```
 Read only the `--numstat` summary (file path + added + deleted counts) — never read full diff text into context. Aggregate per-file line changes across all agents for this issue. Store the result in `files_modified` in the compact report (Appendix E).
 
-### Sandbox Retry
+### Sandbox
 
-If `run-agent.sh` fails due to sandbox restrictions (permission errors, named-pipe failures, socket access denied), **retry the exact same invocation outside the sandbox** using `dangerouslyDisableSandbox: true`. Emit before retry:
-`STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<error-summary>`
-Only count it as a true agent failure if it also fails outside the sandbox.
+**Always invoke every `run-agent.sh` Bash call with `dangerouslyDisableSandbox: true`.** This is required so agent CLIs (claude, codex, copilot, gemini) can access auth credentials and run outside Claude Code's sandbox. `GUI_MODE=0` must also be set (via the `GUI_MODE="${GUI_MODE:-0}"` prefix) to preserve full permission flags (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`) needed for unattended execution. If a `run-agent.sh` call fails even with `dangerouslyDisableSandbox: true`, count it as a true agent failure.
 
 ## Appendix D: Sub-Coordinator State (Compaction Survival)
 
