@@ -33,6 +33,7 @@ assert_not_contains() {
 dry_run_output="$(bash "${INSTALLER_PATH}" --dry-run)"
 
 assert_contains "${dry_run_output}" "prompt.md" "dry-run includes prompt asset"
+assert_contains "${dry_run_output}" "modifier-prompt.md" "dry-run includes modifier prompt asset"
 assert_contains "${dry_run_output}" "coordinator-rules.md" "dry-run includes coordinator-rules asset"
 assert_contains "${dry_run_output}" "run-agent.sh" "dry-run includes unified runner asset"
 assert_contains "${dry_run_output}" "agent-registry.json" "dry-run includes registry asset"

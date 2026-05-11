@@ -18,6 +18,9 @@ The smart installer detects your active agent(s) and wires everything up automat
 It also installs shared assets required by workflow skills:
 
 - `prompt.md`
+- `modifier-prompt.md`
+- `review-prompt.md`
+- `complexity-prompt.md`
 - `run-agent.sh`
 - `run-agent.ps1` on Windows
 - `agent-registry.json`
@@ -103,12 +106,12 @@ Quick fix from this repository root:
 
 Bash (macOS / Linux / Git Bash):
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/modifier-prompt.md ./assets/review-prompt.md ./assets/complexity-prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
 ```
 
 PowerShell (Windows):
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 Or re-run installer:
@@ -260,6 +263,7 @@ npx -y skills add chanakya-net/AI-Skills -a github-copilot
 | [`assets/run-agent.ps1`](assets/run-agent.ps1) | PowerShell runner for Windows workflows. |
 | [`assets/prompt.md`](assets/prompt.md) | Shared execution prompt used by the runner workflow. |
 | [`assets/review-prompt.md`](assets/review-prompt.md) | Review prompt material for follow-up quality gates. |
+| [`assets/modifier-prompt.md`](assets/modifier-prompt.md) | Modification prompt for addressing reviewer comments and rerunning verification. |
 | [`assets/complexity-prompt.md`](assets/complexity-prompt.md) | Complexity scoring prompt material used by routing workflows. |
 
 ## Tests
@@ -314,6 +318,7 @@ AI-Skills/
 ├── assets/                 # Shared prompt + runner scripts
 │   ├── agent-registry.json
 │   ├── complexity-prompt.md
+│   ├── modifier-prompt.md
 │   ├── prompt.md
 │   ├── review-prompt.md
 │   ├── run-agent.ps1
