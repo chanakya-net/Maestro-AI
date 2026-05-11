@@ -14,11 +14,11 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Execution Rules
 
-- Never implement work directly in this session. All implementation must be done by sub-coordinators spawned via run-agent.sh using sub-coordinator-prompt.md.
-- Never run tests, build commands, or compile the project in this session. Only read result files from the sub-coordinator.
-- Never pause after routing to ask the user how to proceed. Spawn the sub-coordinator immediately.
+- Never implement work directly in this session. All implementation must be done by worker-agents spawned via run-agent.sh using prompt.md (implementer), review-prompt.md (reviewer), or modifier-prompt.md (modifier).
+- Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
+- Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, print to console, and forget each line.
-- Clear all in-memory issue state after posting the terminal comment and closing the issue.
+- Clear all in-memory issue state after writing the compact report JSON.
 
 ## Issue Intake Rules
 
@@ -34,12 +34,12 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Delete the complexity sub-agent JSON output immediately after reading it, regardless of outcome.
 - On two consecutive complexity sub-agent failures, default to medium-hard (score=25) and continue -- do not block execution.
 
-## Sub-Coordinator Dispatch Rules
+## Worker-Agent Dispatch Rules
 
-- Write issues/active.json before spawning the sub-coordinator. Include issue number, title, body, ownership scope, paths to avoid, verification commands, and all file paths.
-- Spawn exactly one sub-coordinator per issue (or per parallel batch item).
-- Do not spawn multiple sub-coordinators for the same issue.
-- The sub-coordinator handles all implementation, review, and modification internally.
+- Assemble the context payload file before spawning each worker-agent. Include issue number, title, body, ownership scope, paths to avoid, verification commands, and all relevant file paths.
+- Spawn exactly one implementer worker-agent per implementation pass.
+- Do not spawn multiple worker-agents for the same role and cycle.
+- Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
 
 ## Progress Monitoring Rules
 
@@ -49,7 +49,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Result Processing Rules
 
-- Read issues/results/<N>-result.json after sub-coordinator completes.
+- Read issues/results/<N>-result.json after the worker-agent completes.
 - Validate all required fields are present. Treat missing or malformed result as error.
 - Post terminal comment on GitHub using the result data.
 - Close the issue with gh issue close <N>.
@@ -65,5 +65,5 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 - Read master-ledger.json on resume to determine in_flight, completed, and queued issues.
 - If in_flight issue has a result file, process it (sub-coordinator finished but main crashed).
-- If in_flight issue has no result file, re-spawn sub-coordinator (it resumes from sub-state).
+- If in_flight issue has no result file, re-spawn the worker-agent (it resumes from sub-state).
 - Do not re-process completed issues.
