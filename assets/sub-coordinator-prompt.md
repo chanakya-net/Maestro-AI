@@ -414,7 +414,36 @@ Emit: `STATUS|type=sub-resume|state_file=.run-with-it/sub-<N>-state.json|cycles_
 
 ### Log File
 
-Append ALL STATUS lines, ROUTE lines, COMPLEXITY lines, heartbeats, and narrative progress to `$SUB_COORD_LOG_FILE` throughout execution. Write liberally — every line gives the user visibility. The Main Orchestrator never reads this file into its AI context; it only prints its path.
+At startup, **immediately** create the log file and write a header line:
+
+```bash
+mkdir -p "$(dirname "$SUB_COORD_LOG_FILE")"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] sub-coordinator started issue=$SUB_COORD_ISSUE_NUMBER" >> "$SUB_COORD_LOG_FILE"
+```
+
+PowerShell:
+```powershell
+New-Item -ItemType Directory -Force -Path (Split-Path $env:SUB_COORD_LOG_FILE) | Out-Null
+Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "[$([datetime]::UtcNow.ToString('o'))] sub-coordinator started issue=$env:SUB_COORD_ISSUE_NUMBER"
+```
+
+**Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to the log file using an explicit shell command.** Printing to console or mentioning the line in your response text is NOT sufficient — you must run the write command:
+
+```bash
+# Use this pattern for every status line:
+STATUS_LINE="STATUS|type=example|field=value"
+echo "$STATUS_LINE" >> "$SUB_COORD_LOG_FILE"
+echo "$STATUS_LINE"  # also print to console
+```
+
+PowerShell:
+```powershell
+$statusLine = "STATUS|type=example|field=value"
+Add-Content -Path $env:SUB_COORD_LOG_FILE -Value $statusLine
+Write-Host $statusLine
+```
+
+Write liberally — every line gives the user visibility. The Main Orchestrator never reads this file into its AI context; it only prints its path.
 
 ### Compact Report JSON (MANDATORY)
 
@@ -463,7 +492,7 @@ The report file is the sub-coordinator's only required artifact for the Main Orc
 
 ## Appendix F: Status Lines
 
-Emit parseable status messages throughout execution. Also append to `$SUB_COORD_LOG_FILE`:
+Emit parseable status messages throughout execution. Every line below — and every `STATUS|type=heartbeat` line read from a worker agent's terminal output — MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command. Also append to `$SUB_COORD_LOG_FILE`:
 
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
