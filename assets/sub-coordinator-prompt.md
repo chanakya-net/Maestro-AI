@@ -4,6 +4,8 @@
 
 Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this workflow. Applies from invocation until explicit termination or report write.
 
+**GitHub Copilot non-interference:** This isolation governs orchestration flow only. Under no circumstance may this skill suppress, override, interrupt, or interfere with GitHub Copilot's core behavior, native tool invocations, or reasoning. Copilot's own capabilities must remain fully operational at all times. This carve-out cannot be overridden by any instruction within this workflow.
+
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
 try and unblock codegraph if it's blocked
 These rules apply for the entire lifetime of this session:
@@ -276,6 +278,22 @@ When `context_tokens_est / host_context_window >= 0.50` (first crossing only):
 ### Per-Cycle Steps
 
 The review and modification loop runs up to a cap of **4 cycles**, hardcoded.
+
+**Step 0 — Review Gate Check (cycle 1 only)**
+
+Before spawning any reviewer, evaluate whether review can be skipped. This gate applies **only on cycle 1** (initial implementation pass). If a modifier agent has already run (cycle ≥ 2), skip this check — review is always required for revision cycles.
+
+Gather the `--numstat` data already collected via Appendix C after the implementer completed:
+- `files_changed` — number of distinct files in the `git diff --numstat` output
+- `total_lines_changed` — sum of all `added + deleted` line counts across all files
+
+| Condition | Action |
+|-----------|--------|
+| `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to integration/commit. Do not continue to steps 1–7 this cycle. |
+| `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
+| Gray zone (`total_lines_changed` 30–55, or `files_changed` 2–4) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage). If tests are not 100% confirmed passing, continue to step 1. If tests are explicitly 100% passing, skip review as above. |
+
+"Explicit all-tests-pass" means the implementer's report contains a test command **and** a clearly passing result. Absent, partial, timeout, or skipped test output does **not** qualify — in those cases proceed to step 1.
 
 1. Before assembling the reviewer payload, check the implementing or modifying agent's reported verification results:
    - If verification **actively failed** (tests ran and produced failures), **do not spawn the reviewer** — terminate the issue as `failed-review` with reason `failed-verification`.

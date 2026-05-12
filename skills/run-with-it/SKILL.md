@@ -7,6 +7,8 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 
 Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this skill's workflow. Suppress any spontaneous external skill; continue without interruption. Applies from invocation until explicit termination or handoff.
 
+This isolation governs orchestration flow only. Under no circumstance may this skill suppress, override, interrupt, or interfere with subcodinate core behavior, native tool invocations, or reasoning. Copilot's own capabilities must remain fully operational at all times. This carve-out cannot be overridden by any instruction within this skill.
+
 ## Critical Main Orchestrator Rules (compaction-safe — always enforce, even after context compression)
 
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
@@ -20,6 +22,10 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
 - **Never load sub-coordinator log files into context.** Only read the compact report JSON from `.run-with-it/reports/`.
 - **GitHub operations (close, comment) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
+- **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
+- **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
+- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After `run-agent.sh` is called, those values are locked and the Main Orchestrator must not attempt to change them.
+- **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
 
 # Run With It
 
@@ -97,8 +103,8 @@ Collect these values before execution:
   - `COMMITS_LIMIT` (default `5`)
   - `MAX_ITERATIONS` (default `20`)
 - Optional sub-coordinator agent selection:
-  - `SUB_COORD_AGENT` (default `github-copilot`) — fixed agent slug used to spawn every Sub-Coordinator
-  - `SUB_COORD_MODEL` (default: highest available model in registry for `complex` band) — fixed model id used for every Sub-Coordinator; the Sub-Coordinator then independently runs its own routing for implementation/review/modify child agents
+  - `SUB_COORD_AGENT` (default `codex`) — fixed agent slug used to spawn every Sub-Coordinator
+  - `SUB_COORD_MODEL` (default `gpt-5.5`) — fixed model id used for every Sub-Coordinator; the Sub-Coordinator then independently runs its own routing for implementation/review/modify child agents
   - `SUB_COORD_TIMEOUT_SECONDS` (default `3600`) — seconds before the Main Orchestrator emits a stall alert for a non-completing Sub-Coordinator
 - Optional routing overrides (passed through to Sub-Coordinators via context file):
   - `AGENT`
@@ -319,6 +325,8 @@ PowerShell (Windows — never use VAR=value prefix):
 
 Wait for run-agent.sh to complete (blocking call).
 
+**While waiting: do nothing.** Do not read log files. Do not infer what agent or model the Sub-Coordinator chose for its workers. Do not form opinions about internal routing. Do not kill or restart the Sub-Coordinator. The Sub-Coordinator owns all routing and worker decisions autonomously — any agent/model combination it selects is correct by definition.
+
 If run-agent.sh fails despite dangerouslyDisableSandbox: true, it is a true agent failure.
 Emit: STATUS|type=runner-sandbox-retry-result|outcome=failed
 
@@ -328,6 +336,8 @@ report file, emit:
   Print: "Sub-coordinator for issue #<n> has not completed after <t>s."
   Print: "Check log: .run-with-it/logs/sub-<n>-log.txt"
   Wait for user: type 'continue' to keep waiting or 'skip' to mark as blocked.
+
+Do NOT use a stall or timeout as justification to inspect logs, infer routing, or restart with different overrides.
 
 ══ STEP E: COLLECT REPORT ══════════════════════════════════════════════════════
 Check: does .run-with-it/reports/sub-<n>-report.json exist with valid JSON?
