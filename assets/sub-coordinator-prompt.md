@@ -33,6 +33,8 @@ Your context file contains, in order:
    - `SUB_COORD_ISSUE_NUMBER` — the issue number being processed
    - `SUB_COORD_REPORT_FILE` — absolute path where you must write your compact report JSON
    - `SUB_COORD_LOG_FILE` — absolute path for your log file (append all STATUS lines here)
+   - `RUN_WITH_IT_STATUS_FILE` — optional single-line status bus for current terminal progress
+   - `RUN_WITH_IT_EVENTS_LOG` — optional append-only status event log for terminal progress
    - `MAX_AGENT_DEPTH=1` — always 1; your child agents must not spawn further sub-agents
    - `DELEGATED_REVIEW`, `MAX_ITERATIONS`, `COMMITS_LIMIT`, and all other standard run params
 
@@ -110,6 +112,10 @@ Bash invocation (use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
+RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
+RUN_WITH_IT_ROLE="complexity" \
+RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
 "$ASSET_ROOT/run-agent.sh" \
   --agent "$AGENT" \
   --model "$MODEL" \
@@ -122,6 +128,8 @@ PowerShell (Windows):
 ```powershell
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
 $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
+$env:RUN_WITH_IT_ROLE = "complexity"
+$env:RUN_WITH_IT_ISSUE = $env:SUB_COORD_ISSUE_NUMBER
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\complexity-prompt.md" --unattended
 ```
 
@@ -196,6 +204,10 @@ Bash (macOS / Linux / Git Bash — use dangerouslyDisableSandbox: true on this B
 ```bash
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
+RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
+RUN_WITH_IT_ROLE="impl" \
+RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
 "$ASSET_ROOT/run-agent.sh" \
   --agent "$AGENT" \
   --model "$MODEL" \
@@ -208,6 +220,8 @@ PowerShell (Windows):
 ```powershell
 $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
 $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
+$env:RUN_WITH_IT_ROLE = "impl"
+$env:RUN_WITH_IT_ISSUE = $env:SUB_COORD_ISSUE_NUMBER
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
 ```
 
@@ -316,6 +330,10 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    ```bash
    GUI_MODE="${GUI_MODE:-0}" \
    AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+   RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
+   RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
+   RUN_WITH_IT_ROLE="review" \
+   RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
    "$ASSET_ROOT/run-agent.sh" \
      --agent "$REVIEWER_AGENT" \
      --model "$REVIEWER_MODEL" \
@@ -344,7 +362,7 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
    - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands.
-   - Run via: `GUI_MODE="${GUI_MODE:-0}" AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" "$ASSET_ROOT/run-agent.sh" --agent "$MODIFIER_AGENT" --model "$MODIFIER_MODEL" --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" --prompt-file "$ASSET_ROOT/modifier-prompt.md" --unattended` with `dangerouslyDisableSandbox: true`
+   - Run via: `GUI_MODE="${GUI_MODE:-0}" AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" RUN_WITH_IT_ROLE="modify" RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" "$ASSET_ROOT/run-agent.sh" --agent "$MODIFIER_AGENT" --model "$MODIFIER_MODEL" --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" --prompt-file "$ASSET_ROOT/modifier-prompt.md" --unattended` with `dangerouslyDisableSandbox: true`
    - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
@@ -463,6 +481,39 @@ Write-Host $statusLine
 
 Write liberally — every line gives the user visibility. The Main Orchestrator never reads this file into its AI context; it only prints its path.
 
+### Live Status Bus
+
+If `$RUN_WITH_IT_STATUS_FILE` is set, overwrite it with the latest one-line status. If `$RUN_WITH_IT_EVENTS_LOG` is set, append the same line there. These files are for terminal visibility only; never read them into your context.
+
+Bash:
+```bash
+write_live_status() {
+  status_line="$1"
+  if [ -n "${RUN_WITH_IT_STATUS_FILE:-}" ]; then
+    mkdir -p "$(dirname "$RUN_WITH_IT_STATUS_FILE")"
+    printf '%s\n' "$status_line" > "$RUN_WITH_IT_STATUS_FILE"
+  fi
+  if [ -n "${RUN_WITH_IT_EVENTS_LOG:-}" ]; then
+    mkdir -p "$(dirname "$RUN_WITH_IT_EVENTS_LOG")"
+    printf '%s\n' "$status_line" >> "$RUN_WITH_IT_EVENTS_LOG"
+  fi
+}
+```
+
+PowerShell:
+```powershell
+function Write-LiveStatus([string]$statusLine) {
+  if ($env:RUN_WITH_IT_STATUS_FILE) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_STATUS_FILE) | Out-Null
+    Set-Content -Path $env:RUN_WITH_IT_STATUS_FILE -Value $statusLine
+  }
+  if ($env:RUN_WITH_IT_EVENTS_LOG) {
+    New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_EVENTS_LOG) | Out-Null
+    Add-Content -Path $env:RUN_WITH_IT_EVENTS_LOG -Value $statusLine
+  }
+}
+```
+
 ### Compact Report JSON (MANDATORY)
 
 When the sub-coordinator reaches any terminal state (completed / failed-review / blocked):
@@ -514,7 +565,9 @@ Emit parseable status messages throughout execution. Every line below — and ev
 
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|price_tier=<tier>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
-- `STATUS|type=heartbeat|phase=<exploring|implementing|testing|review>|progress=<short-text>|elapsed=<seconds>`
+- `STATUS|type=heartbeat|issue=<n>|role=<complexity|impl|review|modify>|phase=<exploring|implementing|testing|review>|progress=<short-text>|elapsed=<seconds>`
+- `STATUS|type=agent-start|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>`
+- `STATUS|type=agent-complete|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>|status=<success|failed>`
 - `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`

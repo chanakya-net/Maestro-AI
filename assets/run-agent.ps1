@@ -43,6 +43,10 @@ $AGENT_EXTRA_ARGS  = $env:AGENT_EXTRA_ARGS
 $REGISTRY_FILE     = if ($env:AGENT_REGISTRY_FILE) { $env:AGENT_REGISTRY_FILE } else { Join-Path $SCRIPT_DIR "agent-registry.json" }
 $UNATTENDED        = $env:UNATTENDED -eq "1"
 $GUI_MODE          = if ($env:GUI_MODE) { $env:GUI_MODE } else { "auto" }
+$RUN_STATUS_FILE   = $env:RUN_WITH_IT_STATUS_FILE
+$RUN_EVENTS_LOG    = $env:RUN_WITH_IT_EVENTS_LOG
+$RUN_ROLE          = if ($env:RUN_WITH_IT_ROLE) { $env:RUN_WITH_IT_ROLE } else { "agent" }
+$RUN_ISSUE         = if ($env:RUN_WITH_IT_ISSUE) { $env:RUN_WITH_IT_ISSUE } else { "unknown" }
 $DRY_RUN           = $false
 $LIST_AGENTS       = $false
 $DETECTED_ONLY     = $false
@@ -123,6 +127,28 @@ function Write-Telemetry([string]$status) {
     $telemetryAgent = Normalize-TelemetryValue $AGENT
     $telemetryModel = Normalize-TelemetryValue $MODEL
     [Console]::Error.WriteLine("STATUS|type=telemetry|agent=$telemetryAgent|model=$telemetryModel|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=$status|source=runner-default")
+}
+
+function Write-StatusLine([string]$line) {
+    if ($RUN_STATUS_FILE) {
+        $statusDir = Split-Path $RUN_STATUS_FILE
+        if ($statusDir) { New-Item -ItemType Directory -Force -Path $statusDir | Out-Null }
+        Set-Content -Path $RUN_STATUS_FILE -Value $line -Encoding UTF8
+    }
+
+    if ($RUN_EVENTS_LOG) {
+        $eventsDir = Split-Path $RUN_EVENTS_LOG
+        if ($eventsDir) { New-Item -ItemType Directory -Force -Path $eventsDir | Out-Null }
+        Add-Content -Path $RUN_EVENTS_LOG -Value $line -Encoding UTF8
+    }
+}
+
+function Write-RunStatus([string]$type, [string]$status = "") {
+    if (-not $RUN_STATUS_FILE -and -not $RUN_EVENTS_LOG) { return }
+    $statusField = if ($status) { "|status=$status" } else { "" }
+    $line = "STATUS|type=$type|issue=$(Normalize-TelemetryValue $RUN_ISSUE)|role=$(Normalize-TelemetryValue $RUN_ROLE)|agent=$(Normalize-TelemetryValue $AGENT)|model=$(Normalize-TelemetryValue $MODEL)$statusField"
+    Write-StatusLine $line
+    [Console]::Error.WriteLine($line)
 }
 
 function Test-GuiMode {
@@ -348,6 +374,7 @@ try {
         exit 0
     }
 
+    Write-RunStatus "agent-start"
     & $invokeCmd @cmdArgs
     $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
     if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph -ErrorAction SilentlyContinue)) {
@@ -355,8 +382,10 @@ try {
         try { & codegraph mark-dirty 2>$null } catch {} finally { Pop-Location }
     }
     if ($commandExitCode -eq 0) {
+        Write-RunStatus "agent-complete" "success"
         Write-Telemetry "success"
     } else {
+        Write-RunStatus "agent-complete" "failed"
         Write-Telemetry "failed"
     }
     exit $commandExitCode

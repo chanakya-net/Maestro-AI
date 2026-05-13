@@ -37,6 +37,10 @@ AGENT_PERMISSION_MODE="${AGENT_PERMISSION_MODE:-}"
 AGENT_EXTRA_ARGS="${AGENT_EXTRA_ARGS:-}"
 UNATTENDED="${UNATTENDED:-0}"
 GUI_MODE="${GUI_MODE:-auto}"
+RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}"
+RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}"
+RUN_WITH_IT_ROLE="${RUN_WITH_IT_ROLE:-agent}"
+RUN_WITH_IT_ISSUE="${RUN_WITH_IT_ISSUE:-unknown}"
 
 DRY_RUN=0
 LIST_AGENTS=0
@@ -72,6 +76,63 @@ emit_telemetry() {
     "${telemetry_agent}" \
     "${telemetry_model}" \
     "${status}" >&2
+}
+
+write_status_line() {
+  local line="$1"
+  local status_dir events_dir
+
+  if [[ -n "${RUN_WITH_IT_STATUS_FILE}" ]]; then
+    status_dir="$(dirname -- "${RUN_WITH_IT_STATUS_FILE}")"
+    mkdir -p "${status_dir}"
+    printf '%s\n' "${line}" > "${RUN_WITH_IT_STATUS_FILE}"
+  fi
+
+  if [[ -n "${RUN_WITH_IT_EVENTS_LOG}" ]]; then
+    events_dir="$(dirname -- "${RUN_WITH_IT_EVENTS_LOG}")"
+    mkdir -p "${events_dir}"
+    printf '%s\n' "${line}" >> "${RUN_WITH_IT_EVENTS_LOG}"
+  fi
+}
+
+emit_run_status() {
+  local type="$1"
+  local status="${2:-}"
+  local status_field=""
+
+  if [[ -z "${RUN_WITH_IT_STATUS_FILE}" && -z "${RUN_WITH_IT_EVENTS_LOG}" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${status}" ]]; then
+    status_field="|status=${status}"
+  fi
+
+  local line
+  line="$(printf 'STATUS|type=%s|issue=%s|role=%s|agent=%s|model=%s%s' \
+    "${type}" \
+    "$(normalize_telemetry_value "${RUN_WITH_IT_ISSUE}")" \
+    "$(normalize_telemetry_value "${RUN_WITH_IT_ROLE}")" \
+    "$(normalize_telemetry_value "${AGENT}")" \
+    "$(normalize_telemetry_value "${MODEL}")" \
+    "${status_field}")"
+
+  write_status_line "${line}"
+  printf '%s\n' "${line}" >&2
+}
+
+forward_status_stream() {
+  local target_fd="$1"
+  local line
+
+  while IFS= read -r line; do
+    printf '%s\n' "${line}" >&"${target_fd}"
+    case "${line}" in
+      STATUS\|*|ROUTE\|*|COMPLEXITY\|*)
+        write_status_line "${line}"
+        ;;
+    esac
+  done
 }
 
 usage() {
@@ -441,8 +502,12 @@ if [[ "${AGENT_PERMISSION_MODE}" == "safe" ]]; then
 fi
 
 PAYLOAD_FILE="$(mktemp -t ai-skills-prompt.XXXXXX)"
+status_stream_dir=""
 cleanup_payload() {
   rm -f "${PAYLOAD_FILE}"
+  if [[ -n "${status_stream_dir}" ]]; then
+    rm -rf "${status_stream_dir}"
+  fi
 }
 trap cleanup_payload EXIT
 
@@ -528,8 +593,27 @@ if [[ "${DRY_RUN}" == "1" ]]; then
 fi
 
 set +e
-"${cmd[@]}"
-command_status=$?
+emit_run_status "agent-start"
+if [[ -n "${RUN_WITH_IT_STATUS_FILE}" || -n "${RUN_WITH_IT_EVENTS_LOG}" ]]; then
+  status_stream_dir="$(mktemp -d -t run-agent-status.XXXXXX)"
+  stdout_fifo="${status_stream_dir}/stdout"
+  stderr_fifo="${status_stream_dir}/stderr"
+  mkfifo "${stdout_fifo}" "${stderr_fifo}"
+  forward_status_stream 1 < "${stdout_fifo}" &
+  stdout_forward_pid=$!
+  forward_status_stream 2 < "${stderr_fifo}" &
+  stderr_forward_pid=$!
+
+  "${cmd[@]}" > "${stdout_fifo}" 2> "${stderr_fifo}"
+  command_status=$?
+  wait "${stdout_forward_pid}"
+  wait "${stderr_forward_pid}"
+  rm -rf "${status_stream_dir}"
+  status_stream_dir=""
+else
+  "${cmd[@]}"
+  command_status=$?
+fi
 set -e
 
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
@@ -537,8 +621,10 @@ if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; t
 fi
 
 if [[ "${command_status}" == "0" ]]; then
+  emit_run_status "agent-complete" "success"
   emit_telemetry "success"
 else
+  emit_run_status "agent-complete" "failed"
   emit_telemetry "failed"
 fi
 
