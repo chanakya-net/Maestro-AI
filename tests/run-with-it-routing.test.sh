@@ -110,6 +110,13 @@ assert_contains 'Sub-Coordinators are ephemeral' "documents sub-coordinator re-s
 # Status messages (where documented)
 assert_contains 'STATUS|type=sub-coord-spawn' "documents sub spawn status line"
 assert_contains 'STATUS|type=sub-coord-complete' "documents report status line"
+assert_contains 'RUN_WITH_IT_STATUS_FILE' "documents current status file"
+assert_contains 'RUN_WITH_IT_EVENTS_LOG' "documents status event log"
+assert_contains 'STATUS|type=agent-start' "documents live agent start status line"
+assert_contains 'STATUS|type=agent-complete' "documents live agent complete status line"
+assert_contains 'STATUS|type=heartbeat|issue=<n>|role=' "documents live heartbeat status line"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" '.run-with-it/status/current.txt' "orchestrator rules document current status file"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'poll `current.txt`' "orchestrator rules document shell-only status polling"
 
 # File layout
 assert_contains '.run-with-it/' "documents .run-with-it directory"

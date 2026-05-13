@@ -42,9 +42,11 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 While working, emit short parseable progress lines so the coordinator can show what you are doing:
 
-`STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>`
+`STATUS|type=heartbeat|issue=<issue-or-unknown>|role=impl|phase=<exploring|implementing|testing>|progress=<short-text>`
 
 Emit a heartbeat when you enter each phase and at least once every 60 seconds during long-running work. Keep `progress` under 8 words, for example `reading nearby tests`, `patching runner docs`, or `running focused tests`.
+
+Use `RUN_WITH_IT_ISSUE` for the `issue` field when it is present; otherwise use `unknown`.
 
 Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
 

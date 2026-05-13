@@ -21,6 +21,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` fails both inside and outside the sandbox.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
 - **Never load sub-coordinator log files into context.** Only read the compact report JSON from `.run-with-it/reports/`.
+- **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
 - **GitHub operations (close, comment) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
@@ -106,6 +107,10 @@ Collect these values before execution:
   - `SUB_COORD_AGENT` (default `codex`) — fixed agent slug used to spawn every Sub-Coordinator
   - `SUB_COORD_MODEL` (default `gpt-5.5`) — fixed model id used for every Sub-Coordinator; the Sub-Coordinator then independently runs its own routing for implementation/review/modify child agents
   - `SUB_COORD_TIMEOUT_SECONDS` (default `3600`) — seconds before the Main Orchestrator emits a stall alert for a non-completing Sub-Coordinator
+- Optional live status controls:
+  - `STATUS_POLL_SECONDS` (default `10`) — shell polling cadence for printing the latest changed status line while a Sub-Coordinator runs
+  - `RUN_WITH_IT_STATUS_FILE` (default `.run-with-it/status/current.txt`) — single-line current status bus, overwritten on every update
+  - `RUN_WITH_IT_EVENTS_LOG` (default `.run-with-it/status/events.log`) — append-only status event log for terminal inspection only; never load it into AI context
 - Optional routing overrides (passed through to Sub-Coordinators via context file):
   - `AGENT`
   - `MODEL`
@@ -288,7 +293,12 @@ Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
      MAX_AGENT_FALLBACKS=<value>
 
 Create directories before spawning:
-  mkdir -p .run-with-it/reports .run-with-it/logs
+  mkdir -p .run-with-it/reports .run-with-it/logs .run-with-it/status
+
+Resolve live status files before spawning:
+  RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-$(pwd -P)/.run-with-it/status/current.txt}"
+  RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
+  STATUS_POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
 
 Mark issue status="in_progress" in main-state.json. Write to disk BEFORE spawning.
 Emit: STATUS|type=sub-coord-spawn|issue=<n>|agent=<SUB_COORD_AGENT>
@@ -300,16 +310,44 @@ Print to user:
   "To watch live progress in a separate terminal:"
   "  tail -f .run-with-it/logs/sub-<n>-log.txt"
 
-══ STEP D: SPAWN SUB-COORDINATOR (BLOCKING) ════════════════════════════════════
+══ STEP D: SPAWN SUB-COORDINATOR (MONITORED BLOCKING) ═════════════════════════
 Bash (macOS / Linux / Git Bash):
-  GUI_MODE="${GUI_MODE:-0}" \
-  AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-  "$ASSET_ROOT/run-agent.sh" \
-    --agent "$SUB_COORD_AGENT" \
-    --model "$SUB_COORD_MODEL" \
-    --context-file "$SUB_COORD_CONTEXT_FILE" \
-    --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
-    --unattended
+  (
+    GUI_MODE="${GUI_MODE:-0}" \
+    AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+    RUN_WITH_IT_STATUS_FILE="$RUN_WITH_IT_STATUS_FILE" \
+    RUN_WITH_IT_EVENTS_LOG="$RUN_WITH_IT_EVENTS_LOG" \
+    RUN_WITH_IT_ROLE="sub-coord" \
+    RUN_WITH_IT_ISSUE="<n>" \
+    "$ASSET_ROOT/run-agent.sh" \
+      --agent "$SUB_COORD_AGENT" \
+      --model "$SUB_COORD_MODEL" \
+      --context-file "$SUB_COORD_CONTEXT_FILE" \
+      --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
+      --unattended
+  ) &
+  SUB_COORD_PID=$!
+  SUB_COORD_STARTED_AT=$(date +%s)
+  LAST_PRINTED_STATUS=""
+  while kill -0 "$SUB_COORD_PID" 2>/dev/null; do
+    if [ -s "$RUN_WITH_IT_STATUS_FILE" ]; then
+      CURRENT_STATUS="$(tail -n 1 "$RUN_WITH_IT_STATUS_FILE")"
+      if [ "$CURRENT_STATUS" != "$LAST_PRINTED_STATUS" ]; then
+        printf '%s\n' "$CURRENT_STATUS"
+        LAST_PRINTED_STATUS="$CURRENT_STATUS"
+      fi
+    fi
+    NOW=$(date +%s)
+    if [ "$((NOW - SUB_COORD_STARTED_AT))" -ge "$SUB_COORD_TIMEOUT_SECONDS" ] && [ ! -f "$SUB_COORD_REPORT_FILE" ]; then
+      printf 'STATUS|type=stall|issue=<n>|idle_for=%s|action=alert-user\n' "$((NOW - SUB_COORD_STARTED_AT))"
+      printf 'Sub-coordinator for issue #<n> has not completed after %ss.\n' "$((NOW - SUB_COORD_STARTED_AT))"
+      printf 'Check log: .run-with-it/logs/sub-<n>-log.txt\n'
+      break
+    fi
+    sleep "$STATUS_POLL_SECONDS"
+  done
+  wait "$SUB_COORD_PID"
+  SUB_COORD_STATUS=$?
 
 Always invoke the above Bash call with dangerouslyDisableSandbox: true. This ensures
 agent CLIs (claude, codex, copilot, gemini) can authenticate and run outside Claude
@@ -319,13 +357,17 @@ Code's sandbox. GUI_MODE=0 preserves full permission flags (--dangerously-skip-p
 PowerShell (Windows — never use VAR=value prefix):
   $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
   $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
+  $env:RUN_WITH_IT_STATUS_FILE = "$RUN_WITH_IT_STATUS_FILE"
+  $env:RUN_WITH_IT_EVENTS_LOG = "$RUN_WITH_IT_EVENTS_LOG"
+  $env:RUN_WITH_IT_ROLE = "sub-coord"
+  $env:RUN_WITH_IT_ISSUE = "<n>"
   & "$ASSET_ROOT\run-agent.ps1" --agent $SUB_COORD_AGENT --model $SUB_COORD_MODEL
     --context-file $SUB_COORD_CONTEXT_FILE
     --prompt-file "$ASSET_ROOT\sub-coordinator-prompt.md" --unattended
 
-Wait for run-agent.sh to complete (blocking call).
+Wait for run-agent.sh to complete while the shell watcher prints only changed one-line statuses from `$RUN_WITH_IT_STATUS_FILE`.
 
-**While waiting: do nothing.** Do not read log files. Do not infer what agent or model the Sub-Coordinator chose for its workers. Do not form opinions about internal routing. Do not kill or restart the Sub-Coordinator. The Sub-Coordinator owns all routing and worker decisions autonomously — any agent/model combination it selects is correct by definition.
+**While waiting: monitor status only.** Do not read log files into AI context. Do not read `.run-with-it/status/events.log` into AI context. Do not infer what agent or model the Sub-Coordinator chose for its workers. Do not form opinions about internal routing. Do not kill or restart the Sub-Coordinator. The Sub-Coordinator owns all routing and worker decisions autonomously — any agent/model combination it selects is correct by definition.
 
 If run-agent.sh fails despite dangerouslyDisableSandbox: true, it is a true agent failure.
 Emit: STATUS|type=runner-sandbox-retry-result|outcome=failed
@@ -511,6 +553,9 @@ Emit parseable one-line status messages:
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`
 - main loop: `STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>|failed=<count>`
 - sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>`
+- live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
+- live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
+- live heartbeat: `STATUS|type=heartbeat|issue=<n>|role=<impl|review|modify>|phase=<exploring|implementing|testing|review>|progress=<short-text>`
 - sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
 - stall: `STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user`
 - intake fallback: `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-failed-outside-sandbox>`

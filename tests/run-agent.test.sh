@@ -51,7 +51,7 @@ fi
 
 prompt_contract="$(<"${ROOT_DIR}/assets/prompt.md")"
 assert_contains "${prompt_contract}" "## Progress Heartbeats" "implementation prompt documents progress heartbeats"
-assert_contains "${prompt_contract}" "STATUS|type=heartbeat|phase=<exploring|implementing|testing>|progress=<short-text>" "implementation prompt includes child heartbeat contract"
+assert_contains "${prompt_contract}" "STATUS|type=heartbeat|issue=<issue-or-unknown>|role=impl|phase=<exploring|implementing|testing>|progress=<short-text>" "implementation prompt includes child heartbeat contract"
 assert_contains "${prompt_contract}" "at least once every 60 seconds" "implementation prompt documents heartbeat cadence"
 assert_contains "${prompt_contract}" "Heartbeat lines are live progress updates, not the final report." "implementation prompt separates heartbeat from final report"
 

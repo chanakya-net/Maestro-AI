@@ -13,6 +13,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 ## Context Rules
 
 - Never load sub-coordinator log files (`.run-with-it/logs/`) into your AI context under any circumstances.
+- Never load live status logs (`.run-with-it/status/current.txt` or `.run-with-it/status/events.log`) into your AI context. A shell watcher may print the latest changed status line to the terminal, then forget it.
 - Never read implementation diffs, reviewer JSONs, or code from sub-coordinators into your context.
 - Only read the compact report JSON (`.run-with-it/reports/sub-<n>-report.json`) from each sub-coordinator — nothing else.
 - If compressed mid-run: re-read `main-state.json`, identify pending issues, re-enter Main Loop. Do not ask the user "what have we done so far?".
@@ -22,7 +23,15 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Always spawn sub-coordinators via `run-agent.sh --prompt-file sub-coordinator-prompt.md`.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=2` into every sub-coordinator context file.
+- Always pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ROLE=sub-coord`, and `RUN_WITH_IT_ISSUE=<issue>` into the runner so live progress updates reach the shared status bus.
 - Mark the issue as `in_progress` in `main-state.json` and write it to disk BEFORE spawning the sub-coordinator.
+
+## Live Status Rules
+
+- Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
+- While a sub-coordinator runs, poll `current.txt` from the shell and print only changed lines.
+- Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
+- The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 
 ## GitHub Rules
 
