@@ -1,6 +1,6 @@
 # AI-Skills
 
-> 📖 **[explainer.html](explainer.html)** — explains the full working of this repo in detail.
+> 📖 **[explainer.html](explainer.html)** — explains the full working of this repo in detail. &nbsp;|&nbsp; 📊 **[diagram.pdf](diagram.pdf)** — sequence diagram.
 
 > Personal AI skills for any coding agent — install once, use everywhere.
 
