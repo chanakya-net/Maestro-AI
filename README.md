@@ -1,5 +1,7 @@
 # AI-Skills
 
+> 📖 **[explainer.html](explainer.html)** — explains the full working of this repo in detail.
+
 > Personal AI skills for any coding agent — install once, use everywhere.
 
 ## What This Repo Does

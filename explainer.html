@@ -1,0 +1,1065 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI-Skills — Complete Documentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f111a;
+      --surface: #181b28;
+      --surface-2: #1e2235;
+      --border: #2a2f45;
+      --text: #e2e4f0;
+      --text-muted: #8b90b0;
+      --accent: #7c8aff;
+      --accent-glow: rgba(124, 138, 255, 0.15);
+      --green: #4ade80;
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --cyan: #22d3ee;
+      --orange: #fb923c;
+      --pink: #e879f9;
+      --font: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', monospace;
+      --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-ui);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ── */
+
+    .sidebar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 260px;
+      height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 1.5rem 0;
+      overflow-y: auto;
+      z-index: 10;
+    }
+
+    .sidebar .logo {
+      padding: 0 1.25rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1rem;
+    }
+
+    .sidebar .logo h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .sidebar .logo p {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+    }
+
+    .sidebar nav a {
+      display: block;
+      padding: 0.45rem 1.25rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.82rem;
+      transition: all 0.15s;
+      border-left: 2px solid transparent;
+    }
+
+    .sidebar nav a:hover,
+    .sidebar nav a.active {
+      color: var(--text);
+      background: var(--accent-glow);
+      border-left-color: var(--accent);
+    }
+
+    .sidebar nav .nav-heading {
+      padding: 1rem 1.25rem 0.35rem;
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    .main {
+      margin-left: 260px;
+      padding: 2.5rem 3rem;
+      max-width: 1000px;
+    }
+
+    /* ── Typography ── */
+
+    h2 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin: 2.5rem 0 0.75rem;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+
+    h2:first-of-type { margin-top: 0; }
+
+    h3 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      margin: 1.75rem 0 0.5rem;
+      color: var(--accent);
+    }
+
+    h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 1.25rem 0 0.4rem;
+      color: var(--cyan);
+    }
+
+    p { margin-bottom: 0.75rem; color: var(--text); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Code blocks ── */
+
+    pre {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 0.75rem 0 1.25rem;
+      overflow-x: auto;
+      font-family: var(--font);
+      font-size: 0.78rem;
+      line-height: 1.55;
+      color: var(--text);
+    }
+
+    code {
+      font-family: var(--font);
+      font-size: 0.8em;
+      background: var(--surface-2);
+      padding: 0.15em 0.4em;
+      border-radius: 4px;
+      color: var(--pink);
+    }
+
+    pre code {
+      background: none;
+      padding: 0;
+      border-radius: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    /* ── Cards ── */
+
+    .card-grid {
+      display: grid;
+      gap: 1rem;
+      margin: 1rem 0 1.5rem;
+    }
+
+    .card-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+    .card-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 24px var(--accent-glow);
+    }
+
+    .card .card-icon {
+      font-size: 1.5rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .card h4 {
+      margin: 0 0 0.3rem;
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+
+    .card p {
+      margin: 0;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    /* ── Flow diagram ── */
+
+    .flow-diagram {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      margin: 1.5rem 0;
+      font-family: var(--font);
+      font-size: 0.78rem;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+
+    .flow-diagram .step {
+      padding: 0.5rem 1rem;
+      margin: 0.25rem 0;
+      border-radius: 6px;
+    }
+
+    .flow-diagram .step-title {
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .flow-diagram .step-desc {
+      color: var(--text-muted);
+      margin-left: 1.5rem;
+    }
+
+    .flow-diagram .arrow {
+      color: var(--text-muted);
+      text-align: center;
+      padding: 0.15rem 0;
+    }
+
+    .flow-diagram .branch {
+      border-left: 2px solid var(--border);
+      margin-left: 1.5rem;
+      padding-left: 1rem;
+    }
+
+    /* ── Tags ── */
+
+    .tag {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 600;
+      padding: 0.15em 0.6em;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 0.3em;
+    }
+
+    .tag-green { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+    .tag-yellow { background: rgba(251, 191, 36, 0.15); color: var(--yellow); }
+    .tag-red { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+    .tag-cyan { background: rgba(34, 211, 238, 0.15); color: var(--cyan); }
+    .tag-orange { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
+    .tag-pink { background: rgba(232, 121, 249, 0.15); color: var(--pink); }
+
+    /* ── Tables ── */
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0 1.5rem;
+      font-size: 0.82rem;
+    }
+
+    th, td {
+      padding: 0.6rem 0.9rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      background: var(--surface);
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      letter-spacing: 0.04em;
+    }
+
+    td { color: var(--text); }
+
+    tr:hover td { background: var(--surface); }
+
+    /* ── Lists ── */
+
+    ul, ol { margin: 0.5rem 0 1rem 1.5rem; }
+    li { margin-bottom: 0.35rem; color: var(--text); }
+
+    /* ── Separator ── */
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2rem 0;
+    }
+
+    /* ── Responsive ── */
+
+    @media (max-width: 768px) {
+      .sidebar { display: none; }
+      .main { margin-left: 0; padding: 1.5rem; }
+      .card-grid.cols-2, .card-grid.cols-3 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ── Glossary / mini cards ── */
+
+    .glossary-term {
+      display: inline-block;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.25rem 0.65rem;
+      margin: 0.15rem 0.1rem;
+      font-family: var(--font);
+      font-size: 0.72rem;
+      color: var(--cyan);
+      cursor: default;
+      transition: border-color 0.15s;
+    }
+
+    .glossary-term:hover {
+      border-color: var(--cyan);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════ SIDEBAR ═══════════════ -->
+<aside class="sidebar">
+  <div class="logo">
+    <h1>AI-Skills</h1>
+    <p>Agent skill collection · v1</p>
+  </div>
+  <nav>
+    <div class="nav-heading">Overview</div>
+    <a href="#overview">Introduction</a>
+    <a href="#skills">All Skills</a>
+    <a href="#skills-table">Skills Table</a>
+    <a href="#workflow">Unified Workflow</a>
+
+    <div class="nav-heading">Run With It</div>
+    <a href="#rwi-arch">Architecture</a>
+    <a href="#rwi-flow">Complete Flow</a>
+    <a href="#rwi-preflight">1. Preflight</a>
+    <a href="#rwi-fetch">2. Issue Fetch</a>
+    <a href="#rwi-loop">3. Main Loop</a>
+    <a href="#rwi-subcoord">4. Sub-Coordinator</a>
+    <a href="#rwi-cleanup">5. Cleanup</a>
+    <a href="#rwi-state">State Contract</a>
+    <a href="#rwi-resume">Resume &amp; Compression</a>
+
+    <div class="nav-heading">Reference</div>
+    <a href="#assets">Assets</a>
+    <a href="#overrides">Overrides</a>
+  </nav>
+</aside>
+
+<!-- ═══════════════ MAIN ═══════════════ -->
+<div class="main">
+
+<!-- ─── OVERVIEW ─── -->
+<section id="overview">
+  <h2>Introduction</h2>
+  <p>
+    <strong>AI-Skills</strong> is a reusable skill collection for coding agents —
+    Copilot, Codex, Claude, Gemini, and others. It provides a practical workflow
+    from <strong>requirements discovery</strong> → <strong>issue planning</strong>
+    → <strong>orchestrated execution</strong>, with shared runtime assets so
+    behavior stays consistent across agents and operating systems.
+  </p>
+
+  <p>
+    The collection is designed around a <strong>pipeline architecture</strong>:
+    each skill handles one stage of the software delivery lifecycle, and they
+    chain together naturally. The crown jewel is <code>run-with-it</code>, a
+    two-layer orchestration runtime that can drive multi-issue execution for
+    hours without context degradation.
+  </p>
+</section>
+
+<!-- ─── ALL SKILLS ─── -->
+<section id="skills">
+  <h2>All Skills</h2>
+
+  <div class="card-grid cols-2">
+
+    <div class="card">
+      <div class="card-icon">&#x1F50D;</div>
+      <h4>break-req</h4>
+      <p>Interviews relentlessly to break down complex requirements, resolve
+      ambiguous decisions, map dependencies, and capture technical constraints
+      — before any planning or coding begins.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-icon">&#x1F4CB;</div>
+      <h4>create-git-issue</h4>
+      <p>Synthesises a PRD from conversation context, then creates dependency-aware
+      tracer-bullet implementation issues with routing hints — publishes to GitHub
+      or writes local files as fallback.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-icon">&#x1F916;</div>
+      <h4>run-with-it</h4>
+      <p>Two-layer orchestration runtime. Main Orchestrator fetches issues, plans
+      execution order, spawns Sub-Coordinators, collects compact reports, and
+      updates GitHub. Each Sub-Coordinator handles one issue end-to-end with
+      complexity-based agent routing.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-icon">&#x1F504;</div>
+      <h4>tdd-implementation</h4>
+      <p>Strict red-green-refactor discipline with behaviour-first tests and thin
+      vertical implementation slices. Tests through public interfaces, never
+      implementation details.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-icon">&#x26A1;</div>
+      <h4>save-tokens</h4>
+      <p>Ultra-compressed assistant narration mode. Drops articles, filler,
+      pleasantries, and hedging. Uses symbols for relationships (&rarr;, &larr;, &hArr;,
+      &there4;, &becaus;). Cuts token usage ~75% in long sessions.</p>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─── SKILLS TABLE ─── -->
+<section id="skills-table">
+  <h2>Skills at a Glance</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Skill</th>
+        <th>Role</th>
+        <th>Key Capabilities</th>
+        <th>Input</th>
+        <th>Output</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>break-req</code></td>
+        <td><span class="tag tag-cyan">Discovery</span></td>
+        <td>Interviews user, explores codebase, identifies constraints &amp; dependencies</td>
+        <td>Conversation, codebase</td>
+        <td><code>technical_requirements.md</code></td>
+      </tr>
+      <tr>
+        <td><code>create-git-issue</code></td>
+        <td><span class="tag tag-yellow">Planning</span></td>
+        <td>PRD synthesis, vertical-slice issue breakdown, dependency-aware ordering</td>
+        <td>Requirements</td>
+        <td>PRD + issues (GitHub or local)</td>
+      </tr>
+      <tr>
+        <td><code>run-with-it</code></td>
+        <td><span class="tag tag-green">Execution</span></td>
+        <td>Orchestration, complexity routing, agent/model dispatch, review loop</td>
+        <td>GitHub issues / local issues.md</td>
+        <td>Closed issues + compact reports</td>
+      </tr>
+      <tr>
+        <td><code>tdd-implementation</code></td>
+        <td><span class="tag tag-pink">Build</span></td>
+        <td>Red-green-refactor, behaviour-first tests, thin slices</td>
+        <td>Issue + codebase</td>
+        <td>Working code + tests</td>
+      </tr>
+      <tr>
+        <td><code>save-tokens</code></td>
+        <td><span class="tag tag-orange">Optimisation</span></td>
+        <td>Compressed narration, symbol shorthand, ~75% token reduction</td>
+        <td>Session context</td>
+        <td>Compact responses</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── WORKFLOW ─── -->
+<section id="workflow">
+  <h2>Unified Workflow</h2>
+  <p>The skills chain together in a natural pipeline:</p>
+
+  <div class="flow-diagram" style="display:flex; align-items:center; justify-content:space-around; gap:0.5rem; flex-wrap:wrap;">
+    <div style="text-align:center; flex:1; min-width:120px;">
+      <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:1rem;">
+        <div style="font-size:1.3rem; margin-bottom:0.3rem;">&#x1F50D;</div>
+        <div style="font-weight:600; color:var(--cyan); font-size:0.85rem;">break-req</div>
+        <div style="font-size:0.7rem; color:var(--text-muted);">Discover &amp; resolve</div>
+      </div>
+    </div>
+    <div style="color:var(--text-muted); font-size:1.2rem;">&rarr;</div>
+    <div style="text-align:center; flex:1; min-width:120px;">
+      <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:1rem;">
+        <div style="font-size:1.3rem; margin-bottom:0.3rem;">&#x1F4CB;</div>
+        <div style="font-weight:600; color:var(--yellow); font-size:0.85rem;">create-git-issue</div>
+        <div style="font-size:0.7rem; color:var(--text-muted);">PRD &amp; issues</div>
+      </div>
+    </div>
+    <div style="color:var(--text-muted); font-size:1.2rem;">&rarr;</div>
+    <div style="text-align:center; flex:1; min-width:120px;">
+      <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:1rem; border-color:var(--accent);">
+        <div style="font-size:1.3rem; margin-bottom:0.3rem;">&#x1F916;</div>
+        <div style="font-weight:600; color:var(--green); font-size:0.85rem;">run-with-it</div>
+        <div style="font-size:0.7rem; color:var(--text-muted);">Orchestrate &amp; execute</div>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top:1rem; font-size:0.85rem; color:var(--text-muted);">
+    <code>run-with-it</code> uses <code>tdd-implementation</code> and
+    <code>save-tokens</code> internally during Sub-Coordinator sessions.
+  </p>
+</section>
+
+<hr>
+
+<!-- ═══════════════ RUN WITH IT ═══════════════ -->
+
+<section id="rwi-arch">
+  <h2>Run With It — Architecture</h2>
+
+  <p>
+    <code>run-with-it</code> is a <strong>two-layer orchestration runtime</strong>
+    designed for indefinite multi-issue execution without context degradation.
+    It separates concerns between a persistent <strong>Main Orchestrator</strong>
+    and ephemeral <strong>Sub-Coordinators</strong>.
+  </p>
+
+  <div class="card-grid cols-2">
+    <div class="card">
+      <h4>Main Orchestrator</h4>
+      <p>Runs in the primary agent session. Fetches issues, plans execution order,
+      spawns one Sub-Coordinator per issue, reads compact reports, updates GitHub.
+      Never implements code. Memory is <code>.run-with-it/main-state.json</code>.</p>
+    </div>
+    <div class="card">
+      <h4>Sub-Coordinator</h4>
+      <p>Spawned per issue via <code>run-agent.sh</code>. Handles complexity analysis,
+      agent routing, implementation, review, and modification. Writes a compact
+      report JSON when done. Never touches GitHub. Each runs with
+      <code>MAX_AGENT_DEPTH=1</code>.</p>
+    </div>
+  </div>
+
+  <div class="flow-diagram" style="text-align:center; padding:1.5rem;">
+    <div style="display:flex; justify-content:center; gap:1rem; flex-wrap:wrap;">
+
+      <div style="flex:1; min-width:200px;">
+        <div style="background:var(--surface-2); border:1px solid var(--accent); border-radius:8px; padding:1rem;">
+          <div style="font-weight:700; color:var(--accent); margin-bottom:0.5rem;">Main Orchestrator</div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">
+            Fetch issues &rarr; Plan order &rarr; Spawn Sub-Coord &rarr; Read report &rarr; Close issue
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text-muted); font-size:0.75rem;">
+        <div>spawns</div>
+        <div style="font-size:1rem;">&darr;</div>
+        <div>reports</div>
+      </div>
+
+      <div style="flex:1; min-width:200px;">
+        <div style="background:var(--surface-2); border:1px solid var(--cyan); border-radius:8px; padding:1rem;">
+          <div style="font-weight:700; color:var(--cyan); margin-bottom:0.5rem;">Sub-Coordinator</div>
+          <div style="font-size:0.72rem; color:var(--text-muted);">
+            Analyse &rarr; Route &rarr; Implement &rarr; Review &rarr; Modify &rarr; Report
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <hr style="margin:1.5rem auto; max-width:300px;">
+
+    <div style="font-size:0.75rem; color:var(--text-muted);">
+      <span class="glossary-term">.run-with-it/main-state.json</span>
+      <span class="glossary-term">compact report JSON</span>
+      <span class="glossary-term">run-agent.sh</span>
+      <span class="glossary-term">sub-coordinator-prompt.md</span>
+      <span class="glossary-term">agent-registry.json</span>
+    </div>
+  </div>
+</section>
+
+<!-- ─── COMPLETE FLOW ─── -->
+<section id="rwi-flow">
+  <h2>Complete Flow</h2>
+
+  <div class="flow-diagram">
+
+    <!-- 1 -->
+    <div class="step">
+      <span class="tag tag-cyan">Step 1</span>
+      <span class="step-title">Preflight Checks</span>
+      <div class="step-desc">Resolve asset root &rarr; verify all 10 required files &rarr; detect OS &rarr; check gh auth &rarr; detect existing state (resume/discard prompt) &rarr; verify Sub-Coord agent &amp; model</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- 2 -->
+    <div class="step">
+      <span class="tag tag-yellow">Step 2</span>
+      <span class="step-title">Initial Issue Fetch</span>
+      <div class="step-desc"><code>gh</code> fetch all <code>ready-for-agent</code> issues &rarr; fallback to local <code>issues.md</code> &rarr; build dependency graph &rarr; topological sort &rarr; write execution plan to <code>main-state.json</code></div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Loop header -->
+    <div style="border:2px dashed var(--accent); border-radius:8px; padding:0.75rem 1rem; margin:0.5rem 0; background:rgba(124,138,255,0.06);">
+      <span class="tag tag-green">MAIN LOOP</span>
+      <span style="font-size:0.75rem; color:var(--text-muted); margin-left:0.5rem;">Repeats until all issues are terminal</span>
+    </div>
+
+    <div class="arrow">&darr;</div>
+
+    <!-- A -->
+    <div class="step">
+      <span class="tag tag-pink">A</span>
+      <span class="step-title">Memory Refresh</span>
+      <div class="step-desc">Re-read <code>main-orchestrator-rules.md</code> + <code>main-state.json</code> from disk &rarr; emit <code>STATUS|type=memory-refresh</code></div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- B -->
+    <div class="step">
+      <span class="tag tag-pink">B</span>
+      <span class="step-title">Identify Next Issue</span>
+      <div class="step-desc">Find first <code>pending</code> issue with all deps <code>completed</code> &rarr; if none ready, re-evaluate &rarr; unresolvable &rarr; mark <code>blocked</code> &rarr; all terminal &rarr; exit loop</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- C -->
+    <div class="step">
+      <span class="tag tag-pink">C</span>
+      <span class="step-title">Assemble Sub-Coordinator Context</span>
+      <div class="step-desc">Re-fetch issue body via <code>gh issue view</code> &rarr; recent commits &rarr; CodeGraph/grep context &rarr; environment block (issue#n, report path, <code>MAX_AGENT_DEPTH=1</code>, overrides) &rarr; mark issue <code>in_progress</code> &rarr; write state before spawn</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- D -->
+    <div class="step">
+      <span class="tag tag-pink">D</span>
+      <span class="step-title">Spawn Sub-Coordinator</span>
+      <div class="step-desc"><code>run-agent.sh --prompt-file sub-coordinator-prompt.md</code> &rarr; monitored blocking loop &rarr; 3600s stall alert &rarr; shell watcher prints status line changes &rarr; waits for report JSON</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- E -->
+    <div class="step">
+      <span class="tag tag-pink">E</span>
+      <span class="step-title">Collect Compact Report</span>
+      <div class="step-desc">Read <code>.run-with-it/reports/sub-&lt;n&gt;-report.json</code> &rarr; if missing, mark <code>blocked</code> &rarr; parse: outcome, summary, files_modified, verification, token_usage, commit_sha &rarr; delete context temp file</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- F -->
+    <div class="step">
+      <span class="tag tag-pink">F</span>
+      <span class="step-title">Update State + GitHub</span>
+      <div class="step-desc">Write <code>main-state.json</code> &rarr; post terminal comment (Status/Summary/Verification/Token Usage/Notes) &rarr; close if <code>completed</code>, leave open if <code>failed-review</code>/<code>blocked</code></div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- loop back -->
+    <div style="text-align:center; color:var(--text-muted); font-size:0.78rem;">
+      &#x21BA; GOTO Step A — next iteration
+    </div>
+
+    <hr style="margin:1rem 0;">
+
+    <!-- 3 -->
+    <div class="step">
+      <span class="tag tag-red">Done</span>
+      <span class="step-title">Final Ledger + Cleanup</span>
+      <div class="step-desc">Print aggregated ledger &rarr; delete <code>.run-with-it/</code> artifacts &rarr; remove untracked <code>technical_requirements.md</code>/<code>prd.md</code>/<code>issues.md</code> &rarr; update <code>.gitignore</code> &rarr; commit cleanup</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ─── PREFLIGHT ─── -->
+
+<section id="rwi-preflight">
+  <h3>1. Preflight Checks</h3>
+
+  <div class="card-grid cols-2">
+    <div class="card">
+      <h4>Asset Discovery</h4>
+      <p>Resolve from <code>$ASSETS_DEST</code> &rarr; <code>~/.ai-skill-collections/assets</code> &rarr; <code>./assets</code>. Must find all 10 required files (<code>prompt.md</code>, <code>run-agent.sh</code>, <code>run-agent.ps1</code>, <code>agent-registry.json</code>, <code>review-prompt.md</code>, <code>modifier-prompt.md</code>, <code>complexity-prompt.md</code>, <code>coordinator-rules.md</code>, <code>sub-coordinator-prompt.md</code>, <code>main-orchestrator-rules.md</code>).</p>
+    </div>
+    <div class="card">
+      <h4>OS Detection</h4>
+      <p>Detect <code>uname -s</code> (macOS/Linux) vs <code>$env:OS = Windows_NT</code> (PowerShell). Adapts all shell commands: <code>mkdir -p</code> vs <code>New-Item</code>, <code>$HOME</code> vs <code>$env:USERPROFILE</code>, <code>.sh</code> vs <code>.ps1</code> runners.</p>
+    </div>
+    <div class="card">
+      <h4>Agent &amp; Model Validation</h4>
+      <p>Verify <code>SUB_COORD_AGENT</code> is installed via <code>run-agent.sh --list-agents --detected-only</code>. Confirm <code>SUB_COORD_MODEL</code> is in that agent's <code>known_models</code> in <code>agent-registry.json</code>.</p>
+    </div>
+    <div class="card">
+      <h4>Existing-State Detection</h4>
+      <p>If <code>.run-with-it/main-state.json</code> exists, prompt user: <code>resume</code> (continue previous run) or <code>discard</code> (delete and start fresh). On <code>resume</code>, <code>in_progress</code> issues reset to <code>pending</code> (Sub-Coordinators are ephemeral).</p>
+    </div>
+  </div>
+
+  <p style="margin-top:0.5rem;">
+    <span class="tag tag-cyan">OS</span>
+    <span class="glossary-term">uname -s</span>
+    <span class="glossary-term">$env:OS</span>
+    <span class="glossary-term">Git Bash</span>
+    <span class="glossary-term">WSL</span>
+    <span class="glossary-term">MINGW*</span>
+  </p>
+</section>
+
+<!-- ─── ISSUE FETCH ─── -->
+
+<section id="rwi-fetch">
+  <h3>2. Initial Issue Fetch &amp; Execution Plan</h3>
+
+  <p>After preflight clears, issues are fetched and sequenced:</p>
+
+  <ol>
+    <li><strong>Primary:</strong> <code>gh issue list --label ready-for-agent --state open --limit 10</code>. Retry outside sandbox if sandbox fails.</li>
+    <li><strong>Fallback:</strong> Local <code>issues.md</code> file &mdash; only when <code>gh</code> fails both sandboxed and unsandboxed, or no GitHub remote exists.</li>
+    <li><strong>Dependency graph:</strong> Each issue&rsquo;s body/labels/cross-references are parsed to identify required dependencies.</li>
+    <li><strong>Topological sort:</strong> Respects dependency order. Within same tier: critical fixes &rarr; infrastructure &rarr; feature slices &rarr; polish &rarr; refactors.</li>
+    <li><strong>Blocked detection:</strong> Issues whose deps are open/unresolved get <code>blocked</code> status until those deps complete.</li>
+  </ol>
+
+  <table>
+    <thead><tr><th>Override</th><th>Default</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>ISSUE_LABEL</code></td><td><code>ready-for-agent</code></td><td>Filter label for issue fetch</td></tr>
+      <tr><td><code>ISSUE_LIMIT</code></td><td><code>10</code></td><td>Max issues to fetch</td></tr>
+      <tr><td><code>ISSUE_STATE</code></td><td><code>open</code></td><td>GitHub issue state filter</td></tr>
+      <tr><td><code>COMMITS_LIMIT</code></td><td><code>5</code></td><td>Recent commits to inject into Sub-Coordinator context</td></tr>
+      <tr><td><code>MAX_ITERATIONS</code></td><td><code>20</code></td><td>Upper bound on Main Loop iterations</td></tr>
+    </tbody>
+  </table>
+
+  <p>The execution plan is written to <code>.run-with-it/main-state.json</code> before any work begins.</p>
+</section>
+
+<!-- ─── MAIN LOOP ─── -->
+
+<section id="rwi-loop">
+  <h3>3. Main Orchestrator Loop</h3>
+
+  <p>Executes immediately and unconditionally after the plan is written &mdash; never pauses for user input after planning. Each iteration:</p>
+
+  <table>
+    <thead>
+      <tr><th>Step</th><th>Action</th><th>Key Details</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="tag tag-pink">A</span></td>
+        <td>Memory Refresh</td>
+        <td>Re-read <code>main-orchestrator-rules.md</code> + <code>main-state.json</code>. Mandatory at top of every iteration. Emit STATUS memory-refresh line.</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-pink">B</span></td>
+        <td>Identify Next Issue</td>
+        <td>First <code>pending</code> issue whose deps are all <code>completed</code>. Re-evaluate blocked issues. Exit loop when all terminal.</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-pink">C</span></td>
+        <td>Assemble Context</td>
+        <td><code>gh issue view &lt;n&gt;</code> (fresh), recent commits, CodeGraph/grep context, env block with <code>SUB_COORD_ISSUE_NUMBER</code>, <code>SUB_COORD_REPORT_FILE</code>, <code>MAX_AGENT_DEPTH=1</code>, all overrides. Mark issue <code>in_progress</code> in state.</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-pink">D</span></td>
+        <td>Spawn Sub-Coordinator</td>
+        <td><code>run-agent.sh --prompt-file sub-coordinator-prompt.md</code> with <code>dangerouslyDisableSandbox: true</code>. Background + monitored loop. 3600s stall alert. Shell watcher prints only changed status lines. Never load logs into AI context.</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-pink">E</span></td>
+        <td>Collect Report</td>
+        <td>Read <code>.run-with-it/reports/sub-&lt;n&gt;-report.json</code>. If missing: <code>blocked + report-missing</code>. Delete context file. Never read log files.</td>
+      </tr>
+      <tr>
+        <td><span class="tag tag-pink">F</span></td>
+        <td>Update State + GitHub</td>
+        <td>Write <code>main-state.json</code>. Post terminal comment using Appendix E markdown template (Status/Summary/Verification/Token Usage/Notes/Blocking Reasons). Close if completed; leave open if failed-review or blocked.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:1rem; margin:1rem 0;">
+    <h4 style="margin:0 0 0.3rem; color:var(--accent);">Critical Guardrails</h4>
+    <ul style="margin:0; font-size:0.82rem;">
+      <li>Never implement work directly in this session</li>
+      <li>Never run tests, build commands, or compile</li>
+      <li>Never load sub-coordinator log files into AI context</li>
+      <li>Never kill, cancel, or restart a Sub-Coordinator mid-run</li>
+      <li>Never derive issue state from conversation history &mdash; always read <code>main-state.json</code></li>
+      <li>Never inspect or infer Sub-Coordinator internal routing decisions</li>
+      <li>Never present execution option menus or pause after planning</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ─── SUB-COORDINATOR ─── -->
+
+<section id="rwi-subcoord">
+  <h3>4. Sub-Coordinator Internals</h3>
+
+  <p>
+    Each Sub-Coordinator is a self-contained agent session that handles exactly
+    <strong>one issue</strong> end-to-end. It is spawned via
+    <code>run-agent.sh</code> with <code>MAX_AGENT_DEPTH=1</code> (children
+    cannot spawn further sub-agents). It never touches GitHub and never updates
+    <code>main-state.json</code>.
+  </p>
+
+  <div class="flow-diagram">
+
+    <!-- Complexity -->
+    <div class="step">
+      <span class="tag tag-cyan">1</span>
+      <span class="step-title">Complexity Analysis</span>
+      <div class="step-desc">Spawn complexity sub-agent using <code>complexity-prompt.md</code>. 9-dimension rubric, scores 1-5 each (total 9-45). Maps to band: <code>quite-easy</code>, <code>easy</code>, <code>medium</code>, <code>medium-hard</code>, <code>complex</code>, <code>holy-fuck</code>. Output: <code>COMPLEXITY|</code> line + JSON blob.</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Routing -->
+    <div class="step">
+      <span class="tag tag-yellow">2</span>
+      <span class="step-title">Deterministic Routing</span>
+      <div class="step-desc">Score to weight range. Build candidate pool from <code>agent-registry.json</code>. Sort by complexity_weight ASC, price_tier ASC, price_output_per_1m ASC. Randomly pick from top 4. Select agent that supports the chosen model. Apply allowlist/denylist/provider routing rules.</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Implementation -->
+    <div class="step">
+      <span class="tag tag-green">3</span>
+      <span class="step-title">Implementation</span>
+      <div class="step-desc">Spawn implementer worker-agent with <code>prompt.md</code>. Runs TDD discipline (red-green-refactor). Produces code with behaviour-first tests through public interfaces. Captures commit SHA, not diff text.</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Gate -->
+    <div style="border:1px dashed var(--orange); border-radius:6px; padding:0.5rem 1rem; margin:0.3rem 0; background:rgba(251,146,60,0.05);">
+      <span class="tag tag-orange">Gate</span>
+      <span style="font-size:0.75rem; color:var(--text-muted);">Skip review if &lt; 30 lines, &le; 3 files, all tests pass</span>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Review -->
+    <div class="step">
+      <span class="tag tag-pink">4</span>
+      <span class="step-title">Review</span>
+      <div class="step-desc">Reviewer band = implementer band + 1. Reviewer writes status JSON: verdict <code>approve</code>/<code>revise</code>/<code>reject</code> + instructions. Sub-Coordinator reads ONLY the status file (verdict + comment_count + nitpick_only).</div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Branch -->
+    <div class="branch">
+      <div style="color:var(--green);">approve &rarr; integrate &amp; commit</div>
+      <div style="color:var(--yellow); margin-top:0.2rem;">revise &rarr; modification loop (max 4 cycles, escalate band after 2)</div>
+      <div style="color:var(--red); margin-top:0.2rem;">reject &rarr; terminate as <code>failed-review</code></div>
+    </div>
+    <div class="arrow">&darr;</div>
+
+    <!-- Report -->
+    <div class="step">
+      <span class="tag tag-cyan">5</span>
+      <span class="step-title">Compact Report</span>
+      <div class="step-desc">Write to <code>$SUB_COORD_REPORT_FILE</code>. Schema: <code>issue_number</code>, <code>outcome</code>, <code>summary</code>, <code>files_modified</code>, <code>verification</code>, <code>review_summary</code>, <code>token_usage</code>, <code>commit_sha</code>, <code>blocking_reasons</code>.</div>
+    </div>
+
+  </div>
+
+  <h4>9-Dimension Complexity Rubric</h4>
+  <table>
+    <thead><tr><th>Dimension</th><th>Scored 1-5</th></tr></thead>
+    <tbody>
+      <tr><td>Codebase surface area</td><td>How many files/modules need changes</td></tr>
+      <tr><td>Logic branching</td><td>Conditional complexity</td></tr>
+      <tr><td>Data flow depth</td><td>How far data travels through the system</td></tr>
+      <tr><td>External dependency touch</td><td>APIs, databases, third-party services</td></tr>
+      <tr><td>Test infrastructure need</td><td>New test setup required</td></tr>
+      <tr><td>Security/implicit constraints</td><td>Auth, permissions, edge cases</td></tr>
+      <tr><td>Domain novelty</td><td>How new the concept is to the codebase</td></tr>
+      <tr><td>Integration surface</td><td>How many other features touch this area</td></tr>
+      <tr><td>Debugging/observability need</td><td>How hard it is to verify correctness</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── CLEANUP ─── -->
+
+<section id="rwi-cleanup">
+  <h3>5. Cleanup</h3>
+
+  <div class="card-grid cols-3">
+    <div class="card" style="border-color:var(--green);">
+      <h4 style="color:var(--green);">Successful Run</h4>
+      <p>Delete all <code>.run-with-it/</code> files, remove untracked <code>technical_requirements.md</code>/<code>prd.md</code>/<code>issues.md</code>, append to <code>.gitignore</code>, commit with <code>chore: remove skill-generated artifacts post-run</code>.</p>
+    </div>
+    <div class="card" style="border-color:var(--yellow);">
+      <h4 style="color:var(--yellow);">Failed / Interrupted</h4>
+      <p>Preserve all <code>.run-with-it/</code> files. Print paths of preserved state, reports, logs, reviews. Offer <code>discard</code> command to force-delete and restart.</p>
+    </div>
+    <div class="card" style="border-color:var(--red);">
+      <h4 style="color:var(--red);">Discard</h4>
+      <p>Delete everything including <code>main-state.json</code>, all reports, logs, reviews, <code>technical_requirements.md</code>, <code>prd.md</code>, <code>issues.md</code>. Update <code>.gitignore</code>, commit. Proceed as fresh run.</p>
+    </div>
+  </div>
+
+  <p>
+    <strong>Safety:</strong> Before deleting any workspace file, check <code>git status --short</code>.
+    Never delete user-modified files. Skip dirty files and emit <code>STATUS|type=cleanup|action=skipped-dirty-file</code>.
+  </p>
+</section>
+
+<!-- ─── STATE CONTRACT ─── -->
+
+<section id="rwi-state">
+  <h3>State Contract</h3>
+
+  <p>
+    The Main Orchestrator&rsquo;s entire persistent memory is
+    <code>.run-with-it/main-state.json</code> (schema version 2). It survives
+    context compression, session restarts, and agent context clears.
+  </p>
+
+  <pre>{
+  <span style="color:var(--accent);">"schema_version"</span>: 2,
+  <span style="color:var(--accent);">"run_id"</span>: "uuid...",
+  <span style="color:var(--accent);">"started_at"</span>: "2026-05-14T...",
+  <span style="color:var(--accent);">"execution_plan"</span>: {
+    <span style="color:var(--accent);">"batches"</span>: [
+      { <span style="color:var(--accent);">"batch_id"</span>: 1, <span style="color:var(--accent);">"issues"</span>: [36, 37, 38],
+        <span style="color:var(--accent);">"mode"</span>: "sequential" }
+    ]
+  },
+  <span style="color:var(--accent);">"issue_registry"</span>: {
+    "36": {
+      <span style="color:var(--accent);">"status"</span>: "completed | in_progress | pending | failed-review | blocked",
+      <span style="color:var(--accent);">"title"</span>: "issue title",
+      <span style="color:var(--accent);">"report_file"</span>: ".run-with-it/reports/sub-36-report.json",
+      <span style="color:var(--accent);">"log_file"</span>: ".run-with-it/logs/sub-36-log.txt",
+      <span style="color:var(--accent);">"commit_sha"</span>: "abc1234"
+    }
+  },
+  <span style="color:var(--accent);">"current_batch_id"</span>: 1,
+  <span style="color:var(--accent);">"current_issue_index"</span>: 0,
+  <span style="color:var(--accent);">"completed_summaries"</span>: [{...}],
+  <span style="color:var(--accent);">"ledger_rows"</span>: ["STATUS|type=ledger|..."]
+}</pre>
+
+  <table>
+    <thead><tr><th>Field</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>issue_registry</code></td><td>One entry per issue with status, title, file paths, commit SHA</td></tr>
+      <tr><td><code>completed_summaries</code></td><td>Accumulates one compact record per finished issue — bounded history for context survival</td></tr>
+      <tr><td><code>ledger_rows</code></td><td>Verbatim STATUS lines for final ledger printout</td></tr>
+      <tr><td><code>current_batch_id</code> + <code>current_issue_index</code></td><td>Tell a resumed orchestrator exactly where to continue</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── RESUME ─── -->
+
+<section id="rwi-resume">
+  <h3>Resume &amp; Compression Survival</h3>
+
+  <div class="card-grid cols-2">
+    <div class="card">
+      <h4>Resume Flow</h4>
+      <p>On startup, if <code>main-state.json</code> exists, prompt <code>resume</code>/<code>discard</code>. On resume: re-read state, reset <code>in_progress</code> to <code>pending</code> (Sub-Coordinators are ephemeral), skip already-terminal ones, re-enter Main Loop at Step A.</p>
+    </div>
+    <div class="card">
+      <h4>Compression Survival</h4>
+      <p>After context compression: re-read <code>main-state.json</code>. <code>completed</code> issues are never re-run. <code>in_progress</code> resets to <code>pending</code>. <code>completed_summaries</code> gives bounded history. Never derive state from conversation.</p>
+    </div>
+  </div>
+
+  <p>
+    <span class="glossary-term">ephemeral</span>
+    <span class="glossary-term">main-state.json</span>
+    <span class="glossary-term">completed_summaries</span>
+    <span class="glossary-term">re-read before each loop</span>
+  </p>
+</section>
+
+<!-- ─── ASSETS ─── -->
+
+<section id="assets">
+  <h2>Runtime Assets</h2>
+
+  <table>
+    <thead><tr><th>File</th><th>Role</th><th>Used By</th></tr></thead>
+    <tbody>
+      <tr><td><code>agent-registry.json</code></td><td>Agent aliases, detection commands, invocation templates, model catalog, routing metadata (546 lines)</td><td>Sub-Coordinator routing</td></tr>
+      <tr><td><code>run-agent.sh</code></td><td>Bash runner — orchestrates agent CLI invocation, permission modes, dry-run (631 lines)</td><td>Main Orchestrator / Sub-Coordinator spawn</td></tr>
+      <tr><td><code>run-agent.ps1</code></td><td>PowerShell equivalent of <code>run-agent.sh</code></td><td>Windows path</td></tr>
+      <tr><td><code>prompt.md</code></td><td>Shared execution prompt (84 lines)</td><td>Implementer worker-agent</td></tr>
+      <tr><td><code>review-prompt.md</code></td><td>Review prompt for quality gates (124 lines)</td><td>Reviewer worker-agent</td></tr>
+      <tr><td><code>modifier-prompt.md</code></td><td>Address review comments, re-run verification (86 lines)</td><td>Modifier worker-agent</td></tr>
+      <tr><td><code>complexity-prompt.md</code></td><td>9-dimension score rubric + mapping (189 lines)</td><td>Complexity sub-agent</td></tr>
+      <tr><td><code>sub-coordinator-prompt.md</code></td><td>Full Sub-Coordinator lifecycle instructions (588 lines)</td><td>Spawned child agent session</td></tr>
+      <tr><td><code>coordinator-rules.md</code></td><td>Hard constraints re-read before each phase (74 lines)</td><td>Sub-Coordinator</td></tr>
+      <tr><td><code>main-orchestrator-rules.md</code></td><td>Hard constraints re-read each loop (55 lines)</td><td>Main Orchestrator</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ─── OVERRIDES ─── -->
+
+<section id="overrides">
+  <h2>Supported Overrides</h2>
+
+  <table>
+    <thead><tr><th>Env Var</th><th>Default</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>SUB_COORD_AGENT</code></td><td><code>codex</code></td><td>Agent slug for spawning Sub-Coordinators</td></tr>
+      <tr><td><code>SUB_COORD_MODEL</code></td><td><code>gpt-5.5</code></td><td>Model for Sub-Coordinator session</td></tr>
+      <tr><td><code>SUB_COORD_TIMEOUT_SECONDS</code></td><td><code>3600</code></td><td>Stall alert threshold</td></tr>
+      <tr><td><code>STATUS_POLL_SECONDS</code></td><td><code>10</code></td><td>Shell status polling cadence</td></tr>
+      <tr><td><code>DELEGATED_REVIEW</code></td><td><code>true</code></td><td>Enable autonomous review</td></tr>
+      <tr><td><code>MAX_AGENT_FALLBACKS</code></td><td><code>2</code></td><td>Upper bound on routing fallback retries</td></tr>
+      <tr><td><code>AGENT_ALLOWLIST</code></td><td>—</td><td>Comma-separated permitted agent slugs</td></tr>
+      <tr><td><code>AGENT_DENYLIST</code></td><td>—</td><td>Comma-separated blocked agent slugs</td></tr>
+      <tr><td><code>AGENT</code></td><td>—</td><td>Force agent selection (must be installed)</td></tr>
+      <tr><td><code>MODEL</code></td><td>—</td><td>Force model for selected agent</td></tr>
+      <tr><td><code>COMPLEXITY_LEVEL</code></td><td>—</td><td>Force complexity band</td></tr>
+      <tr><td><code>COMPLEXITY_SCORE</code></td><td>—</td><td>Force numeric score (8-45)</td></tr>
+      <tr><td><code>AGENT_REGISTRY_FILE</code></td><td><code>&lt;asset-root&gt;/agent-registry.json</code></td><td>Custom registry path</td></tr>
+      <tr><td><code>ASSETS_DEST</code></td><td>—</td><td>Custom asset root directory</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<hr>
+
+<div style="text-align:center; padding:2rem 0; color:var(--text-muted); font-size:0.78rem;">
+  Generated from AI-Skills collection &mdash; <code>skills/run-with-it/SKILL.md</code> + <code>assets/</code><br>
+  Skills: break-req &middot; create-git-issue &middot; run-with-it &middot; tdd-implementation &middot; save-tokens
+</div>
+
+</div><!-- .main -->
+</body>
+</html>
