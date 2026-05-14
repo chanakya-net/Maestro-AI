@@ -42,6 +42,7 @@ FAKE_BIN="${WORK_DIR}/bin"
 CUSTOM_REGISTRY="${WORK_DIR}/registry.json"
 STATUS_FILE="${WORK_DIR}/status/current.txt"
 EVENTS_LOG="${WORK_DIR}/status/events.log"
+ROLE_LOG="${WORK_DIR}/impl/issue-42-impl-cycle-1.log"
 STDOUT_FILE="${WORK_DIR}/stdout.txt"
 STDERR_FILE="${WORK_DIR}/stderr.txt"
 
@@ -100,6 +101,7 @@ PATH="${FAKE_BIN}:${PATH}" \
   PROMPT_FILE="${PROMPT_FILE}" \
   RUN_WITH_IT_STATUS_FILE="${STATUS_FILE}" \
   RUN_WITH_IT_EVENTS_LOG="${EVENTS_LOG}" \
+  RUN_WITH_IT_LOG_FILE="${ROLE_LOG}" \
   RUN_WITH_IT_ROLE=impl \
   RUN_WITH_IT_ISSUE=42 \
   UNATTENDED=1 \
@@ -109,6 +111,7 @@ stdout_output="$(<"${STDOUT_FILE}")"
 stderr_output="$(<"${STDERR_FILE}")"
 status_current="$(<"${STATUS_FILE}")"
 status_events="$(<"${EVENTS_LOG}")"
+role_log="$(<"${ROLE_LOG}")"
 
 assert_contains "${stdout_output}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner preserves heartbeat stdout"
 assert_contains "${stdout_output}" "fake-agent done" "runner preserves normal stdout"
@@ -118,6 +121,10 @@ assert_contains "${status_events}" "STATUS|type=agent-start|issue=42|role=impl|a
 assert_contains "${status_events}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner forwards heartbeat to event log"
 assert_contains "${status_events}" "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "runner writes agent-complete to event log"
 assert_equals "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "${status_current}" "runner writes latest status to current status file"
+assert_contains "${role_log}" "STATUS|type=agent-start|issue=42|role=impl|agent=fake|model=fake-default" "runner writes agent-start to role log"
+assert_contains "${role_log}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner mirrors agent stdout to role log"
+assert_contains "${role_log}" "fake-agent done" "runner mirrors normal agent output to role log"
+assert_contains "${role_log}" "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "runner writes agent-complete to role log"
 
 runner_source="$(<"${RUNNER_PATH}")"
 assert_contains "${runner_source}" 'wait "${stdout_forward_pid}"' "runner waits for stdout forwarder by explicit pid"

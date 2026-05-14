@@ -18,6 +18,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS/heartbeat line to `$SUB_COORD_LOG_FILE`, print to console, and forget each line.
+- Store Sub-Coordinator logs under `.run-with-it/sub/`. Store worker-agent logs under `.run-with-it/<role>/`, where `<role>` is `complexity`, `impl`, `review`, or `modify`.
 - Clear all in-memory issue state after writing the compact report JSON.
 - **Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
 - Also write the latest live line to `$RUN_WITH_IT_STATUS_FILE` when it is set and append it to `$RUN_WITH_IT_EVENTS_LOG` when it is set. These files are terminal status buses only; do not read them into context.
@@ -42,11 +43,14 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Spawn exactly one implementer worker-agent per implementation pass.
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
-- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) to every `run-agent.sh` / `run-agent.ps1` worker invocation.
+- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) to every `run-agent.sh` / `run-agent.ps1` worker invocation.
+- Set each worker's `RUN_WITH_IT_LOG_FILE` to a role-specific path such as `.run-with-it/complexity/issue-<n>-complexity.log`, `.run-with-it/impl/issue-<n>-impl-cycle-<cycle>.log`, `.run-with-it/review/issue-<n>-review-cycle-<cycle>.log`, or `.run-with-it/modify/issue-<n>-modify-cycle-<cycle>.log`.
 
 ## Progress Monitoring Rules
 
 - Read progress files every 30 seconds. Print each new line to console, then forget it.
+- For worker-agent log files, read only the latest few lines with `tail -n ${WORKER_LOG_TAIL_LINES:-5}` (PowerShell: `Get-Content -Tail $env:WORKER_LOG_TAIL_LINES`, default 5). Never read a full worker-agent log into context.
+- After inspecting a worker log tail, emit a concise Sub-Coordinator status line summarizing the worker state; write that line to `$SUB_COORD_LOG_FILE`, `$RUN_WITH_IT_STATUS_FILE`, and `$RUN_WITH_IT_EVENTS_LOG` rather than carrying the worker log text in memory.
 - **Every STATUS/heartbeat line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - Every forwarded STATUS/heartbeat line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.
 - Do not accumulate progress lines in variables or memory.

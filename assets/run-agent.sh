@@ -39,6 +39,7 @@ UNATTENDED="${UNATTENDED:-0}"
 GUI_MODE="${GUI_MODE:-auto}"
 RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}"
 RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}"
+RUN_WITH_IT_LOG_FILE="${RUN_WITH_IT_LOG_FILE:-}"
 RUN_WITH_IT_ROLE="${RUN_WITH_IT_ROLE:-agent}"
 RUN_WITH_IT_ISSUE="${RUN_WITH_IT_ISSUE:-unknown}"
 
@@ -72,10 +73,27 @@ emit_telemetry() {
   telemetry_agent="$(normalize_telemetry_value "${AGENT}")"
   telemetry_model="$(normalize_telemetry_value "${MODEL}")"
 
-  printf 'STATUS|type=telemetry|agent=%s|model=%s|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=%s|source=runner-default\n' \
+  local line
+  line="$(printf 'STATUS|type=telemetry|agent=%s|model=%s|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=%s|source=runner-default' \
     "${telemetry_agent}" \
     "${telemetry_model}" \
-    "${status}" >&2
+    "${status}")"
+
+  write_log_line "${line}"
+  printf '%s\n' "${line}" >&2
+}
+
+write_log_line() {
+  local line="$1"
+  local log_dir
+
+  if [[ -z "${RUN_WITH_IT_LOG_FILE}" ]]; then
+    return 0
+  fi
+
+  log_dir="$(dirname -- "${RUN_WITH_IT_LOG_FILE}")"
+  mkdir -p "${log_dir}"
+  printf '%s\n' "${line}" >> "${RUN_WITH_IT_LOG_FILE}"
 }
 
 write_status_line() {
@@ -100,7 +118,7 @@ emit_run_status() {
   local status="${2:-}"
   local status_field=""
 
-  if [[ -z "${RUN_WITH_IT_STATUS_FILE}" && -z "${RUN_WITH_IT_EVENTS_LOG}" ]]; then
+  if [[ -z "${RUN_WITH_IT_STATUS_FILE}" && -z "${RUN_WITH_IT_EVENTS_LOG}" && -z "${RUN_WITH_IT_LOG_FILE}" ]]; then
     return 0
   fi
 
@@ -118,6 +136,7 @@ emit_run_status() {
     "${status_field}")"
 
   write_status_line "${line}"
+  write_log_line "${line}"
   printf '%s\n' "${line}" >&2
 }
 
@@ -127,6 +146,7 @@ forward_status_stream() {
 
   while IFS= read -r line; do
     printf '%s\n' "${line}" >&"${target_fd}"
+    write_log_line "${line}"
     case "${line}" in
       STATUS\|*|ROUTE\|*|COMPLEXITY\|*)
         write_status_line "${line}"
@@ -143,7 +163,8 @@ Usage:
   run-agent.sh --list-models <agent>
 
 Environment equivalents:
-  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED
+  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED,
+  RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE
 EOF
 }
 
@@ -594,7 +615,7 @@ fi
 
 set +e
 emit_run_status "agent-start"
-if [[ -n "${RUN_WITH_IT_STATUS_FILE}" || -n "${RUN_WITH_IT_EVENTS_LOG}" ]]; then
+if [[ -n "${RUN_WITH_IT_STATUS_FILE}" || -n "${RUN_WITH_IT_EVENTS_LOG}" || -n "${RUN_WITH_IT_LOG_FILE}" ]]; then
   status_stream_dir="$(mktemp -d -t run-agent-status.XXXXXX)"
   stdout_fifo="${status_stream_dir}/stdout"
   stderr_fifo="${status_stream_dir}/stderr"

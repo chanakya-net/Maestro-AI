@@ -20,7 +20,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never present execution option menus** (Option A / B / C style choices).
 - **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` fails both inside and outside the sandbox.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
-- **Never load sub-coordinator log files into context.** Only read the compact report JSON from `.run-with-it/reports/`.
+- **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/sub/`. A shell watcher may print only the last two changed lines with `tail -n 2`; only read the compact report JSON from `.run-with-it/reports/`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
 - **GitHub operations (close, comment) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
@@ -47,6 +47,7 @@ Preferred upstream flow:
 **Main Orchestrator** (this skill, runs in the primary session):
 - Fetches all `ready-for-agent` issues once at startup
 - Determines sequential execution order based on dependencies
+- Writes its own status log to `.run-with-it/main/main.log`
 - Spawns one **Sub-Coordinator** per issue via `run-agent.sh`
 - Waits for each Sub-Coordinator to complete and write its compact report
 - Reads ONLY the compact report JSON — never the implementation diffs or log files
@@ -57,7 +58,8 @@ Preferred upstream flow:
 **Sub-Coordinator** (spawned via `sub-coordinator-prompt.md`, runs in a child agent session):
 - Handles exactly ONE issue end-to-end
 - Runs complexity analysis, deterministic routing, implementation, review, and modification loops
-- Writes a compact report JSON and a full log file when done
+- Writes a compact report JSON and a full log file under `.run-with-it/sub/` when done
+- Spawns worker agents whose logs are written under `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, and `.run-with-it/modify/`
 - Never touches GitHub; never updates `main-state.json`
 
 This isolation means each issue's implementation complexity is contained to its own isolated Sub-Coordinator session. The Main Orchestrator's context grows by only one compact JSON record per completed issue, allowing runs of hours or days without context degradation.
@@ -109,8 +111,10 @@ Collect these values before execution:
   - `SUB_COORD_TIMEOUT_SECONDS` (default `3600`) — seconds before the Main Orchestrator emits a stall alert for a non-completing Sub-Coordinator
 - Optional live status controls:
   - `STATUS_POLL_SECONDS` (default `10`) — shell polling cadence for printing the latest changed status line while a Sub-Coordinator runs
+  - `LOG_TAIL_POLL_SECONDS` (default `120`) — shell polling cadence for printing the last two changed sub-coordinator log lines
   - `RUN_WITH_IT_STATUS_FILE` (default `.run-with-it/status/current.txt`) — single-line current status bus, overwritten on every update
   - `RUN_WITH_IT_EVENTS_LOG` (default `.run-with-it/status/events.log`) — append-only status event log for terminal inspection only; never load it into AI context
+  - `RUN_WITH_IT_LOG_FILE` — role-specific runner log file; Sub-Coordinators use `.run-with-it/sub/sub-<n>.log`, workers use `.run-with-it/<role>/...`
 - Optional routing overrides (passed through to Sub-Coordinators via context file):
   - `AGENT`
   - `MODEL`
@@ -279,7 +283,7 @@ Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
   4. Environment configuration block (append at end of context file):
      SUB_COORD_ISSUE_NUMBER=<n>
      SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/reports/sub-<n>-report.json>
-     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/logs/sub-<n>-log.txt>
+     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/sub/sub-<n>.log>
      MAX_AGENT_DEPTH=1
      DELEGATED_REVIEW=<value>
      MAX_ITERATIONS=<value>
@@ -293,12 +297,18 @@ Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
      MAX_AGENT_FALLBACKS=<value>
 
 Create directories before spawning:
-  mkdir -p .run-with-it/reports .run-with-it/logs .run-with-it/status
+  mkdir -p .run-with-it/main .run-with-it/sub .run-with-it/reports .run-with-it/status .run-with-it/complexity .run-with-it/impl .run-with-it/review .run-with-it/modify
 
 Resolve live status files before spawning:
+  MAIN_LOG_FILE="${MAIN_LOG_FILE:-$(pwd -P)/.run-with-it/main/main.log}"
+  SUB_COORD_LOG_FILE="$(pwd -P)/.run-with-it/sub/sub-<n>.log"
   RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-$(pwd -P)/.run-with-it/status/current.txt}"
   RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
   STATUS_POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
+  LOG_TAIL_POLL_SECONDS="${LOG_TAIL_POLL_SECONDS:-120}"
+
+Every STATUS line emitted by the Main Orchestrator must be appended to `$MAIN_LOG_FILE`
+with an explicit shell write before or at the same time it is printed.
 
 Mark issue status="in_progress" in main-state.json. Write to disk BEFORE spawning.
 Emit: STATUS|type=sub-coord-spawn|issue=<n>|agent=<SUB_COORD_AGENT>
@@ -306,9 +316,9 @@ Emit: STATUS|type=sub-coord-spawn|issue=<n>|agent=<SUB_COORD_AGENT>
 
 Print to user:
   "Starting sub-coordinator for issue #<n>: <title>"
-  "Log: .run-with-it/logs/sub-<n>-log.txt"
+  "Log: .run-with-it/sub/sub-<n>.log"
   "To watch live progress in a separate terminal:"
-  "  tail -f .run-with-it/logs/sub-<n>-log.txt"
+  "  tail -f .run-with-it/sub/sub-<n>.log"
 
 ══ STEP D: SPAWN SUB-COORDINATOR (MONITORED BLOCKING) ═════════════════════════
 Bash (macOS / Linux / Git Bash):
@@ -317,6 +327,7 @@ Bash (macOS / Linux / Git Bash):
     AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
     RUN_WITH_IT_STATUS_FILE="$RUN_WITH_IT_STATUS_FILE" \
     RUN_WITH_IT_EVENTS_LOG="$RUN_WITH_IT_EVENTS_LOG" \
+    RUN_WITH_IT_LOG_FILE="$SUB_COORD_LOG_FILE" \
     RUN_WITH_IT_ROLE="sub-coord" \
     RUN_WITH_IT_ISSUE="<n>" \
     "$ASSET_ROOT/run-agent.sh" \
@@ -329,6 +340,8 @@ Bash (macOS / Linux / Git Bash):
   SUB_COORD_PID=$!
   SUB_COORD_STARTED_AT=$(date +%s)
   LAST_PRINTED_STATUS=""
+  LAST_PRINTED_LOG_TAIL=""
+  LAST_LOG_TAIL_AT=0
   while kill -0 "$SUB_COORD_PID" 2>/dev/null; do
     if [ -s "$RUN_WITH_IT_STATUS_FILE" ]; then
       CURRENT_STATUS="$(tail -n 1 "$RUN_WITH_IT_STATUS_FILE")"
@@ -338,10 +351,18 @@ Bash (macOS / Linux / Git Bash):
       fi
     fi
     NOW=$(date +%s)
+    if [ "$((NOW - LAST_LOG_TAIL_AT))" -ge "$LOG_TAIL_POLL_SECONDS" ] && [ -s "$SUB_COORD_LOG_FILE" ]; then
+      CURRENT_LOG_TAIL="$(tail -n 2 "$SUB_COORD_LOG_FILE")"
+      if [ "$CURRENT_LOG_TAIL" != "$LAST_PRINTED_LOG_TAIL" ]; then
+        printf '%s\n' "$CURRENT_LOG_TAIL"
+        LAST_PRINTED_LOG_TAIL="$CURRENT_LOG_TAIL"
+      fi
+      LAST_LOG_TAIL_AT="$NOW"
+    fi
     if [ "$((NOW - SUB_COORD_STARTED_AT))" -ge "$SUB_COORD_TIMEOUT_SECONDS" ] && [ ! -f "$SUB_COORD_REPORT_FILE" ]; then
       printf 'STATUS|type=stall|issue=<n>|idle_for=%s|action=alert-user\n' "$((NOW - SUB_COORD_STARTED_AT))"
       printf 'Sub-coordinator for issue #<n> has not completed after %ss.\n' "$((NOW - SUB_COORD_STARTED_AT))"
-      printf 'Check log: .run-with-it/logs/sub-<n>-log.txt\n'
+      printf 'Check log: .run-with-it/sub/sub-<n>.log\n'
       break
     fi
     sleep "$STATUS_POLL_SECONDS"
@@ -359,6 +380,7 @@ PowerShell (Windows — never use VAR=value prefix):
   $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
   $env:RUN_WITH_IT_STATUS_FILE = "$RUN_WITH_IT_STATUS_FILE"
   $env:RUN_WITH_IT_EVENTS_LOG = "$RUN_WITH_IT_EVENTS_LOG"
+  $env:RUN_WITH_IT_LOG_FILE = "$SUB_COORD_LOG_FILE"
   $env:RUN_WITH_IT_ROLE = "sub-coord"
   $env:RUN_WITH_IT_ISSUE = "<n>"
   & "$ASSET_ROOT\run-agent.ps1" --agent $SUB_COORD_AGENT --model $SUB_COORD_MODEL
@@ -376,7 +398,7 @@ If run-agent.sh runs longer than SUB_COORD_TIMEOUT_SECONDS without producing the
 report file, emit:
   STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user
   Print: "Sub-coordinator for issue #<n> has not completed after <t>s."
-  Print: "Check log: .run-with-it/logs/sub-<n>-log.txt"
+  Print: "Check log: .run-with-it/sub/sub-<n>.log"
   Wait for user: type 'continue' to keep waiting or 'skip' to mark as blocked.
 
 Do NOT use a stall or timeout as justification to inspect logs, infer routing, or restart with different overrides.
@@ -389,9 +411,9 @@ Check: does .run-with-it/reports/sub-<n>-report.json exist with valid JSON?
 
 Print to user (do NOT read into AI context):
   "=== Sub-coordinator output for issue #<n> ==="
-  "Full log: .run-with-it/logs/sub-<n>-log.txt"
+  "Full log: .run-with-it/sub/sub-<n>.log"
   "Report:   .run-with-it/reports/sub-<n>-report.json"
-  "(Log is not loaded into context — use tail -f to inspect)"
+  "(Log is not loaded into context — only shell tail -n 2 was used for live display)"
 
 Parse from report JSON: outcome, summary, files_modified, verification,
 review_summary, token_usage, commit_sha, blocking_reasons.
@@ -461,7 +483,7 @@ On successful run completion:
 
 - Delete all `$SUB_COORD_CONTEXT_FILE` temp files (should already be deleted after each issue, but clean up any stragglers).
 - Delete `.run-with-it/main-state.json`, `.run-with-it/main-orchestrator-rules.md`, `.run-with-it/coordinator-rules.md`.
-- Delete all files under `.run-with-it/reports/`, `.run-with-it/logs/`, `.run-with-it/reviews/`.
+- Delete all files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, and `.run-with-it/reviews/`.
 - Remove `.run-with-it/` directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
 - Ensure `.gitignore` contains entries for `.run-with-it/`, `technical_requirements.md`, `prd.md`, and `issues.md` using an idempotent append.
@@ -504,7 +526,7 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 2)
       "status": "completed | in_progress | pending | failed-review | blocked",
       "title": "issue title",
       "report_file": ".run-with-it/reports/sub-36-report.json",
-      "log_file": ".run-with-it/logs/sub-36-log.txt",
+      "log_file": ".run-with-it/sub/sub-36.log",
       "commit_sha": "abc1234"
     }
   },
