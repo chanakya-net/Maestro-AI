@@ -12,7 +12,9 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## Context Rules
 
-- Never load sub-coordinator log files (`.run-with-it/logs/`) into your AI context under any circumstances.
+- Write Main Orchestrator status lines to `.run-with-it/main/main.log`.
+- Never load full sub-coordinator log files (`.run-with-it/sub/`) into your AI context under any circumstances.
+- A shell watcher may run `tail -n 2 .run-with-it/sub/sub-<n>.log` and print only those two changed lines to the terminal; do not summarize, retain, or reason from those lines.
 - Never load live status logs (`.run-with-it/status/current.txt` or `.run-with-it/status/events.log`) into your AI context. A shell watcher may print the latest changed status line to the terminal, then forget it.
 - Never read implementation diffs, reviewer JSONs, or code from sub-coordinators into your context.
 - Only read the compact report JSON (`.run-with-it/reports/sub-<n>-report.json`) from each sub-coordinator — nothing else.
@@ -24,12 +26,15 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=2` into every sub-coordinator context file.
 - Always pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ROLE=sub-coord`, and `RUN_WITH_IT_ISSUE=<issue>` into the runner so live progress updates reach the shared status bus.
+- Always pass `RUN_WITH_IT_LOG_FILE=.run-with-it/sub/sub-<n>.log` into the runner so the sub-coordinator's own process output is stored under `.run-with-it/sub/`.
+- Always pass `RUN_WITH_IT_DONE_FILE=.run-with-it/done/issue-<n>-sub-coord.done` into the runner so stale sentinels are cleared and process completion is recorded.
 - Mark the issue as `in_progress` in `main-state.json` and write it to disk BEFORE spawning the sub-coordinator.
 
 ## Live Status Rules
 
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
 - While a sub-coordinator runs, poll `current.txt` from the shell and print only changed lines.
+- Every 120 seconds, a shell watcher may print only the latest two changed lines from `.run-with-it/sub/sub-<n>.log` using `tail -n 2`; never read more than those two log lines.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 

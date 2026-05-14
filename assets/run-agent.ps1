@@ -7,7 +7,8 @@
 #
 # Environment equivalents:
 #   AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT,
-#   AGENT_PERMISSION_MODE, AGENT_EXTRA_ARGS, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE
+#   AGENT_PERMISSION_MODE, AGENT_EXTRA_ARGS, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
+#   RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE
 
 $ErrorActionPreference = "Stop"
 
@@ -45,6 +46,8 @@ $UNATTENDED        = $env:UNATTENDED -eq "1"
 $GUI_MODE          = if ($env:GUI_MODE) { $env:GUI_MODE } else { "auto" }
 $RUN_STATUS_FILE   = $env:RUN_WITH_IT_STATUS_FILE
 $RUN_EVENTS_LOG    = $env:RUN_WITH_IT_EVENTS_LOG
+$RUN_LOG_FILE      = $env:RUN_WITH_IT_LOG_FILE
+$RUN_DONE_FILE     = $env:RUN_WITH_IT_DONE_FILE
 $RUN_ROLE          = if ($env:RUN_WITH_IT_ROLE) { $env:RUN_WITH_IT_ROLE } else { "agent" }
 $RUN_ISSUE         = if ($env:RUN_WITH_IT_ISSUE) { $env:RUN_WITH_IT_ISSUE } else { "unknown" }
 $DRY_RUN           = $false
@@ -90,7 +93,8 @@ Usage:
   run-agent.ps1 --list-models <agent>
 
 Environment equivalents:
-  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE
+  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
+  RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE
 "@
         exit 0
     } elseif ($arg.StartsWith("-")) {
@@ -126,7 +130,17 @@ function Normalize-TelemetryValue([string]$value) {
 function Write-Telemetry([string]$status) {
     $telemetryAgent = Normalize-TelemetryValue $AGENT
     $telemetryModel = Normalize-TelemetryValue $MODEL
-    [Console]::Error.WriteLine("STATUS|type=telemetry|agent=$telemetryAgent|model=$telemetryModel|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=$status|source=runner-default")
+    $line = "STATUS|type=telemetry|agent=$telemetryAgent|model=$telemetryModel|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=$status|source=runner-default"
+    Write-LogLine $line
+    [Console]::Error.WriteLine($line)
+}
+
+function Write-LogLine([string]$line) {
+    if (-not $RUN_LOG_FILE) { return }
+
+    $logDir = Split-Path $RUN_LOG_FILE
+    if ($logDir) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
+    Add-Content -Path $RUN_LOG_FILE -Value $line -Encoding UTF8
 }
 
 function Write-StatusLine([string]$line) {
@@ -143,12 +157,45 @@ function Write-StatusLine([string]$line) {
     }
 }
 
+function Initialize-DoneFile {
+    if (-not $RUN_DONE_FILE) { return }
+
+    $doneDir = Split-Path $RUN_DONE_FILE
+    if ($doneDir) { New-Item -ItemType Directory -Force -Path $doneDir | Out-Null }
+    Remove-Item -Force $RUN_DONE_FILE -ErrorAction SilentlyContinue
+}
+
+function Write-DoneFile([string]$status, [string]$source) {
+    if (-not $RUN_DONE_FILE) { return }
+
+    $doneDir = Split-Path $RUN_DONE_FILE
+    if ($doneDir) { New-Item -ItemType Directory -Force -Path $doneDir | Out-Null }
+    $line = "DONE|issue=$(Normalize-TelemetryValue $RUN_ISSUE)|role=$(Normalize-TelemetryValue $RUN_ROLE)|agent=$(Normalize-TelemetryValue $AGENT)|model=$(Normalize-TelemetryValue $MODEL)|status=$(Normalize-TelemetryValue $status)|source=$(Normalize-TelemetryValue $source)|completed_at=$([datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+    Add-Content -Path $RUN_DONE_FILE -Value $line -Encoding UTF8
+    Write-LogLine $line
+}
+
 function Write-RunStatus([string]$type, [string]$status = "") {
-    if (-not $RUN_STATUS_FILE -and -not $RUN_EVENTS_LOG) { return }
+    if (-not $RUN_STATUS_FILE -and -not $RUN_EVENTS_LOG -and -not $RUN_LOG_FILE) { return }
     $statusField = if ($status) { "|status=$status" } else { "" }
     $line = "STATUS|type=$type|issue=$(Normalize-TelemetryValue $RUN_ISSUE)|role=$(Normalize-TelemetryValue $RUN_ROLE)|agent=$(Normalize-TelemetryValue $AGENT)|model=$(Normalize-TelemetryValue $MODEL)$statusField"
     Write-StatusLine $line
+    Write-LogLine $line
     [Console]::Error.WriteLine($line)
+}
+
+function Forward-AgentLine([string]$line, [string]$stream) {
+    Write-LogLine $line
+
+    if ($line.StartsWith("STATUS|") -or $line.StartsWith("ROUTE|") -or $line.StartsWith("COMPLEXITY|")) {
+        Write-StatusLine $line
+    }
+
+    if ($stream -eq "stderr") {
+        [Console]::Error.WriteLine($line)
+    } else {
+        Write-Output $line
+    }
 }
 
 function Test-GuiMode {
@@ -374,17 +421,42 @@ try {
         exit 0
     }
 
+    Initialize-DoneFile
     Write-RunStatus "agent-start"
-    & $invokeCmd @cmdArgs
-    $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+    if ($RUN_STATUS_FILE -or $RUN_EVENTS_LOG -or $RUN_LOG_FILE) {
+        $stdoutCapture = [System.IO.Path]::GetTempFileName()
+        $stderrCapture = [System.IO.Path]::GetTempFileName()
+        try {
+            & $invokeCmd @cmdArgs > $stdoutCapture 2> $stderrCapture
+            $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+
+            Get-Content $stdoutCapture -Encoding UTF8 | ForEach-Object {
+                Forward-AgentLine "$_" "stdout"
+            }
+            Get-Content $stderrCapture -Encoding UTF8 | ForEach-Object {
+                Forward-AgentLine "$_" "stderr"
+            }
+        }
+        finally {
+            Remove-Item -Force $stdoutCapture -ErrorAction SilentlyContinue
+            Remove-Item -Force $stderrCapture -ErrorAction SilentlyContinue
+        }
+    } else {
+        & $invokeCmd @cmdArgs
+        $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
+    }
     if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph -ErrorAction SilentlyContinue)) {
         Push-Location $REPO_ROOT
         try { & codegraph mark-dirty 2>$null } catch {} finally { Pop-Location }
     }
     if ($commandExitCode -eq 0) {
+        Write-DoneFile "success" "runner-exit"
+        Write-RunStatus "worker-done" "success"
         Write-RunStatus "agent-complete" "success"
         Write-Telemetry "success"
     } else {
+        Write-DoneFile "failed" "runner-exit"
+        Write-RunStatus "worker-done" "failed"
         Write-RunStatus "agent-complete" "failed"
         Write-Telemetry "failed"
     }
