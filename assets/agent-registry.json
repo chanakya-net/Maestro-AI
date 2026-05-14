@@ -82,9 +82,10 @@
       "price_input_per_1m": 15.00,
       "price_output_per_1m": 15.00,
       "complexity_weight": 9,
+      "min_band": "holy-fuck",
       "context_window": 1000000,
       "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"],
-      "_note": "Copilot subscription multiplier: 15x. Reserve for explicit use or hardest routing bands."
+      "_note": "Copilot subscription multiplier: 15x. min_band=holy-fuck — do not route below that band."
     },
     "claude-opus-4.7": {
       "provider": "anthropic",
@@ -93,9 +94,10 @@
       "price_input_per_1m": 15.00,
       "price_output_per_1m": 15.00,
       "complexity_weight": 9,
+      "min_band": "holy-fuck",
       "context_window": 1000000,
       "strengths": ["best-coding", "agentic", "adaptive-thinking", "frontier"],
-      "_note": "GitHub Copilot CLI model ID for Opus 4.7 (dot format). Same model as claude-opus-4-7."
+      "_note": "GitHub Copilot CLI model ID for Opus 4.7 (dot format). Same model as claude-opus-4-7. min_band=holy-fuck — do not route below that band."
     },
     "claude-opus-4-7[1m]": {
       "provider": "anthropic",
@@ -298,10 +300,10 @@
         "_note": "Google/Gemini models may enter the normal automatic pool only for quite-easy and easy tasks. Do not use Gemini as a last-resort fallback for medium or harder work unless explicitly selected by AGENT/MODEL overrides."
       },
       "anthropic": {
-        "automatic_routing": "copilot_only",
-        "preferred_agents": ["github-copilot"],
-        "fallback_agents": [],
-        "_note": "Claude-provider models should use GitHub Copilot only for automatic routing. Direct Claude is temporarily disabled for automatic fallback and should be used only when explicitly forced."
+        "automatic_routing": "all",
+        "preferred_agents": ["github-copilot", "claude"],
+        "fallback_agents": ["claude"],
+        "_note": "Anthropic models route through any available agent (github-copilot or direct claude). claude-opus-4-7 and claude-opus-4.7 are min_band=holy-fuck and should not appear below that band."
       }
     },
     "hard_minimum_overrides": [
@@ -312,8 +314,8 @@
     ],
     "band_required_models": {
       "complex":    ["gpt-5.5"],
-      "holy-fuck":  ["gpt-5.5"],
-      "_note": "These models are pinned into the pool regardless of price ranking. Ensures frontier GPT options are always available at high complexity even when cheaper models dominate the cost-sorted slots."
+      "holy-fuck":  ["gpt-5.5", "claude-opus-4.7", "claude-opus-4-7"],
+      "_note": "These models are pinned into the pool regardless of price ranking. Ensures frontier options (GPT + Claude Opus) are always available at high complexity. Claude Opus is pinned only at holy-fuck; min_band=holy-fuck on catalog entries prevents it from routing into lower bands."
     },
     "interchangeable_agent_groups": [
       {
@@ -324,6 +326,11 @@
     ],
     "agent_preference_rules": [
       {
+        "models": ["claude-opus-4.7", "claude-opus-4-7"],
+        "preferred_agents": ["claude", "github-copilot"],
+        "_note": "When Opus 4.7 is selected, prefer direct Claude agent first, then fall back to GitHub Copilot. Direct Claude runs the native Anthropic model without any intermediary."
+      },
+      {
         "models": ["claude-haiku-4.5", "claude-haiku-4-5"],
         "preferred_agents": ["github-copilot", "claude"],
         "_note": "If Haiku 4.5 is selected and both GitHub Copilot and Claude are available, choose GitHub Copilot before direct Claude. claude-haiku-4.5 = Copilot CLI ID; claude-haiku-4-5-20251001 = Claude CLI ID."
@@ -331,9 +338,9 @@
       {
         "provider": "anthropic",
         "direct_agent": "claude",
-        "automatic_routing": "explicit_only",
-        "preferred_agents": ["github-copilot"],
-        "_note": "Direct Claude agent is temporarily disabled for automatic routing. Use only via explicit AGENT override."
+        "automatic_routing": "all",
+        "preferred_agents": ["github-copilot", "claude"],
+        "_note": "Direct Claude agent is an equal peer in automatic routing. claude-opus-4-7/4.7 are min_band=holy-fuck and excluded from lower bands automatically."
       }
     ]
   },
