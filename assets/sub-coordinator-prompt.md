@@ -98,7 +98,7 @@ Override handling:
 
 Sub-agent selection for complexity:
 1. Reuse the model-first selection algorithm below.
-2. Restrict the candidate pool to easy-medium band only: `complexity_weight` `1–6`.
+2. Restrict the candidate pool to easy-medium band only: `complexity_weight` `1–6`. Exclude any model where `exclude_from_complexity` is `true`.
 3. Randomly pick from the filtered pool.
 4. Apply provider routing rules: Gemini may enter only when the target band is `quite-easy` or `easy`; otherwise exclude it.
 5. Pass both `AGENT` and `MODEL` explicitly to the sub-agent runner.
