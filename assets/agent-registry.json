@@ -18,6 +18,7 @@
       "price_input_per_1m": 0.33,
       "price_output_per_1m": 0.33,
       "complexity_weight": 2,
+      "exclude_from_complexity": true,
       "context_window": 200000,
       "strengths": ["speed", "high-throughput", "cost-sensitive"],
       "_note": "Copilot subscription multiplier: 0.33x. price_* fields are routing units, not API dollars."
@@ -29,6 +30,7 @@
       "price_input_per_1m": 0.33,
       "price_output_per_1m": 0.33,
       "complexity_weight": 2,
+      "exclude_from_complexity": true,
       "context_window": 200000,
       "strengths": ["speed", "high-throughput", "cost-sensitive"],
       "_note": "GitHub Copilot CLI model ID for Haiku 4.5 (dot format). Same model as claude-haiku-4-5."
