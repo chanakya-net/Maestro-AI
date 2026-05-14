@@ -51,7 +51,8 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 3. Validate behavior, risk, and verification evidence against requirements.
 4. Write the status file to `REVIEWER_STATUS_FILE`.
 5. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
-6. Stop.
+6. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
+7. Stop.
 
 ## Output Contract
 
@@ -122,3 +123,14 @@ This is read directly by the modifier worker-agent (never by the Sub-Coordinator
 - The status file is the Sub-Coordinator's routing signal. Keep it small.
 - The instructions file is the modifier's working document. Make it complete and actionable.
 - Write both files before stopping.
+
+## Completion Sentinel
+
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after both JSON files are valid and fully flushed to disk:
+
+```bash
+mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+```
+
+Do not write the done file before `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` both exist and parse as valid JSON.

@@ -43,12 +43,15 @@ CUSTOM_REGISTRY="${WORK_DIR}/registry.json"
 STATUS_FILE="${WORK_DIR}/status/current.txt"
 EVENTS_LOG="${WORK_DIR}/status/events.log"
 ROLE_LOG="${WORK_DIR}/impl/issue-42-impl-cycle-1.log"
+DONE_FILE="${WORK_DIR}/done/issue-42-impl.done"
 STDOUT_FILE="${WORK_DIR}/stdout.txt"
 STDERR_FILE="${WORK_DIR}/stderr.txt"
 
 mkdir -p "${FAKE_BIN}"
 printf 'Issue context\n' > "${CONTEXT_FILE}"
 printf 'Do the work\n' > "${PROMPT_FILE}"
+mkdir -p "$(dirname "${DONE_FILE}")"
+printf 'stale done file\n' > "${DONE_FILE}"
 cat > "${FAKE_BIN}/fake-agent" <<'SH'
 #!/usr/bin/env bash
 printf 'STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests\n'
@@ -102,6 +105,7 @@ PATH="${FAKE_BIN}:${PATH}" \
   RUN_WITH_IT_STATUS_FILE="${STATUS_FILE}" \
   RUN_WITH_IT_EVENTS_LOG="${EVENTS_LOG}" \
   RUN_WITH_IT_LOG_FILE="${ROLE_LOG}" \
+  RUN_WITH_IT_DONE_FILE="${DONE_FILE}" \
   RUN_WITH_IT_ROLE=impl \
   RUN_WITH_IT_ISSUE=42 \
   UNATTENDED=1 \
@@ -112,6 +116,7 @@ stderr_output="$(<"${STDERR_FILE}")"
 status_current="$(<"${STATUS_FILE}")"
 status_events="$(<"${EVENTS_LOG}")"
 role_log="$(<"${ROLE_LOG}")"
+done_signal="$(<"${DONE_FILE}")"
 
 assert_contains "${stdout_output}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner preserves heartbeat stdout"
 assert_contains "${stdout_output}" "fake-agent done" "runner preserves normal stdout"
@@ -125,6 +130,10 @@ assert_contains "${role_log}" "STATUS|type=agent-start|issue=42|role=impl|agent=
 assert_contains "${role_log}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner mirrors agent stdout to role log"
 assert_contains "${role_log}" "fake-agent done" "runner mirrors normal agent output to role log"
 assert_contains "${role_log}" "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "runner writes agent-complete to role log"
+assert_contains "${done_signal}" "DONE|issue=42|role=impl|agent=fake|model=fake-default|status=success|source=runner-exit" "runner writes done sentinel on successful exit"
+if [[ "${done_signal}" == *"stale done file"* ]]; then
+  fail "runner must remove stale done sentinel before starting"
+fi
 
 runner_source="$(<"${RUNNER_PATH}")"
 assert_contains "${runner_source}" 'wait "${stdout_forward_pid}"' "runner waits for stdout forwarder by explicit pid"

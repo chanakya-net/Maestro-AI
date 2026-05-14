@@ -57,6 +57,24 @@ Use `RUN_WITH_IT_ISSUE` for the `issue` field when it is present; otherwise use 
 
 Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
 
+## Completion Sentinel
+
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, and your final report content is ready.
+
+Bash:
+```bash
+mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf 'DONE|issue=%s|role=modify|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+```
+
+PowerShell:
+```powershell
+New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
+Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=modify|status=success|source=agent"
+```
+
+Do not write the done file if tests are failing, verification is incomplete, or the final report is not ready.
+
 ## Verification
 
 You must run tests after addressing reviewer comments.

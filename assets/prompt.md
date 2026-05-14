@@ -50,6 +50,24 @@ Use `RUN_WITH_IT_ISSUE` for the `issue` field when it is present; otherwise use 
 
 Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
 
+## Completion Sentinel
+
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
+
+Bash:
+```bash
+mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf 'DONE|issue=%s|role=impl|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+```
+
+PowerShell:
+```powershell
+New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
+Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
+```
+
+Do not write the done file if tests are failing, verification is incomplete, or the final report is not ready.
+
 ## Verification
 
 Run tests before declaring work complete. All tests must pass. Do not mark work done if any test is failing.

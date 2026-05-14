@@ -36,6 +36,7 @@ Your context file contains, in order:
    - `RUN_WITH_IT_STATUS_FILE` — optional single-line status bus for current terminal progress
    - `RUN_WITH_IT_EVENTS_LOG` — optional append-only status event log for terminal progress
    - `RUN_WITH_IT_LOG_FILE` — optional runner log file for the currently spawned worker under `.run-with-it/<role>/`
+   - `RUN_WITH_IT_DONE_FILE` — optional completion sentinel for the currently spawned worker under `.run-with-it/done/`
    - `MAX_AGENT_DEPTH=1` — always 1; your child agents must not spawn further sub-agents
    - `DELEGATED_REVIEW`, `MAX_ITERATIONS`, `COMMITS_LIMIT`, and all other standard run params
 
@@ -112,12 +113,15 @@ Sub-agent input context, in order:
 Bash invocation (use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
 COMPLEXITY_LOG_FILE=".run-with-it/complexity/issue-${SUB_COORD_ISSUE_NUMBER}-complexity.log"
+COMPLEXITY_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-complexity.done"
 mkdir -p "$(dirname "$COMPLEXITY_LOG_FILE")"
+mkdir -p "$(dirname "$COMPLEXITY_DONE_FILE")"
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
 RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
 RUN_WITH_IT_LOG_FILE="$COMPLEXITY_LOG_FILE" \
+RUN_WITH_IT_DONE_FILE="$COMPLEXITY_DONE_FILE" \
 RUN_WITH_IT_ROLE="complexity" \
 RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
 "$ASSET_ROOT/run-agent.sh" \
@@ -135,6 +139,7 @@ $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
 $env:RUN_WITH_IT_ROLE = "complexity"
 $env:RUN_WITH_IT_ISSUE = $env:SUB_COORD_ISSUE_NUMBER
 $env:RUN_WITH_IT_LOG_FILE = ".run-with-it\complexity\issue-$env:SUB_COORD_ISSUE_NUMBER-complexity.log"
+$env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-$env:SUB_COORD_ISSUE_NUMBER-complexity.done"
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\complexity-prompt.md" --unattended
 ```
 
@@ -208,12 +213,15 @@ Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's regis
 Bash (macOS / Linux / Git Bash — use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
 IMPL_LOG_FILE=".run-with-it/impl/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.log"
+IMPL_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.done"
 mkdir -p "$(dirname "$IMPL_LOG_FILE")"
+mkdir -p "$(dirname "$IMPL_DONE_FILE")"
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
 RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
 RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
 RUN_WITH_IT_LOG_FILE="$IMPL_LOG_FILE" \
+RUN_WITH_IT_DONE_FILE="$IMPL_DONE_FILE" \
 RUN_WITH_IT_ROLE="impl" \
 RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
 "$ASSET_ROOT/run-agent.sh" \
@@ -231,6 +239,7 @@ $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
 $env:RUN_WITH_IT_ROLE = "impl"
 $env:RUN_WITH_IT_ISSUE = $env:SUB_COORD_ISSUE_NUMBER
 $env:RUN_WITH_IT_LOG_FILE = ".run-with-it\impl\issue-$env:SUB_COORD_ISSUE_NUMBER-impl-cycle-$env:CYCLE.log"
+$env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-$env:SUB_COORD_ISSUE_NUMBER-impl-cycle-$env:CYCLE.done"
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
 ```
 
@@ -338,12 +347,15 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    Bash:
    ```bash
    REVIEW_LOG_FILE=".run-with-it/review/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.log"
+   REVIEW_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.done"
    mkdir -p "$(dirname "$REVIEW_LOG_FILE")"
+   mkdir -p "$(dirname "$REVIEW_DONE_FILE")"
    GUI_MODE="${GUI_MODE:-0}" \
    AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
    RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
    RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
    RUN_WITH_IT_LOG_FILE="$REVIEW_LOG_FILE" \
+   RUN_WITH_IT_DONE_FILE="$REVIEW_DONE_FILE" \
    RUN_WITH_IT_ROLE="review" \
    RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
    "$ASSET_ROOT/run-agent.sh" \
@@ -374,7 +386,7 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
    - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands.
-   - Run via: `MODIFY_LOG_FILE=".run-with-it/modify/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.log"; mkdir -p "$(dirname "$MODIFY_LOG_FILE")"; GUI_MODE="${GUI_MODE:-0}" AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" RUN_WITH_IT_LOG_FILE="$MODIFY_LOG_FILE" RUN_WITH_IT_ROLE="modify" RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" "$ASSET_ROOT/run-agent.sh" --agent "$MODIFIER_AGENT" --model "$MODIFIER_MODEL" --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" --prompt-file "$ASSET_ROOT/modifier-prompt.md" --unattended` with `dangerouslyDisableSandbox: true`
+   - Run via: `MODIFY_LOG_FILE=".run-with-it/modify/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.log"; MODIFY_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.done"; mkdir -p "$(dirname "$MODIFY_LOG_FILE")" "$(dirname "$MODIFY_DONE_FILE")"; GUI_MODE="${GUI_MODE:-0}" AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" RUN_WITH_IT_LOG_FILE="$MODIFY_LOG_FILE" RUN_WITH_IT_DONE_FILE="$MODIFY_DONE_FILE" RUN_WITH_IT_ROLE="modify" RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" "$ASSET_ROOT/run-agent.sh" --agent "$MODIFIER_AGENT" --model "$MODIFIER_MODEL" --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" --prompt-file "$ASSET_ROOT/modifier-prompt.md" --unattended` with `dangerouslyDisableSandbox: true`
    - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
@@ -538,6 +550,23 @@ Every worker-agent invocation must set `RUN_WITH_IT_LOG_FILE` to a role-specific
 - `.run-with-it/modify/issue-<n>-modify-cycle-<cycle>.log`
 
 The runner mirrors each worker's stdout/stderr into that file. When monitoring a worker, read only the newest few lines with `tail -n ${WORKER_LOG_TAIL_LINES:-5}` and print changed lines to console; never load the full worker log into context. After reading the tail, emit a concise Sub-Coordinator `STATUS|type=worker-log-tail|...` line to `$SUB_COORD_LOG_FILE` and the live status bus so the Main Orchestrator can print that status without keeping the worker log in memory.
+
+### Worker Done Files
+
+Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specific sentinel under `.run-with-it/done/`:
+
+- `.run-with-it/done/issue-<n>-complexity.done`
+- `.run-with-it/done/issue-<n>-impl-cycle-<cycle>.done`
+- `.run-with-it/done/issue-<n>-review-cycle-<cycle>.done`
+- `.run-with-it/done/issue-<n>-modify-cycle-<cycle>.done`
+
+The worker may write this file when its required artifacts are complete. `run-agent.sh` / `run-agent.ps1` removes stale sentinels before start and writes a fallback `DONE|...|source=runner-exit` line when the process exits. Treat the done file as a phase-transition hint only after required output artifacts are valid:
+
+- complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
+- impl/modify: verification evidence and final worker report are available
+- review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON
+
+When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.
 
 ### Compact Report JSON (MANDATORY)
 

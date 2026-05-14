@@ -27,6 +27,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Always inject `MAX_AGENT_DEPTH=2` into every sub-coordinator context file.
 - Always pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ROLE=sub-coord`, and `RUN_WITH_IT_ISSUE=<issue>` into the runner so live progress updates reach the shared status bus.
 - Always pass `RUN_WITH_IT_LOG_FILE=.run-with-it/sub/sub-<n>.log` into the runner so the sub-coordinator's own process output is stored under `.run-with-it/sub/`.
+- Always pass `RUN_WITH_IT_DONE_FILE=.run-with-it/done/issue-<n>-sub-coord.done` into the runner so stale sentinels are cleared and process completion is recorded.
 - Mark the issue as `in_progress` in `main-state.json` and write it to disk BEFORE spawning the sub-coordinator.
 
 ## Live Status Rules

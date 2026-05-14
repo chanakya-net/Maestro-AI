@@ -115,6 +115,7 @@ Collect these values before execution:
   - `RUN_WITH_IT_STATUS_FILE` (default `.run-with-it/status/current.txt`) — single-line current status bus, overwritten on every update
   - `RUN_WITH_IT_EVENTS_LOG` (default `.run-with-it/status/events.log`) — append-only status event log for terminal inspection only; never load it into AI context
   - `RUN_WITH_IT_LOG_FILE` — role-specific runner log file; Sub-Coordinators use `.run-with-it/sub/sub-<n>.log`, workers use `.run-with-it/<role>/...`
+  - `RUN_WITH_IT_DONE_FILE` — role-specific completion sentinel; workers use `.run-with-it/done/issue-<n>-<role>-cycle-<cycle>.done`
 - Optional routing overrides (passed through to Sub-Coordinators via context file):
   - `AGENT`
   - `MODEL`
@@ -297,7 +298,7 @@ Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
      MAX_AGENT_FALLBACKS=<value>
 
 Create directories before spawning:
-  mkdir -p .run-with-it/main .run-with-it/sub .run-with-it/reports .run-with-it/status .run-with-it/complexity .run-with-it/impl .run-with-it/review .run-with-it/modify
+  mkdir -p .run-with-it/main .run-with-it/sub .run-with-it/reports .run-with-it/status .run-with-it/done .run-with-it/complexity .run-with-it/impl .run-with-it/review .run-with-it/modify
 
 Resolve live status files before spawning:
   MAIN_LOG_FILE="${MAIN_LOG_FILE:-$(pwd -P)/.run-with-it/main/main.log}"
@@ -328,6 +329,7 @@ Bash (macOS / Linux / Git Bash):
     RUN_WITH_IT_STATUS_FILE="$RUN_WITH_IT_STATUS_FILE" \
     RUN_WITH_IT_EVENTS_LOG="$RUN_WITH_IT_EVENTS_LOG" \
     RUN_WITH_IT_LOG_FILE="$SUB_COORD_LOG_FILE" \
+    RUN_WITH_IT_DONE_FILE="$(pwd -P)/.run-with-it/done/issue-<n>-sub-coord.done" \
     RUN_WITH_IT_ROLE="sub-coord" \
     RUN_WITH_IT_ISSUE="<n>" \
     "$ASSET_ROOT/run-agent.sh" \
@@ -381,6 +383,7 @@ PowerShell (Windows — never use VAR=value prefix):
   $env:RUN_WITH_IT_STATUS_FILE = "$RUN_WITH_IT_STATUS_FILE"
   $env:RUN_WITH_IT_EVENTS_LOG = "$RUN_WITH_IT_EVENTS_LOG"
   $env:RUN_WITH_IT_LOG_FILE = "$SUB_COORD_LOG_FILE"
+  $env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-<n>-sub-coord.done"
   $env:RUN_WITH_IT_ROLE = "sub-coord"
   $env:RUN_WITH_IT_ISSUE = "<n>"
   & "$ASSET_ROOT\run-agent.ps1" --agent $SUB_COORD_AGENT --model $SUB_COORD_MODEL
@@ -483,7 +486,7 @@ On successful run completion:
 
 - Delete all `$SUB_COORD_CONTEXT_FILE` temp files (should already be deleted after each issue, but clean up any stragglers).
 - Delete `.run-with-it/main-state.json`, `.run-with-it/main-orchestrator-rules.md`, `.run-with-it/coordinator-rules.md`.
-- Delete all files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, and `.run-with-it/reviews/`.
+- Delete all files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/done/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, and `.run-with-it/reviews/`.
 - Remove `.run-with-it/` directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
 - Ensure `.gitignore` contains entries for `.run-with-it/`, `technical_requirements.md`, `prd.md`, and `issues.md` using an idempotent append.
@@ -577,6 +580,7 @@ Emit parseable one-line status messages:
 - sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>`
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
 - live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
+- worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
 - live heartbeat: `STATUS|type=heartbeat|issue=<n>|role=<impl|review|modify>|phase=<exploring|implementing|testing|review>|progress=<short-text>`
 - sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
 - stall: `STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user`
