@@ -328,10 +328,18 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 
    Bash:
    ```bash
+   # Restrict github-copilot to non-autonomous mode for review — prevents it from
+   # continuing past the JSON output and starting implementation work.
+   _REVIEW_PERM=""
+   if [[ "$REVIEWER_AGENT" == "github-copilot" ]]; then
+     _REVIEW_PERM="--autopilot"
+   fi
+
    GUI_MODE="${GUI_MODE:-0}" \
    AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
    RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
    RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
+   AGENT_PERMISSION_MODE="${_REVIEW_PERM}" \
    RUN_WITH_IT_ROLE="review" \
    RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
    "$ASSET_ROOT/run-agent.sh" \
