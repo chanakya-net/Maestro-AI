@@ -130,7 +130,7 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-agent.sh" "run-agent.ps1" "agent-registry.json")
+  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-agent.sh" "run-agent.ps1" "worker-watch.sh" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then
@@ -140,6 +140,7 @@ install_assets() {
       note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
     done
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-agent.sh"
+    note "  [dry-run] chmod +x ${ASSETS_DEST}/worker-watch.sh"
     WOULD_INSTALL+=("assets")
     echo
     return 0
@@ -171,6 +172,7 @@ install_assets() {
   done
 
   chmod +x "${ASSETS_DEST}/run-agent.sh"
+  chmod +x "${ASSETS_DEST}/worker-watch.sh"
 
   INSTALLED+=("assets")
   note "  assets installed at: $ASSETS_DEST"
