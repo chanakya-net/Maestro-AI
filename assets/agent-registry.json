@@ -7,7 +7,6 @@
     "gemini-cli": "gemini",
     "copilot": "github-copilot",
     "github-copilot-cli": "github-copilot",
-    "open-code": "opencode",
     "open_code": "opencode"
   },
   "model_catalog": {
@@ -141,17 +140,6 @@
       "context_window": 1000000,
       "strengths": ["maximum-reasoning-effort", "frontier", "hardest-problems"]
     },
-    "gpt-5-mini": {
-      "provider": "openai",
-      "ability": "fast",
-      "price_tier": "low",
-      "price_input_per_1m": 0.00,
-      "price_output_per_1m": 0.00,
-      "complexity_weight": 2,
-      "context_window": 400000,
-      "strengths": ["included-quota", "high-throughput", "simple-tasks"],
-      "_note": "Copilot subscription multiplier: 0x at Medium reasoning. price_* fields are routing units, not API dollars."
-    },
     "gpt-5.4-mini": {
       "provider": "openai",
       "ability": "balanced",
@@ -162,16 +150,6 @@
       "context_window": 400000,
       "strengths": ["coding", "computer-use", "subagents", "cost-efficient"],
       "_note": "Copilot subscription multiplier: 0.33x at Medium reasoning. price_* fields are routing units, not API dollars."
-    },
-    "gpt-5.1": {
-      "provider": "openai",
-      "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 1.25,
-      "price_output_per_1m": 10.00,
-      "complexity_weight": 6,
-      "context_window": 400000,
-      "strengths": ["adaptive-reasoning", "math", "coding", "science"]
     },
     "gpt-5.2": {
       "provider": "openai",
@@ -248,17 +226,6 @@
       "context_window": 1048576,
       "strengths": ["multimodal", "thinking", "computer-use", "code-execution", "search-grounding"],
       "_note": "Copilot subscription multiplier: 0.33x. Eligible only for quite-easy/easy automatic routing."
-    },
-    "gemini-2.5-pro": {
-      "provider": "google",
-      "ability": "advanced",
-      "price_tier": "med",
-      "price_input_per_1m": 1.00,
-      "price_output_per_1m": 1.00,
-      "complexity_weight": 8,
-      "context_window": 1048576,
-      "strengths": ["long-context", "multimodal", "reasoning"],
-      "_note": "Copilot subscription multiplier: 1x. Available through Copilot; not re-added to Gemini CLI defaults."
     },
     "gemini-3.1-flash-lite-preview": {
       "provider": "google",
@@ -453,16 +420,10 @@
         "available": ["--yolo"]
       },
       "model": {
-        "default": "auto-gemini-3",
+        "default": "gemini-3.1-pro-preview",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "auto-gemini-3",
-          "auto",
-          "pro",
-          "flash",
-          "flash-lite",
           "gemini-3.1-pro-preview",
-          "gemini-3.1-pro-preview-customtools",
           "gemini-3-flash-preview",
           "gemini-3.1-flash-lite-preview"
         ]
@@ -492,22 +453,20 @@
         "available": ["--autopilot --yolo", "--autopilot"]
       },
       "model": {
-        "default": "gpt-5.3-codex-spark",
+        "default": "gpt-5.3-codex",
         "flag_template": "--model {{model}}",
         "known_models": [
           "claude-haiku-4.5",
           "claude-sonnet-4.6",
-          "claude-opus-4.7",
-          "gemini-2.5-pro",
           "gemini-3-flash-preview",
           "gemini-3.1-pro-preview",
           "gpt-5.2",
           "gpt-5.2-codex",
-          "gpt-5.3-codex-spark",
           "gpt-5.3-codex",
-          "gpt-5.5",
-          "gpt-5.4"
-        ]
+          "gpt-5.4",
+          "gpt-5.4-mini"
+        ],
+        "_note": "gpt-5.3-codex-spark is not available through GitHub Copilot; Spark remains a Codex CLI model."
       },
       "capability_band": "balanced",
       "fallback_order": ["codex", "gemini"],
