@@ -49,10 +49,11 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Progress Monitoring Rules
 
-- Read progress files every 30 seconds. Print each new line to console, then forget it.
-- For worker-agent log files, read only the latest few lines with `tail -n ${WORKER_LOG_TAIL_LINES:-5}` (PowerShell: `Get-Content -Tail $env:WORKER_LOG_TAIL_LINES`, default 5). Never read a full worker-agent log into context.
-- After inspecting a worker log tail, emit a concise Sub-Coordinator status line summarizing the worker state; write that line to `$SUB_COORD_LOG_FILE`, `$RUN_WITH_IT_STATUS_FILE`, and `$RUN_WITH_IT_EVENTS_LOG` rather than carrying the worker log text in memory.
-- Watch the worker's `RUN_WITH_IT_DONE_FILE` while the runner process is active. Treat the done file as a phase-transition hint only after its required output artifacts are valid. Examples: reviewer status/instructions JSON files exist and parse; implementer/modifier verification evidence is available; complexity output has a valid `COMPLEXITY|` line and JSON. If the done file appears before required output artifacts are valid, keep waiting.
+- Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that PID plus role, cycle, agent, model, log file, done file, and result file to `.run-with-it/sub-<issue>-state.json` before monitoring begins.
+- Poll worker liveness every `WORKER_POLL_SECONDS` seconds, default `20`.
+- Summarize worker log progress every `WORKER_LOG_SUMMARY_SECONDS` seconds, default `60`, using only the newest `${WORKER_LOG_TAIL_LINES:-5}` lines via `tail -n ${WORKER_LOG_TAIL_LINES:-5}` (PowerShell: `Get-Content -Tail $env:WORKER_LOG_TAIL_LINES`, default 5).
+- PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
+- Logs never decide completion. Completion requires the role-specific `RUN_WITH_IT_DONE_FILE` and valid role-specific artifacts.
 - When a valid done file and valid artifacts are present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` and proceed to the next phase without waiting on unrelated CLI cleanup. Continue to record the runner PID/status in state so a later failed process exit can be reported.
 - **Every STATUS/heartbeat line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - Every forwarded STATUS/heartbeat line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.

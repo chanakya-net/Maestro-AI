@@ -31,6 +31,7 @@ AI-Skills/
 │   ├── review-prompt.md
 │   ├── run-agent.sh
 │   ├── run-agent.ps1
+│   ├── worker-watch.sh
 │   └── sub-coordinator-prompt.md
 ├── skills/
 │   ├── break-req/SKILL.md
@@ -94,6 +95,7 @@ It also installs shared assets required by workflow skills:
 - `complexity-prompt.md`
 - `run-agent.sh`
 - `run-agent.ps1` on Windows
+- `worker-watch.sh`
 - `agent-registry.json`
 
 Default asset location:
@@ -125,6 +127,8 @@ The codebase has four main surfaces:
 - `uninstall.sh` / `uninstall.ps1` remove agent registrations, shared assets, and this collection's installed skill directories for a clean reinstall.
 
 The repository intentionally keeps the runtime contract simple: skills prepare context, then `run-with-it` selects an agent/model and invokes `assets/run-agent.sh` or `assets/run-agent.ps1`. The runner executes a prepared payload; it does not create issues, fetch issue bodies, or infer project history on its own.
+
+Sub-Coordinators launch role workers as monitored background jobs. They create `.run-with-it/sub-<issue>-state.json` before the first worker spawn and update it after every worker PID capture, storing role, cycle, PID, agent/model, log file, done file, and result file. `worker-watch.sh` checks background worker liveness and log-tail changes for status summaries; it does not decide phase completion. Completion still requires the role-specific `RUN_WITH_IT_DONE_FILE` plus valid role artifacts.
 
 ## Unified Routing Workflow
 
@@ -177,12 +181,12 @@ Quick fix from this repository root:
 
 Bash (macOS / Linux / Git Bash):
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/modifier-prompt.md ./assets/review-prompt.md ./assets/complexity-prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/modifier-prompt.md ./assets/review-prompt.md ./assets/complexity-prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/worker-watch.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
 ```
 
 PowerShell (Windows):
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 Or re-run installer:
@@ -332,10 +336,15 @@ npx -y skills add chanakya-net/AI-Skills -a github-copilot
 | [`assets/agent-registry.json`](assets/agent-registry.json) | Agent aliases, detection commands, invocation templates, model catalog, and routing metadata. |
 | [`assets/run-agent.sh`](assets/run-agent.sh) | Bash runner used by macOS, Linux, Git Bash, and GUI-launched Unix-like agent workflows. |
 | [`assets/run-agent.ps1`](assets/run-agent.ps1) | PowerShell runner for Windows workflows. |
+| [`assets/worker-watch.sh`](assets/worker-watch.sh) | Helper used by Sub-Coordinators to check background worker liveness and log-tail changes. It does not decide phase completion. |
 | [`assets/prompt.md`](assets/prompt.md) | Shared execution prompt used by the runner workflow. |
 | [`assets/review-prompt.md`](assets/review-prompt.md) | Review prompt material for follow-up quality gates. |
 | [`assets/modifier-prompt.md`](assets/modifier-prompt.md) | Modification prompt for addressing reviewer comments and rerunning verification. |
 | [`assets/complexity-prompt.md`](assets/complexity-prompt.md) | Complexity scoring prompt material used by routing workflows. |
+
+Durable runtime state:
+
+- `.run-with-it/sub-<issue>-state.json`: durable Sub-Coordinator state created before the first worker spawn and updated after every worker PID capture.
 
 ## Tests
 
@@ -373,4 +382,3 @@ description: What this skill does and when to use it
 3. Commit and push — the skill is immediately available to all agents on next install/update.
 
 ---
-

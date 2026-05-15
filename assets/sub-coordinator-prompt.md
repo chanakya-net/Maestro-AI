@@ -66,7 +66,7 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `worker-watch.sh`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
 
 ## Coordinator Rules File
 
@@ -85,6 +85,68 @@ cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 - before writing the final report
 
 `.run-with-it/coordinator-rules.md` is deleted as part of normal cleanup.
+
+## Mandatory State Bootstrap
+
+Before spawning the complexity worker, create `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json`. This file is required even if the run later fails before the first worker starts.
+
+Initial schema:
+
+```json
+{
+  "schema_version": 1,
+  "issue_number": 42,
+  "phase": "starting",
+  "in_flight_agents": [],
+  "review_history": [],
+  "updated_at": "2026-05-15T00:00:00Z"
+}
+```
+
+Write this file before every major phase transition and immediately after every worker PID is captured. On context compression/resume, read this file first. If a listed worker still has no valid result artifact, use its stored `pid`, `done_file`, `log_file`, and `result_file` to decide whether to continue waiting, process completed artifacts, or re-spawn the phase.
+
+State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_agents`, `review_history`, and `updated_at`. Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `log_file`, `done_file`, `result_file`, and `started_at`.
+
+## Background Worker Monitoring Contract
+
+Start every worker as a monitored background process. After spawning a background worker, monitor it until either:
+
+1. `RUN_WITH_IT_DONE_FILE` exists and the role-specific artifacts are valid, or
+2. the process exits without valid artifacts.
+
+Every Bash worker launch must follow this shape:
+
+```bash
+WORKER_POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
+WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
+WORKER_LOG_TAIL_LINES="${WORKER_LOG_TAIL_LINES:-5}"
+WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-${RUN_WITH_IT_ROLE}-cycle-${CYCLE:-1}.tail.sha"
+
+GUI_MODE="${GUI_MODE:-0}" \
+AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
+RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
+RUN_WITH_IT_LOG_FILE="$IMPL_LOG_FILE" \
+RUN_WITH_IT_DONE_FILE="$IMPL_DONE_FILE" \
+RUN_WITH_IT_ROLE="impl" \
+RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
+"$ASSET_ROOT/run-agent.sh" \
+  --agent "$AGENT" \
+  --model "$MODEL" \
+  --context-file "$CONTEXT_PAYLOAD_FILE" \
+  --prompt-file "$ASSET_ROOT/prompt.md" \
+  --unattended &
+
+WORKER_PID=$!
+```
+
+Immediately after `WORKER_PID=$!`, write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with the captured PID, role, cycle, agent, model, log file, done file, result file, and started timestamp before monitoring begins.
+
+Every `WORKER_POLL_SECONDS` seconds, run `assets/worker-watch.sh` with the stored PID, done file, log file, and tail-state file. PID liveness is diagnostic only. Completion requires both the done file and valid artifacts.
+
+Every `WORKER_LOG_SUMMARY_SECONDS` seconds, if the worker log tail changed, read only the newest `${WORKER_LOG_TAIL_LINES:-5}` lines, write a concise `STATUS|type=worker-log-tail|...` summary to `$SUB_COORD_LOG_FILE`, update `$RUN_WITH_IT_STATUS_FILE`, and append `$RUN_WITH_IT_EVENTS_LOG`. Do not store the raw log tail in memory or in the state file.
+
+If the PID is dead, immediately `wait "$WORKER_PID"` to capture the runner exit code. If done file and valid artifacts are valid, continue to the next phase. If not, treat the phase as failed or follow the documented fallback chain for that phase.
 
 ## Appendix A: Routing Contract
 
@@ -114,6 +176,10 @@ Bash invocation (use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
 COMPLEXITY_LOG_FILE=".run-with-it/complexity/issue-${SUB_COORD_ISSUE_NUMBER}-complexity.log"
 COMPLEXITY_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-complexity.done"
+COMPLEXITY_RESULT_FILE=".run-with-it/complexity/issue-${SUB_COORD_ISSUE_NUMBER}-complexity-result.json"
+WORKER_POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
+WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
+WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-complexity-cycle-1.tail.sha"
 mkdir -p "$(dirname "$COMPLEXITY_LOG_FILE")"
 mkdir -p "$(dirname "$COMPLEXITY_DONE_FILE")"
 GUI_MODE="${GUI_MODE:-0}" \
@@ -129,8 +195,12 @@ RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
-  --unattended
+  --unattended &
+
+WORKER_PID=$!
 ```
+
+Immediately write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with this `WORKER_PID`, `role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, `COMPLEXITY_LOG_FILE`, `COMPLEXITY_DONE_FILE`, and `COMPLEXITY_RESULT_FILE`. Monitor with `assets/worker-watch.sh`; complexity is complete only after the done file and valid artifacts include a valid `COMPLEXITY|` line and JSON blob.
 
 PowerShell (Windows):
 ```powershell
@@ -214,6 +284,10 @@ Bash (macOS / Linux / Git Bash — use dangerouslyDisableSandbox: true on this B
 ```bash
 IMPL_LOG_FILE=".run-with-it/impl/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.log"
 IMPL_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.done"
+IMPL_RESULT_FILE=".run-with-it/impl/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}-result.json"
+WORKER_POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
+WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
+WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.tail.sha"
 mkdir -p "$(dirname "$IMPL_LOG_FILE")"
 mkdir -p "$(dirname "$IMPL_DONE_FILE")"
 GUI_MODE="${GUI_MODE:-0}" \
@@ -229,8 +303,12 @@ RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/prompt.md" \
-  --unattended
+  --unattended &
+
+WORKER_PID=$!
 ```
+
+Immediately write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with this `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, and `IMPL_RESULT_FILE`. Monitor with `assets/worker-watch.sh`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
 
 PowerShell (Windows):
 ```powershell
@@ -348,6 +426,10 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    ```bash
    REVIEW_LOG_FILE=".run-with-it/review/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.log"
    REVIEW_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.done"
+   REVIEW_RESULT_FILE="$REVIEWER_STATUS_FILE"
+   WORKER_POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
+   WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
+   WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.tail.sha"
    mkdir -p "$(dirname "$REVIEW_LOG_FILE")"
    mkdir -p "$(dirname "$REVIEW_DONE_FILE")"
    GUI_MODE="${GUI_MODE:-0}" \
@@ -363,13 +445,16 @@ Gather the `--numstat` data already collected via Appendix C after the implement
      --model "$REVIEWER_MODEL" \
      --context-file "$REVIEWER_CONTEXT_PAYLOAD_FILE" \
      --prompt-file "$ASSET_ROOT/review-prompt.md" \
-     --unattended
+     --unattended &
+
+   WORKER_PID=$!
    ```
 
 4. Emit before reviewer starts: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
-5. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never read `REVIEWER_INSTRUCTIONS_FILE`** — that file is for the modifier only.
-6. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `.run-with-it/sub-<N>-state.json` for this cycle. Do not read its contents.
-7. Emit after step 5: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
+5. Immediately write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with this `WORKER_PID`, `role=review`, `cycle`, reviewer agent/model, `REVIEW_LOG_FILE`, `REVIEW_DONE_FILE`, and `REVIEW_RESULT_FILE`. Monitor with `assets/worker-watch.sh`; review is complete only after the done file and valid artifacts include both reviewer JSON files.
+6. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never read `REVIEWER_INSTRUCTIONS_FILE`** — that file is for the modifier only.
+7. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `.run-with-it/sub-<N>-state.json` for this cycle. Do not read its contents.
+8. Emit after step 6: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 
 ### Verdict Routing
 
@@ -386,7 +471,35 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
    - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands.
-   - Run via: `MODIFY_LOG_FILE=".run-with-it/modify/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.log"; MODIFY_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.done"; mkdir -p "$(dirname "$MODIFY_LOG_FILE")" "$(dirname "$MODIFY_DONE_FILE")"; GUI_MODE="${GUI_MODE:-0}" AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" RUN_WITH_IT_LOG_FILE="$MODIFY_LOG_FILE" RUN_WITH_IT_DONE_FILE="$MODIFY_DONE_FILE" RUN_WITH_IT_ROLE="modify" RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" "$ASSET_ROOT/run-agent.sh" --agent "$MODIFIER_AGENT" --model "$MODIFIER_MODEL" --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" --prompt-file "$ASSET_ROOT/modifier-prompt.md" --unattended` with `dangerouslyDisableSandbox: true`
+   - Run via this background-worker shape with `dangerouslyDisableSandbox: true`:
+
+     ```bash
+     MODIFY_LOG_FILE=".run-with-it/modify/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.log"
+     MODIFY_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.done"
+     MODIFY_RESULT_FILE=".run-with-it/modify/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}-result.json"
+     WORKER_POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
+     WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
+     WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.tail.sha"
+     mkdir -p "$(dirname "$MODIFY_LOG_FILE")" "$(dirname "$MODIFY_DONE_FILE")"
+     GUI_MODE="${GUI_MODE:-0}" \
+     AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+     RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
+     RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
+     RUN_WITH_IT_LOG_FILE="$MODIFY_LOG_FILE" \
+     RUN_WITH_IT_DONE_FILE="$MODIFY_DONE_FILE" \
+     RUN_WITH_IT_ROLE="modify" \
+     RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
+     "$ASSET_ROOT/run-agent.sh" \
+       --agent "$MODIFIER_AGENT" \
+       --model "$MODIFIER_MODEL" \
+       --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" \
+       --prompt-file "$ASSET_ROOT/modifier-prompt.md" \
+       --unattended &
+
+     WORKER_PID=$!
+     ```
+
+     Immediately write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with this `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, and `MODIFY_RESULT_FILE`. Monitor with `assets/worker-watch.sh`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
    - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.

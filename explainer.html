@@ -706,7 +706,7 @@
   <div class="card-grid cols-2">
     <div class="card">
       <h4>Asset Discovery</h4>
-      <p>Resolve from <code>$ASSETS_DEST</code> &rarr; <code>~/.ai-skill-collections/assets</code> &rarr; <code>./assets</code>. Must find all 10 required files (<code>prompt.md</code>, <code>run-agent.sh</code>, <code>run-agent.ps1</code>, <code>agent-registry.json</code>, <code>review-prompt.md</code>, <code>modifier-prompt.md</code>, <code>complexity-prompt.md</code>, <code>coordinator-rules.md</code>, <code>sub-coordinator-prompt.md</code>, <code>main-orchestrator-rules.md</code>).</p>
+      <p>Resolve from <code>$ASSETS_DEST</code> &rarr; <code>~/.ai-skill-collections/assets</code> &rarr; <code>./assets</code>. Must find all 11 required files (<code>prompt.md</code>, <code>run-agent.sh</code>, <code>run-agent.ps1</code>, <code>worker-watch.sh</code>, <code>agent-registry.json</code>, <code>review-prompt.md</code>, <code>modifier-prompt.md</code>, <code>complexity-prompt.md</code>, <code>coordinator-rules.md</code>, <code>sub-coordinator-prompt.md</code>, <code>main-orchestrator-rules.md</code>).</p>
     </div>
     <div class="card">
       <h4>OS Detection</h4>
@@ -832,6 +832,10 @@
     cannot spawn further sub-agents). It never touches GitHub and never updates
     <code>main-state.json</code>.
   </p>
+  <p>
+    Worker lifecycle: spawn background worker -&gt; capture PID -&gt; write state -&gt;
+    poll every 20s -&gt; summarize logs every 60s -&gt; validate done file + artifacts -&gt; proceed.
+  </p>
 
   <div class="flow-diagram">
 
@@ -839,7 +843,7 @@
     <div class="step">
       <span class="tag tag-cyan">1</span>
       <span class="step-title">Complexity Analysis</span>
-      <div class="step-desc">Spawn complexity sub-agent using <code>complexity-prompt.md</code>. 9-dimension rubric, scores 1-5 each (total 9-45). Maps to band: <code>quite-easy</code>, <code>easy</code>, <code>medium</code>, <code>medium-hard</code>, <code>complex</code>, <code>holy-fuck</code>. Output: <code>COMPLEXITY|</code> line + JSON blob.</div>
+      <div class="step-desc">Bootstrap <code>.run-with-it/sub-&lt;issue&gt;-state.json</code>, then spawn complexity sub-agent using <code>complexity-prompt.md</code> as a monitored background worker. 9-dimension rubric, scores 1-5 each (total 9-45). Maps to band: <code>quite-easy</code>, <code>easy</code>, <code>medium</code>, <code>medium-hard</code>, <code>complex</code>, <code>holy-fuck</code>. Output: <code>COMPLEXITY|</code> line + JSON blob.</div>
     </div>
     <div class="arrow">&darr;</div>
 
@@ -855,7 +859,7 @@
     <div class="step">
       <span class="tag tag-green">3</span>
       <span class="step-title">Implementation</span>
-      <div class="step-desc">Spawn implementer worker-agent with <code>prompt.md</code>. Runs TDD discipline (red-green-refactor). Produces code with behaviour-first tests through public interfaces. Captures commit SHA, not diff text.</div>
+      <div class="step-desc">Spawn implementer worker-agent with <code>prompt.md</code> in the background, capture PID, persist worker metadata, and monitor with <code>worker-watch.sh</code>. Runs TDD discipline (red-green-refactor). Produces code with behaviour-first tests through public interfaces. Captures commit SHA, not diff text.</div>
     </div>
     <div class="arrow">&darr;</div>
 
@@ -1016,6 +1020,7 @@
       <tr><td><code>agent-registry.json</code></td><td>Agent aliases, detection commands, invocation templates, model catalog, routing metadata (546 lines)</td><td>Sub-Coordinator routing</td></tr>
       <tr><td><code>run-agent.sh</code></td><td>Bash runner — orchestrates agent CLI invocation, permission modes, dry-run (631 lines)</td><td>Main Orchestrator / Sub-Coordinator spawn</td></tr>
       <tr><td><code>run-agent.ps1</code></td><td>PowerShell equivalent of <code>run-agent.sh</code></td><td>Windows path</td></tr>
+      <tr><td><code>worker-watch.sh</code></td><td>Reports background worker PID liveness, done-file presence, and log-tail changes without deciding completion</td><td>Sub-Coordinator worker monitoring</td></tr>
       <tr><td><code>prompt.md</code></td><td>Shared execution prompt (84 lines)</td><td>Implementer worker-agent</td></tr>
       <tr><td><code>review-prompt.md</code></td><td>Review prompt for quality gates (124 lines)</td><td>Reviewer worker-agent</td></tr>
       <tr><td><code>modifier-prompt.md</code></td><td>Address review comments, re-run verification (86 lines)</td><td>Modifier worker-agent</td></tr>

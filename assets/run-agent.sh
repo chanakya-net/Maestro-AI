@@ -252,8 +252,8 @@ apply_gui_permission_mode() {
       fi
       ;;
     github-copilot)
-      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--allow-all" || "${AGENT_PERMISSION_MODE}" == "--allow-all-tools" ]]; then
-        AGENT_PERMISSION_MODE="--autopilot --yolo"
+      if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--allow-all" || "${AGENT_PERMISSION_MODE}" == "--autopilot --yolo" ]]; then
+        AGENT_PERMISSION_MODE="--allow-all-tools"
       fi
       ;;
     gemini)
