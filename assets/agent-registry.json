@@ -7,6 +7,7 @@
     "gemini-cli": "gemini",
     "copilot": "github-copilot",
     "github-copilot-cli": "github-copilot",
+    "open-code": "opencode",
     "open_code": "opencode"
   },
   "model_catalog": {

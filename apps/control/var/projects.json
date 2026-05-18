@@ -1,0 +1,22 @@
+{
+  "projects": [
+    {
+      "id": "8a71e68c-a11",
+      "name": "intellibill",
+      "hostPath": "/Users/chanakya/projects/intelibill",
+      "workspacePath": "/workspace",
+      "runnerContainerName": "ai-skills-runner-8a71e68c-a11",
+      "homeVolumeName": "ai-skills-agent-home-8a71e68c-a11",
+      "createdAt": "2026-05-18T13:39:19.941Z"
+    },
+    {
+      "id": "455d71c7-b17",
+      "name": "install-api-smoke",
+      "hostPath": "/Users/chanakya/projects/AI-Skills",
+      "workspacePath": "/workspace",
+      "runnerContainerName": "ai-skills-runner-455d71c7-b17",
+      "homeVolumeName": "ai-skills-agent-home-455d71c7-b17",
+      "createdAt": "2026-05-18T13:45:55.147Z"
+    }
+  ]
+}

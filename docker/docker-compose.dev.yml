@@ -1,0 +1,20 @@
+services:
+  control:
+    build:
+      context: ..
+      dockerfile: docker/control.Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      AI_SKILLS_RUNNER_IMAGE: ai-skills-runner:latest
+      AI_SKILLS_CONTROL_DATA: /data/projects.json
+      AI_SKILLS_REPO_ROOT: /repo
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ..:/repo:ro
+      - control-data:/data
+
+volumes:
+  control-data:
