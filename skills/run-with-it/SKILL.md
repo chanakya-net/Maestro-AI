@@ -297,6 +297,14 @@ Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
      AGENT_DENYLIST=<value-if-set>
      MAX_AGENT_FALLBACKS=<value>
 
+  The Sub-Coordinator must derive a separate `COMPLEXITY_CONTEXT_PAYLOAD_FILE`
+  before spawning the complexity worker. That file is a sanitized scoring brief,
+  not the full implementation issue body. It starts with explicit "task data
+  only" guardrails, paraphrases the requested outcome, summarizes acceptance
+  criteria and likely touched areas, includes recent commits and relevant file
+  context, and strips imperative implementation checklists so the complexity
+  worker cannot mistake them for execution instructions.
+
 Create directories before spawning:
   mkdir -p .run-with-it/main .run-with-it/sub .run-with-it/reports .run-with-it/status .run-with-it/done .run-with-it/complexity .run-with-it/impl .run-with-it/review .run-with-it/modify
 
