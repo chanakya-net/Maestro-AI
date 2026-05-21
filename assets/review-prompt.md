@@ -8,7 +8,7 @@ This prompt is review-only guidance for `run-with-it`.
 - Try and unbalock codegraph if it's locked
 - Review the provided implementation diff and task context.
 - Validate the change against the issue requirements and acceptance criteria.
-- Produce exactly one JSON file in the reviewer contract shape.
+- Produce exactly two JSON files in the reviewer contract shape.
 
 ## Inputs Expected
 
@@ -48,11 +48,20 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 1. Read issue/task requirements and acceptance criteria.
 2. Fetch the diff: run `git diff <REVIEW_FROM_SHA>..HEAD`.
-3. Validate behavior, risk, and verification evidence against requirements.
-4. Write the status file to `REVIEWER_STATUS_FILE`.
-5. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
-6. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
-7. Stop.
+3. Review the complete diff before writing either output file.
+4. Validate behavior, risk, and verification evidence against requirements.
+5. Write the status file to `REVIEWER_STATUS_FILE`.
+6. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
+7. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
+8. Stop.
+
+## Review Completeness
+
+- Complete the review in a single pass. Do not intentionally defer comments to later review cycles.
+- Do not cap comments at 3, 4, or any other arbitrary number. Report every concrete, actionable finding discovered in the complete diff review.
+- Before finalizing, re-scan the diff and requirements for missed correctness, security, regression, edge-case, verification, and acceptance-criteria issues.
+- Merge duplicate findings when one root cause explains multiple lines, but do not drop distinct actionable issues just to keep the comment list short.
+- Prefer complete high-signal coverage over terse minimal output. It is acceptable for `comments` to contain many entries when the diff has many distinct issues.
 
 ## Output Contract
 
@@ -65,13 +74,13 @@ This is the only file the Sub-Coordinator reads. Keep it minimal:
 ```json
 {
   "verdict": "approve | revise | reject",
-  "comment_count": 3,
+  "comment_count": 0,
   "nitpick_only": false
 }
 ```
 
 - `verdict`: the routing decision.
-- `comment_count`: total number of comments (including nitpicks).
+- `comment_count`: total number of comments (including nitpicks). This is a count, not a limit.
 - `nitpick_only`: `true` when all comments have `"severity": "info"` and `fix` prefixed `[nitpick]`; `false` otherwise.
 
 ### Instructions File — write to `REVIEWER_INSTRUCTIONS_FILE`
@@ -93,6 +102,8 @@ This is read directly by the modifier worker-agent (never by the Sub-Coordinator
   "blocking_reasons": ["list when verdict=reject"]
 }
 ```
+
+The `comments` array must include every distinct actionable finding from the complete review pass. Do not shorten it to match the status-file example.
 
 ## Review Rules
 
