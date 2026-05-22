@@ -1,6 +1,6 @@
 ---
 name: run-with-it
-description: Two-layer orchestration runtime — Main Orchestrator fetches all issues, plans execution order, spawns ephemeral Sub-Coordinators one at a time, collects compact reports, and updates GitHub. Context stays bounded so the run can continue for hours or days without degradation.
+description: Two-layer orchestration runtime — Main Orchestrator fetches all issues, plans execution order, spawns Sub-Coordinators (sequentially or in parallel batches), collects compact reports, and updates GitHub. Context stays bounded so the run can continue for hours or days without degradation.
 ---
 
 ## Skill Isolation
@@ -46,10 +46,10 @@ Preferred upstream flow:
 
 **Main Orchestrator** (this skill, runs in the primary session):
 - Fetches all `ready-for-agent` issues once at startup
-- Determines sequential execution order based on dependencies
+- Determines execution order based on dependencies; groups independent issues into parallel batches when `PARALLEL_JOBS > 1`
 - Writes its own status log to `.run-with-it/main/main.log`
-- Spawns one **Sub-Coordinator** per issue via `run-agent.sh`
-- Waits for each Sub-Coordinator to complete and write its compact report
+- Spawns up to `PARALLEL_JOBS` **Sub-Coordinators** concurrently (one per independent issue in the batch) via `run-agent.sh`
+- Waits for all Sub-Coordinators in the batch to complete and write their compact reports
 - Reads ONLY the compact report JSON — never the implementation diffs or log files
 - Updates `main-state.json` after each issue (its full external memory)
 - Posts terminal GitHub comments and closes/updates issues
@@ -130,6 +130,8 @@ Collect these values before execution:
   - `DELEGATED_REVIEW` (default `true`)
 - Optional depth guard:
   - `MAX_AGENT_DEPTH` (default `1`): always inject `MAX_AGENT_DEPTH=1` into every Sub-Coordinator context file so the Sub-Coordinator's children cannot spawn further sub-agents.
+- Optional parallel execution:
+  - `PARALLEL_JOBS` (default `1`) — maximum number of Sub-Coordinators to run concurrently. When `> 1`, all pending issues with no unmet dependencies are batched together up to this limit and spawned simultaneously. Sequential behavior (`PARALLEL_JOBS=1`) is the default for backward compatibility.
 
 ## Asset Discovery (Required)
 
@@ -234,10 +236,10 @@ Fallback policy:
 After fetching all issues:
 
 1. Build a dependency graph: for each issue, identify which other issues it depends on (from issue body, labels, or cross-references).
-2. Determine sequential execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors.
+2. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues at the same dependency tier with no mutual dependencies form a parallel batch (up to `PARALLEL_JOBS` at a time).
 3. Issues whose dependencies have open/unresolved status are marked `blocked` until their dependencies complete.
-4. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work.
-5. Emit: `STATUS|type=plan|total_issues=<n>|mode=sequential|pending=<n>|blocked=<n>`
+4. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs` and `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `parallel` otherwise) in the plan.
+5. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|parallel>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 6. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
 ## Main Orchestrator Loop
@@ -260,9 +262,17 @@ Emit: STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json
 Emit: STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>
       |failed=<count>
 
-══ STEP B: IDENTIFY NEXT ISSUE ═════════════════════════════════════════════════
-From issue_registry in main-state.json, find the first issue with
+══ STEP B: IDENTIFY NEXT BATCH ═════════════════════════════════════════════════
+From issue_registry in main-state.json, collect ALL issues with
 status="pending" whose dependencies are all "completed".
+
+- If PARALLEL_JOBS=1 (sequential mode): take only the first ready issue (priority
+  order: critical fixes → dev infra → tracer-bullet slices → polish → refactors).
+- If PARALLEL_JOBS>1 (parallel mode): take up to PARALLEL_JOBS ready issues,
+  selecting them by the same priority order. Issues in the batch must have no
+  unmet dependencies on each other (i.e., no issue in the batch depends on another
+  issue also in the batch). If a candidate depends on another batch member, defer
+  it to the next iteration.
 
 If no pending issue is ready: check if any "pending" issue has unmet
 dependencies — re-evaluate them. If still unresolvable, mark them "blocked".
@@ -270,8 +280,14 @@ dependencies — re-evaluate them. If still unresolvable, mark them "blocked".
 If ALL issues are terminal (completed / failed-review / blocked):
   EXIT LOOP → proceed to Final Ledger and Cleanup.
 
-══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILE ═══════════════════════════════
-Build $SUB_COORD_CONTEXT_FILE (temp file) containing, in order:
+Set CURRENT_BATCH = [ <issue_n>, <issue_m>, ... ] (1 to PARALLEL_JOBS issues).
+Emit: STATUS|type=batch-start|batch_size=<n>|issues=<comma-separated-numbers>
+      |parallel_jobs=<PARALLEL_JOBS>
+
+══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════
+Repeat for EACH issue <n> in CURRENT_BATCH:
+
+Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, in order:
   1. Full issue body: re-fetch using:
        gh issue view <n> --json number,title,body,labels,url,comments
      (re-fetch even if pre-fetched at startup — ensures freshest data)
@@ -319,40 +335,87 @@ Resolve live status files before spawning:
 Every STATUS line emitted by the Main Orchestrator must be appended to `$MAIN_LOG_FILE`
 with an explicit shell write before or at the same time it is printed.
 
-Mark issue status="in_progress" in main-state.json. Write to disk BEFORE spawning.
-Emit: STATUS|type=sub-coord-spawn|issue=<n>|agent=<SUB_COORD_AGENT>
-      |model=<SUB_COORD_MODEL>|report_file=<path>|log_file=<path>
+For EACH issue <n> in CURRENT_BATCH:
+  Mark issue status="in_progress" in main-state.json. Write to disk BEFORE spawning.
+  Emit: STATUS|type=sub-coord-spawn|issue=<n>|agent=<SUB_COORD_AGENT>
+        |model=<SUB_COORD_MODEL>|report_file=<path>|log_file=<path>
+        |batch_size=<len(CURRENT_BATCH)>|parallel_jobs=<PARALLEL_JOBS>
 
-Print to user:
+Print to user for each issue:
   "Starting sub-coordinator for issue #<n>: <title>"
   "Log: .run-with-it/sub/sub-<n>.log"
   "To watch live progress in a separate terminal:"
   "  tail -f .run-with-it/sub/sub-<n>.log"
 
-══ STEP D: SPAWN SUB-COORDINATOR (MONITORED BLOCKING) ═════════════════════════
+══ STEP D: SPAWN ALL SUB-COORDINATORS IN BATCH (PARALLEL MONITORED BLOCKING) ══
+
 Bash (macOS / Linux / Git Bash):
-  (
-    GUI_MODE="${GUI_MODE:-0}" \
-    AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-    RUN_WITH_IT_STATUS_FILE="$RUN_WITH_IT_STATUS_FILE" \
-    RUN_WITH_IT_EVENTS_LOG="$RUN_WITH_IT_EVENTS_LOG" \
-    RUN_WITH_IT_LOG_FILE="$SUB_COORD_LOG_FILE" \
-    RUN_WITH_IT_DONE_FILE="$(pwd -P)/.run-with-it/done/issue-<n>-sub-coord.done" \
-    RUN_WITH_IT_ROLE="sub-coord" \
-    RUN_WITH_IT_ISSUE="<n>" \
-    "$ASSET_ROOT/run-agent.sh" \
-      --agent "$SUB_COORD_AGENT" \
-      --model "$SUB_COORD_MODEL" \
-      --context-file "$SUB_COORD_CONTEXT_FILE" \
-      --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
-      --unattended
-  ) &
-  SUB_COORD_PID=$!
-  SUB_COORD_STARTED_AT=$(date +%s)
+
+  # --- Phase 1: Spawn all sub-coordinators in the batch as background processes ---
+  declare -A _BATCH_PIDS
+  declare -A _BATCH_STARTED_ATS
+  declare -A _BATCH_LAST_LOG_TAIL_ATS
+  declare -A _BATCH_LAST_LOG_TAILS
+
+  for issue_n in $CURRENT_BATCH; do
+    SUB_COORD_CTX_FILE="$SUB_COORD_CONTEXT_FILE_${issue_n}"
+    SUB_COORD_LOG="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
+    SUB_COORD_DONE="$(pwd -P)/.run-with-it/done/issue-${issue_n}-sub-coord.done"
+    (
+      GUI_MODE="${GUI_MODE:-0}" \
+      AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
+      RUN_WITH_IT_STATUS_FILE="$RUN_WITH_IT_STATUS_FILE" \
+      RUN_WITH_IT_EVENTS_LOG="$RUN_WITH_IT_EVENTS_LOG" \
+      RUN_WITH_IT_LOG_FILE="$SUB_COORD_LOG" \
+      RUN_WITH_IT_DONE_FILE="$SUB_COORD_DONE" \
+      RUN_WITH_IT_ROLE="sub-coord" \
+      RUN_WITH_IT_ISSUE="$issue_n" \
+      "$ASSET_ROOT/run-agent.sh" \
+        --agent "$SUB_COORD_AGENT" \
+        --model "$SUB_COORD_MODEL" \
+        --context-file "$SUB_COORD_CTX_FILE" \
+        --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
+        --unattended
+    ) &
+    _BATCH_PIDS[$issue_n]=$!
+    _BATCH_STARTED_ATS[$issue_n]=$(date +%s)
+    _BATCH_LAST_LOG_TAIL_ATS[$issue_n]=0
+    _BATCH_LAST_LOG_TAILS[$issue_n]=""
+  done
+
+  # --- Phase 2: Monitor all running sub-coordinators until all exit ---
   LAST_PRINTED_STATUS=""
-  LAST_PRINTED_LOG_TAIL=""
-  LAST_LOG_TAIL_AT=0
-  while kill -0 "$SUB_COORD_PID" 2>/dev/null; do
+  while true; do
+    ALL_DONE=true
+    for issue_n in "${!_BATCH_PIDS[@]}"; do
+      pid="${_BATCH_PIDS[$issue_n]}"
+      if kill -0 "$pid" 2>/dev/null; then
+        ALL_DONE=false
+        NOW=$(date +%s)
+        elapsed=$((NOW - _BATCH_STARTED_ATS[$issue_n]))
+        sub_report="$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json"
+        sub_log="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
+        # Stall alert
+        if [ "$elapsed" -ge "$SUB_COORD_TIMEOUT_SECONDS" ] && [ ! -f "$sub_report" ]; then
+          printf 'STATUS|type=stall|issue=%s|idle_for=%s|action=alert-user\n' \
+            "$issue_n" "$elapsed"
+          printf 'Sub-coordinator for issue #%s has not completed after %ss.\n' \
+            "$issue_n" "$elapsed"
+          printf 'Check log: .run-with-it/sub/sub-%s.log\n' "$issue_n"
+        fi
+        # Periodic log tail (every LOG_TAIL_POLL_SECONDS per issue)
+        if [ "$((NOW - _BATCH_LAST_LOG_TAIL_ATS[$issue_n]))" -ge "$LOG_TAIL_POLL_SECONDS" ] \
+           && [ -s "$sub_log" ]; then
+          CURRENT_LOG_TAIL="$(tail -n 2 "$sub_log")"
+          if [ "$CURRENT_LOG_TAIL" != "${_BATCH_LAST_LOG_TAILS[$issue_n]}" ]; then
+            printf '[issue #%s] %s\n' "$issue_n" "$CURRENT_LOG_TAIL"
+            _BATCH_LAST_LOG_TAILS[$issue_n]="$CURRENT_LOG_TAIL"
+          fi
+          _BATCH_LAST_LOG_TAIL_ATS[$issue_n]="$NOW"
+        fi
+      fi
+    done
+    # Print changed status line (shared bus — last writer wins)
     if [ -s "$RUN_WITH_IT_STATUS_FILE" ]; then
       CURRENT_STATUS="$(tail -n 1 "$RUN_WITH_IT_STATUS_FILE")"
       if [ "$CURRENT_STATUS" != "$LAST_PRINTED_STATUS" ]; then
@@ -360,25 +423,16 @@ Bash (macOS / Linux / Git Bash):
         LAST_PRINTED_STATUS="$CURRENT_STATUS"
       fi
     fi
-    NOW=$(date +%s)
-    if [ "$((NOW - LAST_LOG_TAIL_AT))" -ge "$LOG_TAIL_POLL_SECONDS" ] && [ -s "$SUB_COORD_LOG_FILE" ]; then
-      CURRENT_LOG_TAIL="$(tail -n 2 "$SUB_COORD_LOG_FILE")"
-      if [ "$CURRENT_LOG_TAIL" != "$LAST_PRINTED_LOG_TAIL" ]; then
-        printf '%s\n' "$CURRENT_LOG_TAIL"
-        LAST_PRINTED_LOG_TAIL="$CURRENT_LOG_TAIL"
-      fi
-      LAST_LOG_TAIL_AT="$NOW"
-    fi
-    if [ "$((NOW - SUB_COORD_STARTED_AT))" -ge "$SUB_COORD_TIMEOUT_SECONDS" ] && [ ! -f "$SUB_COORD_REPORT_FILE" ]; then
-      printf 'STATUS|type=stall|issue=<n>|idle_for=%s|action=alert-user\n' "$((NOW - SUB_COORD_STARTED_AT))"
-      printf 'Sub-coordinator for issue #<n> has not completed after %ss.\n' "$((NOW - SUB_COORD_STARTED_AT))"
-      printf 'Check log: .run-with-it/sub/sub-<n>.log\n'
-      break
-    fi
+    [ "$ALL_DONE" = "true" ] && break
     sleep "$STATUS_POLL_SECONDS"
   done
-  wait "$SUB_COORD_PID"
-  SUB_COORD_STATUS=$?
+
+  # --- Phase 3: Collect exit codes ---
+  declare -A _BATCH_EXIT_CODES
+  for issue_n in "${!_BATCH_PIDS[@]}"; do
+    wait "${_BATCH_PIDS[$issue_n]}"
+    _BATCH_EXIT_CODES[$issue_n]=$?
+  done
 
 Always invoke the above Bash call with dangerouslyDisableSandbox: true. This ensures
 agent CLIs (claude, codex, copilot, gemini) can authenticate and run outside Claude
@@ -386,52 +440,66 @@ Code's sandbox. GUI_MODE=0 preserves full permission flags (--dangerously-skip-p
 --dangerously-bypass-approvals-and-sandbox) required for unattended execution.
 
 PowerShell (Windows — never use VAR=value prefix):
-  $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-  $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
-  $env:RUN_WITH_IT_STATUS_FILE = "$RUN_WITH_IT_STATUS_FILE"
-  $env:RUN_WITH_IT_EVENTS_LOG = "$RUN_WITH_IT_EVENTS_LOG"
-  $env:RUN_WITH_IT_LOG_FILE = "$SUB_COORD_LOG_FILE"
-  $env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-<n>-sub-coord.done"
-  $env:RUN_WITH_IT_ROLE = "sub-coord"
-  $env:RUN_WITH_IT_ISSUE = "<n>"
-  & "$ASSET_ROOT\run-agent.ps1" --agent $SUB_COORD_AGENT --model $SUB_COORD_MODEL
-    --context-file $SUB_COORD_CONTEXT_FILE
-    --prompt-file "$ASSET_ROOT\sub-coordinator-prompt.md" --unattended
+  For each issue_n in $CURRENT_BATCH, start a background job:
+  $Jobs = @{}
+  foreach ($issue_n in $CURRENT_BATCH) {
+    $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
+    $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
+    $env:RUN_WITH_IT_STATUS_FILE = "$RUN_WITH_IT_STATUS_FILE"
+    $env:RUN_WITH_IT_EVENTS_LOG = "$RUN_WITH_IT_EVENTS_LOG"
+    $env:RUN_WITH_IT_LOG_FILE = ".run-with-it\sub\sub-${issue_n}.log"
+    $env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-${issue_n}-sub-coord.done"
+    $env:RUN_WITH_IT_ROLE = "sub-coord"
+    $env:RUN_WITH_IT_ISSUE = "$issue_n"
+    $Jobs[$issue_n] = Start-Job -ScriptBlock {
+      & "$using:ASSET_ROOT\run-agent.ps1" --agent $using:SUB_COORD_AGENT `
+        --model $using:SUB_COORD_MODEL `
+        --context-file $using:SUB_COORD_CONTEXT_FILES[$using:issue_n] `
+        --prompt-file "$using:ASSET_ROOT\sub-coordinator-prompt.md" --unattended
+    }
+  }
+  # Wait for all jobs
+  $Jobs.Values | Wait-Job | Out-Null
 
-Wait for run-agent.sh to complete while the shell watcher prints only changed one-line statuses from `$RUN_WITH_IT_STATUS_FILE`.
+**While waiting: monitor status only per issue.** Do not read log files into AI context. Do not infer what agent or model a Sub-Coordinator chose for its workers. Do not kill or restart any Sub-Coordinator in the batch. Each Sub-Coordinator owns its routing and worker decisions autonomously. The only valid responses to a stalled Sub-Coordinator are: (a) continue waiting, or (b) after user instruction, mark it as blocked and let the rest of the batch finish.
 
-**While waiting: monitor status only.** Do not read log files into AI context. Do not read `.run-with-it/status/events.log` into AI context. Do not infer what agent or model the Sub-Coordinator chose for its workers. Do not form opinions about internal routing. Do not kill or restart the Sub-Coordinator. The Sub-Coordinator owns all routing and worker decisions autonomously — any agent/model combination it selects is correct by definition.
+If run-agent.sh fails for an issue despite dangerouslyDisableSandbox: true, it is a true agent failure for that issue.
+Emit: STATUS|type=runner-sandbox-retry-result|issue=<n>|outcome=failed
 
-If run-agent.sh fails despite dangerouslyDisableSandbox: true, it is a true agent failure.
-Emit: STATUS|type=runner-sandbox-retry-result|outcome=failed
-
-If run-agent.sh runs longer than SUB_COORD_TIMEOUT_SECONDS without producing the
-report file, emit:
+If a Sub-Coordinator runs longer than SUB_COORD_TIMEOUT_SECONDS without producing its
+report file:
   STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user
   Print: "Sub-coordinator for issue #<n> has not completed after <t>s."
   Print: "Check log: .run-with-it/sub/sub-<n>.log"
-  Wait for user: type 'continue' to keep waiting or 'skip' to mark as blocked.
+  The rest of the batch continues running. Wait for user: type 'continue' to keep
+  waiting for this issue, or 'skip' to mark it as blocked and proceed once the
+  other batch members finish.
 
 Do NOT use a stall or timeout as justification to inspect logs, infer routing, or restart with different overrides.
 
-══ STEP E: COLLECT REPORT ══════════════════════════════════════════════════════
-Check: does .run-with-it/reports/sub-<n>-report.json exist with valid JSON?
-  YES: Read the compact report JSON into context (this is the ONLY file you read).
-  NO:  Mark issue status="blocked" with reason="report-missing".
-       Update main-state.json. Proceed to Step F with blocked status.
+══ STEP E: COLLECT REPORTS (for each issue in CURRENT_BATCH) ══════════════════
+Repeat for EACH issue <n> in CURRENT_BATCH:
 
-Print to user (do NOT read into AI context):
-  "=== Sub-coordinator output for issue #<n> ==="
-  "Full log: .run-with-it/sub/sub-<n>.log"
-  "Report:   .run-with-it/reports/sub-<n>-report.json"
-  "(Log is not loaded into context — only shell tail -n 2 was used for live display)"
+  Check: does .run-with-it/reports/sub-<n>-report.json exist with valid JSON?
+    YES: Read the compact report JSON into context (this is the ONLY file you read).
+    NO:  Mark issue status="blocked" with reason="report-missing".
+         Update main-state.json. Proceed to Step F for this issue with blocked status.
 
-Parse from report JSON: outcome, summary, files_modified, verification,
-review_summary, token_usage, commit_sha, blocking_reasons.
+  Print to user (do NOT read into AI context):
+    "=== Sub-coordinator output for issue #<n> ==="
+    "Full log: .run-with-it/sub/sub-<n>.log"
+    "Report:   .run-with-it/reports/sub-<n>-report.json"
+    "(Log is not loaded into context — only shell tail -n 2 was used for live display)"
 
-Delete $SUB_COORD_CONTEXT_FILE immediately after reading the report.
+  Parse from report JSON: outcome, summary, files_modified, verification,
+  review_summary, token_usage, commit_sha, blocking_reasons.
 
-══ STEP F: UPDATE STATE + GITHUB ════════════════════════════════════════════════
+  Delete $SUB_COORD_CONTEXT_FILE_<n> immediately after reading the report.
+
+══ STEP F: UPDATE STATE + GITHUB (for each issue in CURRENT_BATCH) ════════════
+Repeat for EACH issue <n> in CURRENT_BATCH (process reports sequentially even
+though they were collected in parallel — GitHub operations must not race):
+
 1. Update issue_registry[<n>].status = report.outcome in main-state.json.
 2. Append to completed_summaries:
      { issue, outcome, files_modified_count, lines_added, lines_deleted,
@@ -444,6 +512,10 @@ Delete $SUB_COORD_CONTEXT_FILE immediately after reading the report.
    If outcome="failed-review" or "blocked": leave open (terminal comment already posted)
 7. Emit: STATUS|type=sub-coord-complete|issue=<n>|outcome=<outcome>
          |report_file=<path>|commit_sha=<sha-or-none>
+
+After all issues in the batch have been processed:
+8. Emit: STATUS|type=batch-complete|batch_size=<n>
+         |completed=<count>|failed=<count>|blocked=<count>
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
 ```
@@ -524,12 +596,15 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 2)
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "run_id": "<uuid generated at run start>",
   "started_at": "<iso8601>",
   "execution_plan": {
+    "execution_mode": "sequential | parallel",
+    "parallel_jobs": 1,
     "batches": [
-      { "batch_id": 1, "issues": [36, 37, 38], "mode": "sequential" }
+      { "batch_id": 1, "issues": [36], "mode": "sequential" },
+      { "batch_id": 2, "issues": [37, 38], "mode": "parallel" }
     ]
   },
   "issue_registry": {
@@ -541,8 +616,8 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 2)
       "commit_sha": "abc1234"
     }
   },
-  "current_batch_id": 1,
-  "current_issue_index": 0,
+  "current_batch_id": 2,
+  "active_batch_issues": [37, 38],
   "completed_summaries": [
     {
       "issue": 36,
@@ -564,7 +639,8 @@ Key invariants:
 - `issue_registry` has one entry per issue
 - `completed_summaries` accumulates one compact record per finished issue — this is what the main orchestrator reads back after compression
 - `ledger_rows` stores verbatim STATUS lines for the final ledger printout
-- `current_batch_id` + `current_issue_index` tell a resumed orchestrator exactly where to continue
+- `current_batch_id` + `active_batch_issues` tell a resumed orchestrator exactly which batch was running; on resume all `in_progress` issues in `active_batch_issues` are reset to `pending` (Sub-Coordinators are ephemeral — restart the whole batch)
+- When `PARALLEL_JOBS=1`, `active_batch_issues` always has at most one entry (backward-compatible)
 
 ### `.gitignore` Auto-Append for `.run-with-it/` (Required)
 
@@ -582,10 +658,12 @@ On the first write of any file under `.run-with-it/`:
 
 Emit parseable one-line status messages:
 
-- plan: `STATUS|type=plan|total_issues=<n>|mode=sequential|pending=<n>|blocked=<n>`
+- plan: `STATUS|type=plan|total_issues=<n>|mode=<sequential|parallel>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
+- batch start: `STATUS|type=batch-start|batch_size=<n>|issues=<comma-separated>|parallel_jobs=<PARALLEL_JOBS>`
+- batch complete: `STATUS|type=batch-complete|batch_size=<n>|completed=<count>|failed=<count>|blocked=<count>`
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`
 - main loop: `STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>|failed=<count>`
-- sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>`
+- sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>|batch_size=<n>|parallel_jobs=<PARALLEL_JOBS>`
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
 - live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
 - worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
@@ -616,11 +694,11 @@ Also print a final summary of all `completed_summaries` entries showing:
 On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 14). On `resume`:
 
 1. Re-read `.run-with-it/main-state.json`.
-2. Identify all issues with `status="in_progress"` — these had a Sub-Coordinator that was interrupted mid-run. Reset them to `status="pending"` (Sub-Coordinators are ephemeral; re-run fresh).
+2. Identify all issues with `status="in_progress"` — these had a Sub-Coordinator that was interrupted mid-run (possibly mid-batch in parallel mode). Reset ALL of them to `status="pending"` (Sub-Coordinators are ephemeral; re-run the entire interrupted batch fresh). Also clear `active_batch_issues` to `[]`.
 3. Identify all issues with `status="pending"` — these haven't started yet.
 4. Identify all issues with `status="completed"`, `"failed-review"`, or `"blocked"` — skip these entirely.
 5. Re-enter Main Loop at Step A.
-6. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|re_queued_in_progress=<m>`
+6. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|re_queued_in_progress=<m>|parallel_jobs=<PARALLEL_JOBS>`
 
 If `.run-with-it/main-state.json` is missing or unparseable when the user types `resume`, emit:
 
@@ -637,8 +715,9 @@ When the Main Orchestrator's context is compressed and the session resumes (conv
 1. Re-read `.run-with-it/main-state.json` (Step A of the loop).
 2. The `completed_summaries` array gives the full bounded history.
 3. Issues with `status="completed"` are done — never re-run them.
-4. Issues with `status="in_progress"` are reset to `"pending"` — re-run their Sub-Coordinators fresh.
-5. Continue the Main Loop as if resuming from a clean slate.
+4. Issues with `status="in_progress"` are reset to `"pending"` — re-run their Sub-Coordinators fresh (entire batch is re-queued; partial batch completions before compression are lost and must be re-run).
+5. Clear `active_batch_issues` to `[]` in main-state.json.
+6. Continue the Main Loop as if resuming from a clean slate.
 
 Never derive issue state from conversation history after compression. The state file is always authoritative.
 
@@ -698,5 +777,7 @@ Comment requirements:
 - **Never present execution option menus.**
 - **Never run tests, build commands, or compile the project** in this session.
 - **Never derive issue state from conversation history.** Always read from `main-state.json`.
+- **Never kill or restart individual Sub-Coordinators mid-batch.** A stall alert for one batch member does not justify interrupting the others — wait for the full batch or mark the stalled issue blocked on user instruction.
+- **GitHub operations within a batch are sequential.** Even when Sub-Coordinators ran in parallel, Step F processes each issue's GitHub comment/close one at a time to avoid race conditions.
 - Preserve local fallback behavior when GitHub or git is unavailable.
 - Keep changes minimal and focused to orchestration/control-plane behavior.
