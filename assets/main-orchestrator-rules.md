@@ -28,7 +28,10 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Always pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ROLE=sub-coord`, and `RUN_WITH_IT_ISSUE=<issue>` into the runner so live progress updates reach the shared status bus.
 - Always pass `RUN_WITH_IT_LOG_FILE=.run-with-it/sub/sub-<n>.log` into the runner so the sub-coordinator's own process output is stored under `.run-with-it/sub/`.
 - Always pass `RUN_WITH_IT_DONE_FILE=.run-with-it/done/issue-<n>-sub-coord.done` into the runner so stale sentinels are cleared and process completion is recorded.
-- Mark the issue as `in_progress` in `main-state.json` and write it to disk BEFORE spawning the sub-coordinator.
+- Mark ALL issues in the current batch as `in_progress` in `main-state.json` and set `active_batch_issues` to the batch issue list. Write to disk BEFORE spawning the first sub-coordinator.
+- When `PARALLEL_JOBS > 1`: spawn all sub-coordinators in the batch as separate background processes (`&`), then enter a single shared monitoring loop that watches all PIDs. Each issue has its own context file, log file, done file, and report file.
+- When `PARALLEL_JOBS = 1`: spawn a single sub-coordinator as before (backward-compatible, single PID).
+- Never kill or restart an individual sub-coordinator mid-batch. A stall in one batch member does not affect others.
 
 ## Live Status Rules
 
@@ -58,3 +61,5 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never pause to ask the user how to proceed after state is loaded — execute the loop.
 - Never present execution option menus.
 - If all issues are terminal (completed/failed-review/blocked): exit loop and run cleanup.
+- After batch completes: re-read `main-state.json` (Step A) before selecting the next batch. GitHub updates within a batch are always sequential — process one issue at a time through Step F even when sub-coordinators ran in parallel.
+- On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_batch_issues` to `[]`. The entire interrupted batch must be re-run fresh.
