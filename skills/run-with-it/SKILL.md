@@ -29,6 +29,9 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Spawn every Sub-Coordinator as a background process, capture `SUB_COORD_PID=$!`, and persist it in `main-state.json` before monitoring.** Persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` together so the rolling pool can recover cleanly after context compression.
 - **Use `assets/worker-watch.sh` for Sub-Coordinator liveness checks during pool monitoring.** Pass each Sub-Coordinator's `pid`, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
+- **GitHub operations on completion are sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as it completes to avoid race conditions.
+- **Preserve local fallback behavior when GitHub or git is unavailable.**
+- **Keep changes minimal and focused to orchestration/control-plane behavior.**
 
 # Run With It
 
@@ -89,10 +92,10 @@ This isolation means each issue's implementation complexity is contained to its 
 
 ## OS Detection
 
-Detect the current OS before asset discovery and runner selection:
+Detect the current OS before asset discovery and runner selection, and capture it in the `OS_FAMILY` environment variable:
 
-- **Windows (native PowerShell):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
-- **macOS / Linux / Git Bash / WSL:** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
+- **Windows (native PowerShell) (`OS_FAMILY=windows`):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
+- **macOS / Linux / Git Bash / WSL (`OS_FAMILY=unix`):** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
 
 Adapt all shell commands in this skill to the detected runtime:
 
@@ -340,6 +343,7 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
      Otherwise: basic grep/find to identify relevant files
   4. Environment configuration block (append at end of context file):
      SUB_COORD_ISSUE_NUMBER=<n>
+     OS_FAMILY=<unix|windows>
      SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/reports/sub-<n>-report.json>
      SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/sub/sub-<n>.log>
      RUN_FEATURE_BRANCH=<shared-run-feature-branch>
@@ -424,250 +428,6 @@ Execution-mode requirement (critical):
 
   Persist `POOL_PID` in `main-state.json`, then monitor that single process until
   it emits `STATUS|type=pool-empty`.
-
-Legacy implementation sketch below is retained only as behavioral reference. Prefer
-`run-with-it-pool.sh` whenever it exists at the resolved asset root.
-
-Bash (macOS / Linux / Git Bash):
-
-  # Bash 3-compatible pool tracking (no associative arrays)
-  # Keep an issue list plus per-issue dynamic vars: _POOL_PID_<issue>, etc.
-  POOL_ISSUES=""
-
-  _pool_add_issue() {
-    local issue="$1"
-    case " $POOL_ISSUES " in
-      *" $issue "*) ;;
-      *) POOL_ISSUES="${POOL_ISSUES} ${issue}" ;;
-    esac
-  }
-
-  _pool_remove_issue() {
-    local issue="$1"
-    local next=""
-    local cur
-    for cur in $POOL_ISSUES; do
-      if [ "$cur" != "$issue" ]; then
-        next="${next} ${cur}"
-      fi
-    done
-    POOL_ISSUES="$next"
-  }
-
-  _pool_set() {
-    local key="$1"
-    local issue="$2"
-    local value="$3"
-    local escaped
-    escaped=$(printf '%q' "$value")
-    eval "_POOL_${key}_${issue}=${escaped}"
-  }
-
-  _pool_get() {
-    local key="$1"
-    local issue="$2"
-    eval "printf '%s' \"\${_POOL_${key}_${issue}-}\""
-  }
-
-  _pool_unset_issue() {
-    local issue="$1"
-    unset "_POOL_PID_${issue}" "_POOL_STARTED_AT_${issue}" \
-      "_POOL_LAST_LOG_TAIL_AT_${issue}" "_POOL_LAST_LOG_TAIL_${issue}"
-  }
-
-  # --- Spawn each newly queued issue into the pool ---
-  for issue_n in $NEWLY_QUEUED; do
-    eval "SUB_COORD_CTX_FILE=\"\${SUB_COORD_CONTEXT_FILE_${issue_n}}\""
-    SUB_COORD_LOG="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
-    SUB_COORD_DONE="$(pwd -P)/.run-with-it/done/issue-${issue_n}-sub-coord.done"
-    nohup "$ASSET_ROOT/run-with-it-dispatch.sh" \
-      --asset-root "$ASSET_ROOT" \
-      --role sub-coord \
-      --issue "$issue_n" \
-      --agent "$SUB_COORD_AGENT" \
-      --model "$SUB_COORD_MODEL" \
-      --context-file "$SUB_COORD_CTX_FILE" \
-      --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
-      --log-file "$SUB_COORD_LOG" \
-      --done-file "$SUB_COORD_DONE" \
-      --result-file "$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json" \
-      --status-file "$RUN_WITH_IT_STATUS_FILE" \
-      --events-log "$RUN_WITH_IT_EVENTS_LOG" \
-      --poll-seconds "$STATUS_POLL_SECONDS" \
-      --timeout-seconds "$SUB_COORD_TIMEOUT_SECONDS" \
-      >>"$SUB_COORD_LOG" 2>&1 < /dev/null &
-      _pool_add_issue "$issue_n"
-      _pool_set "PID" "$issue_n" "$!"
-      SUB_COORD_PID="$(_pool_get "PID" "$issue_n")"
-      disown "$SUB_COORD_PID" 2>/dev/null || true
-      _pool_set "STARTED_AT" "$issue_n" "$(date +%s)"
-      _pool_set "LAST_LOG_TAIL_AT" "$issue_n" "0"
-      _pool_set "LAST_LOG_TAIL" "$issue_n" ""
-
-    # Persist PID + monitoring artifacts in main-state.json immediately.
-    # Required fields: issue, pid, started_at, context_file, log_file, done_file, report_file.
-    # This write must happen before entering the monitor loop for this issue.
-  done
-
-  # --- Rolling pool monitor: poll until pool is empty ---
-  LAST_PRINTED_STATUS=""
-  while [ -n "$POOL_ISSUES" ]; do
-    sleep "$STATUS_POLL_SECONDS"
-
-    CURRENT_POOL_ISSUES="$POOL_ISSUES"
-    for issue_n in $CURRENT_POOL_ISSUES; do
-      pid="$(_pool_get "PID" "$issue_n")"
-
-      if ! kill -0 "$pid" 2>/dev/null; then
-        # Sub-coordinator finished — collect exit code and process immediately
-        wait "$pid" 2>/dev/null
-        _pool_remove_issue "$issue_n"
-        _pool_unset_issue "$issue_n"
-
-        # ── Collect report (Step E inline) ───────────────────────────────────
-        sub_report="$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json"
-        printf '=== Sub-coordinator output for issue #%s ===\n' "$issue_n"
-        printf 'Full log: .run-with-it/sub/sub-%s.log\n' "$issue_n"
-        printf 'Report:   %s\n' "$sub_report"
-        if [ -f "$sub_report" ]; then
-          # Read compact report JSON into AI context — ONLY file read per issue
-          _REPORT_OUTCOME="$(python3 -c "import json; d=json.load(open('$sub_report')); print(d.get('outcome','blocked'))" 2>/dev/null || echo 'blocked')"
-        else
-          _REPORT_OUTCOME="blocked"
-          printf 'WARNING: report missing for issue #%s — marking blocked\n' "$issue_n"
-        fi
-
-        # ── Update state + GitHub (Step F inline) ────────────────────────────
-        # 1. Update issue_registry[issue_n].status = _REPORT_OUTCOME in main-state.json
-        # 2. Remove issue_n from active_pool_issues
-        # 3. Append to completed_summaries and ledger_rows
-        # 4. Write main-state.json to disk BEFORE any GitHub call
-        # 5. Post terminal GitHub comment (Appendix D template) from report JSON
-        if [ "$_REPORT_OUTCOME" = "completed" ]; then
-          gh issue close "$issue_n" --comment "Completed by run-with-it."
-        fi
-        # Delete context temp file
-        eval "_DONE_CTX_FILE=\"\${SUB_COORD_CONTEXT_FILE_${issue_n}}\""
-        rm -f "$_DONE_CTX_FILE" 2>/dev/null || true
-        printf 'STATUS|type=sub-coord-complete|issue=%s|outcome=%s|report_file=%s\n' \
-          "$issue_n" "$_REPORT_OUTCOME" "$sub_report"
-
-        # ── Fill freed slot immediately ───────────────────────────────────────
-        # Re-evaluate ready issues: deps may have resolved now that issue_n completed.
-        # Select highest-priority pending issue with all deps "completed".
-        # If found: assemble context file → spawn → add to POOL_ISSUES.
-        # Emit: STATUS|type=pool-slot-filled|issue=<next>|freed_by=<issue_n>
-        # If none: slot stays empty; pool shrinks toward zero.
-        continue  # Jump to next pool member check; new spawn is tracked in POOL_ISSUES
-      fi
-
-      # Still running — heartbeat and stall detection
-      NOW=$(date +%s)
-      started_at="$(_pool_get "STARTED_AT" "$issue_n")"
-      elapsed=$((NOW - started_at))
-      sub_report="$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json"
-      sub_log="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
-      sub_done="$(pwd -P)/.run-with-it/done/issue-${issue_n}-sub-coord.done"
-      sub_tail_state="$(pwd -P)/.run-with-it/status/sub-${issue_n}.tail.sha"
-
-      # Use worker-watch to report liveness/log-tail changes for sub-coordinators.
-      # Liveness is diagnostic only; completion still requires done sentinel + report artifacts.
-      "$ASSET_ROOT/worker-watch.sh" \
-        --pid "$pid" \
-        --done-file "$sub_done" \
-        --log-file "$sub_log" \
-        --tail-state-file "$sub_tail_state" \
-        --tail-lines 2 >/dev/null || true
-
-      if [ "$elapsed" -ge "$SUB_COORD_TIMEOUT_SECONDS" ] && [ ! -f "$sub_report" ]; then
-        printf 'STATUS|type=stall|issue=%s|idle_for=%s|action=alert-user\n' \
-          "$issue_n" "$elapsed"
-        printf 'Sub-coordinator for issue #%s has not completed after %ss.\n' \
-          "$issue_n" "$elapsed"
-        printf 'Check log: .run-with-it/sub/sub-%s.log\n' "$issue_n"
-      fi
-      last_tail_at="$(_pool_get "LAST_LOG_TAIL_AT" "$issue_n")"
-      [ -n "$last_tail_at" ] || last_tail_at=0
-      if [ "$((NOW - last_tail_at))" -ge "$LOG_TAIL_POLL_SECONDS" ] \
-         && [ -s "$sub_log" ]; then
-        CURRENT_LOG_TAIL="$(tail -n 2 "$sub_log")"
-        last_tail="$(_pool_get "LAST_LOG_TAIL" "$issue_n")"
-        if [ "$CURRENT_LOG_TAIL" != "$last_tail" ]; then
-          printf '[issue #%s] %s\n' "$issue_n" "$CURRENT_LOG_TAIL"
-          _pool_set "LAST_LOG_TAIL" "$issue_n" "$CURRENT_LOG_TAIL"
-        fi
-        _pool_set "LAST_LOG_TAIL_AT" "$issue_n" "$NOW"
-      fi
-    done
-
-    # Print changed status line (shared bus — last writer wins)
-    if [ -s "$RUN_WITH_IT_STATUS_FILE" ]; then
-      CURRENT_STATUS="$(tail -n 1 "$RUN_WITH_IT_STATUS_FILE")"
-      if [ "$CURRENT_STATUS" != "$LAST_PRINTED_STATUS" ]; then
-        printf '%s\n' "$CURRENT_STATUS"
-        LAST_PRINTED_STATUS="$CURRENT_STATUS"
-      fi
-    fi
-  done
-  printf 'STATUS|type=pool-empty|pending_remaining=<n>\n'
-
-Always invoke the above Bash call with dangerouslyDisableSandbox: true. This ensures
-agent CLIs (claude, codex, copilot, gemini) can authenticate and run outside Claude
-Code's sandbox. GUI_MODE=0 preserves full permission flags (--dangerously-skip-permissions,
---dangerously-bypass-approvals-and-sandbox) required for unattended execution.
-
-For tool runtimes that provide sync/async terminal modes:
-  - Use async mode for Step D and keep monitoring via the returned terminal/session id.
-  - Do not run spawn in one shell call and liveness monitor in another unrelated call.
-  - If a shell lifecycle is interrupted, recover from persisted state instead of assuming
-    in-memory PID variables still exist.
-
-PowerShell (Windows — never use VAR=value prefix):
-  # Spawn newly queued issues as background jobs
-  foreach ($issue_n in $NEWLY_QUEUED) {
-    $env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-    $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
-    $env:RUN_WITH_IT_STATUS_FILE = "$RUN_WITH_IT_STATUS_FILE"
-    $env:RUN_WITH_IT_EVENTS_LOG = "$RUN_WITH_IT_EVENTS_LOG"
-    $env:RUN_WITH_IT_LOG_FILE = ".run-with-it\sub\sub-${issue_n}.log"
-    $env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-${issue_n}-sub-coord.done"
-    $env:RUN_WITH_IT_ROLE = "sub-coord"
-    $env:RUN_WITH_IT_ISSUE = "$issue_n"
-    $Jobs[$issue_n] = Start-Job -ScriptBlock {
-      & "$using:ASSET_ROOT\run-agent.ps1" --agent $using:SUB_COORD_AGENT `
-        --model $using:SUB_COORD_MODEL `
-        --context-file $using:SUB_COORD_CONTEXT_FILES[$using:issue_n] `
-        --prompt-file "$using:ASSET_ROOT\sub-coordinator-prompt.md" --unattended
-    }
-  }
-  # Rolling poll: on any completion, process report + fill slot immediately
-  while ($Jobs.Count -gt 0) {
-    Start-Sleep -Seconds $STATUS_POLL_SECONDS
-    $finished = $Jobs.GetEnumerator() | Where-Object { $_.Value.State -ne 'Running' }
-    foreach ($entry in $finished) {
-      $issue_n = $entry.Key
-      $Jobs.Remove($issue_n)
-      # Collect report (Step E inline), update state + GitHub (Step F inline),
-      # fill freed slot immediately (Step B logic inline).
-    }
-  }
-
-**While monitoring: do not read log files into AI context. Do not infer agent or model choices.
-Do not kill or restart any Sub-Coordinator. A stall for one pool member does not affect others —
-continue the pool or mark the stalled issue blocked on user instruction.**
-
-If `run-with-it-dispatch.sh` / `run-agent.sh` fails for an issue despite dangerouslyDisableSandbox: true, it is a true agent failure.
-Emit: STATUS|type=runner-sandbox-retry-result|issue=<n>|outcome=failed
-
-If a Sub-Coordinator runs longer than SUB_COORD_TIMEOUT_SECONDS without producing its report file:
-  STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user
-  Print: "Sub-coordinator for issue #<n> has not completed after <t>s."
-  Print: "Check log: .run-with-it/sub/sub-<n>.log"
-  Other pool members continue running. Wait for user: type 'continue' to keep
-  waiting, or 'skip' to mark as blocked and remove from pool (freeing the slot).
-
-Do NOT use a stall or timeout as justification to inspect logs, infer routing, or restart.
-GitHub operations triggered by pool completions are sequential per issue to avoid races.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
 ```
@@ -971,15 +731,3 @@ Comment requirements:
 - `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`.
 - `Blocking Reasons` section must be included **only** when `report.blocking_reasons` is non-empty. Render each entry as a separate markdown bullet. Omit the section entirely otherwise.
 
-## Guardrails
-
-- **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately.
-- **Never load sub-coordinator log files into AI context.** Print their path; never cat or read_file them.
-- **Never implement work directly in this session.** Implementation belongs to Sub-Coordinators via the runner.
-- **Never present execution option menus.**
-- **Never run tests, build commands, or compile the project** in this session.
-- **Never derive issue state from conversation history.** Always read from `main-state.json`.
-- **Never kill or restart individual Sub-Coordinators mid-run.** A stall alert for one pool member does not justify interrupting the others — continue the pool or mark the stalled issue blocked on user instruction.
-- **GitHub operations on completion are sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as it completes to avoid race conditions.
-- Preserve local fallback behavior when GitHub or git is unavailable.
-- Keep changes minimal and focused to orchestration/control-plane behavior.

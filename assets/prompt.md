@@ -15,7 +15,6 @@ Do not read files, run commands, edit code, or emit status lines until both acti
 Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
 ## Scope
-- try and unblcok codegraph if it's locked
 - Implement only the issue(s) assigned in the run context.
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep changes minimal and focused.
