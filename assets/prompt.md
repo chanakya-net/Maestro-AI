@@ -50,24 +50,6 @@ Use `RUN_WITH_IT_ISSUE` for the `issue` field when it is present; otherwise use 
 
 Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
 
-## Completion Sentinel
-
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
-
-Bash:
-```bash
-mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
-printf 'DONE|issue=%s|role=impl|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
-```
-
-PowerShell:
-```powershell
-New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
-Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
-```
-
-Do not write the done file if tests are failing, verification is incomplete, or the final report is not ready.
-
 ## Verification
 
 Run tests before declaring work complete. All tests must pass. Do not mark work done if any test is failing.
@@ -87,16 +69,64 @@ If a full-suite run is prohibitively slow, run the narrowest passing scope, docu
 
 **Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), retry the exact same command with `dangerouslyDisableSandbox: true` in the Bash tool call. Do not mark verification as failed due to a sandbox restriction alone.
 
+## Mandatory Commit Before Handoff
+
+**Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit the reviewer cannot isolate your changes.
+
+Commit sequence:
+
+Bash:
+```bash
+# Stage all modified and new files for this issue
+git add -A
+# Commit with an issue-scoped message
+git commit -m "impl(#${RUN_WITH_IT_ISSUE:-unknown}): implementation complete"
+# Capture and print the SHA so the sub-coordinator can record it
+IMPL_COMMIT_SHA=$(git rev-parse HEAD)
+printf 'IMPL_COMMIT_SHA=%s\n' "$IMPL_COMMIT_SHA"
+```
+
+PowerShell:
+```powershell
+git add -A
+git commit -m "impl(#$env:RUN_WITH_IT_ISSUE): implementation complete"
+$implCommitSha = git rev-parse HEAD
+Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
+```
+
+**If there is nothing to commit** (no files changed), emit `IMPL_COMMIT_SHA=NONE` and continue — the sub-coordinator will treat a missing commit as a failure.
+
+**Do not write the done file until the commit is made.** The output report must include the commit SHA and a list of all committed files.
+
+## Completion Sentinel
+
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
+
+Bash:
+```bash
+mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf 'DONE|issue=%s|role=impl|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+```
+
+PowerShell:
+```powershell
+New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
+Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
+```
+
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, or the final report is not ready.
+
 ## Output Contract
 
-Do not output this report until all tests pass. If tests are failing, fix them first.
+Do not output this report until all tests pass and the mandatory commit is made. If tests are failing, fix them first.
 
 Report:
 
-1. Files changed
-2. Key implementation decisions
-3. Tests run, suites executed, and pass/fail results (required — must show tests passed)
-4. Remaining risks or follow-up notes
+1. **Commit SHA** — the exact SHA of the commit made in the mandatory commit step (required)
+2. **Files committed** — list of all files included in that commit
+3. Key implementation decisions
+4. Tests run, suites executed, and pass/fail results (required — must show tests passed)
+5. Remaining risks or follow-up notes
 
 If all assigned work is complete and no further ready work is provided in context, output:
 `<promise>NO_MORE_TASKS</promise>`
