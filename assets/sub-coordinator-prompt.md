@@ -234,7 +234,7 @@ The complexity payload must not include:
 - The full issue body when it contains implementation commands.
 - Reviewer instructions, diffs, verification failures, or modifier instructions.
 
-Bash invocation (use dangerouslyDisableSandbox: true on this Bash call):
+Bash invocation (use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions):
 ```bash
 COMPLEXITY_LOG_FILE=".run-with-it/complexity/issue-${SUB_COORD_ISSUE_NUMBER}-complexity.log"
 COMPLEXITY_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-complexity.done"
@@ -351,7 +351,7 @@ ISSUE_BASE_SHA=$(git rev-parse HEAD)
 
 Store `ISSUE_BASE_SHA` in `.run-with-it/sub-<N>-state.json` immediately. This value never changes for the lifetime of this issue.
 
-Bash (macOS / Linux / Git Bash — use dangerouslyDisableSandbox: true on this Bash call):
+Bash (macOS / Linux / Git Bash; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions):
 ```bash
 IMPL_LOG_FILE=".run-with-it/impl/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.log"
 IMPL_DONE_FILE=".run-with-it/done/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.done"
@@ -505,7 +505,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 
    **Always reinforce in the payload**: these SHA values are concrete commit hashes, not symbolic refs. The reviewer must not resolve `HEAD` or any branch name — the SHAs are the authority.
 
-3. Spawn the reviewer child agent (use dangerouslyDisableSandbox: true on this Bash call):
+3. Spawn the reviewer child agent (use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions):
 
    Bash:
    ```bash
@@ -557,7 +557,7 @@ The implementer (or modifier) has already committed all changes as part of its m
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
    - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`.
-   - Run via this background-worker shape with `dangerouslyDisableSandbox: true`:
+   - Run via this background-worker shape; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions:
 
      ```bash
      MODIFY_LOG_FILE=".run-with-it/modify/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.log"
@@ -663,7 +663,7 @@ On merge success, include `merge.status="completed"`, `merge.merge_sha`, `issue_
 
 ### Sandbox
 
-**Always invoke every `run-with-it-dispatch.sh` Bash call with `dangerouslyDisableSandbox: true`.** This is required so the wrapped agent CLIs (claude, codex, copilot, gemini) can access auth credentials and run outside Claude Code's sandbox. The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh`, preserving full permission flags (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`) needed for unattended execution. If a dispatch call fails even with `dangerouslyDisableSandbox: true`, count it as a true agent failure.
+**Invoke `run-with-it-dispatch.sh` through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh`, preserving unattended runner flags configured in `agent-registry.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
 
 ## Appendix D: Sub-Coordinator State (Compaction Survival)
 

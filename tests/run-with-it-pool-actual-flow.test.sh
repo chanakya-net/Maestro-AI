@@ -52,6 +52,7 @@ make_fixture() {
     "${ROOT_DIR}/assets/worker-watch.sh" \
     "${ROOT_DIR}/assets/run-with-it-dispatch.sh" \
     "${ROOT_DIR}/assets/run-with-it-pool.sh" \
+    "${ROOT_DIR}/assets/merge-recovery-prompt.md" \
     "$asset_root/"
   chmod +x "$asset_root/run-agent.sh" \
     "$asset_root/worker-watch.sh" \
@@ -96,7 +97,7 @@ if [[ "${1:-}" == "--version" ]]; then
 fi
 repo_root="$1"
 prompt_payload="$2"
-report_file="$(printf '%s' "$prompt_payload" | sed -n 's/^REPORT_FILE=//p' | head -n 1)"
+report_file="$(printf '%s' "$prompt_payload" | sed -n 's/^REPORT_FILE=//p; s/^MERGE_RECOVERY_REPORT_FILE=//p' | head -n 1)"
 outcome="$(printf '%s' "$prompt_payload" | sed -n 's/^OUTCOME=//p' | head -n 1)"
 issue="${RUN_WITH_IT_ISSUE:-unknown}"
 role="${RUN_WITH_IT_ROLE:-unknown}"
@@ -104,7 +105,10 @@ printf 'STATUS|type=heartbeat|issue=%s|role=%s|phase=starting|progress=fake sub 
 printf 'STATUS|type=merge-start|issue=%s|branch=run-with-it/smoke/issue-%s|target=run-with-it/smoke\n' "$issue" "$issue"
 mkdir -p "$repo_root" "$(dirname "$report_file")"
 printf 'issue=%s repo=%s\n' "$issue" "$repo_root" > "$repo_root/issue-$issue.marker"
-if [[ "$outcome" == "merge_failed" ]]; then
+if [[ "$role" == "merge-recovery" ]]; then
+  printf 'STATUS|type=heartbeat|issue=%s|role=merge-recovery|phase=resolving|progress=fake recovery\n' "$issue"
+  printf '{"schema_version":1,"issue_number":%s,"outcome":"completed","summary":"fake recovery completed","feature_branch":"run-with-it/smoke","issue_branch":"run-with-it/smoke/issue-%s","merge_sha":"fake-recovery-%s","files_modified":[{"path":"shared.txt","lines_added":1,"lines_deleted":1}],"verification":{"passed":true,"commands_run":["fake verify"],"evidence":"fake recovery passed"},"blocking_reasons":[]}\n' "$issue" "$issue" "$issue" > "$report_file"
+elif [[ "$outcome" == "merge_failed" ]]; then
   printf 'STATUS|type=merge-failed|issue=%s|reason=conflict\n' "$issue"
   printf '{"schema_version":1,"issue_number":%s,"outcome":"merge_failed","summary":"fake merge conflict","files_modified_count":1,"lines_added":2,"lines_deleted":0,"review_cycles":1,"commit_sha":"fake-%s","merge":{"status":"failed","failure_reason":"conflict","conflict_files":["shared.txt"]}}\n' "$issue" "$issue" > "$report_file"
 else
@@ -213,6 +217,7 @@ assert_file_contains "$SUCCESS_PROJECT/.run-with-it/main/main.log" "STATUS|type=
 MIXED_ROOT="$WORK_DIR/mixed"
 make_fixture "$MIXED_ROOT"
 MIXED_PROJECT="$MIXED_ROOT/project"
+MIXED_PROJECT_REAL="$(cd "$MIXED_PROJECT" && pwd -P)"
 write_context "$MIXED_PROJECT" 1 merge_failed
 write_context "$MIXED_PROJECT" 2 completed
 write_context "$MIXED_PROJECT" 3 completed
@@ -233,18 +238,22 @@ cat > "$MIXED_PROJECT/.run-with-it/main-state.json" <<JSON
 }
 JSON
 run_pool "$MIXED_ROOT" 2
-assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 1 merge_recovery
-assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 2 pending
+assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 1 completed
+assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 2 completed
 assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 3 completed
 assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 4 completed
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 1 "STATUS|type=merge-failed|issue=1"
+assert_file "$MIXED_PROJECT/.run-with-it/merge-recovery/issue-1.log" "merge recovery log exists for issue 1"
+assert_file "$MIXED_PROJECT/.run-with-it/reports/merge-recovery-1-report.json" "merge recovery report exists for issue 1"
+assert_file "$MIXED_PROJECT/.run-with-it/done/issue-1-merge-recovery.done" "merge recovery done sentinel exists for issue 1"
+assert_file_contains "$MIXED_PROJECT/.run-with-it/merge-recovery/issue-1.log" "STATUS|type=heartbeat|issue=1|role=merge-recovery|phase=resolving|progress=fake recovery" "merge recovery coordinator runs for issue 1"
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 3 "STATUS|type=merge-complete|issue=3"
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 4 "STATUS|type=merge-complete|issue=4"
-assert_not_file "$MIXED_PROJECT/.run-with-it/sub/sub-2.log" "dependent issue 2 is not spawned while issue 1 is in merge_recovery"
-assert_not_file "$MIXED_PROJECT/.run-with-it/reports/sub-2-report.json" "dependent issue 2 has no report while blocked by merge_recovery"
-assert_not_file "$MIXED_PROJECT/.run-with-it/done/issue-2-sub-coord.done" "dependent issue 2 has no done sentinel while blocked by merge_recovery"
+assert_spawned_issue_artifacts "$MIXED_PROJECT" 2 "STATUS|type=merge-complete|issue=2"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=merge-failed|issue=1|reason=conflict" "events log records issue 1 merge failure"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=1|outcome=merge_recovery" "events log records issue 1 merge recovery transition"
+assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=merge-recovery|issue=1|report_file=$MIXED_PROJECT_REAL/.run-with-it/reports/merge-recovery-1-report.json|state=completed" "events log records issue 1 recovery completion"
+assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=2|outcome=completed" "events log records dependent issue 2 completion after recovery"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=3|outcome=completed" "events log records unrelated issue 3 completion"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=4|outcome=completed" "events log records unrelated issue 4 completion"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/main/main.log" "STATUS|type=pool-slot-filled" "main log records rolling pool slot refill"
@@ -255,8 +264,8 @@ success = json.load(open(sys.argv[1]))
 mixed = json.load(open(sys.argv[2]))
 if len(success.get("completed_summaries", [])) != 3:
     raise SystemExit("success scenario should have three completed summaries")
-if len(mixed.get("completed_summaries", [])) != 2:
-    raise SystemExit("mixed scenario should have two completed summaries")
+if len(mixed.get("completed_summaries", [])) != 4:
+    raise SystemExit("mixed scenario should have four completed summaries")
 if len(mixed.get("merge_recovery_summaries", [])) != 1:
     raise SystemExit("mixed scenario should have one merge recovery summary")
 if mixed.get("active_pool_issues") != []:

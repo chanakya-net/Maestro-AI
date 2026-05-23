@@ -76,8 +76,8 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Sandbox Rules
 
-- If `run-with-it-dispatch.sh` / `run-agent.sh` fails due to sandbox restrictions, retry the same invocation outside the sandbox before counting it as a failure.
-- Sandbox failures do not consume the fallback budget. Only failures outside the sandbox count.
+- If `run-with-it-dispatch.sh` / `run-agent.sh` fails due to sandbox restrictions, use the current tool's explicit approved permission-escalation flow when available, then retry the same invocation before counting it as a failure.
+- Sandbox failures do not consume the fallback budget. Only failures after an approved retry, or failures where permission escalation is unavailable, count.
 
 ## Resume Rules
 

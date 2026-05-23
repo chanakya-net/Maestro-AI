@@ -64,18 +64,33 @@ fi
 
 DISPATCHER="${ASSET_ROOT}/run-with-it-dispatch.sh"
 PROMPT_FILE="${ASSET_ROOT}/sub-coordinator-prompt.md"
+MERGE_RECOVERY_PROMPT_FILE="${ASSET_ROOT}/merge-recovery-prompt.md"
 
 [ -x "$DISPATCHER" ] || fail "dispatcher not executable: $DISPATCHER"
 [ -f "$PROMPT_FILE" ] || fail "sub-coordinator prompt not found: $PROMPT_FILE"
+[ -f "$MERGE_RECOVERY_PROMPT_FILE" ] || fail "merge recovery prompt not found: $MERGE_RECOVERY_PROMPT_FILE"
 [ -f "$STATE_FILE" ] || fail "state file not found: $STATE_FILE"
 
+JSON_PARSER=""
+if command -v jq >/dev/null 2>&1; then
+  JSON_PARSER="jq"
+elif command -v python3 >/dev/null 2>&1; then
+  JSON_PARSER="python3"
+else
+  fail "no JSON parser available; install jq or python3"
+fi
+
 if [ -z "$PARALLEL_JOBS" ]; then
-  PARALLEL_JOBS="$(python3 - "$STATE_FILE" <<'PY'
+  if [ "$JSON_PARSER" = "jq" ]; then
+    PARALLEL_JOBS="$(jq -r '.execution_plan.parallel_jobs // 4' "$STATE_FILE")"
+  else
+    PARALLEL_JOBS="$(python3 - "$STATE_FILE" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
 print(state.get("execution_plan", {}).get("parallel_jobs", 4))
 PY
 )"
+  fi
 fi
 
 mkdir -p "$(dirname "$MAIN_LOG")" "$(dirname "$STATUS_FILE")" "$(dirname "$EVENTS_LOG")"
@@ -89,7 +104,21 @@ write_status() {
 }
 
 ready_issues() {
-  python3 - "$STATE_FILE" "$1" <<'PY'
+  if [ "$JSON_PARSER" = "jq" ]; then
+    jq -r --argjson limit "$1" '
+      ([.issue_registry // {} | to_entries[] | select(.value.status == "completed") | .key | tonumber]) as $completed
+      | [
+          (.execution_plan.topo_order // [])[] as $issue
+          | (.issue_registry[($issue | tostring)] // {}) as $info
+          | select($info.status == "pending")
+          | select(all(($info.deps // [])[]; . as $dep | $completed | index($dep | tonumber)))
+          | select((($info.context_file // $info.sub_coord_context_file // "") | length) > 0)
+          | ($issue | tostring)
+        ][0:$limit]
+      | join(" ")
+    ' "$STATE_FILE"
+  else
+    python3 - "$STATE_FILE" "$1" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
 limit = int(sys.argv[2])
@@ -109,19 +138,50 @@ for issue in topo:
             ready.append(str(issue))
 print(" ".join(ready))
 PY
+  fi
 }
 
 context_file_for() {
-  python3 - "$STATE_FILE" "$1" <<'PY'
+  if [ "$JSON_PARSER" = "jq" ]; then
+    jq -r --arg issue "$1" '.issue_registry[$issue].context_file // .issue_registry[$issue].sub_coord_context_file // ""' "$STATE_FILE"
+  else
+    python3 - "$STATE_FILE" "$1" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
 info = state.get("issue_registry", {}).get(str(sys.argv[2]), {})
 print(info.get("context_file") or info.get("sub_coord_context_file") or "")
 PY
+  fi
 }
 
 mark_in_progress() {
-  python3 - "$STATE_FILE" "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
+  if [ "$JSON_PARSER" = "jq" ]; then
+    local tmp_file
+    tmp_file="$(mktemp -t run-with-it-state.XXXXXX)"
+    jq \
+      --arg issue "$1" \
+      --argjson pid "$2" \
+      --argjson started_at "$(date +%s)" \
+      --arg context_file "$3" \
+      --arg log_file "$4" \
+      --arg done_file "$5" \
+      --arg report_file "$6" \
+      '
+        .issue_registry = (.issue_registry // {})
+        | .issue_registry[$issue] = ((.issue_registry[$issue] // {}) + {
+            status: "in_progress",
+            context_file: $context_file,
+            pid: $pid,
+            started_at: $started_at,
+            log_file: $log_file,
+            done_file: $done_file,
+            report_file: $report_file
+          })
+        | .active_pool_issues = (((.active_pool_issues // []) | map(tostring)) + [$issue] | unique)
+      ' "$STATE_FILE" > "$tmp_file"
+    mv "$tmp_file" "$STATE_FILE"
+  else
+    python3 - "$STATE_FILE" "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
 import json, sys, time
 path, issue, pid, context_file, log_file, done_file, report_file = sys.argv[1:]
 state = json.load(open(path))
@@ -140,10 +200,56 @@ if str(issue) not in active:
 state["active_pool_issues"] = active
 json.dump(state, open(path, "w"), indent=2)
 PY
+  fi
 }
 
 finalize_issue() {
-  python3 - "$STATE_FILE" "$1" "$2" <<'PY'
+  if [ "$JSON_PARSER" = "jq" ]; then
+    local report_json tmp_file status
+    report_json="$(mktemp -t run-with-it-report.XXXXXX)"
+    tmp_file="$(mktemp -t run-with-it-state.XXXXXX)"
+    if ! jq empty "$2" >/dev/null 2>&1; then
+      printf '{}\n' > "$report_json"
+    else
+      cp "$2" "$report_json"
+    fi
+    status="$(jq -r '(.outcome // "blocked") as $outcome | if $outcome == "merge_failed" then "merge_recovery" else $outcome end' "$report_json")"
+    jq \
+      --arg issue "$1" \
+      --arg report_file "$2" \
+      --slurpfile report "$report_json" \
+      '
+        ($report[0] // {}) as $r
+        | ($r.outcome // "blocked") as $outcome
+        | (if $outcome == "merge_failed" then "merge_recovery" else $outcome end) as $status
+        | .issue_registry = (.issue_registry // {})
+        | .issue_registry[$issue] = ((.issue_registry[$issue] // {}) + {status: $status})
+        | if $outcome == "merge_failed" then
+            .issue_registry[$issue].failed_merge_report_file = $report_file
+            | .issue_registry[$issue].blocking_reasons = (((.issue_registry[$issue].blocking_reasons // []) + ["merge recovery required"]) | unique)
+          else . end
+        | .active_pool_issues = ((.active_pool_issues // []) | map(tostring) | map(select(. != $issue)))
+        | {
+            issue: ($issue | tonumber),
+            outcome: $status,
+            files_modified_count: ($r.files_modified_count // 0),
+            lines_added: ($r.lines_added // 0),
+            lines_deleted: ($r.lines_deleted // 0),
+            review_cycles: ($r.review_cycles // 0),
+            commit_sha: ($r.commit_sha // null)
+          } as $summary
+        | if $status != "merge_recovery" then
+            .completed_summaries = ((.completed_summaries // []) + [$summary])
+          else
+            .merge_recovery_summaries = ((.merge_recovery_summaries // []) + [$summary])
+          end
+        | .ledger_rows = ((.ledger_rows // []) + ["STATUS|type=ledger|task=\($issue)|outcome=\($status)|report=\($report_file)"])
+      ' "$STATE_FILE" > "$tmp_file"
+    mv "$tmp_file" "$STATE_FILE"
+    rm -f "$report_json"
+    printf '%s\n' "$status"
+  else
+    python3 - "$STATE_FILE" "$1" "$2" <<'PY'
 import json, os, sys
 path, issue, report_file = sys.argv[1:]
 outcome = "blocked"
@@ -159,7 +265,7 @@ state = json.load(open(path))
 entry = state.setdefault("issue_registry", {}).setdefault(str(issue), {})
 entry["status"] = status
 if outcome == "merge_failed":
-    entry["merge_recovery_report_file"] = report_file
+    entry["failed_merge_report_file"] = report_file
     entry.setdefault("blocking_reasons", []).append("merge recovery required")
 state["active_pool_issues"] = [x for x in state.get("active_pool_issues", []) if str(x) != str(issue)]
 summary = {
@@ -180,6 +286,175 @@ state.setdefault("ledger_rows", []).append(ledger)
 json.dump(state, open(path, "w"), indent=2)
 print(status)
 PY
+  fi
+}
+
+write_merge_recovery_context() {
+  if [ "$JSON_PARSER" = "jq" ]; then
+    {
+      printf 'You are receiving merge recovery task data only.\n'
+      printf 'Resolve only the failed merge for this issue. Do not select new issues, close GitHub issues, create a final PR, or modify main-state.json.\n\n'
+      printf 'MERGE_RECOVERY_REPORT_FILE=%s\n' "$3"
+      printf 'RUN_WITH_IT_RESULT_FILE=%s\n' "$3"
+      printf 'OUTCOME=completed\n\n'
+      printf 'MERGE_RECOVERY_CONTEXT_JSON:\n'
+      jq --arg issue "$1" '
+        (.issue_registry[$issue] // {}) as $entry
+        | {
+            issue: {
+              number: ($issue | tonumber),
+              title: ($entry.title // ""),
+              deps: ($entry.deps // []),
+              issue_branch: ($entry.issue_branch // null),
+              worktree_path: ($entry.worktree_path // null)
+            },
+            run_branch: (.run_branch // {}),
+            failed_merge_report_file: ($entry.failed_merge_report_file // $entry.report_file // null),
+            failed_merge_summary: {
+              blocking_reasons: ($entry.blocking_reasons // []),
+              dependency_proof: ($entry.dependency_proof // null)
+            },
+            completed_summaries: (.completed_summaries // [])
+          }
+      ' "$STATE_FILE"
+    } > "$2"
+  else
+    python3 - "$STATE_FILE" "$1" "$2" "$3" <<'PY'
+import json, sys
+state_file, issue, context_file, recovery_report_file = sys.argv[1:]
+state = json.load(open(state_file))
+entry = state.get("issue_registry", {}).get(str(issue), {})
+completed = state.get("completed_summaries", [])
+payload = {
+    "issue": {
+        "number": int(issue),
+        "title": entry.get("title", ""),
+        "deps": entry.get("deps", []),
+        "issue_branch": entry.get("issue_branch"),
+        "worktree_path": entry.get("worktree_path"),
+    },
+    "run_branch": state.get("run_branch", {}),
+    "failed_merge_report_file": entry.get("failed_merge_report_file") or entry.get("report_file"),
+    "failed_merge_summary": {
+        "blocking_reasons": entry.get("blocking_reasons", []),
+        "dependency_proof": entry.get("dependency_proof"),
+    },
+    "completed_summaries": completed,
+}
+with open(context_file, "w", encoding="utf-8") as handle:
+    handle.write("You are receiving merge recovery task data only.\n")
+    handle.write("Resolve only the failed merge for this issue. Do not select new issues, close GitHub issues, create a final PR, or modify main-state.json.\n\n")
+    handle.write(f"MERGE_RECOVERY_REPORT_FILE={recovery_report_file}\n")
+    handle.write(f"RUN_WITH_IT_RESULT_FILE={recovery_report_file}\n")
+    handle.write("OUTCOME=completed\n\n")
+    handle.write("MERGE_RECOVERY_CONTEXT_JSON:\n")
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+  fi
+}
+
+finalize_merge_recovery() {
+  if [ "$JSON_PARSER" = "jq" ]; then
+    local report_json tmp_file status
+    report_json="$(mktemp -t run-with-it-recovery.XXXXXX)"
+    tmp_file="$(mktemp -t run-with-it-state.XXXXXX)"
+    if ! jq empty "$2" >/dev/null 2>&1; then
+      printf '{}\n' > "$report_json"
+    else
+      cp "$2" "$report_json"
+    fi
+    status="$(jq -r '(.outcome // "blocked") as $outcome | if $outcome == "completed" then "completed" elif ($outcome == "failed-merge" or $outcome == "blocked") then $outcome else "blocked" end' "$report_json")"
+    jq \
+      --arg issue "$1" \
+      --arg report_file "$2" \
+      --slurpfile report "$report_json" \
+      '
+        ($report[0] // {}) as $r
+        | ($r.outcome // "blocked") as $outcome
+        | (if $outcome == "completed" then "completed" elif ($outcome == "failed-merge" or $outcome == "blocked") then $outcome else "blocked" end) as $status
+        | .issue_registry = (.issue_registry // {})
+        | .issue_registry[$issue] = ((.issue_registry[$issue] // {}) + {
+            status: $status,
+            merge_recovery_report_file: $report_file
+          })
+        | if $status == "completed" then
+            .issue_registry[$issue].blocking_reasons = ((.issue_registry[$issue].blocking_reasons // []) | map(select(. != "merge recovery required")))
+            | .issue_registry[$issue].commit_sha = ($r.merge_sha // $r.commit_sha // null)
+          else
+            .issue_registry[$issue].blocking_reasons = (((.issue_registry[$issue].blocking_reasons // []) + ($r.blocking_reasons // [])) | unique)
+          end
+        | ($r.files_modified // []) as $files
+        | {
+            issue: ($issue | tonumber),
+            outcome: $status,
+            files_modified_count: ($r.files_modified_count // ($files | length)),
+            lines_added: ($r.lines_added // ([$files[]? | select(type == "object") | (.lines_added // 0)] | add // 0)),
+            lines_deleted: ($r.lines_deleted // ([$files[]? | select(type == "object") | (.lines_deleted // 0)] | add // 0)),
+            review_cycles: ($r.review_cycles // 0),
+            commit_sha: ($r.merge_sha // $r.commit_sha // null)
+          } as $summary
+        | if $status == "completed" then
+            .completed_summaries = ((.completed_summaries // []) + [$summary])
+          else
+            .merge_recovery_summaries = ((.merge_recovery_summaries // []) + [$summary])
+          end
+        | .ledger_rows = ((.ledger_rows // []) + ["STATUS|type=ledger|task=\($issue)|outcome=\($status)|report=\($report_file)|role=merge-recovery"])
+      ' "$STATE_FILE" > "$tmp_file"
+    mv "$tmp_file" "$STATE_FILE"
+    rm -f "$report_json"
+    printf '%s\n' "$status"
+  else
+    python3 - "$STATE_FILE" "$1" "$2" <<'PY'
+import json, os, sys
+path, issue, report_file = sys.argv[1:]
+outcome = "blocked"
+report = {}
+if os.path.exists(report_file):
+    try:
+        report = json.load(open(report_file))
+        outcome = report.get("outcome", "blocked")
+    except Exception:
+        outcome = "blocked"
+
+status = "completed" if outcome == "completed" else outcome
+if status not in {"completed", "failed-merge", "blocked"}:
+    status = "blocked"
+
+state = json.load(open(path))
+entry = state.setdefault("issue_registry", {}).setdefault(str(issue), {})
+entry["status"] = status
+entry["merge_recovery_report_file"] = report_file
+if status == "completed":
+    entry["blocking_reasons"] = [
+        reason for reason in entry.get("blocking_reasons", [])
+        if reason != "merge recovery required"
+    ]
+    entry["commit_sha"] = report.get("merge_sha") or report.get("commit_sha")
+else:
+    entry.setdefault("blocking_reasons", []).extend(report.get("blocking_reasons", []))
+
+files = report.get("files_modified", [])
+summary = {
+    "issue": int(issue),
+    "outcome": status,
+    "files_modified_count": report.get("files_modified_count", len(files)),
+    "lines_added": report.get("lines_added", sum(item.get("lines_added", 0) for item in files if isinstance(item, dict))),
+    "lines_deleted": report.get("lines_deleted", sum(item.get("lines_deleted", 0) for item in files if isinstance(item, dict))),
+    "review_cycles": report.get("review_cycles", 0),
+    "commit_sha": report.get("merge_sha") or report.get("commit_sha"),
+}
+if status == "completed":
+    state.setdefault("completed_summaries", []).append(summary)
+else:
+    state.setdefault("merge_recovery_summaries", []).append(summary)
+state.setdefault("ledger_rows", []).append(
+    f"STATUS|type=ledger|task={issue}|outcome={status}|report={report_file}|role=merge-recovery"
+)
+json.dump(state, open(path, "w"), indent=2)
+print(status)
+PY
+  fi
 }
 
 READY_INITIAL="$(ready_issues "$PARALLEL_JOBS")"
@@ -277,6 +552,68 @@ spawn_issue() {
   write_status "STATUS|type=sub-coord-spawn|issue=${issue}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|pool_size=$(set -- $POOL_ISSUES; echo $#)|parallel_jobs=${PARALLEL_JOBS}"
 }
 
+run_merge_recovery() {
+  local issue="$1"
+  local context_file log_file done_file report_file recovery_status
+  context_file="$(pwd -P)/.run-with-it/merge-recovery/issue-${issue}-context.md"
+  log_file="$(pwd -P)/.run-with-it/merge-recovery/issue-${issue}.log"
+  done_file="$(pwd -P)/.run-with-it/done/issue-${issue}-merge-recovery.done"
+  report_file="$(pwd -P)/.run-with-it/reports/merge-recovery-${issue}-report.json"
+  mkdir -p "$(dirname "$context_file")" "$(dirname "$log_file")" "$(dirname "$done_file")" "$(dirname "$report_file")"
+  write_merge_recovery_context "$issue" "$context_file" "$report_file"
+  write_status "STATUS|type=merge-recovery|issue=${issue}|report_file=${report_file}|state=started"
+  if "$DISPATCHER" \
+    --asset-root "$ASSET_ROOT" \
+    --role merge-recovery \
+    --issue "$issue" \
+    --agent "$SUB_COORD_AGENT" \
+    --model "$SUB_COORD_MODEL" \
+    --context-file "$context_file" \
+    --prompt-file "$MERGE_RECOVERY_PROMPT_FILE" \
+    --log-file "$log_file" \
+    --done-file "$done_file" \
+    --result-file "$report_file" \
+    --status-file "$STATUS_FILE" \
+    --events-log "$EVENTS_LOG" \
+    --poll-seconds "$POLL_SECONDS" \
+    --timeout-seconds "$TIMEOUT_SECONDS" >/dev/null; then
+    recovery_status="$(finalize_merge_recovery "$issue" "$report_file")"
+  else
+    recovery_status="$(finalize_merge_recovery "$issue" "$report_file")"
+    if [ "$recovery_status" = "completed" ]; then
+      recovery_status="blocked"
+      if [ "$JSON_PARSER" = "jq" ]; then
+        local tmp_file
+        tmp_file="$(mktemp -t run-with-it-state.XXXXXX)"
+        jq \
+          --arg issue "$issue" \
+          --arg report_file "$report_file" \
+          '
+            .issue_registry = (.issue_registry // {})
+            | .issue_registry[$issue] = ((.issue_registry[$issue] // {}) + {
+                status: "blocked",
+                merge_recovery_report_file: $report_file
+              })
+            | .issue_registry[$issue].blocking_reasons = (((.issue_registry[$issue].blocking_reasons // []) + ["merge recovery dispatcher failed"]) | unique)
+          ' "$STATE_FILE" > "$tmp_file"
+        mv "$tmp_file" "$STATE_FILE"
+      else
+        python3 - "$STATE_FILE" "$issue" "$report_file" <<'PY'
+import json, sys
+path, issue, report_file = sys.argv[1:]
+state = json.load(open(path))
+entry = state.setdefault("issue_registry", {}).setdefault(str(issue), {})
+entry["status"] = "blocked"
+entry["merge_recovery_report_file"] = report_file
+entry.setdefault("blocking_reasons", []).append("merge recovery dispatcher failed")
+json.dump(state, open(path, "w"), indent=2)
+PY
+      fi
+    fi
+  fi
+  write_status "STATUS|type=merge-recovery|issue=${issue}|report_file=${report_file}|state=${recovery_status}"
+}
+
 for issue in $READY_INITIAL; do
   spawn_issue "$issue"
 done
@@ -290,11 +627,14 @@ while [ -n "$POOL_ISSUES" ]; do
       continue
     fi
     wait "$pid" 2>/dev/null || true
-    report_file="$(pool_get REPORT "$issue")"
-    outcome="$(finalize_issue "$issue" "$report_file")"
-    pool_remove "$issue"
-    write_status "STATUS|type=sub-coord-complete|issue=${issue}|outcome=${outcome}|report_file=${report_file}"
-    next_issue="$(ready_issues 1)"
+	    report_file="$(pool_get REPORT "$issue")"
+	    outcome="$(finalize_issue "$issue" "$report_file")"
+	    pool_remove "$issue"
+	    write_status "STATUS|type=sub-coord-complete|issue=${issue}|outcome=${outcome}|report_file=${report_file}"
+	    if [ "$outcome" = "merge_recovery" ]; then
+	      run_merge_recovery "$issue"
+	    fi
+	    next_issue="$(ready_issues 1)"
     if [ -n "$next_issue" ]; then
       spawn_issue "$next_issue"
       write_status "STATUS|type=pool-slot-filled|issue=${next_issue}|freed_by=${issue}|pool_size=$(set -- $POOL_ISSUES; echo $#)"

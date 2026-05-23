@@ -30,10 +30,10 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Always inject `MAX_AGENT_DEPTH=1` into every sub-coordinator context file.
 - Pass status, event, log, done, and result paths to `run-with-it-dispatch.sh`; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh`.
 - Always pass `--log-file .run-with-it/sub/sub-<n>.log`, `--done-file .run-with-it/done/issue-<n>-sub-coord.done`, and `--result-file .run-with-it/reports/sub-<n>-report.json`.
-- Always spawn each dispatch process in the background, capture `SUB_COORD_PID=$!`, then persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before entering the monitor loop.
-- Mark ALL issues in the current batch as `in_progress` in `main-state.json` and set `active_batch_issues` to the batch issue list. Write to disk BEFORE spawning the first sub-coordinator.
-- When `PARALLEL_JOBS > 1`: spawn all sub-coordinators in the batch as separate background processes (`&`), then enter a single shared monitoring loop that watches all PIDs. Each issue has its own context file, log file, done file, and report file.
-- When `PARALLEL_JOBS = 1`: spawn a single sub-coordinator as before (backward-compatible, single PID).
+- Always run `run-with-it-pool.sh` as the single rolling-pool supervisor. The pool runner spawns each dispatch process in the background, captures its dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before monitoring.
+- The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
+- When `PARALLEL_JOBS > 1`: the pool runner keeps up to that many dispatch processes active and fills freed slots immediately. Each issue has its own context file, log file, done file, and report file.
+- When `PARALLEL_JOBS = 1`: the same pool runner operates sequentially with at most one active issue.
 - Never kill or restart an individual sub-coordinator mid-batch. A stall in one batch member does not affect others.
 
 ## Live Status Rules
@@ -52,7 +52,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Main Orchestrator may create the final PR from `run-with-it/<run-id>` to the original base branch after all issues are terminal.
 - Main Orchestrator must never merge issue branches; normal merges belong to Sub-Coordinators and failed merges belong to the Merge Recovery Coordinator.
 - Post the terminal comment and close (or leave open) the issue AFTER reading the sub-coordinator's report.
-- If `gh` fails when closing or commenting, retry outside the sandbox before marking as failed.
+- If `gh` fails because the current tool is sandboxed, use that tool's explicit approved permission-escalation flow when available. If permission escalation is unavailable or denied, record the GitHub update as blocked instead of silently falling back.
 
 ## State Rules
 
@@ -68,8 +68,8 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never present execution option menus.
 - If all issues are terminal (completed/failed-review/blocked): exit loop and run cleanup.
 - `merge_recovery` is non-terminal. Keep unrelated ready issues moving, but do not schedule dependents until the recovered issue becomes `completed`.
-- If a compact report outcome is `merge_failed`, set the issue status to `merge_recovery`, persist the merge recovery report path, and spawn the Merge Recovery Coordinator via `run-with-it-dispatch.sh --role merge-recovery`.
+- If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via `run-with-it-dispatch.sh --role merge-recovery`, reads the compact recovery report, and updates the issue to `completed`, `failed-merge`, or `blocked`.
 - When Merge Recovery Coordinator succeeds, set the issue status to `completed`, append its compact recovery summary, recalculate dependency readiness, and continue the rolling pool.
 - When Merge Recovery Coordinator fails, set the issue status to `failed-merge` or `blocked`; dependent issues remain blocked with a reason pointing to that issue.
-- After batch completes: re-read `main-state.json` (Step A) before selecting the next batch. GitHub updates within a batch are always sequential — process one issue at a time through Step F even when sub-coordinators ran in parallel.
-- On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_batch_issues` to `[]`. The entire interrupted batch must be re-run fresh.
+- After the pool is empty: re-read `main-state.json` (Step A) before selecting any remaining work. GitHub updates are always sequential even when sub-coordinators ran in parallel.
+- On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_pool_issues` to `[]`. Interrupted pool members must be re-run fresh.

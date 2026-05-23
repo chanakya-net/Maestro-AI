@@ -138,7 +138,11 @@ assert_contains 'STATUS|type=worker-done' "documents worker done status line"
 assert_contains 'STATUS|type=heartbeat|issue=<n>|role=' "documents live heartbeat status line"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" '.run-with-it/status/current.txt' "orchestrator rules document current status file"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'poll `current.txt`' "orchestrator rules document shell-only status polling"
-assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'SUB_COORD_PID=$!' "orchestrator rules capture sub-coordinator PID"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'captures its dispatcher PID' "orchestrator rules delegate PID capture to pool runner"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'active_pool_issues' "orchestrator rules use active pool state"
+if grep -Fq -- 'active_batch_issues' "$ORCHESTRATOR_RULES_FILE"; then
+  fail "orchestrator rules must not reference stale active_batch_issues"
+fi
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'assets/worker-watch.sh' "orchestrator rules use worker-watch for sub-coordinator liveness"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'run-with-it-dispatch.sh' "orchestrator rules use shared dispatcher"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'run-with-it-pool.sh' "orchestrator rules use shared rolling pool runner"
@@ -206,6 +210,8 @@ assert_not_present_in_active_files '\.run-with-it/logs' "legacy run-with-it logs
 # Critical rules
 assert_contains 'Never implement work directly in this session' "documents no-impl rule"
 assert_contains 'Never run tests' "documents no-test rule"
+assert_not_contains 'dangerouslyDisableSandbox' "run-with-it skill avoids tool-specific sandbox bypass instructions"
+assert_contains 'approved permission-escalation flow' "run-with-it skill documents portable permission escalation"
 
 # Cleanup
 assert_contains 'Cleanup' "documents cleanup section"
