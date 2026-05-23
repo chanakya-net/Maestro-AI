@@ -148,6 +148,7 @@ Required files:
 - `run-agent.sh`
 - `run-agent.ps1`
 - `run-with-it-dispatch.sh`
+- `run-with-it-pool.sh`
 - `agent-registry.json`
 - `review-prompt.md`
 - `modifier-prompt.md`
@@ -172,12 +173,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.sh, .\assets\run-with-it-pool.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/run-with-it-dispatch.sh ./assets/worker-watch.sh ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
 ```
 
 ## Main Orchestrator Rules File
@@ -208,11 +209,12 @@ Before execution verify:
 9. `main-orchestrator-rules.md` exists
 10. Runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
 11. Shared dispatcher exists and is executable (`run-with-it-dispatch.sh` on Bash)
-12. `agent-registry.json` exists
-13. `gh` auth when GitHub intake is required
-14. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears
-15. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`
-16. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
+12. Shared rolling pool runner exists and is executable (`run-with-it-pool.sh` on Bash)
+13. `agent-registry.json` exists
+14. `gh` auth when GitHub intake is required
+15. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears
+16. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`
+17. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -365,9 +367,37 @@ Print to user for each issue:
 
 Execution-mode requirement (critical):
   Run Step D as ONE long-lived shell session that performs both spawn and monitor.
-  Do not split spawn and monitor into separate shell invocations. In environments
-  with per-call ephemeral shells, launch Step D as an async/background terminal
-  job and stream output from that same job until pool-empty.
+  Do not split spawn and monitor into separate shell invocations. Do not write a
+  bespoke rolling-pool script in the Main Orchestrator session. Use the shared
+  `run-with-it-pool.sh` executable; it maintains the pool and calls
+  `run-with-it-dispatch.sh --role sub-coord` for each active issue.
+
+  Required handoff before Step D:
+  - Each ready issue in `main-state.json` must have `issue_registry[<n>].context_file`
+    (or `sub_coord_context_file`) pointing at the context file assembled in Step C.
+
+  Bash (macOS / Linux / Git Bash):
+
+    nohup "$ASSET_ROOT/run-with-it-pool.sh" \
+      --asset-root "$ASSET_ROOT" \
+      --state-file "$(pwd -P)/.run-with-it/main-state.json" \
+      --parallel-jobs "$PARALLEL_JOBS" \
+      --agent "$SUB_COORD_AGENT" \
+      --model "$SUB_COORD_MODEL" \
+      --status-file "$RUN_WITH_IT_STATUS_FILE" \
+      --events-log "$RUN_WITH_IT_EVENTS_LOG" \
+      --main-log "$MAIN_LOG_FILE" \
+      --poll-seconds "$STATUS_POLL_SECONDS" \
+      --timeout-seconds "$SUB_COORD_TIMEOUT_SECONDS" \
+      >>"$MAIN_LOG_FILE" 2>&1 < /dev/null &
+
+    POOL_PID=$!
+
+  Persist `POOL_PID` in `main-state.json`, then monitor that single process until
+  it emits `STATUS|type=pool-empty`.
+
+Legacy implementation sketch below is retained only as behavioral reference. Prefer
+`run-with-it-pool.sh` whenever it exists at the resolved asset root.
 
 Bash (macOS / Linux / Git Bash):
 
