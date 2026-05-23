@@ -17,6 +17,7 @@ Your job is to address reviewer comments on an existing implementation, run veri
 ## Scope
 
 - Address every actionable reviewer comment provided by the coordinator.
+- Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep the fix focused on reviewer feedback and failing verification.
 - Preserve the original issue intent and acceptance criteria.
 - Fix failing tests even when the failure appears outside the original issue scope.
@@ -69,7 +70,7 @@ Heartbeat lines are live progress updates, not the final report. Continue to pro
 
 ## Mandatory Commit Before Handoff
 
-**You MUST commit all your changes before writing the done file.** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
+**You MUST commit all your changes before writing the done file.** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
 
 Commit sequence (after verification passes and all reviewer comments are addressed):
 

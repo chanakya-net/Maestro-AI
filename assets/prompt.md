@@ -17,6 +17,7 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 ## Scope
 - try and unblcok codegraph if it's locked
 - Implement only the issue(s) assigned in the run context.
+- Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep changes minimal and focused.
 - Do not add unrelated refactors or architecture changes.
 
@@ -79,7 +80,7 @@ If a full-suite run is prohibitively slow, run the narrowest passing scope, docu
 
 ## Mandatory Commit Before Handoff
 
-**Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit the reviewer cannot isolate your changes.
+**Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit on the issue worktree branch, the reviewer cannot isolate your changes.
 
 Commit sequence:
 

@@ -41,6 +41,10 @@ Your context file contains, in order:
    - `SUB_COORD_ISSUE_NUMBER` — the issue number being processed
    - `SUB_COORD_REPORT_FILE` — absolute path where you must write your compact report JSON
    - `SUB_COORD_LOG_FILE` — absolute path for your log file under `.run-with-it/sub/` (append all STATUS lines here)
+   - `RUN_FEATURE_BRANCH` — shared run branch created by the Main Orchestrator, for example `run-with-it/<run-id>`
+   - `RUN_BASE_BRANCH` and `RUN_BASE_SHA` — original base branch and SHA captured at run start
+   - `ISSUE_BRANCH` — issue branch created from the shared feature branch
+   - `ISSUE_WORKTREE_PATH` — absolute path to this issue's git worktree under `.run-with-it/worktrees/issue-<n>`
    - `RUN_WITH_IT_STATUS_FILE` — optional single-line status bus for current terminal progress
    - `RUN_WITH_IT_EVENTS_LOG` — optional append-only status event log for terminal progress
    - `RUN_WITH_IT_LOG_FILE` — optional runner log file for the currently spawned worker under `.run-with-it/<role>/`
@@ -75,6 +79,23 @@ Resolve assets in this order:
 3. `./assets`.
 
 Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `run-with-it-dispatch.sh`, `worker-watch.sh`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+
+## Issue Worktree Bootstrap
+
+Before complexity analysis, create an isolated issue branch and worktree from the latest shared run feature branch. All implementation, review, modification, verification, commit capture, and diff commands for this issue happen inside that issue worktree.
+
+Bash:
+```bash
+ISSUE_BRANCH="${ISSUE_BRANCH:-${RUN_FEATURE_BRANCH}/issue-${SUB_COORD_ISSUE_NUMBER}}"
+ISSUE_WORKTREE_PATH="${ISSUE_WORKTREE_PATH:-$(pwd -P)/.run-with-it/worktrees/issue-${SUB_COORD_ISSUE_NUMBER}}"
+git fetch --all --prune 2>/dev/null || true
+git worktree add -B "$ISSUE_BRANCH" "$ISSUE_WORKTREE_PATH" "$RUN_FEATURE_BRANCH"
+REPO_ROOT="$ISSUE_WORKTREE_PATH"
+```
+
+Artifact paths (`SUB_COORD_REPORT_FILE`, `SUB_COORD_LOG_FILE`, `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, role logs, review JSON, and done sentinels) must remain absolute paths under the root checkout's `.run-with-it/`, not inside the issue worktree.
+
+Persist `feature_branch`, `issue_branch`, and `worktree_path` in `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` immediately after the worktree is created. On resume, reuse the existing worktree if it is valid.
 
 ## Coordinator Rules File
 
@@ -144,6 +165,7 @@ WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-${RU
   --log-file "$IMPL_LOG_FILE" \
   --done-file "$IMPL_DONE_FILE" \
   --result-file "$IMPL_RESULT_FILE" \
+  --repo-root "$ISSUE_WORKTREE_PATH" \
   --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
   --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
@@ -368,6 +390,7 @@ $env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-$env:SUB_COORD_ISSUE_NUMBE
 After the implementer runner completes, **immediately capture the commit SHA and validate a commit was actually made**:
 
 ```bash
+cd "$ISSUE_WORKTREE_PATH"
 IMPL_COMMIT_SHA=$(git rev-parse HEAD)
 if [ "$IMPL_COMMIT_SHA" = "$ISSUE_BASE_SHA" ]; then
   # Implementer did not commit — treat as failure
@@ -501,6 +524,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
      --log-file "$REVIEW_LOG_FILE" \
      --done-file "$REVIEW_DONE_FILE" \
      --result-file "$REVIEW_RESULT_FILE" \
+     --repo-root "$ISSUE_WORKTREE_PATH" \
      --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
      --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
@@ -550,6 +574,7 @@ The implementer (or modifier) has already committed all changes as part of its m
        --log-file "$MODIFY_LOG_FILE" \
        --done-file "$MODIFY_DONE_FILE" \
        --result-file "$MODIFY_RESULT_FILE" \
+       --repo-root "$ISSUE_WORKTREE_PATH" \
        --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
        --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
@@ -559,6 +584,7 @@ The implementer (or modifier) has already committed all changes as part of its m
      Immediately write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with this `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, and `MODIFY_RESULT_FILE`. Monitor with `assets/worker-watch.sh`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
    - After the modifier runner completes, **capture and validate the modifier commit**:
      ```bash
+     cd "$ISSUE_WORKTREE_PATH"
      MODIFY_COMMIT_SHA=$(git rev-parse HEAD)
      if [ "$MODIFY_COMMIT_SHA" = "$REVIEW_HEAD_SHA" ]; then
        # Modifier did not commit — treat as failure
@@ -593,6 +619,43 @@ git diff --numstat <ISSUE_BASE_SHA>..<IMPL_COMMIT_SHA or latest MODIFY_COMMIT_SH
 
 Read only the `--numstat` summary (file path + added + deleted counts) — never read full diff text into context. Aggregate per-file line changes across all agents for this issue. Store the result in `files_modified` in the compact report (Appendix E).
 
+## Appendix C2: Normal Merge Back to Shared Feature Branch
+
+After review approval, attempt to merge this issue branch back into the shared run feature branch. The Main Orchestrator must never perform this merge; this Sub-Coordinator owns the normal merge attempt.
+
+Acquire `.run-with-it/locks/merge.lock` before touching the shared feature branch:
+
+```bash
+mkdir -p .run-with-it/locks
+while ! mkdir .run-with-it/locks/merge.lock 2>/dev/null; do
+  sleep 5
+done
+trap 'rmdir .run-with-it/locks/merge.lock 2>/dev/null || true' EXIT
+```
+
+Then:
+
+```bash
+STATUS_LINE="STATUS|type=merge-start|issue=${SUB_COORD_ISSUE_NUMBER}|branch=${ISSUE_BRANCH}|target=${RUN_FEATURE_BRANCH}"
+echo "$STATUS_LINE" >> "$SUB_COORD_LOG_FILE"
+echo "$STATUS_LINE"
+git fetch --all --prune 2>/dev/null || true
+git checkout "$RUN_FEATURE_BRANCH"
+git pull --ff-only origin "$RUN_FEATURE_BRANCH" 2>/dev/null || true
+if git merge --no-ff "$ISSUE_BRANCH" -m "merge(#${SUB_COORD_ISSUE_NUMBER}): integrate issue branch"; then
+  MERGE_SHA="$(git rev-parse HEAD)"
+  git push origin "$RUN_FEATURE_BRANCH" 2>/dev/null || true
+  STATUS_LINE="STATUS|type=merge-complete|issue=${SUB_COORD_ISSUE_NUMBER}|merge_sha=${MERGE_SHA}|pushed=true"
+else
+  CONFLICT_FILES="$(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+  STATUS_LINE="STATUS|type=merge-failed|issue=${SUB_COORD_ISSUE_NUMBER}|reason=conflict|conflict_files=${CONFLICT_FILES}"
+fi
+echo "$STATUS_LINE" >> "$SUB_COORD_LOG_FILE"
+echo "$STATUS_LINE"
+```
+
+On merge success, include `merge.status="completed"`, `merge.merge_sha`, `issue_branch`, `feature_branch`, and `worktree_path` in the compact report. On merge failure, write `outcome="merge_failed"` and include `merge.status="failed"`, `merge.failure_reason`, and `merge.conflict_files` so Main Orchestrator can move the issue to `merge_recovery`.
+
 ### Sandbox
 
 **Always invoke every `run-with-it-dispatch.sh` Bash call with `dangerouslyDisableSandbox: true`.** This is required so the wrapped agent CLIs (claude, codex, copilot, gemini) can access auth credentials and run outside Claude Code's sandbox. The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh`, preserving full permission flags (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`) needed for unattended execution. If a dispatch call fails even with `dangerouslyDisableSandbox: true`, count it as a true agent failure.
@@ -608,6 +671,9 @@ Write `.run-with-it/sub-<N>-state.json` using schema_version 1 to survive within
   "impl_commit_sha": "<SHA captured after implementer's mandatory commit — null until set>",
   "modify_commit_sha": "<SHA captured after latest modifier's mandatory commit — null until set>",
   "review_head_sha": "<current REVIEW_HEAD_SHA for next reviewer — equals impl_commit_sha or modify_commit_sha>",
+  "feature_branch": "run-with-it/<run-id>",
+  "issue_branch": "run-with-it/<run-id>/issue-36",
+  "worktree_path": ".run-with-it/worktrees/issue-36",
   "queue": {
     "ready": [
       {
@@ -790,6 +856,16 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     "complexity_input": 0, "complexity_output": 0
   },
   "commit_sha": "abc1234",
+  "issue_branch": "run-with-it/<run-id>/issue-36",
+  "feature_branch": "run-with-it/<run-id>",
+  "worktree_path": ".run-with-it/worktrees/issue-36",
+  "merge": {
+    "status": "completed | failed | skipped",
+    "merge_sha": "abc1234",
+    "pushed": true,
+    "failure_reason": null,
+    "conflict_files": []
+  },
   "blocking_reasons": []
 }
 ```

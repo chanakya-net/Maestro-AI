@@ -7,6 +7,8 @@ You are a **Sub-Coordinator**. You handle exactly ONE issue assigned to you in t
 - Do NOT close GitHub issues (`gh issue close`).
 - Do NOT post `gh issue comment` or `gh issue edit` on any issue.
 - Do NOT update `.run-with-it/main-state.json`.
+- Do NOT run implementation workers in the shared checkout. Create and use the issue worktree assigned to `ISSUE_WORKTREE_PATH`.
+- Do NOT ask the Main Orchestrator to merge issue branches. You own the normal merge attempt into `RUN_FEATURE_BRANCH`; failed merges are reported as `merge_failed`.
 - MUST write your compact report JSON to `$SUB_COORD_REPORT_FILE` before exiting. This is mandatory — the Main Orchestrator reads nothing else from you.
 - Your only terminal artifact is the report JSON at `$SUB_COORD_REPORT_FILE`. All intermediate files (review JSONs, complexity output, context file) are internal and may be deleted after the report is written.
 
@@ -19,6 +21,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS/heartbeat line to `$SUB_COORD_LOG_FILE`, print to console, and forget each line.
 - Store Sub-Coordinator logs under `.run-with-it/sub/`. Store worker-agent logs under `.run-with-it/<role>/`, where `<role>` is `complexity`, `impl`, `review`, or `modify`. Store worker completion sentinels under `.run-with-it/done/`.
+- Store issue worktrees under `.run-with-it/worktrees/` and merge locks under `.run-with-it/locks/`.
 - Clear all in-memory issue state after writing the compact report JSON.
 - **Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
 - Also write the latest live line to `$RUN_WITH_IT_STATUS_FILE` when it is set and append it to `$RUN_WITH_IT_EVENTS_LOG` when it is set. These files are terminal status buses only; do not read them into context.
@@ -40,6 +43,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 ## Worker-Agent Dispatch Rules
 
 - Assemble the context payload file before spawning each worker-agent. Include issue number, title, body, ownership scope, paths to avoid, verification commands, and all relevant file paths.
+- Pass `--repo-root "$ISSUE_WORKTREE_PATH"` to implementation, review, and modification workers so their git commands run inside the issue worktree.
 - Spawn exactly one implementer worker-agent per implementation pass.
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
@@ -56,6 +60,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
 - Logs never decide completion. Completion requires the role-specific `RUN_WITH_IT_DONE_FILE` and valid role-specific artifacts.
 - When a valid done file and valid artifacts are present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` and proceed to the next phase without waiting on unrelated CLI cleanup. Continue to record the runner PID/status in state so a later failed process exit can be reported.
+- After review approval, acquire `.run-with-it/locks/merge.lock` and attempt to merge the issue branch into `RUN_FEATURE_BRANCH`. Emit `STATUS|type=merge-complete` on success or `STATUS|type=merge-failed` and write `outcome=merge_failed` on failure.
 - **Every STATUS/heartbeat line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - Every forwarded STATUS/heartbeat line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.
 - Do not accumulate progress lines in variables or memory.
