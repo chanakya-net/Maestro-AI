@@ -361,20 +361,65 @@ Print to user for each issue:
 
 ══ STEP D: SPAWN NEWLY QUEUED + ROLLING POOL MONITOR ════════════════════════════
 
+Execution-mode requirement (critical):
+  Run Step D as ONE long-lived shell session that performs both spawn and monitor.
+  Do not split spawn and monitor into separate shell invocations. In environments
+  with per-call ephemeral shells, launch Step D as an async/background terminal
+  job and stream output from that same job until pool-empty.
+
 Bash (macOS / Linux / Git Bash):
 
-  # Declare pool tracking maps (persist across iterations; initialize once at run start)
-  declare -A _POOL_PIDS
-  declare -A _POOL_STARTED_ATS
-  declare -A _POOL_LAST_LOG_TAIL_ATS
-  declare -A _POOL_LAST_LOG_TAILS
+  # Bash 3-compatible pool tracking (no associative arrays)
+  # Keep an issue list plus per-issue dynamic vars: _POOL_PID_<issue>, etc.
+  POOL_ISSUES=""
+
+  _pool_add_issue() {
+    local issue="$1"
+    case " $POOL_ISSUES " in
+      *" $issue "*) ;;
+      *) POOL_ISSUES="${POOL_ISSUES} ${issue}" ;;
+    esac
+  }
+
+  _pool_remove_issue() {
+    local issue="$1"
+    local next=""
+    local cur
+    for cur in $POOL_ISSUES; do
+      if [ "$cur" != "$issue" ]; then
+        next="${next} ${cur}"
+      fi
+    done
+    POOL_ISSUES="$next"
+  }
+
+  _pool_set() {
+    local key="$1"
+    local issue="$2"
+    local value="$3"
+    local escaped
+    escaped=$(printf '%q' "$value")
+    eval "_POOL_${key}_${issue}=${escaped}"
+  }
+
+  _pool_get() {
+    local key="$1"
+    local issue="$2"
+    eval "printf '%s' \"\${_POOL_${key}_${issue}-}\""
+  }
+
+  _pool_unset_issue() {
+    local issue="$1"
+    unset "_POOL_PID_${issue}" "_POOL_STARTED_AT_${issue}" \
+      "_POOL_LAST_LOG_TAIL_AT_${issue}" "_POOL_LAST_LOG_TAIL_${issue}"
+  }
 
   # --- Spawn each newly queued issue into the pool ---
   for issue_n in $NEWLY_QUEUED; do
-    SUB_COORD_CTX_FILE="$SUB_COORD_CONTEXT_FILE_${issue_n}"
+    eval "SUB_COORD_CTX_FILE=\"\${SUB_COORD_CONTEXT_FILE_${issue_n}}\""
     SUB_COORD_LOG="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
     SUB_COORD_DONE="$(pwd -P)/.run-with-it/done/issue-${issue_n}-sub-coord.done"
-    (
+    nohup env \
       GUI_MODE="${GUI_MODE:-0}" \
       AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
       RUN_WITH_IT_STATUS_FILE="$RUN_WITH_IT_STATUS_FILE" \
@@ -388,13 +433,15 @@ Bash (macOS / Linux / Git Bash):
         --model "$SUB_COORD_MODEL" \
         --context-file "$SUB_COORD_CTX_FILE" \
         --prompt-file "$ASSET_ROOT/sub-coordinator-prompt.md" \
-        --unattended
-    ) &
-    _POOL_PIDS[$issue_n]=$!
-    SUB_COORD_PID="${_POOL_PIDS[$issue_n]}"
-    _POOL_STARTED_ATS[$issue_n]=$(date +%s)
-    _POOL_LAST_LOG_TAIL_ATS[$issue_n]=0
-    _POOL_LAST_LOG_TAILS[$issue_n]=""
+        --unattended \
+      >>"$SUB_COORD_LOG" 2>&1 < /dev/null &
+      _pool_add_issue "$issue_n"
+      _pool_set "PID" "$issue_n" "$!"
+      SUB_COORD_PID="$(_pool_get "PID" "$issue_n")"
+      disown "$SUB_COORD_PID" 2>/dev/null || true
+      _pool_set "STARTED_AT" "$issue_n" "$(date +%s)"
+      _pool_set "LAST_LOG_TAIL_AT" "$issue_n" "0"
+      _pool_set "LAST_LOG_TAIL" "$issue_n" ""
 
     # Persist PID + monitoring artifacts in main-state.json immediately.
     # Required fields: issue, pid, started_at, context_file, log_file, done_file, report_file.
@@ -403,19 +450,18 @@ Bash (macOS / Linux / Git Bash):
 
   # --- Rolling pool monitor: poll until pool is empty ---
   LAST_PRINTED_STATUS=""
-  while [ "${#_POOL_PIDS[@]}" -gt 0 ]; do
+  while [ -n "$POOL_ISSUES" ]; do
     sleep "$STATUS_POLL_SECONDS"
 
-    for issue_n in "${!_POOL_PIDS[@]}"; do
-      pid="${_POOL_PIDS[$issue_n]}"
+    CURRENT_POOL_ISSUES="$POOL_ISSUES"
+    for issue_n in $CURRENT_POOL_ISSUES; do
+      pid="$(_pool_get "PID" "$issue_n")"
 
       if ! kill -0 "$pid" 2>/dev/null; then
         # Sub-coordinator finished — collect exit code and process immediately
         wait "$pid" 2>/dev/null
-        unset "_POOL_PIDS[$issue_n]"
-        unset "_POOL_STARTED_ATS[$issue_n]"
-        unset "_POOL_LAST_LOG_TAIL_ATS[$issue_n]"
-        unset "_POOL_LAST_LOG_TAILS[$issue_n]"
+        _pool_remove_issue "$issue_n"
+        _pool_unset_issue "$issue_n"
 
         # ── Collect report (Step E inline) ───────────────────────────────────
         sub_report="$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json"
@@ -440,22 +486,24 @@ Bash (macOS / Linux / Git Bash):
           gh issue close "$issue_n" --comment "Completed by run-with-it."
         fi
         # Delete context temp file
-        rm -f "${SUB_COORD_CONTEXT_FILE_${issue_n}}" 2>/dev/null || true
+        eval "_DONE_CTX_FILE=\"\${SUB_COORD_CONTEXT_FILE_${issue_n}}\""
+        rm -f "$_DONE_CTX_FILE" 2>/dev/null || true
         printf 'STATUS|type=sub-coord-complete|issue=%s|outcome=%s|report_file=%s\n' \
           "$issue_n" "$_REPORT_OUTCOME" "$sub_report"
 
         # ── Fill freed slot immediately ───────────────────────────────────────
         # Re-evaluate ready issues: deps may have resolved now that issue_n completed.
         # Select highest-priority pending issue with all deps "completed".
-        # If found: assemble context file → spawn → add to _POOL_PIDS.
+        # If found: assemble context file → spawn → add to POOL_ISSUES.
         # Emit: STATUS|type=pool-slot-filled|issue=<next>|freed_by=<issue_n>
         # If none: slot stays empty; pool shrinks toward zero.
-        continue  # Jump to next pool member check; new spawn is tracked in _POOL_PIDS
+        continue  # Jump to next pool member check; new spawn is tracked in POOL_ISSUES
       fi
 
       # Still running — heartbeat and stall detection
       NOW=$(date +%s)
-      elapsed=$((NOW - _POOL_STARTED_ATS[$issue_n]))
+      started_at="$(_pool_get "STARTED_AT" "$issue_n")"
+      elapsed=$((NOW - started_at))
       sub_report="$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json"
       sub_log="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
       sub_done="$(pwd -P)/.run-with-it/done/issue-${issue_n}-sub-coord.done"
@@ -477,14 +525,17 @@ Bash (macOS / Linux / Git Bash):
           "$issue_n" "$elapsed"
         printf 'Check log: .run-with-it/sub/sub-%s.log\n' "$issue_n"
       fi
-      if [ "$((NOW - _POOL_LAST_LOG_TAIL_ATS[$issue_n]))" -ge "$LOG_TAIL_POLL_SECONDS" ] \
+      last_tail_at="$(_pool_get "LAST_LOG_TAIL_AT" "$issue_n")"
+      [ -n "$last_tail_at" ] || last_tail_at=0
+      if [ "$((NOW - last_tail_at))" -ge "$LOG_TAIL_POLL_SECONDS" ] \
          && [ -s "$sub_log" ]; then
         CURRENT_LOG_TAIL="$(tail -n 2 "$sub_log")"
-        if [ "$CURRENT_LOG_TAIL" != "${_POOL_LAST_LOG_TAILS[$issue_n]}" ]; then
+        last_tail="$(_pool_get "LAST_LOG_TAIL" "$issue_n")"
+        if [ "$CURRENT_LOG_TAIL" != "$last_tail" ]; then
           printf '[issue #%s] %s\n' "$issue_n" "$CURRENT_LOG_TAIL"
-          _POOL_LAST_LOG_TAILS[$issue_n]="$CURRENT_LOG_TAIL"
+          _pool_set "LAST_LOG_TAIL" "$issue_n" "$CURRENT_LOG_TAIL"
         fi
-        _POOL_LAST_LOG_TAIL_ATS[$issue_n]="$NOW"
+        _pool_set "LAST_LOG_TAIL_AT" "$issue_n" "$NOW"
       fi
     done
 
@@ -503,6 +554,12 @@ Always invoke the above Bash call with dangerouslyDisableSandbox: true. This ens
 agent CLIs (claude, codex, copilot, gemini) can authenticate and run outside Claude
 Code's sandbox. GUI_MODE=0 preserves full permission flags (--dangerously-skip-permissions,
 --dangerously-bypass-approvals-and-sandbox) required for unattended execution.
+
+For tool runtimes that provide sync/async terminal modes:
+  - Use async mode for Step D and keep monitoring via the returned terminal/session id.
+  - Do not run spawn in one shell call and liveness monitor in another unrelated call.
+  - If a shell lifecycle is interrupted, recover from persisted state instead of assuming
+    in-memory PID variables still exist.
 
 PowerShell (Windows — never use VAR=value prefix):
   # Spawn newly queued issues as background jobs
