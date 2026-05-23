@@ -154,24 +154,31 @@ if os.path.exists(report_file):
         outcome = report.get("outcome", "blocked")
     except Exception:
         outcome = "blocked"
+status = "merge_recovery" if outcome == "merge_failed" else outcome
 state = json.load(open(path))
 entry = state.setdefault("issue_registry", {}).setdefault(str(issue), {})
-entry["status"] = outcome
+entry["status"] = status
+if outcome == "merge_failed":
+    entry["merge_recovery_report_file"] = report_file
+    entry.setdefault("blocking_reasons", []).append("merge recovery required")
 state["active_pool_issues"] = [x for x in state.get("active_pool_issues", []) if str(x) != str(issue)]
 summary = {
     "issue": int(issue),
-    "outcome": outcome,
+    "outcome": status,
     "files_modified_count": report.get("files_modified_count", 0),
     "lines_added": report.get("lines_added", 0),
     "lines_deleted": report.get("lines_deleted", 0),
     "review_cycles": report.get("review_cycles", 0),
     "commit_sha": report.get("commit_sha"),
 }
-state.setdefault("completed_summaries", []).append(summary)
-ledger = f"STATUS|type=ledger|task={issue}|outcome={outcome}|report={report_file}"
+if status != "merge_recovery":
+    state.setdefault("completed_summaries", []).append(summary)
+else:
+    state.setdefault("merge_recovery_summaries", []).append(summary)
+ledger = f"STATUS|type=ledger|task={issue}|outcome={status}|report={report_file}"
 state.setdefault("ledger_rows", []).append(ledger)
 json.dump(state, open(path, "w"), indent=2)
-print(outcome)
+print(status)
 PY
 }
 
@@ -261,7 +268,7 @@ spawn_issue() {
     --events-log "$EVENTS_LOG" \
     --poll-seconds "$POLL_SECONDS" \
     --timeout-seconds "$TIMEOUT_SECONDS" \
-    >> "$log_file" 2>&1 < /dev/null &
+    >/dev/null 2>&1 < /dev/null &
   pid="$!"
   pool_add "$issue"
   pool_set PID "$issue" "$pid"

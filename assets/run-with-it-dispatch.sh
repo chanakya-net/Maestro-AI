@@ -16,6 +16,7 @@ PROMPT_FILE=""
 LOG_FILE=""
 DONE_FILE=""
 RESULT_FILE=""
+REPO_ROOT_OVERRIDE=""
 STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}"
 EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}"
 TAIL_STATE_FILE=""
@@ -34,7 +35,7 @@ usage() {
 Usage:
   run-with-it-dispatch.sh --role <role> --issue <n> --agent <agent> --model <model> \
     --context-file <file> --prompt-file <file> --log-file <file> --done-file <file> \
-    --result-file <file> [--cycle <n>] [--status-file <file>] [--events-log <file>]
+    --result-file <file> [--repo-root <path>] [--cycle <n>] [--status-file <file>] [--events-log <file>]
 
 Modes:
   --dry-run        Print the wrapped run-agent.sh invocation.
@@ -55,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     --log-file) LOG_FILE="${2:-}"; shift 2 ;;
     --done-file) DONE_FILE="${2:-}"; shift 2 ;;
     --result-file) RESULT_FILE="${2:-}"; shift 2 ;;
+    --repo-root) REPO_ROOT_OVERRIDE="${2:-}"; shift 2 ;;
     --status-file) STATUS_FILE="${2:-}"; shift 2 ;;
     --events-log) EVENTS_LOG="${2:-}"; shift 2 ;;
     --tail-state-file) TAIL_STATE_FILE="${2:-}"; shift 2 ;;
@@ -94,6 +96,9 @@ REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
 [ -f "$REGISTRY_FILE" ] || fail "agent registry not found: $REGISTRY_FILE"
 [ -f "$CONTEXT_FILE" ] || fail "context file not found: $CONTEXT_FILE"
 [ -f "$PROMPT_FILE" ] || fail "prompt file not found: $PROMPT_FILE"
+if [ -n "$REPO_ROOT_OVERRIDE" ]; then
+  [ -d "$REPO_ROOT_OVERRIDE" ] || fail "repo root not found: $REPO_ROOT_OVERRIDE"
+fi
 
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$DONE_FILE")" "$(dirname "$RESULT_FILE")"
 if [ -n "$STATUS_FILE" ]; then mkdir -p "$(dirname "$STATUS_FILE")"; fi
@@ -118,8 +123,8 @@ if [ -n "$CYCLE" ]; then
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
-  printf 'GUI_MODE=0 AGENT_REGISTRY_FILE=%s RUN_WITH_IT_STATUS_FILE=%s RUN_WITH_IT_EVENTS_LOG=%s RUN_WITH_IT_LOG_FILE=%s RUN_WITH_IT_DONE_FILE=%s RUN_WITH_IT_ROLE=%s RUN_WITH_IT_ISSUE=%s %s --agent %s --model %s --context-file %s --prompt-file %s --unattended\n' \
-    "$REGISTRY_FILE" "$STATUS_FILE" "$EVENTS_LOG" "$LOG_FILE" "$DONE_FILE" "$ROLE" "$ISSUE" \
+  printf 'GUI_MODE=0 AGENT_REGISTRY_FILE=%s REPO_ROOT=%s RUN_WITH_IT_STATUS_FILE=%s RUN_WITH_IT_EVENTS_LOG=%s RUN_WITH_IT_LOG_FILE=%s RUN_WITH_IT_DONE_FILE=%s RUN_WITH_IT_ROLE=%s RUN_WITH_IT_ISSUE=%s %s --agent %s --model %s --context-file %s --prompt-file %s --unattended\n' \
+    "$REGISTRY_FILE" "${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}" "$STATUS_FILE" "$EVENTS_LOG" "$LOG_FILE" "$DONE_FILE" "$ROLE" "$ISSUE" \
     "$RUN_AGENT" "$AGENT_NAME" "$MODEL_NAME" "$CONTEXT_FILE" "$PROMPT_FILE"
   exit 0
 fi
@@ -134,6 +139,7 @@ write_status "STATUS|type=dispatch-start|issue=${ISSUE}|role=${ROLE}${cycle_fiel
 
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$REGISTRY_FILE" \
+REPO_ROOT="${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}" \
 RUN_WITH_IT_STATUS_FILE="$STATUS_FILE" \
 RUN_WITH_IT_EVENTS_LOG="$EVENTS_LOG" \
 RUN_WITH_IT_LOG_FILE="$LOG_FILE" \
@@ -146,7 +152,7 @@ nohup "$RUN_AGENT" \
   --context-file "$CONTEXT_FILE" \
   --prompt-file "$PROMPT_FILE" \
   --unattended \
-  >> "$LOG_FILE" 2>&1 < /dev/null &
+  >/dev/null 2>&1 < /dev/null &
 
 pid="$!"
 write_status "STATUS|type=dispatch-pid|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"

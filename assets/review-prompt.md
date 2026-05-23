@@ -13,6 +13,7 @@ Do not read files, run commands, or write output artifacts until activation succ
 ## Scope
 - Try and unbalock codegraph if it's locked
 - Review the provided implementation diff and task context.
+- Run inside the provided `REPO_ROOT`, which may be an issue worktree containing the issue branch under review.
 - Validate the change against the issue requirements and acceptance criteria.
 - Produce exactly two JSON files in the reviewer contract shape.
 

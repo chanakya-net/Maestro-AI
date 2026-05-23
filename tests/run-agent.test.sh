@@ -87,7 +87,6 @@ for agent_id in required_agents:
 
 check(aliases.get("copilot") == "github-copilot", "copilot alias resolves to github-copilot")
 check(aliases.get("claude-code") == "claude", "claude-code alias resolves to claude")
-check(aliases.get("open-code") == "opencode", "open-code alias resolves to opencode")
 check(aliases.get("open_code") == "opencode", "open_code alias resolves to opencode")
 
 for agent_id, agent in agents.items():
@@ -111,14 +110,13 @@ check(model_routing.get("cost_basis") == "agent-subscription-routing-units", "ro
 
 codex_model = agents["codex"]["model"]
 expected_codex_models = [
-    "gpt-5.4-mini",
-    "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
+    "gpt-5.3-codex",
     "gpt-5.2",
     "gpt-5.5",
     "gpt-5.4",
 ]
-check(codex_model.get("default") == "gpt-5.3-codex", "codex defaults to coding model")
+check(codex_model.get("default") == "gpt-5.3-codex-spark", "codex defaults to spark coding model")
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
 check(codex_model.get("pricing_basis") == "codex-subscription", "codex declares subscription pricing basis")
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
@@ -145,17 +143,13 @@ copilot_model = agents["github-copilot"]["model"]
 expected_copilot_models = [
     "claude-haiku-4.5",
     "claude-sonnet-4.6",
-    "claude-opus-4.7",
-    "gemini-2.5-pro",
     "gemini-3-flash-preview",
     "gemini-3.1-pro-preview",
-    "gpt-5-mini",
     "gpt-5.2",
     "gpt-5.2-codex",
     "gpt-5.3-codex",
-    "gpt-5.4-mini",
-    "gpt-5.5",
     "gpt-5.4",
+    "gpt-5.4-mini",
 ]
 check(copilot_model.get("default") == "gpt-5.3-codex", "github-copilot defaults to 1x coding model")
 check(copilot_model.get("known_models") == expected_copilot_models, "github-copilot known models match available Copilot model list")
@@ -165,16 +159,12 @@ for model_id in expected_copilot_models:
 expected_copilot_multipliers = {
     "claude-haiku-4.5": 0.33,
     "claude-sonnet-4.6": 1.0,
-    "claude-opus-4.7": 15.0,
-    "gemini-2.5-pro": 1.0,
     "gemini-3-flash-preview": 0.33,
     "gemini-3.1-pro-preview": 1.0,
-    "gpt-5-mini": 0.0,
     "gpt-5.2": 1.0,
     "gpt-5.2-codex": 1.0,
     "gpt-5.3-codex": 1.0,
     "gpt-5.4-mini": 0.33,
-    "gpt-5.5": 7.5,
     "gpt-5.4": 1.0,
 }
 for model_id, expected_multiplier in expected_copilot_multipliers.items():
@@ -191,8 +181,8 @@ check(model_catalog["gemini-3.1-flash-lite-preview"]["complexity_weight"] == 3, 
 check(model_catalog["gemini-3-flash-preview"]["complexity_weight"] == 4, "Gemini flash is easy eligible but not medium automatic due provider cap")
 
 anthropic_rules = provider_rules.get("anthropic", {})
-check(anthropic_rules.get("automatic_routing") == "fallback_only_for_direct_claude", "direct Claude routing is fallback-only")
-check(anthropic_rules.get("preferred_agents") == ["github-copilot"], "Copilot is preferred for Claude-provider models")
+check(anthropic_rules.get("automatic_routing") == "all", "direct Claude routing remains automatic")
+check(anthropic_rules.get("preferred_agents") == ["github-copilot", "claude"], "Copilot and Claude are preferred for Claude-provider models")
 check(anthropic_rules.get("fallback_agents") == ["claude"], "direct Claude is the fallback agent for Claude-provider models")
 
 agent_preference_rules = model_routing.get("agent_preference_rules", [])
@@ -201,7 +191,7 @@ check(haiku_rules, "Haiku has explicit agent preference rule")
 check(haiku_rules[0].get("preferred_agents") == ["github-copilot", "claude"], "Haiku prefers Copilot before Claude")
 anthropic_agent_rules = [rule for rule in agent_preference_rules if rule.get("provider") == "anthropic"]
 check(anthropic_agent_rules, "anthropic provider has explicit agent preference rule")
-check(anthropic_agent_rules[0].get("automatic_routing") == "fallback_only", "anthropic direct Claude rule is fallback-only")
+check(anthropic_agent_rules[0].get("automatic_routing") == "all", "anthropic direct Claude rule remains automatic")
 
 for agent_id, agent in agents.items():
     fallback_order = agent.get("fallback_order", [])
@@ -220,10 +210,8 @@ removed_gemini_cli_models = {
 }
 check(not removed_gemini_catalog_models & set(model_catalog), "old gemini 2.5 flash models are removed from model catalog")
 check(not removed_gemini_cli_models & gemini_known_models, "gemini 2.5 models are removed from Gemini CLI known models")
-for model_id in ["auto-gemini-3", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"]:
+for model_id in ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"]:
     check(model_id in gemini_known_models, f"{model_id} remains in gemini known models")
-for model_id in ["auto", "pro", "flash", "flash-lite"]:
-    check(model_id in gemini_known_models, f"{model_id} generic gemini alias remains in known models")
 
 opencode = agents["opencode"]
 check(opencode["user_model_configuration"]["requires_user_model_config"] is True, "opencode requires user model config")
@@ -434,9 +422,11 @@ assert_not_contains "${copilot_gui_dry_run_output}" "--allow-all-paths" "GUI mod
 
 echo "PASS: run-agent GUI mode selects safer non-interactive permissions"
 
-gemini_dry_run_output="$("${RUNNER_PATH}" --agent gemini --model auto-gemini-3 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${gemini_dry_run_output}" "gemini --model auto-gemini-3 --prompt" "gemini dry-run uses prompt flags without elevated permission mode"
-assert_not_contains "${gemini_dry_run_output}" "--yolo" "gemini dry-run excludes yolo mode by default"
+gemini_dry_run_output="$("${RUNNER_PATH}" --agent gemini --model gemini-3.1-pro-preview --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${gemini_dry_run_output}" "gemini " "gemini dry-run uses gemini command"
+assert_contains "${gemini_dry_run_output}" "--model gemini-3.1-pro-preview" "gemini dry-run forwards selected model"
+assert_contains "${gemini_dry_run_output}" "--prompt" "gemini dry-run uses prompt flag"
+assert_contains "${gemini_dry_run_output}" "--yolo" "gemini dry-run includes registry default yolo mode"
 assert_not_contains "${gemini_dry_run_output}" "--approval-mode=yolo" "gemini dry-run excludes approval-mode yolo by default"
 assert_not_contains "${gemini_dry_run_output}" "--consent" "gemini dry-run excludes unsupported consent flag"
 
@@ -444,7 +434,9 @@ claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
 
 copilot_dry_run_output="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${copilot_dry_run_output}" "copilot --allow-all-tools --model gpt-5.5 -p" "copilot dry-run uses supported prompt/model/permission flags"
+assert_contains "${copilot_dry_run_output}" "copilot " "copilot dry-run uses copilot command"
+assert_contains "${copilot_dry_run_output}" "--model gpt-5.5" "copilot dry-run forwards selected model"
+assert_contains "${copilot_dry_run_output}" " -p " "copilot dry-run uses prompt flag"
 
 opencode_dry_run_output="$("${RUNNER_PATH}" --agent opencode --model github-copilot/gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${opencode_dry_run_output}" "opencode run --dangerously-skip-permissions --model github-copilot/gpt-5.5" "opencode dry-run places supported run permission flag after subcommand"

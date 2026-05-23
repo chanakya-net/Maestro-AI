@@ -6,6 +6,8 @@ Re-read this file before EVERY loop iteration and after any context compression 
 
 You are the **Main Orchestrator** for `run-with-it`. Your job is issue selection, execution planning, sub-coordinator spawning, state management, and GitHub updates. You never implement code, run tests, or perform routing.
 
+You may create and push the shared run feature branch and create the final PR. You must never merge issue branches. If a Sub-Coordinator reports a failed merge, move the issue to `merge_recovery` and spawn the Merge Recovery Coordinator; do not perform the merge yourself.
+
 ## Memory Refresh Rule (CRITICAL — enforced at top of every loop iteration)
 
 Re-read `.run-with-it/main-state.json` before every loop iteration, no exceptions. After context compression you have no memory of prior work. That file is your entire memory. Never derive issue state from conversation history — always derive it from `main-state.json`. The `completed_summaries` array gives you the complete bounded history of every finished issue.
@@ -47,6 +49,8 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 - GitHub operations (close issues, post terminal comments) are the main orchestrator's SOLE responsibility.
 - Sub-coordinators never touch GitHub under any circumstances.
+- Main Orchestrator may create the final PR from `run-with-it/<run-id>` to the original base branch after all issues are terminal.
+- Main Orchestrator must never merge issue branches; normal merges belong to Sub-Coordinators and failed merges belong to the Merge Recovery Coordinator.
 - Post the terminal comment and close (or leave open) the issue AFTER reading the sub-coordinator's report.
 - If `gh` fails when closing or commenting, retry outside the sandbox before marking as failed.
 
@@ -63,5 +67,9 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never pause to ask the user how to proceed after state is loaded — execute the loop.
 - Never present execution option menus.
 - If all issues are terminal (completed/failed-review/blocked): exit loop and run cleanup.
+- `merge_recovery` is non-terminal. Keep unrelated ready issues moving, but do not schedule dependents until the recovered issue becomes `completed`.
+- If a compact report outcome is `merge_failed`, set the issue status to `merge_recovery`, persist the merge recovery report path, and spawn the Merge Recovery Coordinator via `run-with-it-dispatch.sh --role merge-recovery`.
+- When Merge Recovery Coordinator succeeds, set the issue status to `completed`, append its compact recovery summary, recalculate dependency readiness, and continue the rolling pool.
+- When Merge Recovery Coordinator fails, set the issue status to `failed-merge` or `blocked`; dependent issues remain blocked with a reason pointing to that issue.
 - After batch completes: re-read `main-state.json` (Step A) before selecting the next batch. GitHub updates within a batch are always sequential — process one issue at a time through Step F even when sub-coordinators ran in parallel.
 - On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_batch_issues` to `[]`. The entire interrupted batch must be re-run fresh.
