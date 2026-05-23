@@ -23,6 +23,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 ## Spawning Rules
 
 - Always spawn sub-coordinators via `run-with-it-dispatch.sh --role sub-coord`, which wraps `run-agent.sh --prompt-file sub-coordinator-prompt.md`.
+- Always run the rolling pool via `run-with-it-pool.sh`. Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=2` into every sub-coordinator context file.
 - Pass status, event, log, done, and result paths to `run-with-it-dispatch.sh`; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh`.
