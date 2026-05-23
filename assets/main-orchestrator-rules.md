@@ -28,6 +28,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Always pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ROLE=sub-coord`, and `RUN_WITH_IT_ISSUE=<issue>` into the runner so live progress updates reach the shared status bus.
 - Always pass `RUN_WITH_IT_LOG_FILE=.run-with-it/sub/sub-<n>.log` into the runner so the sub-coordinator's own process output is stored under `.run-with-it/sub/`.
 - Always pass `RUN_WITH_IT_DONE_FILE=.run-with-it/done/issue-<n>-sub-coord.done` into the runner so stale sentinels are cleared and process completion is recorded.
+- Always spawn each sub-coordinator in the background, capture `SUB_COORD_PID=$!`, then persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before entering the monitor loop.
 - Mark ALL issues in the current batch as `in_progress` in `main-state.json` and set `active_batch_issues` to the batch issue list. Write to disk BEFORE spawning the first sub-coordinator.
 - When `PARALLEL_JOBS > 1`: spawn all sub-coordinators in the batch as separate background processes (`&`), then enter a single shared monitoring loop that watches all PIDs. Each issue has its own context file, log file, done file, and report file.
 - When `PARALLEL_JOBS = 1`: spawn a single sub-coordinator as before (backward-compatible, single PID).
@@ -38,6 +39,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
 - While a sub-coordinator runs, poll `current.txt` from the shell and print only changed lines.
 - Every 120 seconds, a shell watcher may print only the latest two changed lines from `.run-with-it/sub/sub-<n>.log` using `tail -n 2`; never read more than those two log lines.
+- In the monitor loop, run `assets/worker-watch.sh` using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 
