@@ -92,7 +92,7 @@ assert_contains 'Sub-Coordinator' "documents sub-coordinator architecture"
 assert_contains 'Two-layer' "documents two-layer architecture"
 assert_contains 'bounded context window' "documents bounded context window"
 assert_contains 'main-state.json' "documents main-state.json state file"
-assert_contains 'Never load sub-coordinator log files' "documents no-load policy"
+assert_contains 'Never load full sub-coordinator log files' "documents no-load policy"
 
 # Complexity (delegated to sub-coordinator; main references Sub-Coordinator Context File)
 assert_contains 'passed through to Sub-Coordinators via context file' "documents sub-coordinator context structure"

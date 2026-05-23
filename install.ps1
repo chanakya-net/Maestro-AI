@@ -52,6 +52,7 @@ SUPPORTED AGENTS
     codex        Codex CLI + GUI
     copilot      GitHub Copilot CLI + VS Code
     antigravity  Gemini GUI (Antigravity)
+    agy          Antigravity CLI (agy)
 
 EXAMPLES
   install.ps1                        # auto-detect all agents
@@ -248,6 +249,7 @@ Install-Gemini
 Install-Via-Skills "codex"       "Codex CLI + GUI"             "cmd:codex" "codex"
 Install-Via-Skills "copilot"     "GitHub Copilot CLI + VS Code" "cmd:gh"   "github-copilot"
 Install-Via-Skills "antigravity" "Gemini GUI (Antigravity)"    "dir:$env:USERPROFILE\.antigravity" "antigravity"
+Install-Via-Skills "agy"         "Antigravity CLI (agy)"       "cmd:agy"   "agy"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 Write-Host "────────────────────────────────────"

@@ -35,7 +35,7 @@ USAGE
 FLAGS
   --dry-run         Print what would run, do nothing.
   --only <target>   Remove only the named target. Repeatable.
-                    Targets: assets, skills, claude, gemini, codex, copilot, antigravity
+                    Targets: assets, skills, claude, gemini, codex, copilot, antigravity, agy
   --list            Print supported uninstall targets and exit.
   --no-color        Disable ANSI color codes.
   -h, --help        Show this help and exit.
@@ -195,13 +195,14 @@ remove_gemini() {
 }
 
 npx_target_selected() {
-  only_filter "codex" || only_filter "copilot" || only_filter "antigravity"
+  only_filter "codex" || only_filter "copilot" || only_filter "antigravity" || only_filter "agy"
 }
 
 npx_target_detected() {
   command -v codex >/dev/null 2>&1 && only_filter "codex" && return 0
   command -v gh >/dev/null 2>&1 && only_filter "copilot" && return 0
   [ -d "$HOME/.antigravity" ] && only_filter "antigravity" && return 0
+  command -v agy >/dev/null 2>&1 && only_filter "agy" && return 0
   return 1
 }
 

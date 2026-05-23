@@ -35,7 +35,7 @@ USAGE
 FLAGS
   -DryRun           Print what would run, do nothing.
   -Only <target>    Remove only the named target. Repeatable: -Only assets -Only codex
-                    Targets: assets, skills, claude, gemini, codex, copilot, antigravity
+                    Targets: assets, skills, claude, gemini, codex, copilot, antigravity, agy
   -List             Print supported uninstall targets and exit.
   -NoColor          Disable ANSI color codes.
   -Help             Show this help and exit.
@@ -182,13 +182,14 @@ function Remove-Gemini {
 }
 
 function Npx-Target-Selected {
-    return (Only-Filter "codex") -or (Only-Filter "copilot") -or (Only-Filter "antigravity")
+    return (Only-Filter "codex") -or (Only-Filter "copilot") -or (Only-Filter "antigravity") -or (Only-Filter "agy")
 }
 
 function Npx-Target-Detected {
     if ((Has-Command "codex") -and (Only-Filter "codex")) { return $true }
     if ((Has-Command "gh") -and (Only-Filter "copilot")) { return $true }
     if ((Test-Path "$env:USERPROFILE\.antigravity") -and (Only-Filter "antigravity")) { return $true }
+    if ((Has-Command "agy") -and (Only-Filter "agy")) { return $true }
     return $false
 }
 

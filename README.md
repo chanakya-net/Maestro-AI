@@ -1,13 +1,21 @@
 # AI-Skills
 
-> 📖 **[explainer.html](explainer.html)** — explains the full working of this repo in detail. &nbsp;|&nbsp; 📊 **[diagram.pdf](diagram.pdf)** — sequence diagram.
+> 📖 **[explainer.html](explainer.html)** — detailed walkthrough. &nbsp;|&nbsp; 📊 **[diagram.pdf](diagram.pdf)** — sequence diagram.
 
-> Personal AI skills for any coding agent — install once, use everywhere.
+> Personal AI skills for coding agents — install once, use across Codex, Claude, Copilot, Gemini, and related tools.
 
 ## What This Repo Does
 
-AI-Skills is a reusable skill collection for coding agents (Copilot, Codex, Claude, Gemini, and others).
-It gives you a practical workflow from requirement discovery to issue planning to execution, with shared runner assets so behavior stays consistent across agents and operating systems.
+AI-Skills is a portable skill collection plus shared runtime assets for coding agents.
+It supports an issue-driven workflow from requirement discovery to PRD/slice creation to coordinated multi-agent execution.
+
+Core flow:
+
+1. `break-req` resolves functional/non-functional requirements.
+2. `create-git-issue` turns those decisions into a PRD and dependency-aware implementation issues.
+3. `run-with-it` schedules ready issues, routes work to suitable agents/models, and coordinates execution.
+4. `tdd-implementation` guides assigned implementation with red-green-refactor discipline.
+5. `save-tokens` compresses assistant narration for long sessions.
 
 ## Repository Structure
 
@@ -15,24 +23,32 @@ It gives you a practical workflow from requirement discovery to issue planning t
 AI-Skills/
 ├── README.md
 ├── LICENSE
+├── explainer.html
+├── diagram.pdf
 ├── gemini-extension.json
+├── technical_requirements.md
 ├── install.sh
 ├── install.ps1
 ├── uninstall.sh
 ├── uninstall.ps1
-├── technical_requirements.md
+├── add-two-numbers.sh
 ├── assets/
 │   ├── agent-registry.json
 │   ├── complexity-prompt.md
 │   ├── coordinator-rules.md
 │   ├── main-orchestrator-rules.md
+│   ├── merge-recovery-prompt.md
 │   ├── modifier-prompt.md
 │   ├── prompt.md
 │   ├── review-prompt.md
 │   ├── run-agent.sh
 │   ├── run-agent.ps1
-│   ├── worker-watch.sh
-│   └── sub-coordinator-prompt.md
+│   ├── run-with-it-dispatch.sh
+│   ├── run-with-it-pool.sh
+│   ├── sub-coordinator-prompt.md
+│   └── worker-watch.sh
+├── docs/
+│   └── superpowers/plans/
 ├── skills/
 │   ├── break-req/SKILL.md
 │   ├── create-git-issue/SKILL.md
@@ -44,341 +60,299 @@ AI-Skills/
     ├── break-req-contract.test.sh
     ├── create-git-issue-routing.test.sh
     ├── install-assets-contract.test.sh
+    ├── run-agent-status-bus.test.sh
     ├── run-agent.test.sh
+    ├── run-with-it-dispatch.test.sh
+    ├── run-with-it-log-harness.test.sh
+    ├── run-with-it-pool-actual-flow.test.sh
+    ├── run-with-it-pool.test.sh
     ├── run-with-it-routing.test.sh
-    └── uninstall-contract.test.sh
+    ├── uninstall-contract.test.sh
+    └── worker-watch.test.sh
 ```
-
-## Skills At A Glance
-
-- `break-req`: Discovers and resolves functional/non-functional decisions, constraints, and dependencies before planning starts.
-- `create-git-issue`: Turns approved requirements into a PRD plus dependency-aware vertical-slice implementation issues.
-- `tdd-implementation`: Implements assigned work in strict red-green-refactor cycles with behavior-first tests.
-- `run-with-it`: Orchestrates execution end-to-end by routing issues to the right agent/model and tracking progress safely.
-- `save-tokens`: Switches assistant narration into compact mode so long sessions consume fewer tokens.
-
-## How To Use Them Together
-
-1. Start with `break-req` to remove ambiguity and lock requirements.
-2. Run `create-git-issue` to convert requirements into actionable issues.
-4. Use `run-with-it`  to coordinate multi-issue execution and closure. it uses `tdd-implementation` and `save-tokens` internaly. 
-5. Enable `save-tokens` anytime you want compressed assistant responses. This helps you using your context windows longer and reducing token costs.
-
-
-
-## Benefits
-
-- Better planning quality: fewer unclear requirements and fewer rework loops.
-- Faster execution: issues are already sliced and dependency-aware.
-- Consistent delivery: shared prompts, registry, and runners reduce cross-agent drift.
-- Higher confidence: TDD discipline plus orchestration feedback loops improve correctness.
-- Lower token cost: compact narration mode helps in long-running workflows.
-
-## Quick Install
-
-**macOS / Linux / Git Bash:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
-```
-
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
-```
-
-The smart installer detects your active agent(s) and wires everything up automatically.
-It also installs shared assets required by workflow skills:
-
-- `prompt.md`
-- `modifier-prompt.md`
-- `review-prompt.md`
-- `complexity-prompt.md`
-- `run-agent.sh`
-- `run-agent.ps1` on Windows
-- `worker-watch.sh`
-- `agent-registry.json`
-
-Default asset location:
-
-```
-macOS/Linux:  ~/.ai-skill-collections/assets
-Windows:      %USERPROFILE%\.ai-skill-collections\assets
-```
-
-Runner contract (execution-only):
-
-Bash (macOS / Linux / Git Bash):
-- `run-agent.sh --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
-
-PowerShell (Windows):
-- `run-agent.ps1 --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>`
-
-`run-with-it` prepares context and invokes the runner. The runner does not fetch GitHub issues or git history itself.
-
-## Codebase Overview
-
-This repository packages a small skill collection plus the shared runner assets those skills need.
-
-The codebase has four main surfaces:
-
-- `skills/` contains the agent-facing skill instructions. Each skill is a standalone `SKILL.md` with YAML front matter.
-- `assets/` contains runtime assets used by `run-with-it`, especially the unified runner scripts and agent/model registry.
-- `install.sh` / `install.ps1` detect local agent tools and install the collection for each supported environment.
-- `uninstall.sh` / `uninstall.ps1` remove agent registrations, shared assets, and this collection's installed skill directories for a clean reinstall.
-
-The repository intentionally keeps the runtime contract simple: skills prepare context, then `run-with-it` selects an agent/model and invokes `assets/run-agent.sh` or `assets/run-agent.ps1`. The runner executes a prepared payload; it does not create issues, fetch issue bodies, or infer project history on its own.
-
-Sub-Coordinators launch role workers as monitored background jobs. They create `.run-with-it/sub-<issue>-state.json` before the first worker spawn and update it after every worker PID capture, storing role, cycle, PID, agent/model, log file, done file, and result file. `worker-watch.sh` checks background worker liveness and log-tail changes for status summaries; it does not decide phase completion. Completion still requires the role-specific `RUN_WITH_IT_DONE_FILE` plus valid role artifacts.
-
-## Unified Routing Workflow
-
-Use this sequence for issue-driven execution:
-
-1. `break-req` captures and resolves requirements/constraints.
-2. `create-git-issue` publishes `prd.md` + implementation slices with routing hints.
-3. `run-with-it` performs final runtime routing and invokes `run-agent.sh`.
-
-`create-git-issue` hints are advisory only. `run-with-it` remains final routing authority at execution time.
-
-## Routing and Registry Overrides
-
-`run-with-it` uses `agent-registry.json` + complexity scoring to select agent/model.
-Automatic routing allows Google/Gemini only for `quite-easy` and `easy` tasks. Direct Claude fallback is temporarily disabled for automatic routing; Claude-provider models route through GitHub Copilot unless explicitly forced with `AGENT=claude`.
-
-Supported overrides and filters:
-
-- `AGENT_REGISTRY_FILE` override registry path (default: `<asset-root>/agent-registry.json`)
-- `AGENT_ALLOWLIST` comma-separated agent slugs to permit
-- `AGENT_DENYLIST` comma-separated agent slugs to block (denylist wins conflicts)
-- `AGENT` force agent selection (must be installed/valid)
-- `MODEL` force model selection for selected agent
-- `COMPLEXITY_LEVEL` force complexity band
-- `COMPLEXITY_SCORE` force numeric score (`8-40`)
-
-Override asset destination or git ref:
-
-Bash:
-```bash
-ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
-```
-
-PowerShell:
-```powershell
-$env:ASSETS_DEST="$env:USERPROFILE\.my-ai-assets"; $env:ASSETS_REF="main"
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
-```
-
-## Troubleshooting
-
-### "No asset files" when running run-with-it
-
-This means the shared files were not found in either:
-
-- `~/.ai-skill-collections/assets` (macOS/Linux) or `%USERPROFILE%\.ai-skill-collections\assets` (Windows)
-- `./assets` (current working directory)
-
-Quick fix from this repository root:
-
-Bash (macOS / Linux / Git Bash):
-```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/modifier-prompt.md ./assets/review-prompt.md ./assets/complexity-prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/worker-watch.sh ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
-```
-
-PowerShell (Windows):
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
-```
-
-Or re-run installer:
-
-Bash: `bash install.sh`
-PowerShell: `.\install.ps1`
-
-### No git repo yet
-
-`run-with-it` can still run without git initialization. It will skip commit-history context and continue with issue/local context.
-
----
-
-## Uninstall
-
-Run the full uninstaller to remove skills per agent and delete shared assets. This leaves the machine ready for a clean install.
-
-macOS / Linux / Git Bash:
-```bash
-curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
-```
-
-Windows (PowerShell):
-```powershell
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
-```
-
-Fresh reinstall from this repository root:
-
-Bash:
-```bash
-bash uninstall.sh && bash install.sh
-```
-
-PowerShell:
-```powershell
-.\uninstall.ps1; .\install.ps1
-```
-
-The uninstaller deletes shared assets by default:
-
-```
-macOS/Linux:  ~/.ai-skill-collections
-Windows:      %USERPROFILE%\.ai-skill-collections
-```
-
-It also removes this collection's installed skill directories from standard skill roots such as `~/.agents/skills`, `~/.codex/skills`, and `~/.Codex/skills`.
-
-To preview removals:
-
-Bash:
-```bash
-bash uninstall.sh --dry-run
-```
-
-PowerShell:
-```powershell
-.\uninstall.ps1 -DryRun
-```
-
-Manual commands are also available if you want to remove one agent by hand.
-
-### Claude Code
-
-```bash
-claude plugin uninstall ai-skill-collections
-```
-
-### Gemini CLI
-
-```bash
-gemini extensions uninstall https://github.com/chanakya-net/AI-Skills
-```
-
-### Codex / Copilot / Antigravity (via npx)
-
-```bash
-npx -y skills remove chanakya-net/AI-Skills --global
-```
-
-### Delete shared assets
-
-macOS / Linux:
-```bash
-rm -rf "$HOME/.ai-skill-collections"
-```
-
-Windows (PowerShell):
-```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\.ai-skill-collections"
-```
-
----
-
-## Per-Agent Install
-
-Per-agent commands below install skills for that specific agent. To guarantee shared assets are installed too, prefer the `install.sh` one-liner above.
-
-### Claude Code
-
-```bash
-claude plugin install github:chanakya-net/AI-Skills
-```
-
-### Gemini CLI
-
-```bash
-gemini extensions install github.com/chanakya-net/AI-Skills
-```
-
-### All Other Agents (via npx)
-
-```bash
-npx -y skills add chanakya-net/AI-Skills -a <agent>
-```
-
-| Agent | `--agent` slug |
-|-------|---------------|
-| OpenAI Codex (CLI + GUI) | `codex` |
-| GitHub Copilot (CLI + VS Code) | `github-copilot` |
-| Gemini GUI (Antigravity) | `antigravity` |
-
-OpenCode note: OpenCode users must configure their preferred model in their local OpenCode setup; this repo does not set OpenCode model defaults for you.
-
-**Example:**
-
-```bash
-npx -y skills add chanakya-net/AI-Skills -a github-copilot
-```
-
----
 
 ## Skills
 
-| Skill | Description |
-|-------|-------------|
-| [`save-tokens`](skills/save-tokens/SKILL.md) | Compresses AI responses using symbols/abbreviations to cut token usage ~75% |
-| [`break-req`](skills/break-req/SKILL.md) | Interviews relentlessly to break down complex requirements and resolve design dependencies |
-| [`create-git-issue`](skills/create-git-issue/SKILL.md) | Synthesizes a PRD from context, then creates dependency-aware tracer-bullet implementation issues |
-| [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Enforces red-green-refactor with behavior-focused tests and thin vertical implementation slices |
-| [`run-with-it`](skills/run-with-it/SKILL.md) | Routes execution by complexity/capability, selects agent+model from registry, and invokes the unified `run-agent.sh` runner |
+| Skill | Purpose |
+|-------|---------|
+| [`break-req`](skills/break-req/SKILL.md) | Requirements discovery, dependency mapping, and technical constraint capture before planning. |
+| [`create-git-issue`](skills/create-git-issue/SKILL.md) | Creates a PRD and dependency-aware tracer-bullet implementation issues. |
+| [`run-with-it`](skills/run-with-it/SKILL.md) | Final runtime authority for issue scheduling, routing, execution coordination, merge recovery, and closure. |
+| [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Test-first implementation workflow using red-green-refactor and behavior-focused tests. |
+| [`save-tokens`](skills/save-tokens/SKILL.md) | Ultra-compressed assistant narration mode for lower token usage. |
+
+## Runtime Architecture
+
+The repo has four main surfaces:
+
+- `skills/`: agent-facing instructions. Each skill is a standalone `SKILL.md` with YAML front matter.
+- `assets/`: shared prompts, registry data, runner scripts, dispatcher scripts, pool runner, and worker watcher.
+- `install.sh` / `install.ps1`: smart installers that detect supported local agents and install both skills and shared assets.
+- `tests/`: shell contract tests for skill boundaries, installer behavior, routing documentation, runner behavior, status bus, pool scheduling, and merge recovery flow.
+
+`run-with-it` uses a two-layer runtime:
+
+- Main Orchestrator: fetches ready issues, builds dependency order, creates a shared feature branch, manages a rolling pool, reads compact reports, updates GitHub/local state, and opens the final PR.
+- Sub-Coordinator: handles one issue in an isolated issue branch/worktree, runs implementation/review/modify workers, verifies, then attempts to merge back into the shared feature branch.
+- Merge Recovery Coordinator: runs only when an issue branch cannot merge cleanly into the shared feature branch.
+
+Main Orchestrator does not implement code or perform issue-branch merges directly.
+
+Durable state and logs live under `.run-with-it/` during orchestration. Worker completion requires done sentinels and compact report artifacts; PID liveness alone is diagnostic.
 
 ## Runtime Assets
 
 | File | Purpose |
 |------|---------|
 | [`assets/agent-registry.json`](assets/agent-registry.json) | Agent aliases, detection commands, invocation templates, model catalog, and routing metadata. |
-| [`assets/run-agent.sh`](assets/run-agent.sh) | Bash runner used by macOS, Linux, Git Bash, and GUI-launched Unix-like agent workflows. |
+| [`assets/run-agent.sh`](assets/run-agent.sh) | Unix runner for macOS, Linux, Git Bash, and GUI-launched Unix-like workflows. |
 | [`assets/run-agent.ps1`](assets/run-agent.ps1) | PowerShell runner for Windows workflows. |
-| [`assets/worker-watch.sh`](assets/worker-watch.sh) | Helper used by Sub-Coordinators to check background worker liveness and log-tail changes. It does not decide phase completion. |
-| [`assets/prompt.md`](assets/prompt.md) | Shared execution prompt used by the runner workflow. |
-| [`assets/review-prompt.md`](assets/review-prompt.md) | Review prompt material for follow-up quality gates. |
-| [`assets/modifier-prompt.md`](assets/modifier-prompt.md) | Modification prompt for addressing reviewer comments and rerunning verification. |
-| [`assets/complexity-prompt.md`](assets/complexity-prompt.md) | Complexity scoring prompt material used by routing workflows. |
+| [`assets/run-with-it-dispatch.sh`](assets/run-with-it-dispatch.sh) | Shared dispatcher that validates inputs, spawns `run-agent.sh`, writes status events, and monitors done/result files. |
+| [`assets/run-with-it-pool.sh`](assets/run-with-it-pool.sh) | Rolling-pool scheduler helper for ready issues and merge recovery handling. |
+| [`assets/worker-watch.sh`](assets/worker-watch.sh) | Liveness/log-tail watcher for background workers. |
+| [`assets/prompt.md`](assets/prompt.md) | Implementation worker prompt. |
+| [`assets/sub-coordinator-prompt.md`](assets/sub-coordinator-prompt.md) | One-issue Sub-Coordinator prompt. |
+| [`assets/merge-recovery-prompt.md`](assets/merge-recovery-prompt.md) | Merge Recovery Coordinator prompt. |
+| [`assets/review-prompt.md`](assets/review-prompt.md) | Review worker prompt. |
+| [`assets/modifier-prompt.md`](assets/modifier-prompt.md) | Modify worker prompt for addressing review feedback. |
+| [`assets/complexity-prompt.md`](assets/complexity-prompt.md) | Complexity scoring and routing prompt. |
+| [`assets/coordinator-rules.md`](assets/coordinator-rules.md) | Shared coordinator rules. |
+| [`assets/main-orchestrator-rules.md`](assets/main-orchestrator-rules.md) | Main Orchestrator rule material. |
 
-Durable runtime state:
+Runner contract:
 
-- `.run-with-it/sub-<issue>-state.json`: durable Sub-Coordinator state created before the first worker spawn and updated after every worker PID capture.
+```bash
+run-agent.sh --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>
+```
+
+Windows:
+
+```powershell
+run-agent.ps1 --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>
+```
+
+The runner executes a prepared payload. It does not fetch GitHub issues, synthesize requirements, or infer project history on its own.
+
+## Installation
+
+macOS / Linux / Git Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
+```
+
+Default shared asset locations:
+
+```text
+macOS/Linux:  ~/.ai-skill-collections/assets
+Windows:      %USERPROFILE%\.ai-skill-collections\assets
+```
+
+Override asset destination or installer source ref:
+
+```bash
+ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main bash install.sh
+```
+
+```powershell
+$env:ASSETS_DEST="$env:USERPROFILE\.my-ai-assets"; $env:ASSETS_REF="main"; .\install.ps1
+```
+
+## Per-Agent Install
+
+Prefer the smart installer above when possible because it also installs shared assets.
+
+Claude Code:
+
+```bash
+claude plugin install github:chanakya-net/AI-Skills
+```
+
+Gemini CLI:
+
+```bash
+gemini extensions install github.com/chanakya-net/AI-Skills
+```
+
+Codex, GitHub Copilot, and Antigravity via `npx`:
+
+```bash
+npx -y skills add chanakya-net/AI-Skills -a <agent>
+```
+
+| Agent | `--agent` slug |
+|-------|----------------|
+| OpenAI Codex CLI/GUI | `codex` |
+| GitHub Copilot CLI / VS Code | `github-copilot` |
+| Gemini GUI / Antigravity | `antigravity` |
+
+OpenCode users should configure model defaults in their own OpenCode setup.
+
+## Routing Controls
+
+`run-with-it` uses `agent-registry.json` plus complexity scoring to select agent/model combinations.
+
+Supported overrides:
+
+- `AGENT_REGISTRY_FILE`: registry path override.
+- `AGENT_ALLOWLIST`: comma-separated agent slugs to permit.
+- `AGENT_DENYLIST`: comma-separated agent slugs to block; denylist wins conflicts.
+- `AGENT`: force agent selection.
+- `MODEL`: force model selection for selected agent.
+- `COMPLEXITY_LEVEL`: force complexity band.
+- `COMPLEXITY_SCORE`: force numeric score.
+
+`create-git-issue` may publish routing hints, but `run-with-it` remains final runtime routing authority.
 
 ## Tests
 
-The test suite is mostly shell-based contract coverage around installer behavior, runner behavior, routing documentation, and skill workflow rules.
+Run all shell tests:
 
-Focused commands:
+```bash
+for test_file in tests/*.test.sh; do
+  bash "$test_file"
+done
+```
+
+Focused tests:
 
 ```bash
 bash tests/install-assets-contract.test.sh
 bash tests/uninstall-contract.test.sh
 bash tests/run-agent.test.sh
-bash tests/break-req-contract.test.sh
-bash tests/create-git-issue-routing.test.sh
-bash tests/run-with-it-routing.test.sh
+bash tests/run-agent-status-bus.test.sh
+bash tests/run-with-it-dispatch.test.sh
+bash tests/run-with-it-pool.test.sh
+bash tests/run-with-it-pool-actual-flow.test.sh
+bash tests/worker-watch.test.sh
 ```
 
-Note: `tests/add-two-numbers.test.sh` is a legacy tracer-bullet test file; the calculator script it references is not part of the current codebase.
+The suite is contract-heavy. It checks skill boundaries, exact prompt/routing language, installed asset lists, status-event propagation, done sentinels, dispatcher validation, and orchestration state transitions.
 
----
+## Troubleshooting
+
+### Missing Shared Assets
+
+If `run-with-it` cannot find shared assets, re-run the installer:
+
+```bash
+bash install.sh
+```
+
+```powershell
+.\install.ps1
+```
+
+Manual Unix repair from repo root:
+
+```bash
+mkdir -p "$HOME/.ai-skill-collections/assets"
+cp -f \
+  ./assets/prompt.md \
+  ./assets/sub-coordinator-prompt.md \
+  ./assets/merge-recovery-prompt.md \
+  ./assets/modifier-prompt.md \
+  ./assets/review-prompt.md \
+  ./assets/complexity-prompt.md \
+  ./assets/coordinator-rules.md \
+  ./assets/main-orchestrator-rules.md \
+  ./assets/run-agent.sh \
+  ./assets/run-agent.ps1 \
+  ./assets/run-with-it-dispatch.sh \
+  ./assets/run-with-it-pool.sh \
+  ./assets/worker-watch.sh \
+  ./assets/agent-registry.json \
+  "$HOME/.ai-skill-collections/assets/"
+chmod +x \
+  "$HOME/.ai-skill-collections/assets/run-agent.sh" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" \
+  "$HOME/.ai-skill-collections/assets/worker-watch.sh"
+```
+
+Manual PowerShell repair from repo root:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
+Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.sh, .\assets\run-with-it-pool.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+```
+
+### No Git Repo
+
+`run-with-it` can still run without git initialization. It skips commit-history context and continues with issue/local context.
+
+## Uninstall
+
+macOS / Linux / Git Bash:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
+```
+
+Preview removals:
+
+```bash
+bash uninstall.sh --dry-run
+```
+
+```powershell
+.\uninstall.ps1 -DryRun
+```
+
+Fresh local reinstall:
+
+```bash
+bash uninstall.sh && bash install.sh
+```
+
+```powershell
+.\uninstall.ps1; .\install.ps1
+```
+
+The uninstaller removes shared assets by default:
+
+```text
+macOS/Linux:  ~/.ai-skill-collections
+Windows:      %USERPROFILE%\.ai-skill-collections
+```
+
+It also removes this collection's installed skill directories from standard skill roots such as `~/.agents/skills`, `~/.codex/skills`, and `~/.Codex/skills`.
+
+Manual per-agent cleanup:
+
+```bash
+claude plugin uninstall ai-skill-collections
+gemini extensions uninstall https://github.com/chanakya-net/AI-Skills
+npx -y skills remove chanakya-net/AI-Skills --global
+```
 
 ## Adding a Skill
 
-1. Create `skills/<name>/SKILL.md` with YAML front-matter:
+1. Create `skills/<name>/SKILL.md` with YAML front matter:
 
 ```markdown
 ---
 name: skill-name
-description: What this skill does and when to use it
+description: What this skill does and when to use it.
 ---
 
-<!-- rules, examples, and any supporting content below -->
+## Purpose
+
+Describe the workflow, boundaries, inputs, and outputs.
 ```
 
-2. Add your rules, examples, or reference material in the body.
-3. Commit and push — the skill is immediately available to all agents on next install/update.
-
----
+2. Add any supporting assets under `assets/` if the skill needs runtime files.
+3. Add or update contract tests under `tests/`.
+4. Re-run the relevant tests before publishing.
