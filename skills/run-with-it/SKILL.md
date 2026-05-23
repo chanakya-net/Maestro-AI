@@ -26,6 +26,8 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
 - **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After `run-agent.sh` is called, those values are locked and the Main Orchestrator must not attempt to change them.
+- **Spawn every Sub-Coordinator as a background process, capture `SUB_COORD_PID=$!`, and persist it in `main-state.json` before monitoring.** Persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` together so the rolling pool can recover cleanly after context compression.
+- **Use `assets/worker-watch.sh` for Sub-Coordinator liveness checks during pool monitoring.** Pass each Sub-Coordinator's `pid`, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
 
 # Run With It
@@ -150,6 +152,7 @@ Required files:
 - `modifier-prompt.md`
 - `complexity-prompt.md`
 - `coordinator-rules.md`
+- `worker-watch.sh`
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
 
@@ -199,14 +202,15 @@ Before execution verify:
 4. `modifier-prompt.md` exists
 5. `complexity-prompt.md` exists
 6. `coordinator-rules.md` exists
-7. `sub-coordinator-prompt.md` exists
-8. `main-orchestrator-rules.md` exists
-9. Runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
-10. `agent-registry.json` exists
-11. `gh` auth when GitHub intake is required
-12. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears
-13. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`
-14. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
+7. `worker-watch.sh` exists
+8. `sub-coordinator-prompt.md` exists
+9. `main-orchestrator-rules.md` exists
+10. Runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
+11. `agent-registry.json` exists
+12. `gh` auth when GitHub intake is required
+13. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears
+14. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`
+15. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -387,9 +391,14 @@ Bash (macOS / Linux / Git Bash):
         --unattended
     ) &
     _POOL_PIDS[$issue_n]=$!
+    SUB_COORD_PID="${_POOL_PIDS[$issue_n]}"
     _POOL_STARTED_ATS[$issue_n]=$(date +%s)
     _POOL_LAST_LOG_TAIL_ATS[$issue_n]=0
     _POOL_LAST_LOG_TAILS[$issue_n]=""
+
+    # Persist PID + monitoring artifacts in main-state.json immediately.
+    # Required fields: issue, pid, started_at, context_file, log_file, done_file, report_file.
+    # This write must happen before entering the monitor loop for this issue.
   done
 
   # --- Rolling pool monitor: poll until pool is empty ---
@@ -449,6 +458,18 @@ Bash (macOS / Linux / Git Bash):
       elapsed=$((NOW - _POOL_STARTED_ATS[$issue_n]))
       sub_report="$(pwd -P)/.run-with-it/reports/sub-${issue_n}-report.json"
       sub_log="$(pwd -P)/.run-with-it/sub/sub-${issue_n}.log"
+      sub_done="$(pwd -P)/.run-with-it/done/issue-${issue_n}-sub-coord.done"
+      sub_tail_state="$(pwd -P)/.run-with-it/status/sub-${issue_n}.tail.sha"
+
+      # Use worker-watch to report liveness/log-tail changes for sub-coordinators.
+      # Liveness is diagnostic only; completion still requires done sentinel + report artifacts.
+      "$ASSET_ROOT/worker-watch.sh" \
+        --pid "$pid" \
+        --done-file "$sub_done" \
+        --log-file "$sub_log" \
+        --tail-state-file "$sub_tail_state" \
+        --tail-lines 2 >/dev/null || true
+
       if [ "$elapsed" -ge "$SUB_COORD_TIMEOUT_SECONDS" ] && [ ! -f "$sub_report" ]; then
         printf 'STATUS|type=stall|issue=%s|idle_for=%s|action=alert-user\n' \
           "$issue_n" "$elapsed"
@@ -677,6 +698,7 @@ Emit parseable one-line status messages:
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`
 - main loop: `STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>|failed=<count>`
 - sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>|pool_size=<n>|parallel_jobs=<PARALLEL_JOBS>`
+- sub-coordinator pid-tracked: `STATUS|type=sub-coord-pid|issue=<n>|pid=<pid>|done_file=<path>|report_file=<path>`
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
 - live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
 - worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
@@ -739,6 +761,7 @@ Never derive issue state from conversation history after compression. The state 
 ### Terminal Issue Comments
 
 Post issue comments only for terminal outcomes: `completed`, `blocked`, or `failed-review`.
+Each terminal comment must be posted only after reading the compact report.
 Populate all fields from the Sub-Coordinator's compact report JSON.
 
 Use the same markdown template for every terminal outcome, with this fixed section order:

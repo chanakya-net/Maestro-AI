@@ -119,6 +119,7 @@ assert_contains 'Sub-Coordinators are ephemeral' "documents sub-coordinator re-s
 
 # Status messages (where documented)
 assert_contains 'STATUS|type=sub-coord-spawn' "documents sub spawn status line"
+assert_contains 'STATUS|type=sub-coord-pid' "documents sub-coordinator pid tracking status line"
 assert_contains 'STATUS|type=sub-coord-complete' "documents report status line"
 assert_contains 'RUN_WITH_IT_STATUS_FILE' "documents current status file"
 assert_contains 'RUN_WITH_IT_EVENTS_LOG' "documents status event log"
@@ -130,6 +131,8 @@ assert_contains 'STATUS|type=worker-done' "documents worker done status line"
 assert_contains 'STATUS|type=heartbeat|issue=<n>|role=' "documents live heartbeat status line"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" '.run-with-it/status/current.txt' "orchestrator rules document current status file"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'poll `current.txt`' "orchestrator rules document shell-only status polling"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'SUB_COORD_PID=$!' "orchestrator rules capture sub-coordinator PID"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'assets/worker-watch.sh' "orchestrator rules use worker-watch for sub-coordinator liveness"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" '.run-with-it/main/main.log' "orchestrator rules document main log"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" '.run-with-it/sub/sub-<n>.log' "orchestrator rules document sub log"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'tail -n 2' "orchestrator rules limit sub log reads"
