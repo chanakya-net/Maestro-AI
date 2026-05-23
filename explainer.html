@@ -710,7 +710,7 @@
     </div>
     <div class="card">
       <h4>OS Detection</h4>
-      <p>Detect <code>uname -s</code> (macOS/Linux) vs <code>$env:OS = Windows_NT</code> (PowerShell). Adapts all shell commands: <code>mkdir -p</code> vs <code>New-Item</code>, <code>$HOME</code> vs <code>$env:USERPROFILE</code>, <code>.sh</code> vs <code>.ps1</code> runners.</p>
+      <p>Detect <code>uname -s</code> (macOS/Linux) vs <code>$env:OS = Windows_NT</code> (PowerShell). The Main Orchestrator passes the pre-detected <code>OS_FAMILY</code> down to Sub-Coordinators in their context configuration to bypass redundant OS checks, while adapting all shell commands (e.g., <code>mkdir -p</code> vs <code>New-Item</code>, <code>$HOME</code> vs <code>$env:USERPROFILE</code>, and <code>.sh</code> vs <code>.ps1</code> runners).</p>
     </div>
     <div class="card">
       <h4>Agent &amp; Model Validation</h4>

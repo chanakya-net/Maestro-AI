@@ -39,6 +39,7 @@ Your context file contains, in order:
 3. CodeGraph context for relevant files (if `.codegraph/` exists), otherwise grep/find context
 4. Environment configuration block with these fields:
    - `SUB_COORD_ISSUE_NUMBER` — the issue number being processed
+   - `OS_FAMILY` — the pre-detected OS family (`unix` or `windows`), passed from the Main Orchestrator to bypass redundant OS detection checks
    - `SUB_COORD_REPORT_FILE` — absolute path where you must write your compact report JSON
    - `SUB_COORD_LOG_FILE` — absolute path for your log file under `.run-with-it/sub/` (append all STATUS lines here)
    - `RUN_FEATURE_BRANCH` — shared run branch created by the Main Orchestrator, for example `run-with-it/<run-id>`
@@ -54,7 +55,12 @@ Your context file contains, in order:
 
 ## OS Detection
 
-Detect the current OS before asset discovery and runner selection:
+Use the pre-detected `OS_FAMILY` configuration variable passed down in your context block if present:
+
+- If `OS_FAMILY` is `windows`, assume the **Windows (native PowerShell)** platform.
+- If `OS_FAMILY` is `unix`, assume the **macOS / Linux / Git Bash / WSL** platform.
+
+If `OS_FAMILY` is not provided, detect the current OS as a fallback:
 
 - **Windows (native PowerShell):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
 - **macOS / Linux / Git Bash / WSL:** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.

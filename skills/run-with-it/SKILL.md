@@ -89,10 +89,10 @@ This isolation means each issue's implementation complexity is contained to its 
 
 ## OS Detection
 
-Detect the current OS before asset discovery and runner selection:
+Detect the current OS before asset discovery and runner selection, and capture it in the `OS_FAMILY` environment variable:
 
-- **Windows (native PowerShell):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
-- **macOS / Linux / Git Bash / WSL:** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
+- **Windows (native PowerShell) (`OS_FAMILY=windows`):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
+- **macOS / Linux / Git Bash / WSL (`OS_FAMILY=unix`):** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
 
 Adapt all shell commands in this skill to the detected runtime:
 
@@ -340,6 +340,7 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
      Otherwise: basic grep/find to identify relevant files
   4. Environment configuration block (append at end of context file):
      SUB_COORD_ISSUE_NUMBER=<n>
+     OS_FAMILY=<unix|windows>
      SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/reports/sub-<n>-report.json>
      SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/sub/sub-<n>.log>
      RUN_FEATURE_BRANCH=<shared-run-feature-branch>
