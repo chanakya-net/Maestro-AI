@@ -75,7 +75,7 @@ Examples:
 
 If a full-suite run is prohibitively slow, run the narrowest passing scope, document exactly which suite was skipped and why, and flag it as a follow-up risk in your output report. Skipping must be the exception, not the default.
 
-**Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), retry the exact same command with `dangerouslyDisableSandbox: true` in the Bash tool call. Do not mark verification as failed due to a sandbox restriction alone.
+**Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 
 ## Mandatory Commit Before Handoff
 

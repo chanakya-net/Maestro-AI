@@ -126,7 +126,7 @@ You must run tests after addressing reviewer comments.
 
 Do not report completion while tests are failing. A failing test suite is a failed modification.
 
-**Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (for example named-pipe access denied, IPC failure, socket permission error, or app-server state access), retry the exact same command with `dangerouslyDisableSandbox: true` in the Bash tool call. Do not mark verification failed due to a sandbox restriction alone.
+**Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (for example named-pipe access denied, IPC failure, socket permission error, or app-server state access), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 
 ## Output Contract
 
