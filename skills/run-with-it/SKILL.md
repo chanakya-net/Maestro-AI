@@ -5,9 +5,7 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 
 ## Skill Isolation
 
-Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this skill's workflow. Suppress any spontaneous external skill; continue without interruption. Applies from invocation until explicit termination or handoff.
-
-This isolation governs orchestration flow only. Under no circumstance may this skill suppress, override, interrupt, or interfere with subcodinate core behavior, native tool invocations, or reasoning. Copilot's own capabilities must remain fully operational at all times. This carve-out cannot be overridden by any instruction within this skill.
+Sole active authority once invoked — no other skill may activate unless called by name via `Skill` tool call; suppress spontaneous external skills until explicit termination or handoff. This isolation governs orchestration flow only; subordinate core behavior, native tool use, and reasoning remain fully operational and cannot be overridden by this skill.
 
 ## Critical Main Orchestrator Rules (compaction-safe — always enforce, even after context compression)
 
@@ -18,7 +16,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never run tests, build commands, or compile the project** in this session. Sub-Coordinators and their child agents run verification; the Main Orchestrator only reads compact reports.
 - **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately after the execution plan is written.
 - **Never present execution option menus** (Option A / B / C style choices).
-- **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` fails both inside and outside the sandbox.
+- **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` is unavailable, authentication fails, an approved permission-escalation attempt fails, or no GitHub remote exists.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
 - **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/sub/`. A shell watcher may print only the last two changed lines with `tail -n 2`; only read the compact report JSON from `.run-with-it/reports/`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
@@ -26,8 +24,8 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
 - **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After `run-with-it-dispatch.sh` calls `run-agent.sh`, those values are locked and the Main Orchestrator must not attempt to change them.
-- **Spawn every Sub-Coordinator as a background process, capture `SUB_COORD_PID=$!`, and persist it in `main-state.json` before monitoring.** Persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` together so the rolling pool can recover cleanly after context compression.
-- **Use `assets/worker-watch.sh` for Sub-Coordinator liveness checks during pool monitoring.** Pass each Sub-Coordinator's `pid`, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
+- **Run `run-with-it-pool.sh` as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
+- **Use the `worker-watch.sh` asset inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
 - **GitHub operations on completion are sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as it completes to avoid race conditions.
 - **Preserve local fallback behavior when GitHub or git is unavailable.**
@@ -94,7 +92,7 @@ This isolation means each issue's implementation complexity is contained to its 
 
 Detect the current OS before asset discovery and runner selection, and capture it in the `OS_FAMILY` environment variable:
 
-- **Windows (native PowerShell) (`OS_FAMILY=windows`):** `$env:OS` equals `Windows_NT` and no `uname` command. Use `.ps1` runners and `$env:USERPROFILE` for home dir.
+- **Windows (native PowerShell) (`OS_FAMILY=windows`):** native PowerShell can install assets and run `run-agent.ps1`, but `run-with-it` orchestration requires Bash-only pool/dispatcher helpers. Stop with a clear message asking the user to run from Git Bash or WSL.
 - **macOS / Linux / Git Bash / WSL (`OS_FAMILY=unix`):** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
 
 Adapt all shell commands in this skill to the detected runtime:
@@ -111,45 +109,36 @@ Adapt all shell commands in this skill to the detected runtime:
 
 ## Inputs
 
-Collect these values before execution:
+Provide a task summary before execution. All other inputs are optional overrides.
 
-- Task summary
-- Optional pre-fetched issue context (otherwise fetch with `gh`)
-- Optional asset root override: `ASSETS_DEST`
-- Optional registry override: `AGENT_REGISTRY_FILE`
-- Optional intake overrides:
-  - `ISSUE_LABEL` (default `ready-for-agent`)
-  - `ISSUE_LIMIT` (default `1000` — fetches all matching issues; set lower to cap)
-  - `ISSUE_STATE` (default `open`)
-  - `COMMITS_LIMIT` (default `5`)
-  - `MAX_ITERATIONS` (default `20`)
-- Optional sub-coordinator agent selection:
-  - `SUB_COORD_AGENT` (default `codex`) — fixed agent slug used to spawn every Sub-Coordinator
-  - `SUB_COORD_MODEL` (default `gpt-5.5`) — fixed model id used for every Sub-Coordinator; the Sub-Coordinator then independently runs its own routing for implementation/review/modify child agents
-  - `SUB_COORD_TIMEOUT_SECONDS` (default `3600`) — seconds before the Main Orchestrator emits a stall alert for a non-completing Sub-Coordinator
-- Optional live status controls:
-  - `STATUS_POLL_SECONDS` (default `10`) — shell polling cadence for printing the latest changed status line while a Sub-Coordinator runs
-  - `LOG_TAIL_POLL_SECONDS` (default `120`) — shell polling cadence for printing the last two changed sub-coordinator log lines
-  - `RUN_WITH_IT_STATUS_FILE` (default `.run-with-it/status/current.txt`) — single-line current status bus, overwritten on every update
-  - `RUN_WITH_IT_EVENTS_LOG` (default `.run-with-it/status/events.log`) — append-only status event log for terminal inspection only; never load it into AI context
-  - `RUN_WITH_IT_LOG_FILE` — role-specific runner log file; Sub-Coordinators use `.run-with-it/sub/sub-<n>.log`, workers use `.run-with-it/<role>/...`
-  - `RUN_WITH_IT_DONE_FILE` — role-specific completion sentinel; workers use `.run-with-it/done/issue-<n>-<role>-cycle-<cycle>.done`
-- Optional routing overrides (passed through to Sub-Coordinators via context file):
-  - `AGENT`
-  - `MODEL`
-  - `COMPLEXITY_LEVEL`
-  - `COMPLEXITY_SCORE`
-- Optional routing filters (passed through to Sub-Coordinators):
-  - `AGENT_ALLOWLIST` (comma-separated)
-  - `AGENT_DENYLIST` (comma-separated)
-- Optional fallback bound (passed through):
-  - `MAX_AGENT_FALLBACKS` (default `2`)
-- Optional review controls (passed through):
-  - `DELEGATED_REVIEW` (default `true`)
-- Optional depth guard:
-  - `MAX_AGENT_DEPTH` (default `1`): always inject `MAX_AGENT_DEPTH=1` into every Sub-Coordinator context file so the Sub-Coordinator's children cannot spawn further sub-agents.
-- Optional parallel execution:
-  - `PARALLEL_JOBS` (default `4`) — size of the rolling Sub-Coordinator pool. The pool stays filled up to this limit: as each Sub-Coordinator completes, the next ready issue is spawned immediately into the freed slot. Set to `1` for sequential execution.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ASSETS_DEST` | — | Asset root override |
+| `AGENT_REGISTRY_FILE` | — | Registry file override |
+| `ISSUE_LABEL` | `ready-for-agent` | Label filter for issue intake |
+| `ISSUE_LIMIT` | `1000` | Max issues to fetch (fetches all by default) |
+| `ISSUE_STATE` | `open` | Issue state filter |
+| `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
+| `MAX_ITERATIONS` | `20` | Max review/modify cycles per Sub-Coordinator |
+| `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
+| `SUB_COORD_MODEL` | `gpt-5.5` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
+| `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
+| `STATUS_POLL_SECONDS` | `10` | Shell polling cadence for status line output |
+| `LOG_TAIL_POLL_SECONDS` | `120` | Shell polling cadence for sub-coordinator log tail |
+| `RUN_WITH_IT_STATUS_FILE` | `.run-with-it/status/current.txt` | Single-line status bus (overwritten each update) |
+| `RUN_WITH_IT_EVENTS_LOG` | `.run-with-it/status/events.log` | Append-only event log — terminal inspection only; never load into AI context |
+| `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/sub/sub-<n>.log`; workers: `.run-with-it/<role>/...` |
+| `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/done/issue-<n>-<role>-cycle-<cycle>.done` |
+| `AGENT` | — | Routing override passed through to Sub-Coordinators |
+| `MODEL` | — | Routing override passed through to Sub-Coordinators |
+| `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
+| `COMPLEXITY_SCORE` | — | Routing override passed through to Sub-Coordinators |
+| `AGENT_ALLOWLIST` | — | Comma-separated; passed through to Sub-Coordinators |
+| `AGENT_DENYLIST` | — | Comma-separated; passed through to Sub-Coordinators |
+| `MAX_AGENT_FALLBACKS` | `2` | Max agent fallback attempts; passed through |
+| `DELEGATED_REVIEW` | `true` | Enable Sub-Coordinator delegated review; passed through |
+| `MAX_AGENT_DEPTH` | `1` | Always injected; prevents Sub-Coordinator children from spawning sub-agents |
+| `PARALLEL_JOBS` | `4` | Rolling pool size. Freed slots fill immediately. Set to `1` for sequential. |
 
 ## Asset Discovery (Required)
 
@@ -216,24 +205,11 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 
 Before execution verify:
 
-1. Resolved asset root exists
-2. `prompt.md` exists
-3. `review-prompt.md` exists
-4. `modifier-prompt.md` exists
-5. `complexity-prompt.md` exists
-6. `coordinator-rules.md` exists
-7. `worker-watch.sh` exists
-8. `sub-coordinator-prompt.md` exists
-9. `main-orchestrator-rules.md` exists
-10. `merge-recovery-prompt.md` exists
-11. Runner exists and is executable (`run-agent.sh` on Bash; `run-agent.ps1` on Windows)
-12. Shared dispatcher exists and is executable (`run-with-it-dispatch.sh` on Bash)
-13. Shared rolling pool runner exists and is executable (`run-with-it-pool.sh` on Bash)
-14. `agent-registry.json` exists
-15. `gh` auth when GitHub intake is required
-16. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears
-17. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`
-18. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
+1. Resolved asset root exists and contains all required files listed in Asset Discovery; runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) are executable.
+2. `gh` auth when GitHub intake is required.
+3. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears.
+4. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
+5. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -246,7 +222,7 @@ Before execution verify:
    - **`discard`**: apply the Cleanup `Discard` policy, then continue with normal preflight and fresh issue intake as if no prior state existed.
    - Do not start any new task, fetch any issue, or spawn any Sub-Coordinator until the user responds.
 
-If `sub-coordinator-prompt.md`, `main-orchestrator-rules.md`, or `merge-recovery-prompt.md` is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
+If any required file from Asset Discovery is missing at the resolved asset root, fail fast with the same platform-appropriate one-line fix message used in asset discovery.
 
 ## Initial Batch Issue Fetch
 
@@ -261,8 +237,8 @@ gh issue list --state "${ISSUE_STATE:-open}" --label "${ISSUE_LABEL:-ready-for-a
 Fallback policy:
 
 - Primary: GitHub issues via `gh`. **Always use GitHub when the repo has a GitHub remote. Never silently fall back to a local file when GitHub may be reachable.**
-- If `gh` fails inside the sandbox (permission error, named-pipe, socket), **retry `gh` outside the sandbox** (`dangerouslyDisableSandbox: true`) before considering any fallback.
-- Fallback: local `issues.md` (`LOCAL_ISSUES_FILE` override supported) — **only** when `gh` fails both inside and outside the sandbox, or no GitHub remote exists. Emit `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-failed-outside-sandbox>` before using local file.
+- If `gh` fails because the current tool is sandboxed (permission error, named-pipe, socket), use that tool's explicit approved permission-escalation flow when available before considering fallback. If escalation is unavailable or denied, emit `STATUS|type=intake-fallback|reason=gh-permission-blocked` and use local fallback only when allowed below.
+- Fallback: local `issues.md` (`LOCAL_ISSUES_FILE` override supported) — **only** when `gh` is unavailable, authentication fails, an approved permission-escalation attempt fails, or no GitHub remote exists. Emit `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-permission-blocked|gh-failed-after-escalation>` before using local file.
 - If git metadata is unavailable, continue with empty commit context.
 
 Before fetching work begins, create the shared run feature branch:
@@ -277,7 +253,7 @@ After fetching all issues:
 1. Build a dependency graph: for each issue, identify which other issues it depends on from `## Blocked by`, issue body, labels, or cross-references. `## Blocked by` is the primary source of truth. Normalize `#123`, full GitHub issue URLs, and plain issue numbers. Treat `None - can start immediately` as no dependencies.
 2. Detect cycles and unresolved dependencies; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
 3. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
-4. Issues whose dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`.
+4. Issues whose dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
 5. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
 6. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 7. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
@@ -315,9 +291,9 @@ Issues in READY_ISSUES must have no unmet dependencies on each other.
 If POOL_SLOTS_FREE > 0 and READY_ISSUES is non-empty:
   Select NEWLY_QUEUED = READY_ISSUES[0 : POOL_SLOTS_FREE].
   For each issue <n> in NEWLY_QUEUED:
-    Mark issue status="in_progress" in main-state.json.
-    Append <n> to active_pool_issues.
-    Write main-state.json to disk BEFORE spawning.
+    Leave issue status="pending" until `run-with-it-pool.sh` spawns it.
+    Ensure its context file path is recorded in main-state.json during Step C.
+    The pool runner marks status="in_progress" and appends <n> to active_pool_issues when it captures the dispatcher PID.
   Emit: STATUS|type=pool-fill|active=<len(ACTIVE_POOL)+len(NEWLY_QUEUED)>
         |newly_queued=<len(NEWLY_QUEUED)>|pending_remaining=<pending_after>
         |parallel_jobs=<PARALLEL_JOBS>
@@ -335,7 +311,7 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
   1. Full issue body: re-fetch using:
        gh issue view <n> --json number,title,body,labels,url,comments
      (re-fetch even if pre-fetched at startup — ensures freshest data)
-     If gh fails: retry outside sandbox. If both fail and local file exists,
+     If gh fails because the current tool is sandboxed, use that tool's explicit approved permission-escalation flow when available. If the approved retry fails and local file exists,
      use cached issue body with a note.
   2. Last COMMITS_LIMIT (default 5) recent commits:
        git log --oneline -<COMMITS_LIMIT>
@@ -426,8 +402,8 @@ Execution-mode requirement (critical):
 
     POOL_PID=$!
 
-  Persist `POOL_PID` in `main-state.json`, then monitor that single process until
-  it emits `STATUS|type=pool-empty`.
+  Persist `POOL_PID` in `main-state.json` for recovery visibility, then monitor that single process until
+  it emits `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by `run-with-it-pool.sh`.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
 ```
@@ -502,7 +478,7 @@ On successful run completion:
 
 - Delete all `$SUB_COORD_CONTEXT_FILE` temp files (should already be deleted after each issue, but clean up any stragglers).
 - Delete `.run-with-it/main-state.json`, `.run-with-it/main-orchestrator-rules.md`, `.run-with-it/coordinator-rules.md`.
-- Delete all files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/done/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, `.run-with-it/reviews/`, `.run-with-it/worktrees/`, `.run-with-it/locks/`, and `.run-with-it/merge-recovery/`.
+- Before deleting tracked files, worktrees, or any file outside `.run-with-it/`, print the planned cleanup targets and ask the user to confirm. After confirmation, delete generated files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/done/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, `.run-with-it/reviews/`, `.run-with-it/worktrees/`, `.run-with-it/locks/`, and `.run-with-it/merge-recovery/`.
 - Remove issue worktrees with `git worktree remove` when possible. Preserve the shared run feature branch after final PR creation.
 - Remove `.run-with-it/` directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
@@ -522,7 +498,7 @@ On failed or interrupted run:
 
 On `discard`:
 
-- Delete all preserved files including `.run-with-it/main-state.json`, all reports, logs, reviews, worktrees, locks, `technical_requirements.md`, `prd.md`, and `issues.md`.
+- Print the planned discard targets and ask the user to confirm before deleting. After confirmation, delete preserved generated files including `.run-with-it/main-state.json`, reports, logs, reviews, worktrees, locks, `technical_requirements.md`, `prd.md`, and `issues.md`.
 - Update `.gitignore` and commit with message `chore: remove skill-generated artifacts (discarded run)`.
 - Emit `STATUS|type=cleanup|action=discarded|files_removed=<n>`.
 - Proceed as a fresh run.
@@ -617,7 +593,7 @@ Emit parseable one-line status messages:
 - pool fill: `STATUS|type=pool-fill|active=<count>|newly_queued=<count>|pending_remaining=<count>|parallel_jobs=<PARALLEL_JOBS>`
 - pool slot filled: `STATUS|type=pool-slot-filled|issue=<n>|freed_by=<m>|pool_size=<count>`
 - pool empty: `STATUS|type=pool-empty|pending_remaining=<n>`
-- merge recovery queued: `STATUS|type=merge-recovery|issue=<n>|report_file=<path>|state=merge_recovery`
+- merge recovery queued: `STATUS|type=merge-recovery|issue=<n>|report_file=<path>|state=<started|completed|failed-merge|blocked>`
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`
 - main loop: `STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>|failed=<count>`
 - sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>|pool_size=<n>|parallel_jobs=<PARALLEL_JOBS>`
@@ -631,7 +607,7 @@ Emit parseable one-line status messages:
 - merge complete: `STATUS|type=merge-complete|issue=<n>|merge_sha=<sha>|pushed=<true|false>`
 - merge failed: `STATUS|type=merge-failed|issue=<n>|reason=<conflict|verification|push|unknown>`
 - stall: `STATUS|type=stall|issue=<n>|idle_for=<seconds>|action=alert-user`
-- intake fallback: `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-failed-outside-sandbox>`
+- intake fallback: `STATUS|type=intake-fallback|reason=<no-gh-auth|no-remote|gh-permission-blocked|gh-failed-after-escalation>`
 - runner sandbox retry: `STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<error-summary>`
 - runner sandbox retry result: `STATUS|type=runner-sandbox-retry-result|outcome=<success|failed>`
 - cleanup completed: `STATUS|type=cleanup|action=completed|files_removed=<n>`
@@ -671,16 +647,7 @@ Then stop and ask the user whether to proceed as a fresh run.
 
 ### Compression Survival
 
-When the Main Orchestrator's context is compressed and the session resumes (conversation history is cleared):
-
-1. Re-read `.run-with-it/main-state.json` (Step A of the loop).
-2. The `completed_summaries` array gives the full bounded history.
-3. Issues with `status="completed"` are done — never re-run them.
-4. Issues with `status="in_progress"` are reset to `"pending"` — re-spawn their Sub-Coordinators fresh (pool members interrupted before compression are re-queued and the rolling pool refills them).
-5. Clear `active_pool_issues` to `[]` in main-state.json.
-6. Continue the Main Loop as if resuming from a clean slate.
-
-Never derive issue state from conversation history after compression. The state file is always authoritative.
+After context compression (conversation history cleared), treat the situation as a resume: re-read `.run-with-it/main-state.json` per Step A, reset all `in_progress` issues to `pending`, clear `active_pool_issues` to `[]`, and continue the Main Loop. `completed` issues are never re-run. The state file is always authoritative — never derive issue state from conversation history.
 
 ## Appendix D: Terminal Issue Comment Contract
 
@@ -697,6 +664,7 @@ Use the same markdown template for every terminal outcome, with this fixed secti
 3. `## Verification`
 4. `## Token Usage`
 5. `## Notes`
+6. `## Blocking Reasons` (only when `report.blocking_reasons` is non-empty)
 
 Terminal comment template:
 
@@ -730,4 +698,3 @@ Comment requirements:
 - `Verification` must summarize the checks run and whether they passed, failed, or were blocked (from `report.verification`).
 - `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`.
 - `Blocking Reasons` section must be included **only** when `report.blocking_reasons` is non-empty. Render each entry as a separate markdown bullet. Omit the section entirely otherwise.
-
