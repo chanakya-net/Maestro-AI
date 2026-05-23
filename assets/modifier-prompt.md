@@ -18,8 +18,10 @@ Your job is to address reviewer comments on an existing implementation, run veri
 
 - Original issue/task context and acceptance criteria.
 - Original implementation prompt context.
-- The implementation or latest modification diff under review.
-- Complete reviewer JSON for the current review cycle.
+- `REVIEW_BASE_SHA` — the issue's baseline commit (before any implementation work); do not substitute `HEAD`.
+- `REVIEW_HEAD_SHA` — the specific commit SHA of the implementation or last modification under review; do not substitute `HEAD`.
+- Fetch the full accumulated diff for this issue: `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — **never** `git diff <SHA>..HEAD`.
+- Complete reviewer JSON for the current review cycle (from `REVIEWER_INSTRUCTIONS_FILE`).
 - Required verification commands from the coordinator.
 
 ## Hard Restrictions
@@ -28,7 +30,7 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - Do not assign agents/models or coordinate parallel execution.
 - Do not emit reviewer JSON artifacts.
 - Do not update issue trackers or runtime state records.
-- Do not create commits, branches, or tags.
+- Do not create commits, branches, or tags — **except** the single mandatory handoff commit required by the "Mandatory Commit Before Handoff" section after verification passes.
 - Do not use the Agent tool for task delegation or sub-agent spawning. Only invoke `tdd-implementation` and `save-tokens` via the Skill tool when useful for disciplined implementation and concise reporting.
 
 ## Depth Guard
@@ -57,9 +59,38 @@ Use `RUN_WITH_IT_ISSUE` for the `issue` field when it is present; otherwise use 
 
 Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
 
+## Mandatory Commit Before Handoff
+
+**You MUST commit all your changes before writing the done file.** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
+
+Commit sequence (after verification passes and all reviewer comments are addressed):
+
+Bash:
+```bash
+# Stage all modified and new files
+git add -A
+# Commit with an issue-scoped and cycle-scoped message
+git commit -m "fix(#${RUN_WITH_IT_ISSUE:-unknown}): address review cycle ${RUN_WITH_IT_CYCLE:-?}"
+# Capture and print the SHA so the sub-coordinator can record it
+MODIFY_COMMIT_SHA=$(git rev-parse HEAD)
+printf 'MODIFY_COMMIT_SHA=%s\n' "$MODIFY_COMMIT_SHA"
+```
+
+PowerShell:
+```powershell
+git add -A
+git commit -m "fix(#$env:RUN_WITH_IT_ISSUE): address review cycle $env:RUN_WITH_IT_CYCLE"
+$modifyCommitSha = git rev-parse HEAD
+Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
+```
+
+**If there is nothing to commit** (no files changed), emit `MODIFY_COMMIT_SHA=NONE` and continue — the sub-coordinator will treat a missing commit as a failure.
+
+**Do not write the done file until the commit is made.** The output report must include the commit SHA and list of committed files.
+
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, and your final report content is ready.
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made, and your final report content is ready.
 
 Bash:
 ```bash
@@ -73,7 +104,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=modify|status=success|source=agent"
 ```
 
-Do not write the done file if tests are failing, verification is incomplete, or the final report is not ready.
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, or the final report is not ready.
 
 ## Verification
 
@@ -90,15 +121,16 @@ Do not report completion while tests are failing. A failing test suite is a fail
 
 ## Output Contract
 
-Do not output this report until all required verification passes.
+Do not output this report until all required verification passes and the mandatory commit is made.
 
 Report:
 
-1. Reviewer comments addressed
-2. Files changed
-3. Key modification decisions
-4. Tests run, suites executed, and pass/fail results (required — must show tests passed)
-5. Any remaining risks or follow-up notes
+1. **Commit SHA** — the exact SHA of the commit made in the mandatory commit step (required)
+2. **Files committed** — list of all files included in that commit
+3. Reviewer comments addressed
+4. Key modification decisions
+5. Tests run, suites executed, and pass/fail results (required — must show tests passed)
+6. Any remaining risks or follow-up notes
 
 If all review comments are addressed and no further work is provided in context, output:
 `<promise>NO_MORE_TASKS</promise>`

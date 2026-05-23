@@ -13,7 +13,9 @@ This prompt is review-only guidance for `run-with-it`.
 ## Inputs Expected
 
 - Coordinator-provided issue/task context.
-- Coordinator-provided `REVIEW_FROM_SHA` — run `git diff <REVIEW_FROM_SHA>..HEAD` to fetch the diff.
+- `REVIEW_BASE_SHA` — the commit before any work on this issue. This is a concrete commit hash provided by the Sub-Coordinator.
+- `REVIEW_HEAD_SHA` — the specific commit SHA of the implementation or last modification under review. This is a concrete commit hash provided by the Sub-Coordinator.
+- Fetch the diff: `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`.
 - Changed-file summary when available.
 - Verification evidence when available.
 - Required reviewer status output path: `REVIEWER_STATUS_FILE`.
@@ -32,6 +34,7 @@ This prompt is review-only guidance for `run-with-it`.
 - Do not create commits, branches, or tags.
 - Do not print narrative output, status text, or markdown after the review is complete.
 - Do not use the Agent tool. Do not spawn sub-agents for any purpose.
+- **NEVER use `HEAD` as the end of a diff range.** Multiple issues run concurrently; `HEAD` may include commits from other issues that are not under review. Always use the explicit `REVIEW_HEAD_SHA` provided — it is a concrete commit hash, not a symbolic ref.
 
 ## Test Execution
 
@@ -47,7 +50,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 ## Workflow
 
 1. Read issue/task requirements and acceptance criteria.
-2. Fetch the diff: run `git diff <REVIEW_FROM_SHA>..HEAD`.
+2. Fetch the diff: run `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`. Use only these two explicit SHAs — never substitute `HEAD` for `REVIEW_HEAD_SHA`.
 3. Review the complete diff before writing either output file.
 4. Validate behavior, risk, and verification evidence against requirements.
 5. Write the status file to `REVIEWER_STATUS_FILE`.

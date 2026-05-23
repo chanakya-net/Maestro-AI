@@ -306,6 +306,14 @@ From `model_catalog` in `agent-registry.json`:
 
 Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
 
+**Capture the issue baseline SHA before spawning the implementer.** This SHA anchors the reviewer's diff range and must never be `HEAD` at review time (other issues may commit in parallel).
+
+```bash
+ISSUE_BASE_SHA=$(git rev-parse HEAD)
+```
+
+Store `ISSUE_BASE_SHA` in `.run-with-it/sub-<N>-state.json` immediately. This value never changes for the lifetime of this issue.
+
 Bash (macOS / Linux / Git Bash — use dangerouslyDisableSandbox: true on this Bash call):
 ```bash
 IMPL_LOG_FILE=".run-with-it/impl/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.log"
@@ -347,11 +355,19 @@ $env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-$env:SUB_COORD_ISSUE_NUMBE
 & "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
 ```
 
-After the implementer runner completes successfully, **immediately capture the commit SHA** and store it — do not read the diff text:
+After the implementer runner completes, **immediately capture the commit SHA and validate a commit was actually made**:
+
 ```bash
 IMPL_COMMIT_SHA=$(git rev-parse HEAD)
+if [ "$IMPL_COMMIT_SHA" = "$ISSUE_BASE_SHA" ]; then
+  # Implementer did not commit — treat as failure
+  printf 'STATUS|type=impl-no-commit|issue=%s|action=fail\n' "$SUB_COORD_ISSUE_NUMBER"
+  # Mark issue as failed-review with blocking_reason="implementer-no-commit"
+  # Write compact report and exit
+fi
 ```
-Store `IMPL_COMMIT_SHA` in `.run-with-it/sub-<N>-state.json`. This SHA is the only diff reference passed to the reviewer. **Never read `git diff` output into the Sub-Coordinator context.**
+
+Store both `ISSUE_BASE_SHA` and `IMPL_COMMIT_SHA` in `.run-with-it/sub-<N>-state.json`. These two SHAs define the exact diff range for the reviewer. **Never read `git diff` output into the Sub-Coordinator context. Never pass `HEAD` to the reviewer — use the explicit `IMPL_COMMIT_SHA`.**
 
 ### Reviewer Band Selection
 
@@ -425,7 +441,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 
 | Condition | Action |
 |-----------|--------|
-| `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to integration/commit. Do not continue to steps 1–7 this cycle. |
+| `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to compact report generation — the implementer already committed. Do not continue to steps 1–7 this cycle. |
 | `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
 | Gray zone (`total_lines_changed` 30–55, or `files_changed` 2–4) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage). If tests are not 100% confirmed passing, continue to step 1. If tests are explicitly 100% passing, skip review as above. |
 
@@ -438,13 +454,18 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 2. Assemble a reviewer payload file in this order:
    - The full slice requirements — complete issue body including title, description, requirements, and acceptance criteria
    - The original `PROMPT_FILE` contents
-   - The commit SHA to review: `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` — the reviewer runs `git diff <SHA>..HEAD` itself to fetch the diff. **Do not read the diff into this payload.**
-   - A per-file `+added/-deleted` summary only (from `git diff --numstat <SHA>..HEAD`) — line counts, no diff text
+   - **Explicit SHA range** (both fields are required; never substitute `HEAD`):
+     - `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` — the commit before any work on this issue
+     - `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` — the specific commit of the work under review
+     - Instruction: `Run git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA> to fetch the diff. Do NOT use HEAD — other issues may have committed since this SHA.`
+   - A per-file `+added/-deleted` summary only: `git diff --numstat <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — line counts, no diff text. **Do not read the full diff into this payload.**
    - The implementer (or modifier) verification results
    - The implementer telemetry stub
    - Output paths (reviewer writes both files; Sub-Coordinator reads only the status file):
      - `REVIEWER_STATUS_FILE=.run-with-it/reviews/<issue-number>-cycle-<n>-status.json`
      - `REVIEWER_INSTRUCTIONS_FILE=.run-with-it/reviews/<issue-number>-cycle-<n>-instructions.json`
+
+   **Always reinforce in the payload**: these SHA values are concrete commit hashes, not symbolic refs. The reviewer must not resolve `HEAD` or any branch name — the SHAs are the authority.
 
 3. Spawn the reviewer child agent (use dangerouslyDisableSandbox: true on this Bash call):
 
@@ -486,9 +507,9 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 
 **`verdict=approve`**
 
-Integrate the current diff. Commit per issue. No modification agent is spawned.
+The implementer (or modifier) has already committed all changes as part of its mandatory handoff commit. On approve, proceed directly to compact report generation. **Do not create an additional commit** — the work is already committed. No modification agent is spawned.
 
-**Nitpick-only `approve`**: When all comments have `"severity": "info"` and `"fix"` values prefixed `[nitpick]`, treat as a clean approve — integrate, no modification agent. List nitpick comments in the report summary under `## Notes`. Do not downgrade for nitpicks alone.
+**Nitpick-only `approve`**: When all comments have `"severity": "info"` and `"fix"` values prefixed `[nitpick]`, treat as a clean approve — proceed to report generation, no modification agent. List nitpick comments in the report summary under `## Notes`. Do not downgrade for nitpicks alone.
 
 **`verdict=revise`**
 
@@ -496,7 +517,7 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, `REVIEW_FROM_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (modifier fetches the diff itself via `git diff <SHA>..HEAD`), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands.
+   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`.
    - Run via this background-worker shape with `dangerouslyDisableSandbox: true`:
 
      ```bash
@@ -526,7 +547,17 @@ Integrate the current diff. Commit per issue. No modification agent is spawned.
      ```
 
      Immediately write `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` with this `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, and `MODIFY_RESULT_FILE`. Monitor with `assets/worker-watch.sh`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
-   - After the modifier runner completes, capture `MODIFY_COMMIT_SHA=$(git rev-parse HEAD)` and store in state. Use this SHA as `REVIEW_FROM_SHA` for the next review cycle.
+   - After the modifier runner completes, **capture and validate the modifier commit**:
+     ```bash
+     MODIFY_COMMIT_SHA=$(git rev-parse HEAD)
+     if [ "$MODIFY_COMMIT_SHA" = "$REVIEW_HEAD_SHA" ]; then
+       # Modifier did not commit — treat as failure
+       printf 'STATUS|type=modify-no-commit|issue=%s|cycle=%s|action=fail\n' \
+         "$SUB_COORD_ISSUE_NUMBER" "$CYCLE"
+       # Terminate as failed-review with blocking_reason="modifier-no-commit"
+     fi
+     ```
+     Store `MODIFY_COMMIT_SHA` in state. For the next review cycle: `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA` (and `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA` — never changes).
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
 
@@ -544,10 +575,12 @@ Skip modification entirely. Terminate the issue as `failed-review` immediately. 
 
 ## Appendix C: File Tracking
 
-After each agent (implementer or modifier) completes, use the captured SHA to get per-file stats:
+After each agent (implementer or modifier) completes, use the issue baseline and the specific commit SHA to get per-file stats:
 ```bash
-git diff --numstat <IMPL_COMMIT_SHA or MODIFY_COMMIT_SHA>..HEAD
+git diff --numstat <ISSUE_BASE_SHA>..<IMPL_COMMIT_SHA or latest MODIFY_COMMIT_SHA>
 ```
+**Never use `HEAD` as the end of this range** — other issues may have committed since. Always use the explicit commit SHA captured immediately after the agent's mandatory commit.
+
 Read only the `--numstat` summary (file path + added + deleted counts) — never read full diff text into context. Aggregate per-file line changes across all agents for this issue. Store the result in `files_modified` in the compact report (Appendix E).
 
 ### Sandbox
@@ -561,6 +594,10 @@ Write `.run-with-it/sub-<N>-state.json` using schema_version 1 to survive within
 ```json
 {
   "schema_version": 1,
+  "issue_base_sha": "<SHA captured before any work — never changes>",
+  "impl_commit_sha": "<SHA captured after implementer's mandatory commit — null until set>",
+  "modify_commit_sha": "<SHA captured after latest modifier's mandatory commit — null until set>",
+  "review_head_sha": "<current REVIEW_HEAD_SHA for next reviewer — equals impl_commit_sha or modify_commit_sha>",
   "queue": {
     "ready": [
       {
@@ -592,11 +629,12 @@ Write `.run-with-it/sub-<N>-state.json` using schema_version 1 to survive within
 
 Write this file before every major phase transition:
 - Before complexity sub-agent spawn
-- Before implementer spawn
+- Before implementer spawn (capture and store `issue_base_sha` here)
+- After implementer done — store `impl_commit_sha` and set `review_head_sha = impl_commit_sha`
 - Before reviewer spawn
 - Before modifier spawn
+- After modifier done — store `modify_commit_sha` and update `review_head_sha = modify_commit_sha`
 - After any verdict is received
-- After any integration/commit
 
 ### Resume After Compaction
 
@@ -702,7 +740,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 The worker may write this file when its required artifacts are complete. `run-agent.sh` / `run-agent.ps1` removes stale sentinels before start and writes a fallback `DONE|...|source=runner-exit` line when the process exits. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
-- impl/modify: verification evidence and final worker report are available
+- impl/modify: verification evidence and final worker report are available **AND** the worker's mandatory commit was made (captured SHA differs from the pre-spawn baseline)
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON
 
 When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.
