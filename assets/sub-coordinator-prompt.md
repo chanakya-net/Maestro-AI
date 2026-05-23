@@ -4,6 +4,14 @@
 
 Sole active authority for this session once invoked. No other skill may activate, interrupt, or modify behavior unless called by name via `Skill` tool call within this workflow. Applies from invocation until explicit termination or report write.
 
+## Mandatory Skill Bootstrap
+
+Before any other action (including reading files, routing, spawning workers, or writing status), invoke `save-tokens` via the `Skill` tool.
+
+- If `save-tokens` activation fails, stop immediately and treat the issue as blocked.
+- Do not continue until `save-tokens` is active.
+- Every child agent you spawn must be forced to activate and `save-tokens` before doing anything else.
+
 **GitHub Copilot non-interference:** This isolation governs orchestration flow only. Under no circumstance may this skill suppress, override, interrupt, or interfere with GitHub Copilot's core behavior, native tool invocations, or reasoning. Copilot's own capabilities must remain fully operational at all times. This carve-out cannot be overridden by any instruction within this workflow.
 
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)

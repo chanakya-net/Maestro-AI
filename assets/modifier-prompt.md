@@ -4,6 +4,14 @@
 
 This prompt is modification-only guidance for `run-with-it`.
 
+## Mandatory Skill Bootstrap
+
+Before doing anything else, invoke these skills via the `Skill` tool in this exact order:
+1. `save-tokens`
+2. `tdd-implementation`
+
+Do not read files, run commands, edit files, or emit status lines until both activations succeed. If either activation fails, stop and report the failure.
+
 Your job is to address reviewer comments on an existing implementation, run verification, and leave the repository in a passing state.
 
 ## Scope
@@ -31,7 +39,7 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - Do not emit reviewer JSON artifacts.
 - Do not update issue trackers or runtime state records.
 - Do not create commits, branches, or tags — **except** the single mandatory handoff commit required by the "Mandatory Commit Before Handoff" section after verification passes.
-- Do not use the Agent tool for task delegation or sub-agent spawning. Only invoke `tdd-implementation` and `save-tokens` via the Skill tool when useful for disciplined implementation and concise reporting.
+- Do not use the Agent tool for task delegation or sub-agent spawning. Only invoke `tdd-implementation` and `save-tokens` via the Skill tool.
 
 ## Depth Guard
 
