@@ -18,7 +18,7 @@ Before any other action (including reading files, routing, spawning workers, or 
 try and unblock codegraph if it's blocked
 These rules apply for the entire lifetime of this session:
 
-- **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via `run-agent.sh`. There is no "implement in this chat" fallback option.
+- **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via `run-with-it-dispatch.sh`, which wraps `run-agent.sh`. There is no "implement in this chat" fallback option.
 - **Never run tests, build commands, or compile the project.** The implementing agent runs verification; you only read results from the agent's output report.
 - **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately after routing completes.
 - **Never present execution option menus.**
@@ -74,7 +74,7 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `worker-watch.sh`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `run-with-it-dispatch.sh`, `worker-watch.sh`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
 
 ## Coordinator Rules File
 
@@ -88,7 +88,7 @@ cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 **Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
 - before complexity sub-agent spawn
 - before routing
-- before each `run-agent.sh` invocation
+- before each `run-with-it-dispatch.sh` invocation
 - before each review cycle step
 - before writing the final report
 
@@ -122,6 +122,8 @@ Start every worker as a monitored background process. After spawning a backgroun
 1. `RUN_WITH_IT_DONE_FILE` exists and the role-specific artifacts are valid, or
 2. the process exits without valid artifacts.
 
+Every Bash worker launch must use `run-with-it-dispatch.sh` so the Sub-Coordinator and Main Orchestrator share the same launch and monitor contract. The dispatcher wraps `run-agent.sh`, forwards the `RUN_WITH_IT_*` environment, captures the child PID, writes dispatch status lines, and monitors with `assets/worker-watch.sh`.
+
 Every Bash worker launch must follow this shape:
 
 ```bash
@@ -130,20 +132,20 @@ WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
 WORKER_LOG_TAIL_LINES="${WORKER_LOG_TAIL_LINES:-5}"
 WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-${RUN_WITH_IT_ROLE}-cycle-${CYCLE:-1}.tail.sha"
 
-GUI_MODE="${GUI_MODE:-0}" \
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
-RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
-RUN_WITH_IT_LOG_FILE="$IMPL_LOG_FILE" \
-RUN_WITH_IT_DONE_FILE="$IMPL_DONE_FILE" \
-RUN_WITH_IT_ROLE="impl" \
-RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
-"$ASSET_ROOT/run-agent.sh" \
+"$ASSET_ROOT/run-with-it-dispatch.sh" \
+  --asset-root "$ASSET_ROOT" \
+  --role impl \
+  --issue "$SUB_COORD_ISSUE_NUMBER" \
+  --cycle "${CYCLE:-1}" \
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/prompt.md" \
-  --unattended &
+  --log-file "$IMPL_LOG_FILE" \
+  --done-file "$IMPL_DONE_FILE" \
+  --result-file "$IMPL_RESULT_FILE" \
+  --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
+  --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
 WORKER_PID=$!
 ```
@@ -215,20 +217,20 @@ WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
 WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-complexity-cycle-1.tail.sha"
 mkdir -p "$(dirname "$COMPLEXITY_LOG_FILE")"
 mkdir -p "$(dirname "$COMPLEXITY_DONE_FILE")"
-GUI_MODE="${GUI_MODE:-0}" \
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
-RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
-RUN_WITH_IT_LOG_FILE="$COMPLEXITY_LOG_FILE" \
-RUN_WITH_IT_DONE_FILE="$COMPLEXITY_DONE_FILE" \
-RUN_WITH_IT_ROLE="complexity" \
-RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
-"$ASSET_ROOT/run-agent.sh" \
+"$ASSET_ROOT/run-with-it-dispatch.sh" \
+  --asset-root "$ASSET_ROOT" \
+  --role complexity \
+  --issue "$SUB_COORD_ISSUE_NUMBER" \
+  --cycle 1 \
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$COMPLEXITY_CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
-  --unattended &
+  --log-file "$COMPLEXITY_LOG_FILE" \
+  --done-file "$COMPLEXITY_DONE_FILE" \
+  --result-file "$COMPLEXITY_RESULT_FILE" \
+  --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
+  --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
 WORKER_PID=$!
 ```
@@ -332,20 +334,20 @@ WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
 WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.tail.sha"
 mkdir -p "$(dirname "$IMPL_LOG_FILE")"
 mkdir -p "$(dirname "$IMPL_DONE_FILE")"
-GUI_MODE="${GUI_MODE:-0}" \
-AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
-RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
-RUN_WITH_IT_LOG_FILE="$IMPL_LOG_FILE" \
-RUN_WITH_IT_DONE_FILE="$IMPL_DONE_FILE" \
-RUN_WITH_IT_ROLE="impl" \
-RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
-"$ASSET_ROOT/run-agent.sh" \
+"$ASSET_ROOT/run-with-it-dispatch.sh" \
+  --asset-root "$ASSET_ROOT" \
+  --role impl \
+  --issue "$SUB_COORD_ISSUE_NUMBER" \
+  --cycle "${CYCLE:-1}" \
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/prompt.md" \
-  --unattended &
+  --log-file "$IMPL_LOG_FILE" \
+  --done-file "$IMPL_DONE_FILE" \
+  --result-file "$IMPL_RESULT_FILE" \
+  --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
+  --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
 WORKER_PID=$!
 ```
@@ -487,20 +489,20 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.tail.sha"
    mkdir -p "$(dirname "$REVIEW_LOG_FILE")"
    mkdir -p "$(dirname "$REVIEW_DONE_FILE")"
-   GUI_MODE="${GUI_MODE:-0}" \
-   AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-   RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
-   RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
-   RUN_WITH_IT_LOG_FILE="$REVIEW_LOG_FILE" \
-   RUN_WITH_IT_DONE_FILE="$REVIEW_DONE_FILE" \
-   RUN_WITH_IT_ROLE="review" \
-   RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
-   "$ASSET_ROOT/run-agent.sh" \
+   "$ASSET_ROOT/run-with-it-dispatch.sh" \
+     --asset-root "$ASSET_ROOT" \
+     --role review \
+     --issue "$SUB_COORD_ISSUE_NUMBER" \
+     --cycle "$CYCLE" \
      --agent "$REVIEWER_AGENT" \
      --model "$REVIEWER_MODEL" \
      --context-file "$REVIEWER_CONTEXT_PAYLOAD_FILE" \
      --prompt-file "$ASSET_ROOT/review-prompt.md" \
-     --unattended &
+     --log-file "$REVIEW_LOG_FILE" \
+     --done-file "$REVIEW_DONE_FILE" \
+     --result-file "$REVIEW_RESULT_FILE" \
+     --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
+     --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
    WORKER_PID=$!
    ```
@@ -536,20 +538,20 @@ The implementer (or modifier) has already committed all changes as part of its m
      WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
      WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.tail.sha"
      mkdir -p "$(dirname "$MODIFY_LOG_FILE")" "$(dirname "$MODIFY_DONE_FILE")"
-     GUI_MODE="${GUI_MODE:-0}" \
-     AGENT_REGISTRY_FILE="$ASSET_ROOT/agent-registry.json" \
-     RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}" \
-     RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}" \
-     RUN_WITH_IT_LOG_FILE="$MODIFY_LOG_FILE" \
-     RUN_WITH_IT_DONE_FILE="$MODIFY_DONE_FILE" \
-     RUN_WITH_IT_ROLE="modify" \
-     RUN_WITH_IT_ISSUE="$SUB_COORD_ISSUE_NUMBER" \
-     "$ASSET_ROOT/run-agent.sh" \
+     "$ASSET_ROOT/run-with-it-dispatch.sh" \
+       --asset-root "$ASSET_ROOT" \
+       --role modify \
+       --issue "$SUB_COORD_ISSUE_NUMBER" \
+       --cycle "$CYCLE" \
        --agent "$MODIFIER_AGENT" \
        --model "$MODIFIER_MODEL" \
        --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" \
        --prompt-file "$ASSET_ROOT/modifier-prompt.md" \
-       --unattended &
+       --log-file "$MODIFY_LOG_FILE" \
+       --done-file "$MODIFY_DONE_FILE" \
+       --result-file "$MODIFY_RESULT_FILE" \
+       --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
+       --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" &
 
      WORKER_PID=$!
      ```
@@ -593,7 +595,7 @@ Read only the `--numstat` summary (file path + added + deleted counts) — never
 
 ### Sandbox
 
-**Always invoke every `run-agent.sh` Bash call with `dangerouslyDisableSandbox: true`.** This is required so agent CLIs (claude, codex, copilot, gemini) can access auth credentials and run outside Claude Code's sandbox. `GUI_MODE=0` must also be set (via the `GUI_MODE="${GUI_MODE:-0}"` prefix) to preserve full permission flags (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`) needed for unattended execution. If a `run-agent.sh` call fails even with `dangerouslyDisableSandbox: true`, count it as a true agent failure.
+**Always invoke every `run-with-it-dispatch.sh` Bash call with `dangerouslyDisableSandbox: true`.** This is required so the wrapped agent CLIs (claude, codex, copilot, gemini) can access auth credentials and run outside Claude Code's sandbox. The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh`, preserving full permission flags (`--dangerously-skip-permissions`, `--dangerously-bypass-approvals-and-sandbox`) needed for unattended execution. If a dispatch call fails even with `dangerouslyDisableSandbox: true`, count it as a true agent failure.
 
 ## Appendix D: Sub-Coordinator State (Compaction Survival)
 
@@ -745,7 +747,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 - `.run-with-it/done/issue-<n>-review-cycle-<cycle>.done`
 - `.run-with-it/done/issue-<n>-modify-cycle-<cycle>.done`
 
-The worker may write this file when its required artifacts are complete. `run-agent.sh` / `run-agent.ps1` removes stale sentinels before start and writes a fallback `DONE|...|source=runner-exit` line when the process exits. Treat the done file as a phase-transition hint only after required output artifacts are valid:
+The worker may write this file when its required artifacts are complete. `run-with-it-dispatch.sh` delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
 - impl/modify: verification evidence and final worker report are available **AND** the worker's mandatory commit was made (captured SHA differs from the pre-spawn baseline)

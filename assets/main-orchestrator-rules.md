@@ -22,13 +22,12 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## Spawning Rules
 
-- Always spawn sub-coordinators via `run-agent.sh --prompt-file sub-coordinator-prompt.md`.
+- Always spawn sub-coordinators via `run-with-it-dispatch.sh --role sub-coord`, which wraps `run-agent.sh --prompt-file sub-coordinator-prompt.md`.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=2` into every sub-coordinator context file.
-- Always pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_ROLE=sub-coord`, and `RUN_WITH_IT_ISSUE=<issue>` into the runner so live progress updates reach the shared status bus.
-- Always pass `RUN_WITH_IT_LOG_FILE=.run-with-it/sub/sub-<n>.log` into the runner so the sub-coordinator's own process output is stored under `.run-with-it/sub/`.
-- Always pass `RUN_WITH_IT_DONE_FILE=.run-with-it/done/issue-<n>-sub-coord.done` into the runner so stale sentinels are cleared and process completion is recorded.
-- Always spawn each sub-coordinator in the background, capture `SUB_COORD_PID=$!`, then persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before entering the monitor loop.
+- Pass status, event, log, done, and result paths to `run-with-it-dispatch.sh`; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh`.
+- Always pass `--log-file .run-with-it/sub/sub-<n>.log`, `--done-file .run-with-it/done/issue-<n>-sub-coord.done`, and `--result-file .run-with-it/reports/sub-<n>-report.json`.
+- Always spawn each dispatch process in the background, capture `SUB_COORD_PID=$!`, then persist `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before entering the monitor loop.
 - Mark ALL issues in the current batch as `in_progress` in `main-state.json` and set `active_batch_issues` to the batch issue list. Write to disk BEFORE spawning the first sub-coordinator.
 - When `PARALLEL_JOBS > 1`: spawn all sub-coordinators in the batch as separate background processes (`&`), then enter a single shared monitoring loop that watches all PIDs. Each issue has its own context file, log file, done file, and report file.
 - When `PARALLEL_JOBS = 1`: spawn a single sub-coordinator as before (backward-compatible, single PID).
