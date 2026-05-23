@@ -130,7 +130,7 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-agent.sh" "run-agent.ps1" "worker-watch.sh" "agent-registry.json")
+  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-agent.sh" "run-agent.ps1" "run-with-it-dispatch.sh" "worker-watch.sh" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then
@@ -140,6 +140,7 @@ install_assets() {
       note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
     done
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-agent.sh"
+    note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-dispatch.sh"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/worker-watch.sh"
     WOULD_INSTALL+=("assets")
     echo
@@ -172,6 +173,7 @@ install_assets() {
   done
 
   chmod +x "${ASSETS_DEST}/run-agent.sh"
+  chmod +x "${ASSETS_DEST}/run-with-it-dispatch.sh"
   chmod +x "${ASSETS_DEST}/worker-watch.sh"
 
   INSTALLED+=("assets")
@@ -198,6 +200,7 @@ patch_claude_permissions() {
   if ! command -v python3 >/dev/null 2>&1; then
     warn "  python3 not found; skipping permission patch (add these manually to $settings):"
     note "    Bash(*run-agent.sh*)"
+    note "    Bash(*run-with-it-dispatch.sh*)"
     note "    Bash(*run-agent.ps1*)"
     note "    Bash(codex *)"
     note "    Bash(opencode *)"
@@ -210,6 +213,7 @@ import json, sys
 
 ENTRIES = [
     "Bash(*run-agent.sh*)",
+    "Bash(*run-with-it-dispatch.sh*)",
     "Bash(*run-agent.ps1*)",
     "Bash(codex *)",
     "Bash(opencode *)",
