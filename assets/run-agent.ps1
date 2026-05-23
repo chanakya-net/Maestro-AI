@@ -250,6 +250,11 @@ function Apply-GuiPermissionMode {
                 $script:AGENT_PERM_MODE = "--approval-mode=auto_edit"
             }
         }
+        "agy" {
+            if (-not $AGENT_PERM_MODE -or $AGENT_PERM_MODE -eq "--dangerously-skip-permissions") {
+                $script:AGENT_PERM_MODE = "--sandbox"
+            }
+        }
     }
 }
 

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "break-req": {
+      "source": "chanakya-net/AI-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/break-req/SKILL.md",
+      "computedHash": "66df6fbde39861bd63c736266851d55214e7ee30b8a893d3a7c3383dd9d0a580"
+    },
+    "create-git-issue": {
+      "source": "chanakya-net/AI-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/create-git-issue/SKILL.md",
+      "computedHash": "6d370b7ee97af56239f59e5900ab09e8c4ff75c7fae76cfe9e37b2b3a77d4989"
+    },
+    "run-with-it": {
+      "source": "chanakya-net/AI-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/run-with-it/SKILL.md",
+      "computedHash": "19043ea05b3385d244133ee3d3d2c89026df3f9981470030564d680538e3c030"
+    },
+    "save-tokens": {
+      "source": "chanakya-net/AI-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/save-tokens/SKILL.md",
+      "computedHash": "ae73e8a88fb986a8d1f789a42c0b523f0f84ade9078093160b449372dca8d09e"
+    },
+    "tdd-implementation": {
+      "source": "chanakya-net/AI-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/tdd-implementation/SKILL.md",
+      "computedHash": "eef8e134d5f545c3dc6a992e8619ceb0c773597755fb94cfb01fa6e792a241a0"
+    }
+  }
+}

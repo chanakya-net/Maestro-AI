@@ -7,7 +7,9 @@
     "gemini-cli": "gemini",
     "copilot": "github-copilot",
     "github-copilot-cli": "github-copilot",
-    "open_code": "opencode"
+    "open_code": "opencode",
+    "agy": "agy",
+    "agy-cli": "agy"
   },
   "model_catalog": {
     "claude-haiku-4-5": {
@@ -247,6 +249,76 @@
       "context_window": 1000000,
       "strengths": ["advanced-reasoning", "agentic", "multimodal", "frontier-gemini"],
       "_note": "Copilot subscription multiplier: 1x. Explicit selection only for harder work; automatic Gemini routing is limited to quite-easy/easy tasks."
+    },
+    "gemini-3.5-flash-medium": {
+      "provider": "google",
+      "ability": "balanced",
+      "price_tier": "low",
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
+      "complexity_weight": 4,
+      "context_window": 1048576,
+      "strengths": ["balanced", "fast", "multimodal"]
+    },
+    "gemini-3.5-flash-high": {
+      "provider": "google",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 0.75,
+      "price_output_per_1m": 0.75,
+      "complexity_weight": 6,
+      "context_window": 1048576,
+      "strengths": ["high-throughput", "multimodal", "fast-intelligence"]
+    },
+    "gemini-3.1-pro-low": {
+      "provider": "google",
+      "ability": "balanced",
+      "price_tier": "low",
+      "price_input_per_1m": 0.33,
+      "price_output_per_1m": 0.33,
+      "complexity_weight": 5,
+      "context_window": 1000000,
+      "strengths": ["reasoning", "cost-sensitive", "multimodal"]
+    },
+    "gemini-3.1-pro-high": {
+      "provider": "google",
+      "ability": "frontier",
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
+      "complexity_weight": 8,
+      "context_window": 1000000,
+      "strengths": ["frontier", "advanced-coding", "extended-thinking"]
+    },
+    "claude-sonnet-4.6-thinking": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 3.00,
+      "price_output_per_1m": 15.00,
+      "complexity_weight": 9,
+      "context_window": 1000000,
+      "strengths": ["extended-reasoning", "complex-coding", "agentic"]
+    },
+    "claude-opus-4.6-thinking": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "price_tier": "high",
+      "price_input_per_1m": 5.00,
+      "price_output_per_1m": 25.00,
+      "complexity_weight": 10,
+      "context_window": 1000000,
+      "strengths": ["deep-thinking", "hardest-problems", "adaptive-reasoning"]
+    },
+    "gpt-0ss-120b-medium": {
+      "provider": "openai",
+      "ability": "advanced",
+      "price_tier": "med",
+      "price_input_per_1m": 1.00,
+      "price_output_per_1m": 1.00,
+      "complexity_weight": 7,
+      "context_window": 400000,
+      "strengths": ["reasoning", "open-weight", "balanced-cost-speed"]
     }
   },
   "model_routing": {
@@ -508,6 +580,43 @@
         ],
         "skip_when_unconfigured": true,
         "skip_message": "OpenCode detected but no user model configuration was found; skipping OpenCode until a model is configured."
+      }
+    },
+    "agy": {
+      "display_name": "Agy",
+      "detection": {
+        "command": "agy",
+        "args": ["help"]
+      },
+      "invocation": {
+        "command": "agy",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "--print", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--dangerously-skip-permissions",
+        "available": ["--dangerously-skip-permissions"]
+      },
+      "model": {
+        "default": "gemini-3.5-flash-medium",
+        "flag_template": "--model {{model}}",
+        "known_models": [
+          "gemini-3.5-flash-medium",
+          "gemini-3.5-flash-high",
+          "gemini-3.1-pro-low",
+          "gemini-3.1-pro-high",
+          "claude-sonnet-4.6-thinking",
+          "claude-opus-4.6-thinking",
+          "gpt-0ss-120b-medium"
+        ]
+      },
+      "capability_band": "advanced",
+      "fallback_order": ["github-copilot", "gemini", "claude"],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
       }
     }
   }
