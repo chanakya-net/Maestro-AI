@@ -4,6 +4,14 @@
 
 This prompt is implementation-only for already assigned work.
 
+## Mandatory Skill Bootstrap
+
+Before doing anything else, invoke these skills via the `Skill` tool in this exact order:
+1. `save-tokens`
+2. `tdd-implementation`
+
+Do not read files, run commands, edit code, or emit status lines until both activations succeed. If either activation fails, stop and report the failure.
+
 Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
 ## Scope
@@ -36,7 +44,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 2. Reuse existing patterns, naming, and helpers.
 3. Respect existing boundaries and dependency direction.
 4. Prefer the smallest compatible extension if a gap is found.
-5. Invoke `tdd-implementation` and `save-tokens` and follow it as the source of truth for test-first workflow and saving tokens.
+5. Follow `save-tokens` and `tdd-implementation` as the source of truth for concise communication and test-first workflow.
 
 ## Progress Heartbeats
 

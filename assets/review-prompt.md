@@ -4,6 +4,12 @@
 
 This prompt is review-only guidance for `run-with-it`.
 
+## Mandatory Skill Bootstrap
+
+Before doing anything else, invoke these skills via the `Skill` tool in this exact order:
+1. `save-tokens`
+Do not read files, run commands, or write output artifacts until activation succeed. If activation fails, stop and report the failure.
+
 ## Scope
 - Try and unbalock codegraph if it's locked
 - Review the provided implementation diff and task context.
