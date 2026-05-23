@@ -15,7 +15,6 @@ Before any other action (including reading files, routing, spawning workers, or 
 **GitHub Copilot non-interference:** This isolation governs orchestration flow only. Under no circumstance may this skill suppress, override, interrupt, or interfere with GitHub Copilot's core behavior, native tool invocations, or reasoning. Copilot's own capabilities must remain fully operational at all times. This carve-out cannot be overridden by any instruction within this workflow.
 
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
-try and unblock codegraph if it's blocked
 These rules apply for the entire lifetime of this session:
 
 - **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via `run-with-it-dispatch.sh`, which wraps `run-agent.sh`. There is no "implement in this chat" fallback option.

@@ -8,10 +8,8 @@ This prompt is review-only guidance for `run-with-it`.
 
 Before doing anything else, invoke these skills via the `Skill` tool in this exact order:
 1. `save-tokens`
-Do not read files, run commands, or write output artifacts until activation succeed. If activation fails, stop and report the failure.
 
 ## Scope
-- Try and unbalock codegraph if it's locked
 - Review the provided implementation diff and task context.
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree containing the issue branch under review.
 - Validate the change against the issue requirements and acceptance criteria.

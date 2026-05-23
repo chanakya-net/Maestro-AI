@@ -26,10 +26,11 @@ Apply compression only to assistant narration style.
 
 ## Rules
 
-- Drop articles, filler, pleasantries, hedging, and transitional phrases
-- Use symbols: `->` leads-to, `<-` triggered-by, `=>` returns, `~` approx, `∵` because, `∴` therefore, `|` or, `!` not, `!=` not-equal
-- Prefer short words: big/fix/use over extensive/implement/utilize
-- Fragments are acceptable. Technical terms and code blocks remain exact and uncompressed.
+- Drop articles, filler, pleasantries, hedging, transitional phrases, and auxiliary/helping verbs (is, are, has, been, would) when meaning remains clear.
+- Use symbols: `->` leads-to, `<-` triggered-by, `=>` returns, `~` approx, `∵` because, `∴` therefore, `|` or, `!` not, `!=` not-equal, `&` and, `+` add/addition, `-` remove/delete, `@` at/target
+- Abbreviate tech terms: cmd, param, repo, auth, dir, err, msg, diff, config, logic, env, state
+- Dense layout: Prefer short bullet lists, minimize empty lines/vertical spacing, omit all conversational headers/footers.
+- Fragments acceptable. Technical terms in code blocks remain exact and uncompressed.
 
 ## Example
 
