@@ -6,11 +6,15 @@ This prompt is implementation-only for already assigned work.
 
 ## Mandatory Skill Bootstrap
 
-Before doing anything else, invoke these skills via the `Skill` tool in this exact order:
+Before doing anything else, attempt to invoke these skills via the `Skill` tool in this exact order:
 1. `save-tokens`
 2. `tdd-implementation`
 
-Do not read files, run commands, edit code, or emit status lines until both activations succeed. If either activation fails, stop and report the failure.
+If the `Skill` tool is available, do not read files, run commands, edit code, or emit status lines until both activations complete.
+If the `Skill` tool is unavailable in this session, continue without activation and follow the equivalent behavior directly:
+- Keep communication concise as `save-tokens` intends.
+- Follow test-first discipline as `tdd-implementation` intends.
+- Emit one explicit status heartbeat noting `skill-tool-unavailable-fallback` before proceeding.
 
 Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
@@ -32,7 +36,7 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 - Do not assign agents/models or coordinate parallel execution.
 - Do not emit reviewer JSON artifacts.
 - Do not update issue trackers or runtime state records.
-- Do not use the Agent tool for task delegation or sub-agent spawning. Only invoke `tdd-implementation` and `save-tokens` via the Skill tool. No other agent or sub-agent spawning is permitted.
+- Do not use the Agent tool for task delegation or sub-agent spawning. Only `tdd-implementation` and `save-tokens` are allowed, and only when the `Skill` tool is available. No other agent or sub-agent spawning is permitted.
 
 ## Depth Guard
 
