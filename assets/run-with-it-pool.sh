@@ -141,6 +141,41 @@ PY
   fi
 }
 
+ready_missing_context_count() {
+  if [ "$JSON_PARSER" = "jq" ]; then
+    jq -r '
+      ([.issue_registry // {} | to_entries[] | select(.value.status == "completed") | .key | tonumber]) as $completed
+      | [
+          (.execution_plan.topo_order // [])[] as $issue
+          | (.issue_registry[($issue | tostring)] // {}) as $info
+          | select($info.status == "pending")
+          | select(all(($info.deps // [])[]; . as $dep | $completed | index($dep | tonumber)))
+          | select((($info.context_file // $info.sub_coord_context_file // "") | length) == 0)
+        ]
+      | length
+    ' "$STATE_FILE"
+  else
+    python3 - "$STATE_FILE" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+reg = state.get("issue_registry", {})
+completed = {int(k) for k, v in reg.items() if v.get("status") == "completed"}
+topo = state.get("execution_plan", {}).get("topo_order", [])
+count = 0
+for issue in topo:
+    info = reg.get(str(issue), {})
+    if info.get("status") != "pending":
+        continue
+    if not all(int(dep) in completed for dep in info.get("deps", [])):
+        continue
+    context_file = info.get("context_file") or info.get("sub_coord_context_file") or ""
+    if not context_file:
+        count += 1
+print(count)
+PY
+  fi
+}
+
 context_file_for() {
   if [ "$JSON_PARSER" = "jq" ]; then
     jq -r --arg issue "$1" '.issue_registry[$issue].context_file // .issue_registry[$issue].sub_coord_context_file // ""' "$STATE_FILE"
@@ -519,6 +554,32 @@ pool_get() {
   eval "printf '%s' \"\${_POOL_${key}_${issue}-}\""
 }
 
+fill_free_slots() {
+  local reason="$1"
+  local pool_size free_slots queued_issue next_batch
+  set -- $POOL_ISSUES
+  pool_size=$#
+  free_slots=$((PARALLEL_JOBS - pool_size))
+  [ "$free_slots" -gt 0 ] || return 0
+
+  next_batch="$(ready_issues "$free_slots")"
+  for queued_issue in $next_batch; do
+    spawn_issue "$queued_issue"
+    write_status "STATUS|type=pool-slot-filled|issue=${queued_issue}|freed_by=${reason}|pool_size=$(set -- $POOL_ISSUES; echo $#)"
+  done
+}
+
+LAST_WAITING_CONTEXT_COUNT=""
+
+emit_waiting_context_status() {
+  local waiting_count
+  waiting_count="$(ready_missing_context_count)"
+  if [ "$waiting_count" != "0" ] && [ "$waiting_count" != "$LAST_WAITING_CONTEXT_COUNT" ]; then
+    write_status "STATUS|type=pool-waiting-context|count=${waiting_count}|state_file=${STATE_FILE}"
+  fi
+  LAST_WAITING_CONTEXT_COUNT="$waiting_count"
+}
+
 spawn_issue() {
   local issue="$1"
   local context_file log_file done_file report_file pid
@@ -634,12 +695,10 @@ while [ -n "$POOL_ISSUES" ]; do
 	    if [ "$outcome" = "merge_recovery" ]; then
 	      run_merge_recovery "$issue"
 	    fi
-	    next_issue="$(ready_issues 1)"
-    if [ -n "$next_issue" ]; then
-      spawn_issue "$next_issue"
-      write_status "STATUS|type=pool-slot-filled|issue=${next_issue}|freed_by=${issue}|pool_size=$(set -- $POOL_ISSUES; echo $#)"
-    fi
+	    fill_free_slots "$issue"
   done
+  fill_free_slots "tick"
+  emit_waiting_context_status
 done
 
 write_status "STATUS|type=pool-empty|state_file=${STATE_FILE}"
