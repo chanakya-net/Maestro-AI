@@ -245,10 +245,10 @@
       "price_tier": "med",
       "price_input_per_1m": 1.00,
       "price_output_per_1m": 1.00,
-      "complexity_weight": 9,
+      "complexity_weight": 6,
       "context_window": 1000000,
       "strengths": ["advanced-reasoning", "agentic", "multimodal", "frontier-gemini"],
-      "_note": "Copilot subscription multiplier: 1x. Explicit selection only for harder work; automatic Gemini routing is limited to quite-easy/easy tasks."
+      "_note": "Gemini 3.1 series is weighted for medium/medium-hard routing."
     },
     "gemini-3.5-flash-medium": {
       "provider": "google",
@@ -256,7 +256,7 @@
       "price_tier": "low",
       "price_input_per_1m": 0.33,
       "price_output_per_1m": 0.33,
-      "complexity_weight": 4,
+      "complexity_weight": 6,
       "context_window": 1048576,
       "strengths": ["balanced", "fast", "multimodal"]
     },
@@ -266,7 +266,7 @@
       "price_tier": "med",
       "price_input_per_1m": 0.75,
       "price_output_per_1m": 0.75,
-      "complexity_weight": 6,
+      "complexity_weight": 8,
       "context_window": 1048576,
       "strengths": ["high-throughput", "multimodal", "fast-intelligence"]
     },
@@ -286,7 +286,7 @@
       "price_tier": "med",
       "price_input_per_1m": 1.00,
       "price_output_per_1m": 1.00,
-      "complexity_weight": 8,
+      "complexity_weight": 6,
       "context_window": 1000000,
       "strengths": ["frontier", "advanced-coding", "extended-thinking"]
     },
@@ -336,9 +336,10 @@
     "_strategy_note": "Sort candidates by (complexity_weight ASC, price_tier ASC, price_output_per_1m ASC). For Copilot models, price_* fields represent subscription multipliers from the user's available model list, not API dollars. Agent-specific routing_cost_overrides take precedence when routing is constrained to that agent; Codex and Claude models are subscription-included because those agents do not expose per-model multipliers. Take the top selection_pool_size models, then randomly pick one from that pool.",
     "provider_routing_rules": {
       "google": {
-        "max_band": "easy",
-        "automatic_routing": "easy_only",
-        "_note": "Google/Gemini models may enter the normal automatic pool only for quite-easy and easy tasks. Do not use Gemini as a last-resort fallback for medium or harder work unless explicitly selected by AGENT/MODEL overrides."
+        "automatic_routing": "all",
+        "preferred_agents": ["agy"],
+        "fallback_agents": ["agy"],
+        "_note": "Google/Gemini models may be used for any complexity band, but must be executed via AGY only. Gemini models are not eligible on GitHub Copilot."
       },
       "anthropic": {
         "automatic_routing": "all",
@@ -492,13 +493,16 @@
         "available": ["--yolo"]
       },
       "model": {
-        "default": "gemini-3.1-pro-preview",
+        "default": "gemini-3.5-flash-high",
         "flag_template": "--model {{model}}",
         "known_models": [
+          "gemini-3.5-flash-high",
+          "gemini-3.5-flash-medium",
           "gemini-3.1-pro-preview",
           "gemini-3-flash-preview",
           "gemini-3.1-flash-lite-preview"
-        ]
+        ],
+        "_note": "Gemini 3.5 is preferred over 3.1 series for quality/performance. 3.1 models remain as fallback compatibility options."
       },
       "capability_band": "balanced",
       "fallback_order": ["github-copilot", "codex", "claude"],
@@ -530,8 +534,6 @@
         "known_models": [
           "claude-haiku-4.5",
           "claude-sonnet-4.6",
-          "gemini-3-flash-preview",
-          "gemini-3.1-pro-preview",
           "gpt-5.2",
           "gpt-5.2-codex",
           "gpt-5.3-codex",
@@ -598,11 +600,11 @@
         "available": ["--dangerously-skip-permissions"]
       },
       "model": {
-        "default": "gemini-3.5-flash-medium",
+        "default": "gemini-3.5-flash-high",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "gemini-3.5-flash-medium",
           "gemini-3.5-flash-high",
+          "gemini-3.5-flash-medium",
           "gemini-3.1-pro-low",
           "gemini-3.1-pro-high",
           "claude-sonnet-4.6-thinking",
