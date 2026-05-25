@@ -90,6 +90,9 @@ Once branches are resolved, produce both files at workspace root:
    - Issue summary in plain language.
    - Observed symptoms and impact.
    - Why this issue is happening (confirmed causes first, then likely causes).
+   - Call Path Trace: ordered end-to-end execution path from trigger to symptom.
+     - Include file/function hops, key condition checks, and state transitions.
+     - Include path anchors in the form `path/to/file:line` wherever available.
    - Contributing factors and conditions that trigger the failure.
    - Evidence table (path/symbol/error snippet -> conclusion).
    - Confidence per cause and unresolved unknowns.
