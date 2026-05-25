@@ -93,18 +93,46 @@ Once branches are resolved, produce both files at workspace root:
    - Call Path Trace: ordered end-to-end execution path from trigger to symptom.
      - Include file/function hops, key condition checks, and state transitions.
      - Include path anchors in the form `path/to/file:line` wherever available.
+       - Format requirements for this section (must match this style):
+          - Use stage headers in plain language (for example: `User action`, `System handler`, `Page load`, `Render outcome`).
+          - Under each stage, use arrow hops with one step per line using `->`.
+          - Show branching conditions inline (for example: `isOfflineMode() = true -> onOfflineSubmit()`).
+          - End with a final symptom line that makes the rendered outcome explicit.
+          - Prefer a monospaced trace block so sequence is visually scannable.
    - Contributing factors and conditions that trigger the failure.
    - Evidence table (path/symbol/error snippet -> conclusion).
    - Confidence per cause and unresolved unknowns.
    - Question log: each targeted question asked, answer received, and how it changed the diagnosis.
 
 2. `debug_llm_context.md`
-   - Project architecture map relevant to this issue.
-   - Relevant libraries/dependencies and detected version context.
-   - Trace of critical call paths and data flow touching the issue.
-   - Fault surface inventory: files/modules/functions most likely requiring change.
-   - Constraints: compatibility, contracts, migration concerns, testing requirements.
-   - Implementation-ready context package an LLM can use to apply a fix.
+   - Include these section headings exactly:
+     - `Architecture Map`
+          - What it should contain: relevant modules/components/services and how they connect for this issue.
+          - Can include: a compact tree, boundaries (UI/backend/data), and ownership notes.
+     - `Critical Call Paths`
+          - What it should contain: trigger-to-symptom execution paths with key condition checks.
+          - Can include: branch variants (online/offline, feature flags, error paths).
+     - `Fault Surface Inventory`
+          - What it should contain: likely files/functions/state points that must change.
+          - Can include: per-item rationale, risk level, and expected blast radius.
+     - `Implementation Approach`
+          - What it should contain: practical fix options, preferred path, and why.
+          - Can include: minimal-diff option, safer alternative, and rollout notes.
+     - `What NOT to change`
+          - What it should contain: nearby code/contracts that must remain intact.
+          - Can include: i18n keys, shared flows, APIs, schema assumptions, and invariants.
+     - `Constraints`
+          - What it should contain: technical/product constraints that bound the fix.
+          - Can include: compatibility limits, migration constraints, performance/security rules.
+     - `Dependencies & Libraries`
+          - What it should contain: frameworks/packages involved in this issue context.
+          - Can include: versions (if known), affected tooling, and non-affected dependencies.
+     - `Test files to update`
+          - What it should contain: concrete test files and assertions to change/add.
+          - Can include: unit/integration/e2e scope and regression cases.
+   - In `Test files to update`, if no tests exist in the project or scope, write exactly: `No tests present.`
+   - Use concrete file paths/functions and line anchors when available.
+   - Keep recommendations implementation-ready so another LLM can apply a safe fix directly.
 
 After writing both files:
 
