@@ -16,6 +16,7 @@ Core flow:
 3. `run-with-it` schedules ready issues, routes work to suitable agents/models, and coordinates execution.
 4. `tdd-implementation` guides assigned implementation with red-green-refactor discipline.
 5. `save-tokens` compresses assistant narration for long sessions.
+6. `help-me-debug` performs deep diagnosis and generates human/LLM debugging reports.
 
 ## Repository Structure
 
@@ -52,6 +53,7 @@ AI-Skills/
 ├── skills/
 │   ├── break-req/SKILL.md
 │   ├── create-git-issue/SKILL.md
+│   ├── help-me-debug/SKILL.md
 │   ├── run-with-it/SKILL.md
 │   ├── save-tokens/SKILL.md
 │   └── tdd-implementation/SKILL.md
@@ -59,6 +61,7 @@ AI-Skills/
     ├── add-two-numbers.test.sh
     ├── break-req-contract.test.sh
     ├── create-git-issue-routing.test.sh
+    ├── help-me-debug-contract.test.sh
     ├── install-assets-contract.test.sh
     ├── run-agent-status-bus.test.sh
     ├── run-agent.test.sh
@@ -77,6 +80,7 @@ AI-Skills/
 |-------|---------|
 | [`break-req`](skills/break-req/SKILL.md) | Requirements discovery, dependency mapping, and technical constraint capture before planning. |
 | [`create-git-issue`](skills/create-git-issue/SKILL.md) | Creates a PRD and dependency-aware tracer-bullet implementation issues. |
+| [`help-me-debug`](skills/help-me-debug/SKILL.md) | Deep diagnosis workflow that produces human-readable and LLM-ready root-cause reports. |
 | [`run-with-it`](skills/run-with-it/SKILL.md) | Final runtime authority for issue scheduling, routing, execution coordination, merge recovery, and closure. |
 | [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Test-first implementation workflow using red-green-refactor and behavior-focused tests. |
 | [`save-tokens`](skills/save-tokens/SKILL.md) | Ultra-compressed assistant narration mode for lower token usage. |

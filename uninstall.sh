@@ -11,7 +11,7 @@ set -euo pipefail
 REPO="chanakya-net/AI-Skills"
 ASSETS_DEST="${ASSETS_DEST:-$HOME/.ai-skill-collections/assets}"
 DEFAULT_ASSETS_ROOT="$HOME/.ai-skill-collections"
-SKILL_NAMES=("break-req" "create-git-issue" "run-with-it" "save-tokens" "tdd-implementation")
+SKILL_NAMES=("break-req" "create-git-issue" "help-me-debug" "run-with-it" "save-tokens" "tdd-implementation")
 SKILL_ROOTS=("$HOME/.agents/skills" "$HOME/.codex/skills" "$HOME/.Codex/skills")
 
 DRY=0

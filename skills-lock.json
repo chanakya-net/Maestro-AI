@@ -13,6 +13,12 @@
       "skillPath": "skills/create-git-issue/SKILL.md",
       "computedHash": "6d370b7ee97af56239f59e5900ab09e8c4ff75c7fae76cfe9e37b2b3a77d4989"
     },
+    "help-me-debug": {
+      "source": "chanakya-net/AI-Skills",
+      "sourceType": "github",
+      "skillPath": "skills/help-me-debug/SKILL.md",
+      "computedHash": "dc8909d271c46dcd4ec16342996bc51c0d6ff500c5e78e1d533d841738cad417"
+    },
     "run-with-it": {
       "source": "chanakya-net/AI-Skills",
       "sourceType": "github",

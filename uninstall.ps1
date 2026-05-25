@@ -17,7 +17,7 @@ param(
 $REPO = "chanakya-net/AI-Skills"
 $ASSETS_DEST = if ($env:ASSETS_DEST) { $env:ASSETS_DEST } else { "$env:USERPROFILE\.ai-skill-collections\assets" }
 $DEFAULT_ASSETS_ROOT = "$env:USERPROFILE\.ai-skill-collections"
-$SKILL_NAMES = @("break-req", "create-git-issue", "run-with-it", "save-tokens", "tdd-implementation")
+$SKILL_NAMES = @("break-req", "create-git-issue", "help-me-debug", "run-with-it", "save-tokens", "tdd-implementation")
 $SKILL_ROOTS = @("$env:USERPROFILE\.agents\skills", "$env:USERPROFILE\.codex\skills", "$env:USERPROFILE\.Codex\skills")
 
 $REMOVED = [System.Collections.Generic.List[string]]::new()
