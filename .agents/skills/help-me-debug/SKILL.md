@@ -58,6 +58,8 @@ Do read-only exploration aggressively. Default to deep analysis.
 4. If gaps remain, ask exactly one targeted question at a time.
    - Every question must directly reduce diagnosis uncertainty.
    - After each answer, continue deep exploration before asking another question.
+   - If any unresolved unknown is answerable by the user (policy, UX intent, business rule, expected output), you must ask at least one targeted question before finalizing.
+   - Do not finalize while human-answerable unknowns remain unasked.
 5. Resolve diagnosis branches across layers:
    - **UI/runtime behavior**: state, rendering, user flow, client-side dependencies.
    - **Backend/service behavior**: API contracts, service boundaries, retries/timeouts, error handling.
@@ -65,7 +67,12 @@ Do read-only exploration aggressively. Default to deep analysis.
    - **Dependency/configuration**: package or library interactions, version constraints, feature flags, env vars.
    - **Architecture interactions**: module boundaries, side effects, async boundaries, orchestration flow.
 6. For every candidate cause, assign a confidence level (`high`, `medium`, `low`) and cite evidence.
-7. Stop only after diagnosis is sufficiently complete to support a safe implementation handoff.
+7. Before finalization, run a completion gate:
+   - List unresolved unknowns.
+   - For each unknown, classify as `human-answerable` or `not-currently-answerable`.
+   - Ask one targeted question for the highest-impact `human-answerable` unknown.
+   - Continue until no high-impact `human-answerable` unknowns remain.
+8. Stop only after diagnosis is sufficiently complete to support a safe implementation handoff.
 
 ## Outputs
 
@@ -78,6 +85,7 @@ Once branches are resolved, produce both files at workspace root:
    - Contributing factors and conditions that trigger the failure.
    - Evidence table (path/symbol/error snippet -> conclusion).
    - Confidence per cause and unresolved unknowns.
+   - Question log: each targeted question asked, answer received, and how it changed the diagnosis.
 
 2. `debug_llm_context.md`
    - Project architecture map relevant to this issue.

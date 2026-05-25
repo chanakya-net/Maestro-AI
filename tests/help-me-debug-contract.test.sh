@@ -26,6 +26,8 @@ assert_contains 'Never implement code, edit product files, create issues, publis
 assert_contains 'The only files this skill may create or update are `debug_human_report.md` and `debug_llm_context.md`.' "limits writable outputs"
 assert_contains 'Walk this diagnosis decision tree in order:' "requires explicit diagnosis decision tree"
 assert_contains 'If gaps remain, ask exactly one targeted question at a time.' "requires single-question clarification loop"
+assert_contains 'If any unresolved unknown is answerable by the user (policy, UX intent, business rule, expected output), you must ask at least one targeted question before finalizing.' "requires mandatory human-answerable clarification"
+assert_contains 'Before finalization, run a completion gate:' "requires completion gate before report finalization"
 assert_contains 'Inform the user the diagnosis package is ready and they can pass `debug_llm_context.md` to an implementation LLM.' "defines handoff guidance"
 assert_contains 'Do not proceed beyond report generation, even if a fix is obvious.' "requires hard stop after outputs"
 
