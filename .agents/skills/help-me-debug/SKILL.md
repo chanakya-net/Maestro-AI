@@ -58,6 +58,8 @@ Do read-only exploration aggressively. Default to deep analysis.
 4. If gaps remain, ask exactly one targeted question at a time.
    - Every question must directly reduce diagnosis uncertainty.
    - After each answer, continue deep exploration before asking another question.
+   - After asking a targeted question, pause and wait for the user's answer before proceeding.
+   - Do not continue investigation finalization or report generation while the question is pending.
    - If any unresolved unknown is answerable by the user (policy, UX intent, business rule, expected output), you must ask at least one targeted question before finalizing.
    - Do not finalize while human-answerable unknowns remain unasked.
 5. Resolve diagnosis branches across layers:
@@ -71,10 +73,16 @@ Do read-only exploration aggressively. Default to deep analysis.
    - List unresolved unknowns.
    - For each unknown, classify as `human-answerable` or `not-currently-answerable`.
    - Ask one targeted question for the highest-impact `human-answerable` unknown.
+   - If a question is unanswered (`pending`), stop and wait; do not write final artifacts yet.
    - Continue until no high-impact `human-answerable` unknowns remain.
 8. Stop only after diagnosis is sufficiently complete to support a safe implementation handoff.
 
 ## Outputs
+
+Output precondition:
+
+- No targeted clarification question is in `pending` state.
+- If a targeted question is pending, respond with `Awaiting user answer: <question>` and stop.
 
 Once branches are resolved, produce both files at workspace root:
 

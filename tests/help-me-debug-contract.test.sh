@@ -26,8 +26,12 @@ assert_contains 'Never implement code, edit product files, create issues, publis
 assert_contains 'The only files this skill may create or update are `debug_human_report.md` and `debug_llm_context.md`.' "limits writable outputs"
 assert_contains 'Walk this diagnosis decision tree in order:' "requires explicit diagnosis decision tree"
 assert_contains 'If gaps remain, ask exactly one targeted question at a time.' "requires single-question clarification loop"
+assert_contains 'After asking a targeted question, pause and wait for the user'"'"'s answer before proceeding.' "requires explicit wait for user answer"
+assert_contains 'Do not continue investigation finalization or report generation while the question is pending.' "prevents proceeding while clarification is pending"
 assert_contains 'If any unresolved unknown is answerable by the user (policy, UX intent, business rule, expected output), you must ask at least one targeted question before finalizing.' "requires mandatory human-answerable clarification"
 assert_contains 'Before finalization, run a completion gate:' "requires completion gate before report finalization"
+assert_contains 'If a question is unanswered (`pending`), stop and wait; do not write final artifacts yet.' "blocks final artifacts when question remains unanswered"
+assert_contains 'If a targeted question is pending, respond with `Awaiting user answer: <question>` and stop.' "requires explicit pending-response behavior"
 assert_contains 'Inform the user the diagnosis package is ready and they can pass `debug_llm_context.md` to an implementation LLM.' "defines handoff guidance"
 assert_contains 'Do not proceed beyond report generation, even if a fix is obvious.' "requires hard stop after outputs"
 
