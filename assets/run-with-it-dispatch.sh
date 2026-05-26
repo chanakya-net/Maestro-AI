@@ -163,6 +163,120 @@ json_nullable_string() {
   fi
 }
 
+is_implementation_role() {
+  [ "$ROLE" = "impl" ] || [ "$ROLE" = "modify" ]
+}
+
+repo_root_for_worker() {
+  printf '%s\n' "${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}"
+}
+
+implementation_result_field() {
+  local field="$1"
+  python3 - "$RESULT_FILE" "$field" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+value = payload.get(field)
+if value is None:
+    raise SystemExit(1)
+print(value)
+PY
+}
+
+implementation_result_json_valid() {
+  python3 - "$RESULT_FILE" "$ISSUE" "$ROLE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+path, issue, role = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "r", encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+if str(payload.get("issue")) != str(issue):
+    raise SystemExit(1)
+if payload.get("role") != role:
+    raise SystemExit(1)
+if payload.get("status") != "success":
+    raise SystemExit(1)
+commit_sha = payload.get("commit_sha")
+if not isinstance(commit_sha, str) or not commit_sha or commit_sha == "NONE":
+    raise SystemExit(1)
+files_committed = payload.get("files_committed")
+if not isinstance(files_committed, list) or not files_committed:
+    raise SystemExit(1)
+verification = payload.get("verification")
+if not isinstance(verification, dict):
+    raise SystemExit(1)
+PY
+}
+
+result_artifact_failure_reason() {
+  local repo_root commit_sha current_head
+
+  if [ ! -s "$RESULT_FILE" ]; then
+    printf 'missing-result-artifact\n'
+    return 0
+  fi
+
+  if ! is_implementation_role; then
+    return 0
+  fi
+
+  if ! implementation_result_json_valid; then
+    printf 'invalid-result-artifact\n'
+    return 0
+  fi
+
+  repo_root="$(repo_root_for_worker)"
+  if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf 'implementation-repo-unavailable\n'
+    return 0
+  fi
+
+  commit_sha="$(implementation_result_field commit_sha || true)"
+  current_head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+  if [ -z "$current_head" ] || [ "$current_head" != "$commit_sha" ]; then
+    printf 'commit-outside-issue-worktree\n'
+    return 0
+  fi
+
+  if [ -n "${pre_spawn_head:-}" ] && [ "$commit_sha" = "$pre_spawn_head" ]; then
+    printf 'missing-implementation-commit\n'
+    return 0
+  fi
+}
+
+completion_failure_reason() {
+  local result_reason
+
+  if [ ! -s "$DONE_FILE" ]; then
+    printf 'missing-done-sentinel\n'
+    return 0
+  fi
+
+  result_reason="$(result_artifact_failure_reason)"
+  if [ -n "$result_reason" ]; then
+    printf '%s\n' "$result_reason"
+  fi
+}
+
+completion_ready() {
+  local reason
+
+  if [ ! -s "$DONE_FILE" ]; then
+    return 1
+  fi
+
+  reason="$(result_artifact_failure_reason)"
+  [ -z "$reason" ]
+}
+
 file_mtime_epoch() {
   local file="$1"
   if [ ! -e "$file" ]; then
@@ -291,10 +405,15 @@ if [ -n "$CYCLE" ]; then
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
-  printf 'GUI_MODE=0 AGENT_REGISTRY_FILE=%s REPO_ROOT=%s RUN_WITH_IT_ISSUE_DIR=%s RUN_WITH_IT_STATUS_FILE=%s RUN_WITH_IT_EVENTS_LOG=%s RUN_WITH_IT_LOG_FILE=%s RUN_WITH_IT_DONE_FILE=%s RUN_WITH_IT_STATE_FILE=%s RUN_WITH_IT_ROLE=%s RUN_WITH_IT_ISSUE=%s %s --agent %s --model %s --context-file %s --prompt-file %s --unattended\n' \
-    "$REGISTRY_FILE" "${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}" "$ISSUE_DIR" "$STATUS_FILE" "$EVENTS_LOG" "$LOG_FILE" "$DONE_FILE" "$STATE_FILE" "$ROLE" "$ISSUE" \
+  printf 'GUI_MODE=0 AGENT_REGISTRY_FILE=%s REPO_ROOT=%s RUN_WITH_IT_ISSUE_DIR=%s RUN_WITH_IT_STATUS_FILE=%s RUN_WITH_IT_EVENTS_LOG=%s RUN_WITH_IT_LOG_FILE=%s RUN_WITH_IT_DONE_FILE=%s RUN_WITH_IT_RESULT_FILE=%s RUN_WITH_IT_STATE_FILE=%s RUN_WITH_IT_ROLE=%s RUN_WITH_IT_ISSUE=%s %s --agent %s --model %s --context-file %s --prompt-file %s --unattended\n' \
+    "$REGISTRY_FILE" "$(repo_root_for_worker)" "$ISSUE_DIR" "$STATUS_FILE" "$EVENTS_LOG" "$LOG_FILE" "$DONE_FILE" "$RESULT_FILE" "$STATE_FILE" "$ROLE" "$ISSUE" \
     "$RUN_AGENT" "$AGENT_NAME" "$MODEL_NAME" "$CONTEXT_FILE" "$PROMPT_FILE"
   exit 0
+fi
+
+pre_spawn_head=""
+if is_implementation_role && git -C "$(repo_root_for_worker)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  pre_spawn_head="$(git -C "$(repo_root_for_worker)" rev-parse HEAD 2>/dev/null || true)"
 fi
 
 started_at="$(date +%s)"
@@ -322,12 +441,13 @@ write_worker_state "starting" "false"
 
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$REGISTRY_FILE" \
-REPO_ROOT="${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}" \
+REPO_ROOT="$(repo_root_for_worker)" \
 RUN_WITH_IT_ISSUE_DIR="$ISSUE_DIR" \
 RUN_WITH_IT_STATUS_FILE="$STATUS_FILE" \
 RUN_WITH_IT_EVENTS_LOG="$EVENTS_LOG" \
 RUN_WITH_IT_LOG_FILE="$LOG_FILE" \
 RUN_WITH_IT_DONE_FILE="$DONE_FILE" \
+RUN_WITH_IT_RESULT_FILE="$RESULT_FILE" \
 RUN_WITH_IT_STATE_FILE="$STATE_FILE" \
 RUN_WITH_IT_ROLE="$ROLE" \
 RUN_WITH_IT_ISSUE="$ISSUE" \
@@ -357,7 +477,7 @@ while true; do
     --tail-state-file "$TAIL_STATE_FILE" \
     --tail-lines "${WORKER_LOG_TAIL_LINES:-5}" >/dev/null || true
 
-  if [ -s "$DONE_FILE" ] && [ -s "$RESULT_FILE" ]; then
+  if completion_ready; then
     alive=false
     if kill -0 "$pid" 2>/dev/null; then alive=true; fi
     write_worker_state "completed" "$alive"
@@ -370,13 +490,17 @@ while true; do
     wait "$pid" 2>/dev/null
     exit_code="$?"
     set -e
-    if [ -s "$DONE_FILE" ] && [ -s "$RESULT_FILE" ]; then
+    if completion_ready; then
       write_worker_state "completed" "false" "$exit_code"
       write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
       exit 0
     fi
-    write_worker_state "failed" "false" "$exit_code" "process-exited-missing-done-or-result"
-    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=missing-done-or-result|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+    failure_reason="$(completion_failure_reason)"
+    if [ -z "$failure_reason" ]; then
+      failure_reason="process-exited-missing-done-or-result"
+    fi
+    write_worker_state "failed" "false" "$exit_code" "$failure_reason"
+    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${failure_reason}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
     exit 1
   fi
 
