@@ -240,7 +240,7 @@ If any required file from Asset Discovery is missing at the resolved asset root,
 
 ## Initial Batch Issue Fetch
 
-If issue data is missing in context, fetch all `ready-for-agent` issues at startup.
+If issue data is missing in context, fetch only open issues with the configured intake label (`ready-for-agent` by default) at startup.
 
 Use `ISSUE_LIMIT` (default `1000`) as the `--limit` argument — this fetches all matching issues by default. Do not cap the result unless the user explicitly sets `ISSUE_LIMIT` to a lower value.
 
@@ -264,13 +264,16 @@ Before fetching work begins, create the shared run feature branch:
 
 After fetching all issues:
 
-1. Build a dependency graph: for each issue, identify which other issues it depends on from `## Blocked by`, issue body, labels, or cross-references. `## Blocked by` is the primary source of truth. Normalize `#123`, full GitHub issue URLs, and plain issue numbers. Treat `None - can start immediately` as no dependencies.
-2. Detect cycles and unresolved dependencies; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
-3. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
-4. Issues whose dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
-5. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
-6. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
-7. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
+1. Filter the fetched issue set before planning: every executable issue must have the configured intake label (`ready-for-agent` by default). Do not add unlabelled issues, PRD/parent issues, `needs-triage` issues, or issues discovered only through cross-references to `main-state.json`.
+2. Build a dependency graph only from each executable issue's `## Blocked by` section. Normalize `#123`, full GitHub issue URLs, and plain issue numbers. Treat `None - can start immediately` as no dependencies.
+3. Treat PRD/parent references as context, not dependencies. Ignore issue references from `## Parent`, titles such as `PRD: ...`, labels such as `needs-triage`, and incidental issue links elsewhere in the body when computing `deps`.
+4. A dependency is actionable only if it points to another fetched executable issue in the same intake set. If `## Blocked by` names a PRD/parent issue or an issue outside the intake set, ignore it and record the ignored reference in `dependency_proof` as non-blocking context rather than marking the issue blocked.
+5. Detect cycles and unresolved dependencies among executable issues only; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
+6. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
+7. Issues whose executable dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
+8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
+9. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
+10. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
 ## Main Orchestrator Loop
 

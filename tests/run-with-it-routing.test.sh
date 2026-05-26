@@ -118,6 +118,13 @@ assert_contains 'SUB_COORD_MODEL' "documents sub-coordinator model override"
 # State file schemas
 assert_contains 'main-state.json' "documents main-state schema"
 assert_contains '"status"' "documents status field in state schema"
+assert_contains 'every executable issue must have the configured intake label (`ready-for-agent` by default)' "documents label-gated executable issue intake"
+assert_contains 'Do not add unlabelled issues, PRD/parent issues, `needs-triage` issues, or issues discovered only through cross-references to `main-state.json`.' "excludes PRD and cross-reference-only issues from execution plan"
+assert_contains 'Build a dependency graph only from each executable issue'\''s `## Blocked by` section.' "limits dependency parsing to Blocked by section"
+assert_contains 'Treat PRD/parent references as context, not dependencies.' "documents PRD parent references are non-blocking"
+assert_contains 'A dependency is actionable only if it points to another fetched executable issue in the same intake set.' "documents dependencies must be executable intake issues"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" '`issue_registry` must contain only executable intake issues with the configured intake label (`ready-for-agent` by default).' "runtime rules enforce ready-for-agent-only registry"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'PRD/parent references are non-blocking context and must not prevent dispatch.' "runtime rules enforce PRD references are non-blocking"
 
 # Resume
 assert_contains 'Resume Flow' "documents resume flow"

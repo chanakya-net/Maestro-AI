@@ -59,6 +59,9 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Write `main-state.json` to disk after every state change: before spawn, after report read, after GitHub update.
 - Never keep unwritten state in memory. If compressed mid-write, re-read from disk to recover.
 - The `completed_summaries` array is the only tolerated accumulation; it grows by one compact entry per issue. Never store full diffs, reviewer JSONs, or code in `main-state.json`.
+- `issue_registry` must contain only executable intake issues with the configured intake label (`ready-for-agent` by default). Do not add PRD/parent issues, `needs-triage` issues, unlabelled issues, or issues discovered only through cross-references.
+- Compute `deps` only from an executable issue's `## Blocked by` section. Ignore `## Parent`, PRD references, `needs-triage` references, and incidental links elsewhere in the body when deciding readiness.
+- A blocker is actionable only when it points to another fetched executable issue in the same intake set. PRD/parent references are non-blocking context and must not prevent dispatch.
 
 ## Execution Rules
 
