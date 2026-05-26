@@ -241,7 +241,7 @@ $cycleField = if ($Cycle) { "|cycle=$Cycle" } else { "" }
 
 if ($DryRun) {
     $repoRootValue = if ($RepoRoot) { $RepoRoot } elseif ($env:REPO_ROOT) { $env:REPO_ROOT } else { (Get-Location).Path }
-    Write-Output "GUI_MODE=0 AGENT_REGISTRY_FILE=$RegistryFile REPO_ROOT=$repoRootValue RUN_WITH_IT_ISSUE_DIR=$IssueDir RUN_WITH_IT_STATUS_FILE=$StatusFile RUN_WITH_IT_EVENTS_LOG=$EventsLog RUN_WITH_IT_LOG_FILE=$LogFile RUN_WITH_IT_DONE_FILE=$DoneFile RUN_WITH_IT_STATE_FILE=$StateFile RUN_WITH_IT_ROLE=$Role RUN_WITH_IT_ISSUE=$Issue $RunAgent --agent $Agent --model $Model --context-file $ContextFile --prompt-file $PromptFile --unattended"
+    Write-Output "GUI_MODE=0 AGENT_REGISTRY_FILE=$RegistryFile REPO_ROOT=$repoRootValue RUN_WITH_IT_ISSUE_DIR=$IssueDir RUN_WITH_IT_STATUS_FILE=$StatusFile RUN_WITH_IT_EVENTS_LOG=$EventsLog RUN_WITH_IT_LOG_FILE=$LogFile RUN_WITH_IT_DONE_FILE=$DoneFile RUN_WITH_IT_RESULT_FILE=$ResultFile RUN_WITH_IT_STATE_FILE=$StateFile RUN_WITH_IT_ROLE=$Role RUN_WITH_IT_ISSUE=$Issue $RunAgent --agent $Agent --model $Model --context-file $ContextFile --prompt-file $PromptFile --unattended"
     exit 0
 }
 
@@ -288,6 +288,7 @@ foreach ($name in @(
     "RUN_WITH_IT_EVENTS_LOG",
     "RUN_WITH_IT_LOG_FILE",
     "RUN_WITH_IT_DONE_FILE",
+    "RUN_WITH_IT_RESULT_FILE",
     "RUN_WITH_IT_STATE_FILE",
     "RUN_WITH_IT_ROLE",
     "RUN_WITH_IT_ISSUE"
@@ -304,6 +305,7 @@ try {
     $env:RUN_WITH_IT_EVENTS_LOG = $EventsLog
     $env:RUN_WITH_IT_LOG_FILE = $LogFile
     $env:RUN_WITH_IT_DONE_FILE = $DoneFile
+    $env:RUN_WITH_IT_RESULT_FILE = $ResultFile
     $env:RUN_WITH_IT_STATE_FILE = $StateFile
     $env:RUN_WITH_IT_ROLE = $Role
     $env:RUN_WITH_IT_ISSUE = $Issue

@@ -130,6 +130,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_ISSUE_DIR` | `.run-with-it/issues/<n>` | Issue-scoped artifact folder created by the Sub-Coordinator/pool |
 | `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/issues/<n>/sub-coordinator.log`; workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log` |
 | `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done` |
+| `RUN_WITH_IT_RESULT_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json` |
 | `RUN_WITH_IT_STATE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`; dispatcher-maintained watchdog state |
 | `AGENT` | — | Routing override passed through to Sub-Coordinators |
 | `MODEL` | — | Routing override passed through to Sub-Coordinators |

@@ -48,9 +48,10 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
 - Spawn every worker through the platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`), which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, state-file, and monitoring contract through `worker-watch.sh` / `worker-watch.ps1`.
-- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
+- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_RESULT_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
 - Set each worker's `RUN_WITH_IT_LOG_FILE` to an issue-scoped path such as `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log`.
 - Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
+- Set each worker's `RUN_WITH_IT_RESULT_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
 - Set each worker's `RUN_WITH_IT_STATE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`.
 
 ## Progress Monitoring Rules

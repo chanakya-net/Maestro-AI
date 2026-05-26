@@ -153,6 +153,7 @@ dry_output="$("$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -StatusFile "$STATUS_FILE" \
   -EventsLog "$EVENTS_LOG")"
 assert_contains "$dry_output" "RUN_WITH_IT_STATE_FILE=${STATE_FILE}" "dry-run sets state file"
+assert_contains "$dry_output" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run sets result file"
 assert_contains "$dry_output" "run-agent.ps1" "dry-run wraps run-agent.ps1"
 
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \

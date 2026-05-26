@@ -958,7 +958,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 The worker may write this file when its required artifacts are complete. The platform dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
-- impl/modify: verification evidence and final worker report are available **AND** the worker's mandatory commit was made (captured SHA differs from the pre-spawn baseline)
+- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`)
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON
 
 When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.

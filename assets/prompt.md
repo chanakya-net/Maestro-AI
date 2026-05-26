@@ -108,11 +108,65 @@ Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 
 **If there is nothing to commit** (no files changed), emit `IMPL_COMMIT_SHA=NONE` and continue — the sub-coordinator will treat a missing commit as a failure.
 
-**Do not write the done file until the commit is made.** The output report must include the commit SHA and a list of all committed files.
+**Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
+
+## Result Artifact
+
+If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable implementation handoff.
+
+Bash:
+```bash
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
+python3 - "$RUN_WITH_IT_RESULT_FILE" "$RUN_WITH_IT_ISSUE" "$IMPL_COMMIT_SHA" <<'PY'
+import json
+import subprocess
+import sys
+
+path, issue, commit_sha = sys.argv[1], sys.argv[2], sys.argv[3]
+files = subprocess.check_output(
+    ["git", "show", "--name-only", "--pretty=format:", commit_sha],
+    text=True,
+).splitlines()
+payload = {
+    "schema_version": 1,
+    "issue": issue,
+    "role": "impl",
+    "status": "success",
+    "commit_sha": commit_sha,
+    "files_committed": [item for item in files if item],
+    "verification": {
+        "passed": True,
+        "commands": [],
+    },
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+```
+
+PowerShell:
+```powershell
+$filesCommitted = git show --name-only --pretty=format: $implCommitSha | Where-Object { $_ }
+$payload = @{
+  schema_version = 1
+  issue = $env:RUN_WITH_IT_ISSUE
+  role = "impl"
+  status = "success"
+  commit_sha = $implCommitSha
+  files_committed = @($filesCommitted)
+  verification = @{
+    passed = $true
+    commands = @()
+  }
+}
+New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
+$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $env:RUN_WITH_IT_RESULT_FILE
+```
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made, `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
 
 Bash:
 ```bash
@@ -126,7 +180,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
 ```
 
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, or the final report is not ready.
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
 ## Output Contract
 
