@@ -16,7 +16,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Execution Rules
 
-- Never implement work directly in this session. All implementation must be done by worker-agents spawned via `run-with-it-dispatch.sh`, which wraps `run-agent.sh` using prompt.md (implementer), review-prompt.md (reviewer), or modifier-prompt.md (modifier).
+- Never implement work directly in this session. All implementation must be done by worker-agents spawned via the platform dispatcher (`run-with-it-dispatch.sh` on Bash, `run-with-it-dispatch.ps1` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1` using prompt.md (implementer), review-prompt.md (reviewer), or modifier-prompt.md (modifier).
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS/heartbeat line to `$SUB_COORD_LOG_FILE`, print to console, and forget each line.
@@ -47,7 +47,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Spawn exactly one implementer worker-agent per implementation pass.
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
-- Spawn every worker through `run-with-it-dispatch.sh`, which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, and monitoring contract.
+- Spawn every worker through the platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`), which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, state-file, and monitoring contract through `worker-watch.sh` / `worker-watch.ps1`.
 - Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
 - Set each worker's `RUN_WITH_IT_LOG_FILE` to an issue-scoped path such as `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log`.
 - Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
@@ -79,7 +79,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Sandbox Rules
 
-- If `run-with-it-dispatch.sh` / `run-agent.sh` fails due to sandbox restrictions, use the current tool's explicit approved permission-escalation flow when available, then retry the same invocation before counting it as a failure.
+- If the platform dispatcher or runner (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` / `run-agent.sh` / `run-agent.ps1`) fails due to sandbox restrictions, use the current tool's explicit approved permission-escalation flow when available, then retry the same invocation before counting it as a failure.
 - Sandbox failures do not consume the fallback budget. Only failures after an approved retry, or failures where permission escalation is unavailable, count.
 
 ## Resume Rules

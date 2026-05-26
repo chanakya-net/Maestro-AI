@@ -17,7 +17,7 @@ Before any other action (including reading files, routing, spawning workers, or 
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
 These rules apply for the entire lifetime of this session:
 
-- **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via `run-with-it-dispatch.sh`, which wraps `run-agent.sh`. There is no "implement in this chat" fallback option.
+- **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via the platform dispatcher (`run-with-it-dispatch.sh` on Bash, `run-with-it-dispatch.ps1` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1`. There is no "implement in this chat" fallback option.
 - **Never run tests, build commands, or compile the project.** The implementing agent runs verification; you only read results from the agent's output report.
 - **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately after routing completes.
 - **Never present execution option menus.**
@@ -85,7 +85,7 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `run-with-it-dispatch.sh`, `worker-watch.sh`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `run-with-it-dispatch.sh`, `run-with-it-dispatch.ps1`, `worker-watch.sh`, `worker-watch.ps1`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
 
 ## Issue Worktree Bootstrap
 
@@ -116,7 +116,7 @@ cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 **Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
 - before complexity sub-agent spawn
 - before routing
-- before each `run-with-it-dispatch.sh` invocation
+- before each `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` invocation
 - before each review cycle step
 - before writing the final report
 
@@ -150,7 +150,7 @@ Start every worker as a monitored background process. After spawning a backgroun
 1. `RUN_WITH_IT_DONE_FILE` exists and the role-specific artifacts are valid, or
 2. the process exits without valid artifacts.
 
-Every Bash worker launch must use `run-with-it-dispatch.sh` so the Sub-Coordinator and Main Orchestrator share the same launch and monitor contract. The dispatcher wraps `run-agent.sh`, forwards the `RUN_WITH_IT_*` environment, captures the child PID, writes dispatch status lines, and monitors with `assets/worker-watch.sh`.
+Every worker launch must use the platform dispatcher so the Sub-Coordinator and Main Orchestrator share the same launch and monitor contract. The dispatcher wraps `run-agent.sh` / `run-agent.ps1`, forwards the `RUN_WITH_IT_*` environment, captures the child PID, writes dispatch status lines, and monitors with `assets/worker-watch.sh` / `assets/worker-watch.ps1`.
 
 Every Bash worker launch must follow this shape:
 
@@ -183,6 +183,45 @@ WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.j
   --stall-seconds "$WORKER_STALL_SECONDS" &
 
 WORKER_PID=$!
+```
+
+Every native PowerShell worker launch must follow this shape and keep all artifacts under `.run-with-it\issues\<n>\workers\<role>`:
+
+```powershell
+$WORKER_POLL_SECONDS = if ($env:WORKER_POLL_SECONDS) { $env:WORKER_POLL_SECONDS } else { "20" }
+$WORKER_QUIET_SECONDS = if ($env:WORKER_QUIET_SECONDS) { $env:WORKER_QUIET_SECONDS } else { "120" }
+$WORKER_STALL_SECONDS = if ($env:WORKER_STALL_SECONDS) { $env:WORKER_STALL_SECONDS } else { "300" }
+$RUN_WITH_IT_ISSUE_DIR = if ($env:RUN_WITH_IT_ISSUE_DIR) { $env:RUN_WITH_IT_ISSUE_DIR } else { Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "issues") $env:SUB_COORD_ISSUE_NUMBER }
+$IMPL_WORKER_DIR = Join-Path (Join-Path $RUN_WITH_IT_ISSUE_DIR "workers") "impl"
+$IMPL_LOG_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).log"
+$IMPL_DONE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).done"
+$IMPL_RESULT_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE)-result.json"
+$WORKER_STATE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).state.json"
+New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
+$WORKER_PROCESS = Start-Process -FilePath "powershell" -ArgumentList @(
+  "-NoProfile", "-File", (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1"),
+  "-AssetRoot", $ASSET_ROOT,
+  "-Role", "impl",
+  "-Issue", $env:SUB_COORD_ISSUE_NUMBER,
+  "-Cycle", $env:CYCLE,
+  "-Agent", $AGENT,
+  "-Model", $MODEL,
+  "-ContextFile", $CONTEXT_PAYLOAD_FILE,
+  "-PromptFile", (Join-Path $ASSET_ROOT "prompt.md"),
+  "-LogFile", $IMPL_LOG_FILE,
+  "-DoneFile", $IMPL_DONE_FILE,
+  "-ResultFile", $IMPL_RESULT_FILE,
+  "-StateFile", $WORKER_STATE_FILE,
+  "-RepoRoot", $ISSUE_WORKTREE_PATH,
+  "-IssueDir", $RUN_WITH_IT_ISSUE_DIR,
+  "-StatusFile", $env:RUN_WITH_IT_STATUS_FILE,
+  "-EventsLog", $env:RUN_WITH_IT_EVENTS_LOG,
+  "-PollSeconds", $WORKER_POLL_SECONDS,
+  "-QuietSeconds", $WORKER_QUIET_SECONDS,
+  "-StallSeconds", $WORKER_STALL_SECONDS
+) -PassThru
+# Foreground/debug equivalent: -StateFile $WORKER_STATE_FILE
+$WORKER_PID = $WORKER_PROCESS.Id
 ```
 
 Immediately after `WORKER_PID=$!`, write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with the captured dispatcher PID, role, cycle, agent, model, log file, done file, result file, state file, and started timestamp before monitoring begins.
@@ -295,14 +334,28 @@ Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `
 
 PowerShell (Windows):
 ```powershell
-$COMPLEXITY_CONTEXT_PAYLOAD_FILE = ".run-with-it\complexity\issue-$env:SUB_COORD_ISSUE_NUMBER-complexity-context.md"
-$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
-$env:RUN_WITH_IT_ROLE = "complexity"
-$env:RUN_WITH_IT_ISSUE = $env:SUB_COORD_ISSUE_NUMBER
-$env:RUN_WITH_IT_LOG_FILE = ".run-with-it\complexity\issue-$env:SUB_COORD_ISSUE_NUMBER-complexity.log"
-$env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-$env:SUB_COORD_ISSUE_NUMBER-complexity.done"
-& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $COMPLEXITY_CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\complexity-prompt.md" --unattended
+$COMPLEXITY_WORKER_DIR = Join-Path (Join-Path $RUN_WITH_IT_ISSUE_DIR "workers") "complexity"
+$COMPLEXITY_LOG_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1.log"
+$COMPLEXITY_DONE_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1.done"
+$COMPLEXITY_RESULT_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1-result.json"
+$COMPLEXITY_STATE_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1.state.json"
+New-Item -ItemType Directory -Force -Path $COMPLEXITY_WORKER_DIR | Out-Null
+& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+  -AssetRoot $ASSET_ROOT `
+  -Role complexity `
+  -Issue $env:SUB_COORD_ISSUE_NUMBER `
+  -Cycle 1 `
+  -Agent $AGENT `
+  -Model $MODEL `
+  -ContextFile $COMPLEXITY_CONTEXT_PAYLOAD_FILE `
+  -PromptFile (Join-Path $ASSET_ROOT "complexity-prompt.md") `
+  -LogFile $COMPLEXITY_LOG_FILE `
+  -DoneFile $COMPLEXITY_DONE_FILE `
+  -ResultFile $COMPLEXITY_RESULT_FILE `
+  -StateFile $COMPLEXITY_STATE_FILE `
+  -IssueDir $RUN_WITH_IT_ISSUE_DIR `
+  -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
+  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG
 ```
 
 Sub-agent output handling:
@@ -419,13 +472,29 @@ Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `
 
 PowerShell (Windows):
 ```powershell
-$env:AGENT_REGISTRY_FILE = "$ASSET_ROOT\agent-registry.json"
-$env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
-$env:RUN_WITH_IT_ROLE = "impl"
-$env:RUN_WITH_IT_ISSUE = $env:SUB_COORD_ISSUE_NUMBER
-$env:RUN_WITH_IT_LOG_FILE = ".run-with-it\impl\issue-$env:SUB_COORD_ISSUE_NUMBER-impl-cycle-$env:CYCLE.log"
-$env:RUN_WITH_IT_DONE_FILE = ".run-with-it\done\issue-$env:SUB_COORD_ISSUE_NUMBER-impl-cycle-$env:CYCLE.done"
-& "$ASSET_ROOT\run-agent.ps1" --agent $AGENT --model $MODEL --context-file $CONTEXT_PAYLOAD_FILE --prompt-file "$ASSET_ROOT\prompt.md" --unattended
+$IMPL_WORKER_DIR = Join-Path (Join-Path $RUN_WITH_IT_ISSUE_DIR "workers") "impl"
+$IMPL_LOG_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).log"
+$IMPL_DONE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).done"
+$IMPL_RESULT_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE)-result.json"
+$IMPL_STATE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).state.json"
+New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
+& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+  -AssetRoot $ASSET_ROOT `
+  -Role impl `
+  -Issue $env:SUB_COORD_ISSUE_NUMBER `
+  -Cycle $env:CYCLE `
+  -Agent $AGENT `
+  -Model $MODEL `
+  -ContextFile $CONTEXT_PAYLOAD_FILE `
+  -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
+  -LogFile $IMPL_LOG_FILE `
+  -DoneFile $IMPL_DONE_FILE `
+  -ResultFile $IMPL_RESULT_FILE `
+  -StateFile $IMPL_STATE_FILE `
+  -RepoRoot $ISSUE_WORKTREE_PATH `
+  -IssueDir $RUN_WITH_IT_ISSUE_DIR `
+  -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
+  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG
 ```
 
 After the implementer runner completes, **immediately capture the commit SHA and validate a commit was actually made**:
@@ -714,7 +783,7 @@ On merge success, include `merge.status="completed"`, `merge.merge_sha`, `issue_
 
 ### Sandbox
 
-**Invoke `run-with-it-dispatch.sh` through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh`, preserving unattended runner flags configured in `agent-registry.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
+**Invoke the platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh` / `run-agent.ps1`, preserving unattended runner flags configured in `agent-registry.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
 
 ## Appendix D: Sub-Coordinator State (Compaction Survival)
 
@@ -869,7 +938,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.state.json`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.state.json`
 
-`run-with-it-dispatch.sh` owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are advisory; log activity observed by the dispatcher is the liveness signal.
+The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are advisory; log activity observed by the dispatcher is the liveness signal.
 
 ### Worker Done Files
 
@@ -880,7 +949,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.done`
 
-The worker may write this file when its required artifacts are complete. `run-with-it-dispatch.sh` delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
+The worker may write this file when its required artifacts are complete. The platform dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
 - impl/modify: verification evidence and final worker report are available **AND** the worker's mandatory commit was made (captured SHA differs from the pre-spawn baseline)

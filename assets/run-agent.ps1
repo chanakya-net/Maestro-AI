@@ -8,7 +8,7 @@
 # Environment equivalents:
 #   AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT,
 #   AGENT_PERMISSION_MODE, AGENT_EXTRA_ARGS, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
-#   RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE
+#   RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE, RUN_WITH_IT_STATE_FILE
 
 $ErrorActionPreference = "Stop"
 
@@ -48,6 +48,7 @@ $RUN_STATUS_FILE   = $env:RUN_WITH_IT_STATUS_FILE
 $RUN_EVENTS_LOG    = $env:RUN_WITH_IT_EVENTS_LOG
 $RUN_LOG_FILE      = $env:RUN_WITH_IT_LOG_FILE
 $RUN_DONE_FILE     = $env:RUN_WITH_IT_DONE_FILE
+$RUN_STATE_FILE    = $env:RUN_WITH_IT_STATE_FILE
 $RUN_ROLE          = if ($env:RUN_WITH_IT_ROLE) { $env:RUN_WITH_IT_ROLE } else { "agent" }
 $RUN_ISSUE         = if ($env:RUN_WITH_IT_ISSUE) { $env:RUN_WITH_IT_ISSUE } else { "unknown" }
 $DRY_RUN           = $false
@@ -94,7 +95,7 @@ Usage:
 
 Environment equivalents:
   AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
-  RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE
+  RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE, RUN_WITH_IT_STATE_FILE
 "@
         exit 0
     } elseif ($arg.StartsWith("-")) {
@@ -194,7 +195,120 @@ function Forward-AgentLine([string]$line, [string]$stream) {
     if ($stream -eq "stderr") {
         [Console]::Error.WriteLine($line)
     } else {
-        Write-Output $line
+        [Console]::Out.WriteLine($line)
+    }
+}
+
+function Quote-ProcessArgument([string]$arg) {
+    if ($null -eq $arg) { return '""' }
+    if ($arg.Length -eq 0) { return '""' }
+    if ($arg -notmatch '[\s"]') { return $arg }
+
+    $result = '"'
+    $backslashes = 0
+    foreach ($char in $arg.ToCharArray()) {
+        if ($char -eq '\') {
+            $backslashes++
+        } elseif ($char -eq '"') {
+            if ($backslashes -gt 0) { $result += ('\' * ($backslashes * 2)) }
+            $result += '\"'
+            $backslashes = 0
+        } else {
+            if ($backslashes -gt 0) { $result += ('\' * $backslashes) }
+            $result += $char
+            $backslashes = 0
+        }
+    }
+
+    if ($backslashes -gt 0) { $result += ('\' * ($backslashes * 2)) }
+    $result += '"'
+    return $result
+}
+
+function Join-ProcessArguments([object[]]$arguments) {
+    return (($arguments | ForEach-Object { Quote-ProcessArgument ([string]$_) }) -join " ")
+}
+
+function Forward-CaptureFile {
+    param(
+        [string]$Path,
+        [string]$Stream,
+        [ref]$Offset,
+        [ref]$Partial,
+        [bool]$FlushPartial
+    )
+
+    if (-not (Test-Path $Path)) { return }
+
+    $content = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+    if ($Offset.Value -gt $content.Length) {
+        $Offset.Value = 0
+        $Partial.Value = ""
+    }
+
+    if ($Offset.Value -eq $content.Length -and -not $FlushPartial) { return }
+
+    $newText = ""
+    if ($Offset.Value -lt $content.Length) {
+        $newText = $content.Substring($Offset.Value)
+        $Offset.Value = $content.Length
+    }
+
+    $text = ($Partial.Value + $newText).Replace("`r`n", "`n").Replace("`r", "`n")
+    if (-not $text) { return }
+
+    $endsWithNewline = $text.EndsWith("`n")
+    $parts = $text.Split([string[]]@("`n"), [System.StringSplitOptions]::None)
+    $lineCount = $parts.Count - 1
+    for ($idx = 0; $idx -lt $lineCount; $idx++) {
+        Forward-AgentLine $parts[$idx] $Stream
+    }
+
+    if ($endsWithNewline) {
+        $Partial.Value = ""
+    } else {
+        $Partial.Value = $parts[-1]
+    }
+
+    if ($FlushPartial -and $Partial.Value) {
+        Forward-AgentLine $Partial.Value $Stream
+        $Partial.Value = ""
+    }
+}
+
+function Invoke-AgentCommandWithCapture([string]$filePath, [System.Collections.Generic.List[string]]$arguments) {
+    $stdoutCapture = [System.IO.Path]::GetTempFileName()
+    $stderrCapture = [System.IO.Path]::GetTempFileName()
+    $stdoutOffset = 0
+    $stderrOffset = 0
+    $stdoutPartial = ""
+    $stderrPartial = ""
+
+    try {
+        $argumentString = Join-ProcessArguments $arguments.ToArray()
+        $process = Start-Process `
+            -FilePath $filePath `
+            -ArgumentList $argumentString `
+            -RedirectStandardOutput $stdoutCapture `
+            -RedirectStandardError $stderrCapture `
+            -NoNewWindow `
+            -PassThru
+
+        while (-not $process.HasExited) {
+            Forward-CaptureFile -Path $stdoutCapture -Stream "stdout" -Offset ([ref]$stdoutOffset) -Partial ([ref]$stdoutPartial) -FlushPartial:$false
+            Forward-CaptureFile -Path $stderrCapture -Stream "stderr" -Offset ([ref]$stderrOffset) -Partial ([ref]$stderrPartial) -FlushPartial:$false
+            Start-Sleep -Milliseconds 200
+            $process.Refresh()
+        }
+
+        $process.WaitForExit()
+        Forward-CaptureFile -Path $stdoutCapture -Stream "stdout" -Offset ([ref]$stdoutOffset) -Partial ([ref]$stdoutPartial) -FlushPartial:$true
+        Forward-CaptureFile -Path $stderrCapture -Stream "stderr" -Offset ([ref]$stderrOffset) -Partial ([ref]$stderrPartial) -FlushPartial:$true
+        return $process.ExitCode
+    }
+    finally {
+        Remove-Item -Force $stdoutCapture -ErrorAction SilentlyContinue
+        Remove-Item -Force $stderrCapture -ErrorAction SilentlyContinue
     }
 }
 
@@ -424,23 +538,7 @@ try {
     Initialize-DoneFile
     Write-RunStatus "agent-start"
     if ($RUN_STATUS_FILE -or $RUN_EVENTS_LOG -or $RUN_LOG_FILE) {
-        $stdoutCapture = [System.IO.Path]::GetTempFileName()
-        $stderrCapture = [System.IO.Path]::GetTempFileName()
-        try {
-            & $invokeCmd @cmdArgs > $stdoutCapture 2> $stderrCapture
-            $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }
-
-            Get-Content $stdoutCapture -Encoding UTF8 | ForEach-Object {
-                Forward-AgentLine "$_" "stdout"
-            }
-            Get-Content $stderrCapture -Encoding UTF8 | ForEach-Object {
-                Forward-AgentLine "$_" "stderr"
-            }
-        }
-        finally {
-            Remove-Item -Force $stdoutCapture -ErrorAction SilentlyContinue
-            Remove-Item -Force $stderrCapture -ErrorAction SilentlyContinue
-        }
+        $commandExitCode = Invoke-AgentCommandWithCapture $invokeCmd $cmdArgs
     } else {
         & $invokeCmd @cmdArgs
         $commandExitCode = if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 }

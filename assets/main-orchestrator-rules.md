@@ -24,13 +24,13 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## Spawning Rules
 
-- Always spawn sub-coordinators via `run-with-it-dispatch.sh --role sub-coord`, which wraps `run-agent.sh --prompt-file sub-coordinator-prompt.md`.
-- Always run the rolling pool via `run-with-it-pool.sh`. Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
+- Always spawn sub-coordinators via the platform dispatcher (`run-with-it-dispatch.sh --role sub-coord` on Bash, `run-with-it-dispatch.ps1 -Role sub-coord` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1` with `sub-coordinator-prompt.md`.
+- Always run the rolling pool via the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`). Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=1` into every sub-coordinator context file.
-- Pass status, event, log, done, and result paths to `run-with-it-dispatch.sh`; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh`.
+- Pass status, event, log, done, state, and result paths to the platform dispatcher; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh` / `run-agent.ps1`.
 - Always pass `--issue-dir .run-with-it/issues/<n>`, `--log-file .run-with-it/issues/<n>/sub-coordinator.log`, `--done-file .run-with-it/issues/<n>/sub-coordinator.done`, and `--result-file .run-with-it/issues/<n>/report.json`.
-- Always run `run-with-it-pool.sh` as the single rolling-pool supervisor. The pool runner spawns each dispatch process in the background, captures its dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before monitoring.
+- Always run the platform pool runner as the single rolling-pool supervisor. The pool runner spawns each dispatch process in the background, captures its dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before monitoring.
 - The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
 - When `PARALLEL_JOBS > 1`: the pool runner keeps up to that many dispatch processes active and fills freed slots immediately. Each issue has its own context file, log file, done file, and report file.
 - When `PARALLEL_JOBS = 1`: the same pool runner operates sequentially with at most one active issue.
@@ -41,7 +41,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
 - While a sub-coordinator runs, poll `current.txt` from the shell and print only changed status lines.
 - Do not tail raw sub-coordinator logs. The status bus is the terminal-visible progress channel; compact report JSON is the AI-visible outcome channel.
-- In the monitor loop, run `assets/worker-watch.sh` using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
+- In the monitor loop, run the platform worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 
@@ -68,7 +68,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never present execution option menus.
 - If all issues are terminal (completed/failed-review/blocked): exit loop and run cleanup.
 - `merge_recovery` is non-terminal. Keep unrelated ready issues moving, but do not schedule dependents until the recovered issue becomes `completed`.
-- If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via `run-with-it-dispatch.sh --role merge-recovery`, reads the compact recovery report, and updates the issue to `completed`, `failed-merge`, or `blocked`.
+- If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via the platform dispatcher with `role=merge-recovery`, reads the compact recovery report, and updates the issue to `completed`, `failed-merge`, or `blocked`.
 - When Merge Recovery Coordinator succeeds, set the issue status to `completed`, append its compact recovery summary, recalculate dependency readiness, and continue the rolling pool.
 - When Merge Recovery Coordinator fails, set the issue status to `failed-merge` or `blocked`; dependent issues remain blocked with a reason pointing to that issue.
 - After the pool is empty: re-read `main-state.json` (Step A) before selecting any remaining work. GitHub updates are always sequential even when sub-coordinators ran in parallel.
