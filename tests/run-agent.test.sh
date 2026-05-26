@@ -429,7 +429,7 @@ echo "PASS: run-agent GUI mode selects safer non-interactive permissions"
 
 agy_dry_run_output="$("${RUNNER_PATH}" --agent agy --model gemini-3.5-flash-high --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${agy_dry_run_output}" "agy " "agy dry-run uses agy command"
-assert_contains "${agy_dry_run_output}" "--model gemini-3.5-flash-high" "agy dry-run forwards selected Google model"
+assert_not_contains "${agy_dry_run_output}" "--model" "agy dry-run lets AGY select the model automatically"
 assert_contains "${agy_dry_run_output}" "--print" "agy dry-run uses print flag"
 assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dry-run includes registry default permission mode"
 

@@ -724,7 +724,7 @@
       },
       "model": {
         "default": "gemini-3.5-flash-high",
-        "flag_template": "--model {{model}}",
+        "flag_template": "",
         "known_models": [
           "gemini-3.5-flash-high",
           "gemini-3.5-flash-medium",
