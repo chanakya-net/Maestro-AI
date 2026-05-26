@@ -15,11 +15,11 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 ## Context Rules
 
 - Write Main Orchestrator status lines to `.run-with-it/main/main.log`.
-- Never load full sub-coordinator log files (`.run-with-it/sub/`) into your AI context under any circumstances.
-- A shell watcher may run `tail -n 2 .run-with-it/sub/sub-<n>.log` and print only those two changed lines to the terminal; do not summarize, retain, or reason from those lines.
+- Never load full sub-coordinator log files (`.run-with-it/issues/<n>/sub-coordinator.log`) into your AI context under any circumstances.
+- Shell watchers must not tail raw logs into AI context. Use status lines and compact JSON reports for all AI-visible progress.
 - Never load live status logs (`.run-with-it/status/current.txt` or `.run-with-it/status/events.log`) into your AI context. A shell watcher may print the latest changed status line to the terminal, then forget it.
 - Never read implementation diffs, reviewer JSONs, or code from sub-coordinators into your context.
-- Only read the compact report JSON (`.run-with-it/reports/sub-<n>-report.json`) from each sub-coordinator — nothing else.
+- Only read the compact report JSON (`.run-with-it/issues/<n>/report.json`) from each sub-coordinator — nothing else.
 - If compressed mid-run: re-read `main-state.json`, identify pending issues, re-enter Main Loop. Do not ask the user "what have we done so far?".
 
 ## Spawning Rules
@@ -29,7 +29,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=1` into every sub-coordinator context file.
 - Pass status, event, log, done, and result paths to `run-with-it-dispatch.sh`; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh`.
-- Always pass `--log-file .run-with-it/sub/sub-<n>.log`, `--done-file .run-with-it/done/issue-<n>-sub-coord.done`, and `--result-file .run-with-it/reports/sub-<n>-report.json`.
+- Always pass `--issue-dir .run-with-it/issues/<n>`, `--log-file .run-with-it/issues/<n>/sub-coordinator.log`, `--done-file .run-with-it/issues/<n>/sub-coordinator.done`, and `--result-file .run-with-it/issues/<n>/report.json`.
 - Always run `run-with-it-pool.sh` as the single rolling-pool supervisor. The pool runner spawns each dispatch process in the background, captures its dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before monitoring.
 - The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
 - When `PARALLEL_JOBS > 1`: the pool runner keeps up to that many dispatch processes active and fills freed slots immediately. Each issue has its own context file, log file, done file, and report file.
@@ -39,8 +39,8 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 ## Live Status Rules
 
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
-- While a sub-coordinator runs, poll `current.txt` from the shell and print only changed lines.
-- Every 120 seconds, a shell watcher may print only the latest two changed lines from `.run-with-it/sub/sub-<n>.log` using `tail -n 2`; never read more than those two log lines.
+- While a sub-coordinator runs, poll `current.txt` from the shell and print only changed status lines.
+- Do not tail raw sub-coordinator logs. The status bus is the terminal-visible progress channel; compact report JSON is the AI-visible outcome channel.
 - In the monitor loop, run `assets/worker-watch.sh` using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.

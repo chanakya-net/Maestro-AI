@@ -20,7 +20,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS/heartbeat line to `$SUB_COORD_LOG_FILE`, print to console, and forget each line.
-- Store Sub-Coordinator logs under `.run-with-it/sub/`. Store worker-agent logs under `.run-with-it/<role>/`, where `<role>` is `complexity`, `impl`, `review`, or `modify`. Store worker completion sentinels under `.run-with-it/done/`.
+- Store all artifacts for this issue under `.run-with-it/issues/<n>/`. Store the Sub-Coordinator log at `.run-with-it/issues/<n>/sub-coordinator.log`. Store worker-agent artifacts under `.run-with-it/issues/<n>/workers/<role>/`, where `<role>` is `complexity`, `impl`, `review`, or `modify`.
 - Store issue worktrees under `.run-with-it/worktrees/` and merge locks under `.run-with-it/locks/`.
 - Clear all in-memory issue state after writing the compact report JSON.
 - **Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
@@ -49,14 +49,14 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
 - Spawn every worker through `run-with-it-dispatch.sh`, which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, and monitoring contract.
 - Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
-- Set each worker's `RUN_WITH_IT_LOG_FILE` to a role-specific path such as `.run-with-it/complexity/issue-<n>-complexity.log`, `.run-with-it/impl/issue-<n>-impl-cycle-<cycle>.log`, `.run-with-it/review/issue-<n>-review-cycle-<cycle>.log`, or `.run-with-it/modify/issue-<n>-modify-cycle-<cycle>.log`.
-- Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/done/issue-<n>-<role>-cycle-<cycle>.done` (omit the cycle segment for complexity when no cycle exists).
+- Set each worker's `RUN_WITH_IT_LOG_FILE` to an issue-scoped path such as `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log`.
+- Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
 
 ## Progress Monitoring Rules
 
-- Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that PID plus role, cycle, agent, model, log file, done file, and result file to `.run-with-it/sub-<issue>-state.json` before monitoring begins.
+- Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that PID plus role, cycle, agent, model, log file, done file, and result file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
 - Poll worker liveness every `WORKER_POLL_SECONDS` seconds, default `20`.
-- Summarize worker log progress every `WORKER_LOG_SUMMARY_SECONDS` seconds, default `60`, using only the newest `${WORKER_LOG_TAIL_LINES:-5}` lines via `tail -n ${WORKER_LOG_TAIL_LINES:-5}` (PowerShell: `Get-Content -Tail $env:WORKER_LOG_TAIL_LINES`, default 5).
+- Summarize worker progress from structured status lines and result artifacts. Do not load raw worker logs into coordinator context.
 - PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
 - Logs never decide completion. Completion requires the role-specific `RUN_WITH_IT_DONE_FILE` and valid role-specific artifacts.
 - When a valid done file and valid artifacts are present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` and proceed to the next phase without waiting on unrelated CLI cleanup. Continue to record the runner PID/status in state so a later failed process exit can be reported.
@@ -81,7 +81,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Resume Rules
 
-- On context compression, re-read `.run-with-it/sub-<SUB_COORD_ISSUE_NUMBER>-state.json` to restore which phase you were in (complexity, routing, impl, review, modify).
+- On context compression, re-read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` to restore which phase you were in (complexity, routing, impl, review, modify).
 - If an in-flight worker-agent has a result file, read the result and continue from the next phase.
 - If an in-flight worker-agent has no result file, re-spawn it from the beginning of that phase.
 - Never re-run a phase that already has a valid result file.

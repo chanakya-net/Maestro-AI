@@ -18,7 +18,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never present execution option menus** (Option A / B / C style choices).
 - **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` is unavailable, authentication fails, an approved permission-escalation attempt fails, or no GitHub remote exists.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
-- **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/sub/`. A shell watcher may print only the last two changed lines with `tail -n 2`; only read the compact report JSON from `.run-with-it/reports/`.
+- **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/issues/<n>/sub-coordinator.log`. Do not tail raw logs into AI context; only read the compact report JSON from `.run-with-it/issues/<n>/report.json`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
@@ -67,8 +67,8 @@ Preferred upstream flow:
 - Runs complexity analysis, deterministic routing, implementation, review, and modification loops
 - Runs child workers with `REPO_ROOT` pointing at the issue worktree while keeping logs/reports under the root `.run-with-it/`
 - Attempts the normal merge back into the shared feature branch under `.run-with-it/locks/merge.lock`
-- Writes a compact report JSON and a full log file under `.run-with-it/sub/` when done
-- Spawns worker agents whose logs are written under `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, and `.run-with-it/modify/`
+- Writes a compact report JSON and full log file under `.run-with-it/issues/<n>/` when done
+- Spawns worker agents whose logs/results/done sentinels are written under `.run-with-it/issues/<n>/workers/<role>/`
 - Never touches GitHub; never updates `main-state.json`
 
 **Merge Recovery Coordinator** (spawned via `merge-recovery-prompt.md`, runs only after `merge_failed`):
@@ -127,8 +127,9 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `LOG_TAIL_POLL_SECONDS` | `120` | Shell polling cadence for sub-coordinator log tail |
 | `RUN_WITH_IT_STATUS_FILE` | `.run-with-it/status/current.txt` | Single-line status bus (overwritten each update) |
 | `RUN_WITH_IT_EVENTS_LOG` | `.run-with-it/status/events.log` | Append-only event log — terminal inspection only; never load into AI context |
-| `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/sub/sub-<n>.log`; workers: `.run-with-it/<role>/...` |
-| `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/done/issue-<n>-<role>-cycle-<cycle>.done` |
+| `RUN_WITH_IT_ISSUE_DIR` | `.run-with-it/issues/<n>` | Issue-scoped artifact folder created by the Sub-Coordinator/pool |
+| `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/issues/<n>/sub-coordinator.log`; workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log` |
+| `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done` |
 | `AGENT` | — | Routing override passed through to Sub-Coordinators |
 | `MODEL` | — | Routing override passed through to Sub-Coordinators |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
@@ -320,8 +321,9 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
   4. Environment configuration block (append at end of context file):
      SUB_COORD_ISSUE_NUMBER=<n>
      OS_FAMILY=<unix|windows>
-     SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/reports/sub-<n>-report.json>
-     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/sub/sub-<n>.log>
+     RUN_WITH_IT_ISSUE_DIR=<abs-path-to-.run-with-it/issues/<n>>
+     SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/issues/<n>/report.json>
+     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/issues/<n>/sub-coordinator.log>
      RUN_FEATURE_BRANCH=<shared-run-feature-branch>
      RUN_BASE_BRANCH=<original-base-branch>
      RUN_BASE_SHA=<original-base-sha>
@@ -348,11 +350,12 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
   worker cannot mistake them for execution instructions.
 
 Create directories before spawning:
-  mkdir -p .run-with-it/main .run-with-it/sub .run-with-it/reports .run-with-it/status .run-with-it/done .run-with-it/complexity .run-with-it/impl .run-with-it/review .run-with-it/modify .run-with-it/merge-recovery .run-with-it/worktrees .run-with-it/locks
+  mkdir -p .run-with-it/main .run-with-it/issues/<n>/workers .run-with-it/status .run-with-it/worktrees .run-with-it/locks
 
 Resolve live status files before spawning:
   MAIN_LOG_FILE="${MAIN_LOG_FILE:-$(pwd -P)/.run-with-it/main/main.log}"
-  SUB_COORD_LOG_FILE="$(pwd -P)/.run-with-it/sub/sub-<n>.log"
+  RUN_WITH_IT_ISSUE_DIR="$(pwd -P)/.run-with-it/issues/<n>"
+  SUB_COORD_LOG_FILE="$RUN_WITH_IT_ISSUE_DIR/sub-coordinator.log"
   RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-$(pwd -P)/.run-with-it/status/current.txt}"
   RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
   STATUS_POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
@@ -368,9 +371,9 @@ For EACH issue <n> in NEWLY_QUEUED:
 
 Print to user for each issue:
   "Starting sub-coordinator for issue #<n>: <title>"
-  "Log: .run-with-it/sub/sub-<n>.log"
+  "Log: .run-with-it/issues/<n>/sub-coordinator.log"
   "To watch live progress in a separate terminal:"
-  "  tail -f .run-with-it/sub/sub-<n>.log"
+  "  tail -f .run-with-it/issues/<n>/sub-coordinator.log"
 
 ══ STEP D: SPAWN NEWLY QUEUED + ROLLING POOL MONITOR ════════════════════════════
 
@@ -442,7 +445,7 @@ run-agent.sh --list-models <agent>
 
 | Flag | Env var equivalent | Required | Description |
 |------|--------------------|----------|-------------|
-| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `gemini`) |
+| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `agy`) |
 | `--model <model>` | `MODEL` | Yes (always pass explicitly) | Model id to use |
 | `--context-file <file>` | `CONTEXT_PAYLOAD_FILE` | Yes | Path to the assembled context payload file |
 | `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `<script-dir>/prompt.md`) | Path to the prompt file |
@@ -478,7 +481,7 @@ On successful run completion:
 
 - Delete all `$SUB_COORD_CONTEXT_FILE` temp files (should already be deleted after each issue, but clean up any stragglers).
 - Delete `.run-with-it/main-state.json`, `.run-with-it/main-orchestrator-rules.md`, `.run-with-it/coordinator-rules.md`.
-- Before deleting tracked files, worktrees, or any file outside `.run-with-it/`, print the planned cleanup targets and ask the user to confirm. After confirmation, delete generated files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/done/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, `.run-with-it/reviews/`, `.run-with-it/worktrees/`, `.run-with-it/locks/`, and `.run-with-it/merge-recovery/`.
+- Before deleting tracked files, worktrees, or any file outside `.run-with-it/`, print the planned cleanup targets and ask the user to confirm. After confirmation, delete generated files under `.run-with-it/issues/`, `.run-with-it/main/`, `.run-with-it/status/`, `.run-with-it/worktrees/`, and `.run-with-it/locks/`.
 - Remove issue worktrees with `git worktree remove` when possible. Preserve the shared run feature branch after final PR creation.
 - Remove `.run-with-it/` directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
@@ -537,9 +540,10 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
       "title": "issue title",
       "deps": [],
       "dependency_proof": "Blocked by: None",
-      "report_file": ".run-with-it/reports/sub-36-report.json",
-      "merge_recovery_report_file": ".run-with-it/reports/merge-recovery-36-report.json",
-      "log_file": ".run-with-it/sub/sub-36.log",
+      "issue_dir": ".run-with-it/issues/36",
+      "report_file": ".run-with-it/issues/36/report.json",
+      "merge_recovery_report_file": ".run-with-it/issues/36/merge-recovery-report.json",
+      "log_file": ".run-with-it/issues/36/sub-coordinator.log",
       "issue_branch": "run-with-it/<run-id>/issue-36",
       "worktree_path": ".run-with-it/worktrees/issue-36",
       "commit_sha": "abc1234"

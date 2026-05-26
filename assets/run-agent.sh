@@ -256,11 +256,6 @@ apply_gui_permission_mode() {
         AGENT_PERMISSION_MODE="--allow-all-tools"
       fi
       ;;
-    gemini)
-      if [[ "${AGENT_PERMISSION_MODE}" == "--yolo" || "${AGENT_PERMISSION_MODE}" == "--approval-mode=yolo" ]]; then
-        AGENT_PERMISSION_MODE="--approval-mode=auto_edit"
-      fi
-      ;;
     agy)
       if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--dangerously-skip-permissions" ]]; then
         AGENT_PERMISSION_MODE="--sandbox"

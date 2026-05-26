@@ -37,9 +37,10 @@ trap cleanup EXIT
 
 CONTEXT_FILE="${WORK_DIR}/context.md"
 PROMPT_FILE="${ROOT_DIR}/assets/prompt.md"
-LOG_FILE="${WORK_DIR}/.run-with-it/impl/issue-42-impl-cycle-1.log"
-DONE_FILE="${WORK_DIR}/.run-with-it/done/issue-42-impl-cycle-1.done"
-RESULT_FILE="${WORK_DIR}/.run-with-it/impl/issue-42-impl-cycle-1-result.json"
+ISSUE_DIR="${WORK_DIR}/.run-with-it/issues/42"
+LOG_FILE="${ISSUE_DIR}/workers/impl/cycle-1.log"
+DONE_FILE="${ISSUE_DIR}/workers/impl/cycle-1.done"
+RESULT_FILE="${ISSUE_DIR}/workers/impl/cycle-1-result.json"
 STATUS_FILE="${WORK_DIR}/.run-with-it/status/current.txt"
 EVENTS_LOG="${WORK_DIR}/.run-with-it/status/events.log"
 WORKTREE_ROOT="${WORK_DIR}/.run-with-it/worktrees/issue-42"
@@ -65,6 +66,7 @@ dry_output="$("${DISPATCHER}" \
   --done-file "${DONE_FILE}" \
   --result-file "${RESULT_FILE}" \
   --repo-root "${WORKTREE_ROOT}" \
+  --issue-dir "${ISSUE_DIR}" \
   --status-file "${STATUS_FILE}" \
   --events-log "${EVENTS_LOG}")"
 
@@ -78,6 +80,7 @@ assert_contains "${dry_output}" "RUN_WITH_IT_ISSUE=42" "dry-run sets issue"
 assert_contains "${dry_output}" "REPO_ROOT=${WORKTREE_ROOT}" "dry-run forwards issue worktree repo root"
 assert_contains "${dry_output}" "RUN_WITH_IT_LOG_FILE=${LOG_FILE}" "dry-run sets role log"
 assert_contains "${dry_output}" "RUN_WITH_IT_DONE_FILE=${DONE_FILE}" "dry-run sets done file"
+assert_contains "${dry_output}" "RUN_WITH_IT_ISSUE_DIR=${ISSUE_DIR}" "dry-run sets issue-scoped artifact folder"
 
 validate_output="$("${DISPATCHER}" \
   --validate-only \
@@ -93,6 +96,7 @@ validate_output="$("${DISPATCHER}" \
   --done-file "${DONE_FILE}" \
   --result-file "${RESULT_FILE}" \
   --repo-root "${WORKTREE_ROOT}" \
+  --issue-dir "${ISSUE_DIR}" \
   --status-file "${STATUS_FILE}" \
   --events-log "${EVENTS_LOG}")"
 
@@ -155,9 +159,10 @@ chmod +x "${SMOKE_BIN}/fake-agent"
 
 SMOKE_CONTEXT="${SMOKE_PROJECT}/context.md"
 SMOKE_PROMPT="${SMOKE_PROJECT}/prompt.md"
-SMOKE_RESULT="${SMOKE_PROJECT}/.run-with-it/reports/result.json"
-SMOKE_LOG="${SMOKE_PROJECT}/.run-with-it/merge-recovery/issue-42.log"
-SMOKE_DONE="${SMOKE_PROJECT}/.run-with-it/done/issue-42-merge-recovery.done"
+SMOKE_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/42"
+SMOKE_RESULT="${SMOKE_ISSUE_DIR}/merge-recovery-report.json"
+SMOKE_LOG="${SMOKE_ISSUE_DIR}/merge-recovery.log"
+SMOKE_DONE="${SMOKE_ISSUE_DIR}/merge-recovery.done"
 SMOKE_STATUS="${SMOKE_PROJECT}/.run-with-it/status/current.txt"
 SMOKE_EVENTS="${SMOKE_PROJECT}/.run-with-it/status/events.log"
 mkdir -p "$(dirname "${SMOKE_RESULT}")"
@@ -176,6 +181,7 @@ PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --done-file "${SMOKE_DONE}" \
   --result-file "${SMOKE_RESULT}" \
   --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${SMOKE_ISSUE_DIR}" \
   --status-file "${SMOKE_STATUS}" \
   --events-log "${SMOKE_EVENTS}" \
   --poll-seconds 1 >/dev/null
