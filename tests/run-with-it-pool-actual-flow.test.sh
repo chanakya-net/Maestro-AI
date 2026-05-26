@@ -15,6 +15,12 @@ assert_file() {
   [[ -f "$file" ]] || fail "$message (missing: $file)"
 }
 
+assert_dir() {
+  local dir="$1"
+  local message="$2"
+  [[ -d "$dir" ]] || fail "$message (missing: $dir)"
+}
+
 assert_not_file() {
   local file="$1"
   local message="$2"
@@ -120,7 +126,7 @@ SH
   chmod +x "$fake_bin/fake-sub-agent"
 
   mkdir -p "$project/.run-with-it/contexts" \
-    "$project/.run-with-it/reports" \
+    "$project/.run-with-it/issues" \
     "$project/.run-with-it/status" \
     "$project/.run-with-it/main"
 }
@@ -129,8 +135,9 @@ write_context() {
   local project="$1"
   local issue="$2"
   local outcome="$3"
+  mkdir -p "$project/.run-with-it/issues/${issue}"
   cat > "$project/.run-with-it/contexts/sub-${issue}.md" <<EOF
-REPORT_FILE=$project/.run-with-it/reports/sub-${issue}-report.json
+REPORT_FILE=$project/.run-with-it/issues/${issue}/report.json
 OUTCOME=$outcome
 EOF
 }
@@ -161,9 +168,11 @@ assert_spawned_issue_artifacts() {
   local project="$1"
   local issue="$2"
   local expected_merge_line="$3"
-  local log_file="$project/.run-with-it/sub/sub-${issue}.log"
-  local report_file="$project/.run-with-it/reports/sub-${issue}-report.json"
-  local done_file="$project/.run-with-it/done/issue-${issue}-sub-coord.done"
+  local issue_dir="$project/.run-with-it/issues/${issue}"
+  local log_file="$issue_dir/sub-coordinator.log"
+  local report_file="$issue_dir/report.json"
+  local done_file="$issue_dir/sub-coordinator.done"
+  assert_dir "$issue_dir" "issue artifact folder exists for issue ${issue}"
   assert_file "$log_file" "sub log exists for issue ${issue}"
   assert_file "$report_file" "report exists for issue ${issue}"
   assert_file "$done_file" "done sentinel exists for issue ${issue}"
@@ -243,16 +252,16 @@ assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 2 completed
 assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 3 completed
 assert_json_status "$MIXED_PROJECT/.run-with-it/main-state.json" 4 completed
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 1 "STATUS|type=merge-failed|issue=1"
-assert_file "$MIXED_PROJECT/.run-with-it/merge-recovery/issue-1.log" "merge recovery log exists for issue 1"
-assert_file "$MIXED_PROJECT/.run-with-it/reports/merge-recovery-1-report.json" "merge recovery report exists for issue 1"
-assert_file "$MIXED_PROJECT/.run-with-it/done/issue-1-merge-recovery.done" "merge recovery done sentinel exists for issue 1"
-assert_file_contains "$MIXED_PROJECT/.run-with-it/merge-recovery/issue-1.log" "STATUS|type=heartbeat|issue=1|role=merge-recovery|phase=resolving|progress=fake recovery" "merge recovery coordinator runs for issue 1"
+assert_file "$MIXED_PROJECT/.run-with-it/issues/1/merge-recovery.log" "merge recovery log exists for issue 1"
+assert_file "$MIXED_PROJECT/.run-with-it/issues/1/merge-recovery-report.json" "merge recovery report exists for issue 1"
+assert_file "$MIXED_PROJECT/.run-with-it/issues/1/merge-recovery.done" "merge recovery done sentinel exists for issue 1"
+assert_file_contains "$MIXED_PROJECT/.run-with-it/issues/1/merge-recovery.log" "STATUS|type=heartbeat|issue=1|role=merge-recovery|phase=resolving|progress=fake recovery" "merge recovery coordinator runs for issue 1"
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 3 "STATUS|type=merge-complete|issue=3"
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 4 "STATUS|type=merge-complete|issue=4"
 assert_spawned_issue_artifacts "$MIXED_PROJECT" 2 "STATUS|type=merge-complete|issue=2"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=merge-failed|issue=1|reason=conflict" "events log records issue 1 merge failure"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=1|outcome=merge_recovery" "events log records issue 1 merge recovery transition"
-assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=merge-recovery|issue=1|report_file=$MIXED_PROJECT_REAL/.run-with-it/reports/merge-recovery-1-report.json|state=completed" "events log records issue 1 recovery completion"
+assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=merge-recovery|issue=1|report_file=$MIXED_PROJECT_REAL/.run-with-it/issues/1/merge-recovery-report.json|state=completed" "events log records issue 1 recovery completion"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=2|outcome=completed" "events log records dependent issue 2 completion after recovery"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=3|outcome=completed" "events log records unrelated issue 3 completion"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=4|outcome=completed" "events log records unrelated issue 4 completion"

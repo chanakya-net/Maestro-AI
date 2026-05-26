@@ -56,6 +56,8 @@ cat > "${FAKE_BIN}/fake-agent" <<'SH'
 #!/usr/bin/env bash
 printf 'STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests\n'
 printf 'fake-agent done\n'
+printf 'partial stdout without newline'
+printf 'partial stderr without newline' >&2
 SH
 chmod +x "${FAKE_BIN}/fake-agent"
 
@@ -129,6 +131,8 @@ assert_equals "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fa
 assert_contains "${role_log}" "STATUS|type=agent-start|issue=42|role=impl|agent=fake|model=fake-default" "runner writes agent-start to role log"
 assert_contains "${role_log}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner mirrors agent stdout to role log"
 assert_contains "${role_log}" "fake-agent done" "runner mirrors normal agent output to role log"
+assert_contains "${role_log}" "partial stdout without newline" "runner captures unterminated stdout in role log"
+assert_contains "${role_log}" "partial stderr without newline" "runner captures unterminated stderr in role log"
 assert_contains "${role_log}" "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "runner writes agent-complete to role log"
 assert_contains "${done_signal}" "DONE|issue=42|role=impl|agent=fake|model=fake-default|status=success|source=runner-exit" "runner writes done sentinel on successful exit"
 if [[ "${done_signal}" == *"stale done file"* ]]; then

@@ -42,6 +42,10 @@ assert_contains "${dry_run_output}" "run-with-it-dispatch.sh" "dry-run includes 
 assert_contains "${dry_run_output}" "run-with-it-pool.sh" "dry-run includes shared run-with-it pool asset"
 assert_contains "${dry_run_output}" "worker-watch.sh" "dry-run includes worker watcher asset"
 assert_contains "${dry_run_output}" "agent-registry.json" "dry-run includes registry asset"
+assert_not_contains "${dry_run_output}" "run-agent.ps1" "Bash installer excludes PowerShell runner asset"
+assert_not_contains "${dry_run_output}" "run-with-it-dispatch.ps1" "Bash installer excludes PowerShell dispatcher asset"
+assert_not_contains "${dry_run_output}" "run-with-it-pool.ps1" "Bash installer excludes PowerShell pool asset"
+assert_not_contains "${dry_run_output}" "worker-watch.ps1" "Bash installer excludes PowerShell watcher asset"
 assert_not_contains "${dry_run_output}" "run-codex.sh" "dry-run excludes legacy codex runner asset"
 assert_not_contains "${dry_run_output}" "run-copilot.sh" "dry-run excludes legacy copilot runner asset"
 

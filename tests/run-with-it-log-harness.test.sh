@@ -45,23 +45,20 @@ SUB_CONTEXT_FILE="${WORK_DIR}/sub-context.md"
 MAIN_LOG="${PROJECT_DIR}/.run-with-it/main/main.log"
 STATUS_FILE="${PROJECT_DIR}/.run-with-it/status/current.txt"
 EVENTS_LOG="${PROJECT_DIR}/.run-with-it/status/events.log"
-SUB_REPORT_FILE="${PROJECT_DIR}/.run-with-it/reports/sub-101-report.json"
-SUB_LOG_FILE="${PROJECT_DIR}/.run-with-it/sub/sub-101.log"
-SUB_STATE_FILE="${PROJECT_DIR}/.run-with-it/sub-101-state.json"
-SUB_DONE_FILE="${PROJECT_DIR}/.run-with-it/done/issue-101-sub-coord.done"
-TRANSITION_PROOF="${PROJECT_DIR}/.run-with-it/transition-proof.txt"
-IMPL_CLEANUP_MARKER="${PROJECT_DIR}/.run-with-it/done/impl-cleanup-finished.marker"
+ISSUE_DIR="${PROJECT_DIR}/.run-with-it/issues/101"
+SUB_REPORT_FILE="${ISSUE_DIR}/report.json"
+SUB_LOG_FILE="${ISSUE_DIR}/sub-coordinator.log"
+SUB_STATE_FILE="${ISSUE_DIR}/sub-state.json"
+SUB_DONE_FILE="${ISSUE_DIR}/sub-coordinator.done"
+TRANSITION_PROOF="${ISSUE_DIR}/transition-proof.txt"
+IMPL_CLEANUP_MARKER="${ISSUE_DIR}/workers/impl/impl-cleanup-finished.marker"
 
 mkdir -p "${PROJECT_DIR}/.run-with-it/main" \
-  "${PROJECT_DIR}/.run-with-it/sub" \
-  "${PROJECT_DIR}/.run-with-it/reports" \
   "${PROJECT_DIR}/.run-with-it/status" \
-  "${PROJECT_DIR}/.run-with-it/done" \
-  "${PROJECT_DIR}/.run-with-it/complexity" \
-  "${PROJECT_DIR}/.run-with-it/impl" \
-  "${PROJECT_DIR}/.run-with-it/review" \
-  "${PROJECT_DIR}/.run-with-it/modify" \
-  "${PROJECT_DIR}/.run-with-it/reviews" \
+  "${ISSUE_DIR}/workers/complexity" \
+  "${ISSUE_DIR}/workers/impl" \
+  "${ISSUE_DIR}/workers/review" \
+  "${ISSUE_DIR}/workers/modify" \
   "${FAKE_BIN}"
 
 cat > "${SUB_CONTEXT_FILE}" <<'EOF'
@@ -71,8 +68,8 @@ Title: Smoke-test run-with-it logging and done sentinels
 
 Acceptance criteria:
 - Run complexity, implementation, review, modification, and final review stages.
-- Write logs under .run-with-it/main, .run-with-it/sub, and each role directory.
-- Write done sentinels under .run-with-it/done.
+- Write logs under the issue-scoped Sub-Coordinator folder.
+- Write worker logs, results, and done sentinels under that same issue folder.
 
 Environment:
 SUB_COORD_ISSUE_NUMBER=101
@@ -152,8 +149,9 @@ cat > "${FAKE_BIN}/fake-sub" <<'SH'
 set -euo pipefail
 
 issue="${SUB_COORD_ISSUE_NUMBER:-${RUN_WITH_IT_ISSUE:-101}}"
-mkdir -p "$(dirname "${SUB_COORD_LOG_FILE}")" "$(dirname "${SUB_COORD_REPORT_FILE}")"
-SUB_STATE_FILE="${PROJECT_DIR}/.run-with-it/sub-${issue}-state.json"
+RUN_WITH_IT_ISSUE_DIR="${RUN_WITH_IT_ISSUE_DIR:-${PROJECT_DIR}/.run-with-it/issues/${issue}}"
+mkdir -p "${RUN_WITH_IT_ISSUE_DIR}" "$(dirname "${SUB_COORD_LOG_FILE}")" "$(dirname "${SUB_COORD_REPORT_FILE}")"
+SUB_STATE_FILE="${RUN_WITH_IT_ISSUE_DIR}/sub-state.json"
 
 write_status() {
   local line="$1"
@@ -184,7 +182,7 @@ write_state() {
 JSON
   python3 -m json.tool "${SUB_STATE_FILE}" > "${SUB_STATE_FILE}.pretty"
   mv "${SUB_STATE_FILE}.pretty" "${SUB_STATE_FILE}"
-  cat "${SUB_STATE_FILE}" >> "${PROJECT_DIR}/.run-with-it/state-history.log"
+  cat "${SUB_STATE_FILE}" >> "${RUN_WITH_IT_ISSUE_DIR}/state-history.log"
 }
 
 json_escape() {
@@ -231,19 +229,22 @@ spawn_worker() {
   local agent="$2"
   local prompt_file="$3"
   local cycle="${4:-1}"
-  local context_file="${PROJECT_DIR}/.run-with-it/${role}-context-${cycle}.md"
-  local log_file="${PROJECT_DIR}/.run-with-it/${role}/issue-${issue}-${role}-cycle-${cycle}.log"
-  local done_file="${PROJECT_DIR}/.run-with-it/done/issue-${issue}-${role}-cycle-${cycle}.done"
-  local result_file="${PROJECT_DIR}/.run-with-it/${role}/issue-${issue}-${role}-cycle-${cycle}-result.json"
+  local worker_dir="${RUN_WITH_IT_ISSUE_DIR}/workers/${role}"
+  local context_file="${worker_dir}/cycle-${cycle}-context.md"
+  local log_file="${worker_dir}/cycle-${cycle}.log"
+  local done_file="${worker_dir}/cycle-${cycle}.done"
+  local result_file="${worker_dir}/cycle-${cycle}-result.json"
   printf 'issue=%s role=%s cycle=%s\n' "${issue}" "${role}" "${cycle}" > "${context_file}"
-  mkdir -p "$(dirname "${log_file}")" "$(dirname "${done_file}")"
+  mkdir -p "${worker_dir}"
   PATH="${FAKE_BIN}:${PATH}" \
     AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE}" \
     PROJECT_DIR="${PROJECT_DIR}" \
     WORKER_RESULT_FILE="${result_file}" \
     REVIEW_CYCLE="${cycle}" \
-    REVIEWER_STATUS_FILE="${PROJECT_DIR}/.run-with-it/reviews/${issue}-cycle-${cycle}-status.json" \
-    REVIEWER_INSTRUCTIONS_FILE="${PROJECT_DIR}/.run-with-it/reviews/${issue}-cycle-${cycle}-instructions.json" \
+    REVIEWER_STATUS_FILE="${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-${cycle}-status.json" \
+    REVIEWER_INSTRUCTIONS_FILE="${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-${cycle}-instructions.json" \
+    RUN_WITH_IT_ISSUE_DIR="${RUN_WITH_IT_ISSUE_DIR}" \
+    RUN_WITH_IT_WORKER_DIR="${worker_dir}" \
     RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE}" \
     RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG}" \
     RUN_WITH_IT_LOG_FILE="${log_file}" \
@@ -268,26 +269,26 @@ write_status "STATUS|type=sub-start|issue=${issue}"
 
 spawn_worker complexity fake-complexity "${ASSET_ROOT}/complexity-prompt.md" 1
 complexity_pid="${spawned_pid}"
-wait_for_done_and_artifact "${complexity_pid}" complexity scoring "${PROJECT_DIR}/.run-with-it/done/issue-${issue}-complexity-cycle-1.done" "grep -Fq 'COMPLEXITY|score=12' '${PROJECT_DIR}/.run-with-it/complexity/issue-${issue}-complexity-cycle-1.log'" "${PROJECT_DIR}/.run-with-it/complexity/issue-${issue}-complexity-cycle-1.log"
+wait_for_done_and_artifact "${complexity_pid}" complexity scoring "${RUN_WITH_IT_ISSUE_DIR}/workers/complexity/cycle-1.done" "grep -Fq 'COMPLEXITY|score=12' '${RUN_WITH_IT_ISSUE_DIR}/workers/complexity/cycle-1.log'" "${RUN_WITH_IT_ISSUE_DIR}/workers/complexity/cycle-1.log"
 
 spawn_worker impl fake-impl "${ASSET_ROOT}/prompt.md" 1
 impl_pid="${spawned_pid}"
-wait_for_done_and_artifact "${impl_pid}" impl implementing "${PROJECT_DIR}/.run-with-it/done/issue-${issue}-impl-cycle-1.done" "valid_json '${PROJECT_DIR}/.run-with-it/impl/issue-${issue}-impl-cycle-1-result.json'" "${PROJECT_DIR}/.run-with-it/impl/issue-${issue}-impl-cycle-1.log"
+wait_for_done_and_artifact "${impl_pid}" impl implementing "${RUN_WITH_IT_ISSUE_DIR}/workers/impl/cycle-1.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/impl/cycle-1-result.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/impl/cycle-1.log"
 if [[ ! -f "${IMPL_CLEANUP_MARKER}" ]]; then
   printf 'started_review_before_impl_cleanup=yes\n' > "${TRANSITION_PROOF}"
 fi
 
 spawn_worker review fake-review "${ASSET_ROOT}/review-prompt.md" 1
 review1_pid="${spawned_pid}"
-wait_for_done_and_artifact "${review1_pid}" review review "${PROJECT_DIR}/.run-with-it/done/issue-${issue}-review-cycle-1.done" "valid_json '${PROJECT_DIR}/.run-with-it/reviews/${issue}-cycle-1-status.json' && valid_json '${PROJECT_DIR}/.run-with-it/reviews/${issue}-cycle-1-instructions.json'" "${PROJECT_DIR}/.run-with-it/review/issue-${issue}-review-cycle-1.log"
+wait_for_done_and_artifact "${review1_pid}" review review "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1-status.json' && valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1-instructions.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1.log"
 
 spawn_worker modify fake-modify "${ASSET_ROOT}/modifier-prompt.md" 1
 modify_pid="${spawned_pid}"
-wait_for_done_and_artifact "${modify_pid}" modify implementing "${PROJECT_DIR}/.run-with-it/done/issue-${issue}-modify-cycle-1.done" "valid_json '${PROJECT_DIR}/.run-with-it/modify/issue-${issue}-modify-cycle-1-result.json'" "${PROJECT_DIR}/.run-with-it/modify/issue-${issue}-modify-cycle-1.log"
+wait_for_done_and_artifact "${modify_pid}" modify implementing "${RUN_WITH_IT_ISSUE_DIR}/workers/modify/cycle-1.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/modify/cycle-1-result.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/modify/cycle-1.log"
 
 spawn_worker review fake-review "${ASSET_ROOT}/review-prompt.md" 2
 review2_pid="${spawned_pid}"
-wait_for_done_and_artifact "${review2_pid}" review review "${PROJECT_DIR}/.run-with-it/done/issue-${issue}-review-cycle-2.done" "valid_json '${PROJECT_DIR}/.run-with-it/reviews/${issue}-cycle-2-status.json' && valid_json '${PROJECT_DIR}/.run-with-it/reviews/${issue}-cycle-2-instructions.json'" "${PROJECT_DIR}/.run-with-it/review/issue-${issue}-review-cycle-2.log"
+wait_for_done_and_artifact "${review2_pid}" review review "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2-status.json' && valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2-instructions.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2.log"
 
 wait "${complexity_pid}" "${impl_pid}" "${review1_pid}" "${modify_pid}" "${review2_pid}"
 write_state "report-written" "[]"
@@ -389,6 +390,7 @@ PATH="${FAKE_BIN}:${PATH}" \
   IMPL_CLEANUP_MARKER="${IMPL_CLEANUP_MARKER}" \
   RUN_WITH_IT_STATUS_FILE="${STATUS_FILE}" \
   RUN_WITH_IT_EVENTS_LOG="${EVENTS_LOG}" \
+  RUN_WITH_IT_ISSUE_DIR="${ISSUE_DIR}" \
   RUN_WITH_IT_LOG_FILE="${SUB_LOG_FILE}" \
   RUN_WITH_IT_DONE_FILE="${SUB_DONE_FILE}" \
   RUN_WITH_IT_ROLE=sub-coord \
@@ -422,7 +424,7 @@ assert_contains "${SUB_LOG_FILE}" 'STATUS|type=worker-done|issue=101|role=review
 assert_contains "${SUB_LOG_FILE}" 'STATUS|type=worker-done|issue=101|role=modify' "sub log records modifier completion"
 assert_contains "${EVENTS_LOG}" 'STATUS|type=worker-done' "events log records worker done statuses"
 
-state_history_file="${PROJECT_DIR}/.run-with-it/state-history.log"
+state_history_file="${ISSUE_DIR}/state-history.log"
 assert_file "${state_history_file}" "state history exists"
 assert_contains "${state_history_file}" '"phase": "starting"' "state history records bootstrap before worker spawn"
 assert_contains "${state_history_file}" '"role": "impl"' "state history recorded implementation worker"
@@ -431,27 +433,24 @@ assert_contains "${state_history_file}" '"log_file"' "state history records log 
 assert_contains "${state_history_file}" '"result_file"' "state history records result file paths"
 assert_contains "${state_history_file}" '"pid"' "state history records worker pid"
 
-assert_file "${PROJECT_DIR}/.run-with-it/complexity/issue-101-complexity-cycle-1.log" "complexity role log exists"
-assert_file "${PROJECT_DIR}/.run-with-it/impl/issue-101-impl-cycle-1.log" "implementation role log exists"
-assert_file "${PROJECT_DIR}/.run-with-it/review/issue-101-review-cycle-1.log" "review cycle 1 role log exists"
-assert_file "${PROJECT_DIR}/.run-with-it/review/issue-101-review-cycle-2.log" "review cycle 2 role log exists"
-assert_file "${PROJECT_DIR}/.run-with-it/modify/issue-101-modify-cycle-1.log" "modifier role log exists"
+assert_file "${ISSUE_DIR}/workers/complexity/cycle-1.log" "complexity role log exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/impl/cycle-1.log" "implementation role log exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/review/cycle-1.log" "review cycle 1 role log exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/review/cycle-2.log" "review cycle 2 role log exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/modify/cycle-1.log" "modifier role log exists in issue folder"
 
-assert_file "${PROJECT_DIR}/.run-with-it/done/issue-101-complexity-cycle-1.done" "complexity done file exists"
-assert_file "${PROJECT_DIR}/.run-with-it/done/issue-101-impl-cycle-1.done" "implementation done file exists"
-assert_file "${PROJECT_DIR}/.run-with-it/done/issue-101-review-cycle-1.done" "review cycle 1 done file exists"
-assert_file "${PROJECT_DIR}/.run-with-it/done/issue-101-review-cycle-2.done" "review cycle 2 done file exists"
-assert_file "${PROJECT_DIR}/.run-with-it/done/issue-101-modify-cycle-1.done" "modifier done file exists"
+assert_file "${ISSUE_DIR}/workers/complexity/cycle-1.done" "complexity done file exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/impl/cycle-1.done" "implementation done file exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/review/cycle-1.done" "review cycle 1 done file exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/review/cycle-2.done" "review cycle 2 done file exists in issue folder"
+assert_file "${ISSUE_DIR}/workers/modify/cycle-1.done" "modifier done file exists in issue folder"
 
-assert_json_file "${PROJECT_DIR}/.run-with-it/reviews/101-cycle-1-status.json" "review cycle 1 status JSON valid"
-assert_json_file "${PROJECT_DIR}/.run-with-it/reviews/101-cycle-1-instructions.json" "review cycle 1 instructions JSON valid"
-assert_json_file "${PROJECT_DIR}/.run-with-it/reviews/101-cycle-2-status.json" "review cycle 2 status JSON valid"
-assert_json_file "${PROJECT_DIR}/.run-with-it/reviews/101-cycle-2-instructions.json" "review cycle 2 instructions JSON valid"
+assert_json_file "${ISSUE_DIR}/workers/review/cycle-1-status.json" "review cycle 1 status JSON valid"
+assert_json_file "${ISSUE_DIR}/workers/review/cycle-1-instructions.json" "review cycle 1 instructions JSON valid"
+assert_json_file "${ISSUE_DIR}/workers/review/cycle-2-status.json" "review cycle 2 status JSON valid"
+assert_json_file "${ISSUE_DIR}/workers/review/cycle-2-instructions.json" "review cycle 2 instructions JSON valid"
 
 assert_contains "${TRANSITION_PROOF}" 'started_review_before_impl_cleanup=yes' "sub-coordinator started next phase from done sentinel before worker cleanup finished"
 assert_contains "${PROJECT_DIR}/smoke-output.txt" 'modified' "small issue work fixture was modified"
-
-tail_lines="$(tail -n 2 "${SUB_LOG_FILE}" | wc -l | tr -d ' ')"
-[[ "${tail_lines}" == "2" ]] || fail "sub log tail returns exactly two lines"
 
 echo "PASS: run-with-it nested logging and done-sentinel smoke harness"

@@ -1,0 +1,381 @@
+param(
+    [string]$AssetRoot = $env:ASSETS_DEST,
+    [Parameter(Mandatory = $true)][string]$Role,
+    [Parameter(Mandatory = $true)][string]$Issue,
+    [string]$Cycle = "",
+    [Parameter(Mandatory = $true)][string]$Agent,
+    [Parameter(Mandatory = $true)][string]$Model,
+    [Parameter(Mandatory = $true)][string]$ContextFile,
+    [Parameter(Mandatory = $true)][string]$PromptFile,
+    [Parameter(Mandatory = $true)][string]$LogFile,
+    [Parameter(Mandatory = $true)][string]$DoneFile,
+    [Parameter(Mandatory = $true)][string]$ResultFile,
+    [string]$StateFile = $env:RUN_WITH_IT_STATE_FILE,
+    [string]$RepoRoot = "",
+    [string]$IssueDir = "",
+    [string]$StatusFile = $env:RUN_WITH_IT_STATUS_FILE,
+    [string]$EventsLog = $env:RUN_WITH_IT_EVENTS_LOG,
+    [string]$TailStateFile = "",
+    [int]$PollSeconds = $(if ($env:WORKER_POLL_SECONDS) { [int]$env:WORKER_POLL_SECONDS } else { 20 }),
+    [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
+    [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
+    [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
+    [switch]$DryRun,
+    [switch]$ValidateOnly
+)
+
+$ErrorActionPreference = "Stop"
+
+function Fail([string]$message) {
+    [Console]::Error.WriteLine("run-with-it-dispatch.ps1: $message")
+    exit 2
+}
+
+function Ensure-ParentDir([string]$path) {
+    $dir = Split-Path $path
+    if ($dir) {
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    }
+}
+
+function Get-PowerShellExe {
+    try {
+        $path = (Get-Process -Id $PID).Path
+        if ($path) { return $path }
+    } catch {}
+    $candidate = Join-Path $PSHOME "pwsh"
+    if (Test-Path $candidate) { return $candidate }
+    $candidate = Join-Path $PSHOME "powershell.exe"
+    if (Test-Path $candidate) { return $candidate }
+    return "powershell"
+}
+
+function Quote-ProcessArgument([string]$arg) {
+    if ($null -eq $arg) { return '""' }
+    if ($arg.Length -eq 0) { return '""' }
+    if ($arg -notmatch '[\s"]') { return $arg }
+
+    $result = '"'
+    $backslashes = 0
+    foreach ($char in $arg.ToCharArray()) {
+        if ($char -eq '\') {
+            $backslashes++
+        } elseif ($char -eq '"') {
+            if ($backslashes -gt 0) { $result += ('\' * ($backslashes * 2)) }
+            $result += '\"'
+            $backslashes = 0
+        } else {
+            if ($backslashes -gt 0) { $result += ('\' * $backslashes) }
+            $result += $char
+            $backslashes = 0
+        }
+    }
+
+    if ($backslashes -gt 0) { $result += ('\' * ($backslashes * 2)) }
+    $result += '"'
+    return $result
+}
+
+function Join-ProcessArguments([object[]]$arguments) {
+    return (($arguments | ForEach-Object { Quote-ProcessArgument ([string]$_) }) -join " ")
+}
+
+function Get-IsoNow {
+    return [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+}
+
+function Get-UnixNow {
+    return [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+}
+
+function Get-FileMtimeEpoch([string]$path) {
+    if (-not (Test-Path $path)) { return 0 }
+    return ([DateTimeOffset](Get-Item $path).LastWriteTimeUtc).ToUnixTimeSeconds()
+}
+
+function Get-FileSize([string]$path) {
+    if (-not (Test-Path $path)) { return 0 }
+    return (Get-Item $path).Length
+}
+
+function Get-LogSignature {
+    if (-not (Test-Path $LogFile)) { return "missing" }
+    return "$(Get-FileSize $LogFile):$(Get-FileMtimeEpoch $LogFile)"
+}
+
+function Get-LatestHeartbeatLine {
+    if (-not (Test-Path $LogFile)) { return "" }
+    $match = Select-String -Path $LogFile -Pattern '^STATUS\|type=heartbeat\|' -ErrorAction SilentlyContinue | Select-Object -Last 1
+    if ($match) { return $match.Line }
+    return ""
+}
+
+function Write-Status([string]$line) {
+    Write-Output $line
+    Ensure-ParentDir $LogFile
+    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    if ($StatusFile) {
+        Ensure-ParentDir $StatusFile
+        Set-Content -Path $StatusFile -Value $line -Encoding UTF8
+    }
+    if ($EventsLog) {
+        Ensure-ParentDir $EventsLog
+        Add-Content -Path $EventsLog -Value $line -Encoding UTF8
+    }
+    $script:lastLogSignature = Get-LogSignature
+}
+
+function Refresh-LogActivity([int64]$nowEpoch) {
+    $signature = Get-LogSignature
+    if ($signature -ne $script:lastLogSignature) {
+        $script:lastLogSignature = $signature
+        $script:lastOutputEpoch = $nowEpoch
+        $script:lastOutputAt = Get-IsoNow
+        $heartbeat = Get-LatestHeartbeatLine
+        if ($heartbeat -and $heartbeat -ne $script:lastHeartbeatLine) {
+            $script:lastHeartbeatLine = $heartbeat
+            $script:lastHeartbeatEpoch = $nowEpoch
+            $script:lastHeartbeatAt = $script:lastOutputAt
+        }
+    }
+}
+
+function Write-WorkerState(
+    [string]$state,
+    [bool]$alive,
+    [Nullable[int]]$exitCode = $null,
+    [string]$stallReason = ""
+) {
+    $nowEpoch = Get-UnixNow
+    $secondsSinceOutput = $nowEpoch - $script:lastOutputEpoch
+    $secondsSinceHeartbeat = $null
+    if ($script:lastHeartbeatEpoch -gt 0) {
+        $secondsSinceHeartbeat = $nowEpoch - $script:lastHeartbeatEpoch
+    }
+
+    $payload = [ordered]@{
+        schema_version = 1
+        issue = $Issue
+        role = $Role
+        cycle = $(if ($Cycle) { $Cycle } else { $null })
+        state = $state
+        dispatcher_pid = $PID
+        runner_pid = $(if ($script:runnerPid) { $script:runnerPid } else { $null })
+        agent = $Agent
+        model = $Model
+        alive = $alive
+        done = ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0))
+        result_present = ((Test-Path $ResultFile) -and ((Get-Item $ResultFile).Length -gt 0))
+        log_present = ((Test-Path $LogFile) -and ((Get-Item $LogFile).Length -gt 0))
+        log_file = $LogFile
+        done_file = $DoneFile
+        result_file = $ResultFile
+        state_file = $StateFile
+        log_size_bytes = Get-FileSize $LogFile
+        log_mtime_epoch = Get-FileMtimeEpoch $LogFile
+        quiet_seconds = $QuietSeconds
+        stall_seconds = $StallSeconds
+        seconds_since_last_output = $secondsSinceOutput
+        seconds_since_last_heartbeat = $secondsSinceHeartbeat
+        started_at = $script:startedIso
+        last_output_at = $script:lastOutputAt
+        last_heartbeat_at = $(if ($script:lastHeartbeatAt) { $script:lastHeartbeatAt } else { $null })
+        updated_at = Get-IsoNow
+        stall_reason = $(if ($stallReason) { $stallReason } else { $null })
+        exit_code = $exitCode
+    }
+
+    Ensure-ParentDir $StateFile
+    $tmpFile = "$StateFile.tmp.$PID"
+    $payload | ConvertTo-Json -Depth 8 | Set-Content -Path $tmpFile -Encoding UTF8
+    Move-Item -Force $tmpFile $StateFile
+}
+
+if (-not $AssetRoot) {
+    $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
+    if (Test-Path (Join-Path $homeAssetRoot "run-agent.ps1")) {
+        $AssetRoot = $homeAssetRoot
+    } else {
+        $AssetRoot = $PSScriptRoot
+    }
+}
+
+$RunAgent = Join-Path $AssetRoot "run-agent.ps1"
+$WorkerWatch = Join-Path $AssetRoot "worker-watch.ps1"
+$RegistryFile = Join-Path $AssetRoot "agent-registry.json"
+
+if (-not (Test-Path $RunAgent)) { Fail "runner not found: $RunAgent" }
+if (-not (Test-Path $WorkerWatch)) { Fail "worker watcher not found: $WorkerWatch" }
+if (-not (Test-Path $RegistryFile)) { Fail "agent registry not found: $RegistryFile" }
+if (-not (Test-Path $ContextFile)) { Fail "context file not found: $ContextFile" }
+if (-not (Test-Path $PromptFile)) { Fail "prompt file not found: $PromptFile" }
+if ($RepoRoot -and -not (Test-Path $RepoRoot)) { Fail "repo root not found: $RepoRoot" }
+
+if (-not $IssueDir) {
+    $IssueDir = if ($env:RUN_WITH_IT_ISSUE_DIR) {
+        $env:RUN_WITH_IT_ISSUE_DIR
+    } else {
+        Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "issues") $Issue
+    }
+}
+
+if (-not $StateFile) {
+    $logDir = Split-Path $LogFile
+    $logBase = [System.IO.Path]::GetFileNameWithoutExtension($LogFile)
+    $StateFile = Join-Path $logDir "$logBase.state.json"
+}
+
+foreach ($path in @($LogFile, $DoneFile, $ResultFile, $StateFile)) {
+    Ensure-ParentDir $path
+}
+if ($StatusFile) { Ensure-ParentDir $StatusFile }
+if ($EventsLog) { Ensure-ParentDir $EventsLog }
+if (-not $TailStateFile) {
+    $cyclePart = if ($Cycle) { $Cycle } else { "0" }
+    $TailStateFile = Join-Path (Join-Path (Get-Location).Path ".run-with-it") "status"
+    $TailStateFile = Join-Path $TailStateFile "issue-$Issue-$Role-cycle-$cyclePart.tail.sha"
+}
+New-Item -ItemType Directory -Force -Path $IssueDir | Out-Null
+
+$cycleField = if ($Cycle) { "|cycle=$Cycle" } else { "" }
+
+if ($DryRun) {
+    $repoRootValue = if ($RepoRoot) { $RepoRoot } elseif ($env:REPO_ROOT) { $env:REPO_ROOT } else { (Get-Location).Path }
+    Write-Output "GUI_MODE=0 AGENT_REGISTRY_FILE=$RegistryFile REPO_ROOT=$repoRootValue RUN_WITH_IT_ISSUE_DIR=$IssueDir RUN_WITH_IT_STATUS_FILE=$StatusFile RUN_WITH_IT_EVENTS_LOG=$EventsLog RUN_WITH_IT_LOG_FILE=$LogFile RUN_WITH_IT_DONE_FILE=$DoneFile RUN_WITH_IT_STATE_FILE=$StateFile RUN_WITH_IT_ROLE=$Role RUN_WITH_IT_ISSUE=$Issue $RunAgent --agent $Agent --model $Model --context-file $ContextFile --prompt-file $PromptFile --unattended"
+    exit 0
+}
+
+$script:startedAt = Get-UnixNow
+$script:startedIso = Get-IsoNow
+$script:lastOutputEpoch = $script:startedAt
+$script:lastOutputAt = $script:startedIso
+$script:lastHeartbeatEpoch = 0
+$script:lastHeartbeatAt = ""
+$script:lastHeartbeatLine = ""
+$script:lastLogSignature = Get-LogSignature
+$script:lastState = "ready"
+$script:runnerPid = $null
+
+Write-Status "STATUS|type=dispatch-ready|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|result_file=$ResultFile"
+Write-WorkerState "ready" $false
+
+if ($ValidateOnly) {
+    exit 0
+}
+
+Write-Status "STATUS|type=dispatch-start|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model"
+$script:lastState = "starting"
+Write-WorkerState "starting" $false
+
+$powerShellExe = Get-PowerShellExe
+$runnerArgs = @(
+    "-NoProfile",
+    "-File", $RunAgent,
+    "--agent", $Agent,
+    "--model", $Model,
+    "--context-file", $ContextFile,
+    "--prompt-file", $PromptFile,
+    "--unattended"
+)
+
+$envBackup = @{}
+foreach ($name in @(
+    "GUI_MODE",
+    "AGENT_REGISTRY_FILE",
+    "REPO_ROOT",
+    "RUN_WITH_IT_ISSUE_DIR",
+    "RUN_WITH_IT_STATUS_FILE",
+    "RUN_WITH_IT_EVENTS_LOG",
+    "RUN_WITH_IT_LOG_FILE",
+    "RUN_WITH_IT_DONE_FILE",
+    "RUN_WITH_IT_STATE_FILE",
+    "RUN_WITH_IT_ROLE",
+    "RUN_WITH_IT_ISSUE"
+)) {
+    $envBackup[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+}
+
+try {
+    $env:GUI_MODE = if ($env:GUI_MODE) { $env:GUI_MODE } else { "0" }
+    $env:AGENT_REGISTRY_FILE = $RegistryFile
+    $env:REPO_ROOT = if ($RepoRoot) { $RepoRoot } elseif ($env:REPO_ROOT) { $env:REPO_ROOT } else { (Get-Location).Path }
+    $env:RUN_WITH_IT_ISSUE_DIR = $IssueDir
+    $env:RUN_WITH_IT_STATUS_FILE = $StatusFile
+    $env:RUN_WITH_IT_EVENTS_LOG = $EventsLog
+    $env:RUN_WITH_IT_LOG_FILE = $LogFile
+    $env:RUN_WITH_IT_DONE_FILE = $DoneFile
+    $env:RUN_WITH_IT_STATE_FILE = $StateFile
+    $env:RUN_WITH_IT_ROLE = $Role
+    $env:RUN_WITH_IT_ISSUE = $Issue
+
+    $process = Start-Process -FilePath $powerShellExe -ArgumentList (Join-ProcessArguments $runnerArgs) -PassThru
+}
+finally {
+    foreach ($name in $envBackup.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $envBackup[$name], "Process")
+    }
+}
+
+$script:runnerPid = $process.Id
+Write-Status "STATUS|type=dispatch-pid|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|done_file=$DoneFile|result_file=$ResultFile"
+$script:lastState = "running"
+Write-WorkerState "running" $true
+
+while ($true) {
+    Start-Sleep -Seconds $PollSeconds
+    $now = Get-UnixNow
+    Refresh-LogActivity $now
+
+    try {
+        & $powerShellExe -NoProfile -File $WorkerWatch -Pid $process.Id -DoneFile $DoneFile -LogFile $LogFile -TailStateFile $TailStateFile -TailLines 5 | Out-Null
+    } catch {}
+
+    if ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0) -and (Test-Path $ResultFile) -and ((Get-Item $ResultFile).Length -gt 0)) {
+        $process.Refresh()
+        Write-WorkerState "completed" (-not $process.HasExited)
+        Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+        exit 0
+    }
+
+    $process.Refresh()
+    if ($process.HasExited) {
+        $exitCode = $process.ExitCode
+        if ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0) -and (Test-Path $ResultFile) -and ((Get-Item $ResultFile).Length -gt 0)) {
+            Write-WorkerState "completed" $false $exitCode
+            Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+            exit 0
+        }
+        Write-WorkerState "failed" $false $exitCode "process-exited-missing-done-or-result"
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=missing-done-or-result|done_file=$DoneFile|result_file=$ResultFile"
+        exit 1
+    }
+
+    $silenceSeconds = $now - $script:lastOutputEpoch
+    $state = "running"
+    $stallReason = ""
+    if ($silenceSeconds -ge $StallSeconds) {
+        $state = "stalled"
+        $stallReason = "alive-but-silent"
+    } elseif ($silenceSeconds -ge $QuietSeconds) {
+        $state = "quiet"
+        $stallReason = "alive-but-quiet"
+    }
+
+    Write-WorkerState $state $true $null $stallReason
+    if ($state -ne $script:lastState) {
+        if ($state -eq "quiet") {
+            Write-Status "STATUS|type=worker-quiet|issue=$Issue|role=$Role$cycleField|reason=alive-but-quiet|silence_seconds=$silenceSeconds|state_file=$StateFile"
+        } elseif ($state -eq "stalled") {
+            Write-Status "STATUS|type=worker-stalled|issue=$Issue|role=$Role$cycleField|reason=alive-but-silent|silence_seconds=$silenceSeconds|state_file=$StateFile"
+        }
+        $script:lastState = $state
+    }
+
+    if ($TimeoutSeconds -ne 0) {
+        $elapsed = $now - $script:startedAt
+        if ($elapsed -ge $TimeoutSeconds) {
+            Write-Status "STATUS|type=dispatch-stall|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|elapsed=$elapsed|action=alert-user"
+            $TimeoutSeconds = 0
+        }
+    }
+}

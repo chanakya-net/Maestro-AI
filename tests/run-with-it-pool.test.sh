@@ -25,6 +25,7 @@ assert_file_contains() {
 }
 
 WORK_DIR="$(mktemp -d)"
+WORK_DIR_REAL="$(cd "${WORK_DIR}" && pwd -P)"
 cleanup() {
   rm -rf "${WORK_DIR}"
 }
@@ -99,6 +100,9 @@ assert_contains "${dry_output}" "--role sub-coord" "dry-run dispatches sub-coord
 assert_contains "${dry_output}" "--issue 101" "dry-run queues first ready issue"
 assert_contains "${dry_output}" "--issue 102" "dry-run queues second ready issue"
 assert_contains "${dry_output}" "--context-file ${WORK_DIR}/.run-with-it/contexts/sub-101.md" "dry-run forwards persisted context path"
+assert_contains "${dry_output}" "--issue-dir ${WORK_DIR_REAL}/.run-with-it/issues/101" "dry-run forwards issue-scoped sub-coordinator folder"
+assert_contains "${dry_output}" "--log-file ${WORK_DIR_REAL}/.run-with-it/issues/101/sub-coordinator.log" "dry-run places sub-coordinator log in issue folder"
+assert_contains "${dry_output}" "--result-file ${WORK_DIR_REAL}/.run-with-it/issues/101/report.json" "dry-run places compact report in issue folder"
 
 printf '# issue 201 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-201.md"
 printf '# issue 202 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-202.md"

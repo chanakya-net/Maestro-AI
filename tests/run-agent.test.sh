@@ -80,14 +80,16 @@ aliases = registry.get("aliases", {})
 model_catalog = registry.get("model_catalog", {})
 model_routing = registry.get("model_routing", {})
 provider_rules = model_routing.get("provider_routing_rules", {})
-required_agents = ["codex", "claude", "gemini", "github-copilot", "opencode"]
+required_agents = ["codex", "claude", "github-copilot", "opencode", "agy"]
 
 for agent_id in required_agents:
     check(agent_id in agents, f"missing agent entry: {agent_id}")
+check("gemini" not in agents, "standalone gemini agent is removed; route Google models through agy")
 
 check(aliases.get("copilot") == "github-copilot", "copilot alias resolves to github-copilot")
 check(aliases.get("claude-code") == "claude", "claude-code alias resolves to claude")
 check(aliases.get("open_code") == "opencode", "open_code alias resolves to opencode")
+check(aliases.get("gemini-cli") is None, "gemini-cli alias is removed with standalone gemini agent")
 
 for agent_id, agent in agents.items():
     check(agent.get("display_name"), f"{agent_id} has display_name")
@@ -100,13 +102,16 @@ for agent_id, agent in agents.items():
     check(isinstance(agent.get("fallback_order"), list), f"{agent_id} has fallback order")
     check("requires_user_model_config" in agent.get("user_model_configuration", {}), f"{agent_id} declares user model config behavior")
 
-for agent_id in ["codex", "claude", "gemini", "github-copilot"]:
+for agent_id in ["codex", "claude", "github-copilot", "agy"]:
     model = agents[agent_id]["model"]
     check(model.get("default"), f"{agent_id} has default model metadata")
     check(model.get("known_models"), f"{agent_id} has known model metadata")
     check(agents[agent_id]["user_model_configuration"]["requires_user_model_config"] is False, f"{agent_id} does not require user model config")
 
-check(model_routing.get("cost_basis") == "agent-subscription-routing-units", "routing costs are subscription-unit based")
+check(model_routing.get("cost_basis") is None, "subscription routing no longer carries API cost basis")
+for model_id, catalog_entry in model_catalog.items():
+    for removed_key in ("price_input_per_1m", "price_output_per_1m", "price_tier"):
+        check(removed_key not in catalog_entry, f"{model_id} omits {removed_key} under subscription routing")
 
 codex_model = agents["codex"]["model"]
 expected_codex_models = [
@@ -118,12 +123,11 @@ expected_codex_models = [
 ]
 check(codex_model.get("default") == "gpt-5.3-codex-spark", "codex defaults to spark coding model")
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
-check(codex_model.get("pricing_basis") == "codex-subscription", "codex declares subscription pricing basis")
+check(codex_model.get("pricing_basis") == "subscription", "codex declares subscription pricing basis")
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
-check(codex_model.get("per_model_multipliers") is False, "codex declares no per-model multiplier system")
 for model_id in expected_codex_models:
     check(model_id in model_catalog, f"codex model catalog includes {model_id}")
-    check(codex_model.get("routing_cost_overrides", {}).get(model_id) == 0.0, f"{model_id} is plan-included for Codex routing")
+check("routing_cost_overrides" not in codex_model, "codex model metadata omits cost overrides")
 
 claude_model = agents["claude"]["model"]
 expected_claude_models = [
@@ -132,19 +136,16 @@ expected_claude_models = [
 ]
 check(claude_model.get("default") == "claude-sonnet-4-6", "claude defaults to selected balanced model")
 check(claude_model.get("known_models") == expected_claude_models, "claude known models match available Claude model list")
-check(claude_model.get("pricing_basis") == "claude-subscription", "claude declares subscription pricing basis")
+check(claude_model.get("pricing_basis") == "subscription", "claude declares subscription pricing basis")
 check(claude_model.get("metered_api_cost") is False, "claude is not treated as API-metered")
-check(claude_model.get("per_model_multipliers") is False, "claude declares no per-model multiplier system")
 for model_id in expected_claude_models:
     check(model_id in model_catalog, f"claude model catalog includes {model_id}")
-    check(claude_model.get("routing_cost_overrides", {}).get(model_id) == 0.0, f"{model_id} is plan-included for Claude routing")
+check("routing_cost_overrides" not in claude_model, "claude model metadata omits cost overrides")
 
 copilot_model = agents["github-copilot"]["model"]
 expected_copilot_models = [
     "claude-haiku-4.5",
     "claude-sonnet-4.6",
-    "gemini-3-flash-preview",
-    "gemini-3.1-pro-preview",
     "gpt-5.2",
     "gpt-5.2-codex",
     "gpt-5.3-codex",
@@ -155,30 +156,29 @@ check(copilot_model.get("default") == "gpt-5.3-codex", "github-copilot defaults 
 check(copilot_model.get("known_models") == expected_copilot_models, "github-copilot known models match available Copilot model list")
 for model_id in expected_copilot_models:
     check(model_id in model_catalog, f"copilot model catalog includes {model_id}")
-
-expected_copilot_multipliers = {
-    "claude-haiku-4.5": 0.33,
-    "claude-sonnet-4.6": 1.0,
-    "gemini-3-flash-preview": 0.33,
-    "gemini-3.1-pro-preview": 1.0,
-    "gpt-5.2": 1.0,
-    "gpt-5.2-codex": 1.0,
-    "gpt-5.3-codex": 1.0,
-    "gpt-5.4-mini": 0.33,
-    "gpt-5.4": 1.0,
-}
-for model_id, expected_multiplier in expected_copilot_multipliers.items():
-    catalog_entry = model_catalog[model_id]
-    check(catalog_entry.get("price_input_per_1m") == expected_multiplier, f"{model_id} input price uses Copilot multiplier")
-    check(catalog_entry.get("price_output_per_1m") == expected_multiplier, f"{model_id} output price uses Copilot multiplier")
+check("claude-sonnet-4.6" in copilot_model.get("known_models", []), "Copilot-specific Claude model ID is preserved")
+check("claude-sonnet-4-6" in claude_model.get("known_models", []), "Claude-specific Claude model ID is preserved")
 
 google_rules = provider_rules.get("google", {})
-check(google_rules.get("automatic_routing") == "easy_only", "google provider is easy-only for automatic routing")
-check(google_rules.get("max_band") == "easy", "google provider is capped at easy band")
-check("quite-easy and easy" in google_rules.get("_note", "").lower(), "google provider note documents easy-only routing")
-check("explicit" in google_rules.get("_note", "").lower(), "google provider note documents explicit overrides")
-check(model_catalog["gemini-3.1-flash-lite-preview"]["complexity_weight"] == 3, "Gemini lite remains quite-easy/easy eligible")
-check(model_catalog["gemini-3-flash-preview"]["complexity_weight"] == 4, "Gemini flash is easy eligible but not medium automatic due provider cap")
+check(google_rules.get("automatic_routing") == "all", "google provider can route through agy for all bands")
+check(google_rules.get("preferred_agents") == ["agy"], "google provider routes through agy")
+check(google_rules.get("fallback_agents") == ["agy"], "google provider falls back through agy only")
+check("agy" in google_rules.get("_note", "").lower(), "google provider note documents agy routing")
+
+agy_model = agents["agy"]["model"]
+expected_agy_models = [
+    "gemini-3.5-flash-high",
+    "gemini-3.5-flash-medium",
+    "gemini-3.1-pro-low",
+    "gemini-3.1-pro-high",
+    "claude-sonnet-4.6-thinking",
+    "claude-opus-4.6-thinking",
+    "gpt-0ss-120b-medium",
+]
+check(agy_model.get("default") == "gemini-3.5-flash-high", "agy defaults to high Gemini model")
+check(agy_model.get("known_models") == expected_agy_models, "agy known models match available Agy model list")
+for model_id in expected_agy_models:
+    check(model_id in model_catalog, f"agy model catalog includes {model_id}")
 
 anthropic_rules = provider_rules.get("anthropic", {})
 check(anthropic_rules.get("automatic_routing") == "all", "direct Claude routing remains automatic")
@@ -195,10 +195,11 @@ check(anthropic_agent_rules[0].get("automatic_routing") == "all", "anthropic dir
 
 for agent_id, agent in agents.items():
     fallback_order = agent.get("fallback_order", [])
+    check("gemini" not in fallback_order, f"{agent_id} fallback order does not reference removed gemini agent")
     if agent_id != "claude" and "claude" in fallback_order:
         check(fallback_order[-1] == "claude", f"{agent_id} uses direct Claude only after other fallback agents")
 
-gemini_known_models = set(agents["gemini"]["model"].get("known_models", []))
+agy_known_models = set(agents["agy"]["model"].get("known_models", []))
 removed_gemini_catalog_models = {
     "auto-gemini-2.5",
     "gemini-2.5-flash-lite",
@@ -209,9 +210,9 @@ removed_gemini_cli_models = {
     "gemini-2.5-pro",
 }
 check(not removed_gemini_catalog_models & set(model_catalog), "old gemini 2.5 flash models are removed from model catalog")
-check(not removed_gemini_cli_models & gemini_known_models, "gemini 2.5 models are removed from Gemini CLI known models")
-for model_id in ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"]:
-    check(model_id in gemini_known_models, f"{model_id} remains in gemini known models")
+check(not removed_gemini_cli_models & agy_known_models, "gemini 2.5 models are removed from Agy known models")
+for model_id in ["gemini-3.5-flash-high", "gemini-3.5-flash-medium", "gemini-3.1-pro-low", "gemini-3.1-pro-high"]:
+    check(model_id in agy_known_models, f"{model_id} remains in agy known models")
 
 opencode = agents["opencode"]
 check(opencode["user_model_configuration"]["requires_user_model_config"] is True, "opencode requires user model config")
@@ -422,13 +423,11 @@ assert_not_contains "${copilot_gui_dry_run_output}" "--allow-all-paths" "GUI mod
 
 echo "PASS: run-agent GUI mode selects safer non-interactive permissions"
 
-gemini_dry_run_output="$("${RUNNER_PATH}" --agent gemini --model gemini-3.1-pro-preview --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${gemini_dry_run_output}" "gemini " "gemini dry-run uses gemini command"
-assert_contains "${gemini_dry_run_output}" "--model gemini-3.1-pro-preview" "gemini dry-run forwards selected model"
-assert_contains "${gemini_dry_run_output}" "--prompt" "gemini dry-run uses prompt flag"
-assert_contains "${gemini_dry_run_output}" "--yolo" "gemini dry-run includes registry default yolo mode"
-assert_not_contains "${gemini_dry_run_output}" "--approval-mode=yolo" "gemini dry-run excludes approval-mode yolo by default"
-assert_not_contains "${gemini_dry_run_output}" "--consent" "gemini dry-run excludes unsupported consent flag"
+agy_dry_run_output="$("${RUNNER_PATH}" --agent agy --model gemini-3.5-flash-high --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+assert_contains "${agy_dry_run_output}" "agy " "agy dry-run uses agy command"
+assert_contains "${agy_dry_run_output}" "--model gemini-3.5-flash-high" "agy dry-run forwards selected Google model"
+assert_contains "${agy_dry_run_output}" "--print" "agy dry-run uses print flag"
+assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dry-run includes registry default permission mode"
 
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"

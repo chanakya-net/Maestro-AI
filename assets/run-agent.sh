@@ -181,7 +181,7 @@ forward_status_stream() {
   local target_fd="$1"
   local line
 
-  while IFS= read -r line; do
+  while IFS= read -r line || [[ -n "${line}" ]]; do
     printf '%s\n' "${line}" >&"${target_fd}"
     write_log_line "${line}"
     case "${line}" in
@@ -254,11 +254,6 @@ apply_gui_permission_mode() {
     github-copilot)
       if [[ -z "${AGENT_PERMISSION_MODE}" || "${AGENT_PERMISSION_MODE}" == "--allow-all" || "${AGENT_PERMISSION_MODE}" == "--autopilot --yolo" ]]; then
         AGENT_PERMISSION_MODE="--allow-all-tools"
-      fi
-      ;;
-    gemini)
-      if [[ "${AGENT_PERMISSION_MODE}" == "--yolo" || "${AGENT_PERMISSION_MODE}" == "--approval-mode=yolo" ]]; then
-        AGENT_PERMISSION_MODE="--approval-mode=auto_edit"
       fi
       ;;
     agy)

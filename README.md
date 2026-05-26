@@ -45,9 +45,12 @@ AI-Skills/
 │   ├── run-agent.sh
 │   ├── run-agent.ps1
 │   ├── run-with-it-dispatch.sh
+│   ├── run-with-it-dispatch.ps1
 │   ├── run-with-it-pool.sh
+│   ├── run-with-it-pool.ps1
 │   ├── sub-coordinator-prompt.md
-│   └── worker-watch.sh
+│   ├── worker-watch.sh
+│   └── worker-watch.ps1
 ├── docs/
 │   └── superpowers/plans/
 ├── skills/
@@ -63,14 +66,20 @@ AI-Skills/
     ├── create-git-issue-routing.test.sh
     ├── help-me-debug-contract.test.sh
     ├── install-assets-contract.test.sh
+    ├── install-assets-powershell-contract.test.sh
     ├── run-agent-status-bus.test.sh
+    ├── run-agent-ps1-status-bus.test.sh
     ├── run-agent.test.sh
+    ├── run-with-it-dispatch-ps1.test.sh
     ├── run-with-it-dispatch.test.sh
     ├── run-with-it-log-harness.test.sh
     ├── run-with-it-pool-actual-flow.test.sh
+    ├── run-with-it-pool-ps1.test.sh
     ├── run-with-it-pool.test.sh
+    ├── run-with-it-routing-windows.test.sh
     ├── run-with-it-routing.test.sh
     ├── uninstall-contract.test.sh
+    ├── worker-watch-ps1.test.sh
     └── worker-watch.test.sh
 ```
 
@@ -112,8 +121,11 @@ Durable state and logs live under `.run-with-it/` during orchestration. Worker c
 | [`assets/run-agent.sh`](assets/run-agent.sh) | Unix runner for macOS, Linux, Git Bash, and GUI-launched Unix-like workflows. |
 | [`assets/run-agent.ps1`](assets/run-agent.ps1) | PowerShell runner for Windows workflows. |
 | [`assets/run-with-it-dispatch.sh`](assets/run-with-it-dispatch.sh) | Shared dispatcher that validates inputs, spawns `run-agent.sh`, writes status events, and monitors done/result files. |
+| [`assets/run-with-it-dispatch.ps1`](assets/run-with-it-dispatch.ps1) | PowerShell dispatcher for native Windows `run-with-it` orchestration. |
 | [`assets/run-with-it-pool.sh`](assets/run-with-it-pool.sh) | Rolling-pool scheduler helper for ready issues and merge recovery handling. |
+| [`assets/run-with-it-pool.ps1`](assets/run-with-it-pool.ps1) | PowerShell rolling-pool scheduler for native Windows orchestration. |
 | [`assets/worker-watch.sh`](assets/worker-watch.sh) | Liveness/log-tail watcher for background workers. |
+| [`assets/worker-watch.ps1`](assets/worker-watch.ps1) | PowerShell liveness/log-tail watcher for background workers. |
 | [`assets/prompt.md`](assets/prompt.md) | Implementation worker prompt. |
 | [`assets/sub-coordinator-prompt.md`](assets/sub-coordinator-prompt.md) | One-issue Sub-Coordinator prompt. |
 | [`assets/merge-recovery-prompt.md`](assets/merge-recovery-prompt.md) | Merge Recovery Coordinator prompt. |
@@ -228,12 +240,18 @@ Focused tests:
 
 ```bash
 bash tests/install-assets-contract.test.sh
+bash tests/install-assets-powershell-contract.test.sh
 bash tests/uninstall-contract.test.sh
 bash tests/run-agent.test.sh
 bash tests/run-agent-status-bus.test.sh
+bash tests/run-agent-ps1-status-bus.test.sh
 bash tests/run-with-it-dispatch.test.sh
+bash tests/run-with-it-dispatch-ps1.test.sh
 bash tests/run-with-it-pool.test.sh
+bash tests/run-with-it-pool-ps1.test.sh
 bash tests/run-with-it-pool-actual-flow.test.sh
+bash tests/run-with-it-routing-windows.test.sh
+bash tests/worker-watch-ps1.test.sh
 bash tests/worker-watch.test.sh
 ```
 
@@ -253,6 +271,8 @@ bash install.sh
 .\install.ps1
 ```
 
+`install.sh` installs the Bash/macOS/Linux/Git Bash helper family only. `install.ps1` installs the native PowerShell helper family only. Both install the shared prompt, rule, and registry assets.
+
 Manual Unix repair from repo root:
 
 ```bash
@@ -267,7 +287,6 @@ cp -f \
   ./assets/coordinator-rules.md \
   ./assets/main-orchestrator-rules.md \
   ./assets/run-agent.sh \
-  ./assets/run-agent.ps1 \
   ./assets/run-with-it-dispatch.sh \
   ./assets/run-with-it-pool.sh \
   ./assets/worker-watch.sh \
@@ -284,7 +303,7 @@ Manual PowerShell repair from repo root:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
-Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.sh, .\assets\run-with-it-pool.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 ### No Git Repo

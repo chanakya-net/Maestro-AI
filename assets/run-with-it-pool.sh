@@ -70,6 +70,7 @@ MERGE_RECOVERY_PROMPT_FILE="${ASSET_ROOT}/merge-recovery-prompt.md"
 [ -f "$PROMPT_FILE" ] || fail "sub-coordinator prompt not found: $PROMPT_FILE"
 [ -f "$MERGE_RECOVERY_PROMPT_FILE" ] || fail "merge recovery prompt not found: $MERGE_RECOVERY_PROMPT_FILE"
 [ -f "$STATE_FILE" ] || fail "state file not found: $STATE_FILE"
+RUN_ROOT="$(cd "$(dirname "$STATE_FILE")/.." && pwd -P)"
 
 JSON_PARSER=""
 if command -v jq >/dev/null 2>&1; then
@@ -189,6 +190,10 @@ PY
   fi
 }
 
+issue_dir_for() {
+  printf '%s/.run-with-it/issues/%s\n' "$RUN_ROOT" "$1"
+}
+
 mark_in_progress() {
   if [ "$JSON_PARSER" = "jq" ]; then
     local tmp_file
@@ -201,11 +206,13 @@ mark_in_progress() {
       --arg log_file "$4" \
       --arg done_file "$5" \
       --arg report_file "$6" \
+      --arg issue_dir "$7" \
       '
         .issue_registry = (.issue_registry // {})
         | .issue_registry[$issue] = ((.issue_registry[$issue] // {}) + {
             status: "in_progress",
             context_file: $context_file,
+            issue_dir: $issue_dir,
             pid: $pid,
             started_at: $started_at,
             log_file: $log_file,
@@ -216,14 +223,15 @@ mark_in_progress() {
       ' "$STATE_FILE" > "$tmp_file"
     mv "$tmp_file" "$STATE_FILE"
   else
-    python3 - "$STATE_FILE" "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
+    python3 - "$STATE_FILE" "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY'
 import json, sys, time
-path, issue, pid, context_file, log_file, done_file, report_file = sys.argv[1:]
+path, issue, pid, context_file, log_file, done_file, report_file, issue_dir = sys.argv[1:]
 state = json.load(open(path))
 reg = state.setdefault("issue_registry", {})
 entry = reg.setdefault(str(issue), {})
 entry["status"] = "in_progress"
 entry["context_file"] = context_file
+entry["issue_dir"] = issue_dir
 entry["pid"] = int(pid)
 entry["started_at"] = int(time.time())
 entry["log_file"] = log_file
@@ -504,24 +512,27 @@ fi
 print_dispatch_command() {
   local issue="$1"
   local context_file="$2"
-  local log_file="$3"
-  local done_file="$4"
-  local report_file="$5"
-  printf '%s --asset-root %s --role sub-coord --issue %s --agent %s --model %s --context-file %s --prompt-file %s --log-file %s --done-file %s --result-file %s --status-file %s --events-log %s --poll-seconds %s --timeout-seconds %s\n' \
+  local issue_dir="$3"
+  local log_file="$4"
+  local done_file="$5"
+  local report_file="$6"
+  printf '%s --asset-root %s --role sub-coord --issue %s --agent %s --model %s --context-file %s --prompt-file %s --log-file %s --done-file %s --result-file %s --issue-dir %s --status-file %s --events-log %s --poll-seconds %s --timeout-seconds %s\n' \
     "$DISPATCHER" "$ASSET_ROOT" "$issue" "$SUB_COORD_AGENT" "$SUB_COORD_MODEL" \
-    "$context_file" "$PROMPT_FILE" "$log_file" "$done_file" "$report_file" \
+    "$context_file" "$PROMPT_FILE" "$log_file" "$done_file" "$report_file" "$issue_dir" \
     "$STATUS_FILE" "$EVENTS_LOG" "$POLL_SECONDS" "$TIMEOUT_SECONDS"
 }
 
 if [ "$DRY_RUN" = 1 ]; then
   for issue in $READY_INITIAL; do
     context_file="$(context_file_for "$issue")"
+    issue_dir="$(issue_dir_for "$issue")"
     print_dispatch_command \
       "$issue" \
       "$context_file" \
-      "$(pwd -P)/.run-with-it/sub/sub-${issue}.log" \
-      "$(pwd -P)/.run-with-it/done/issue-${issue}-sub-coord.done" \
-      "$(pwd -P)/.run-with-it/reports/sub-${issue}-report.json"
+      "$issue_dir" \
+      "${issue_dir}/sub-coordinator.log" \
+      "${issue_dir}/sub-coordinator.done" \
+      "${issue_dir}/report.json"
   done
   exit 0
 fi
@@ -582,13 +593,14 @@ emit_waiting_context_status() {
 
 spawn_issue() {
   local issue="$1"
-  local context_file log_file done_file report_file pid
+  local context_file issue_dir log_file done_file report_file pid
   context_file="$(context_file_for "$issue")"
   [ -f "$context_file" ] || fail "context file missing for issue $issue: $context_file"
-  log_file="$(pwd -P)/.run-with-it/sub/sub-${issue}.log"
-  done_file="$(pwd -P)/.run-with-it/done/issue-${issue}-sub-coord.done"
-  report_file="$(pwd -P)/.run-with-it/reports/sub-${issue}-report.json"
-  mkdir -p "$(dirname "$log_file")" "$(dirname "$done_file")" "$(dirname "$report_file")"
+  issue_dir="$(issue_dir_for "$issue")"
+  log_file="${issue_dir}/sub-coordinator.log"
+  done_file="${issue_dir}/sub-coordinator.done"
+  report_file="${issue_dir}/report.json"
+  mkdir -p "$issue_dir"
   nohup "$DISPATCHER" \
     --asset-root "$ASSET_ROOT" \
     --role sub-coord \
@@ -600,6 +612,7 @@ spawn_issue() {
     --log-file "$log_file" \
     --done-file "$done_file" \
     --result-file "$report_file" \
+    --issue-dir "$issue_dir" \
     --status-file "$STATUS_FILE" \
     --events-log "$EVENTS_LOG" \
     --poll-seconds "$POLL_SECONDS" \
@@ -609,18 +622,19 @@ spawn_issue() {
   pool_add "$issue"
   pool_set PID "$issue" "$pid"
   pool_set REPORT "$issue" "$report_file"
-  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file"
+  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir"
   write_status "STATUS|type=sub-coord-spawn|issue=${issue}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|pool_size=$(set -- $POOL_ISSUES; echo $#)|parallel_jobs=${PARALLEL_JOBS}"
 }
 
 run_merge_recovery() {
   local issue="$1"
-  local context_file log_file done_file report_file recovery_status
-  context_file="$(pwd -P)/.run-with-it/merge-recovery/issue-${issue}-context.md"
-  log_file="$(pwd -P)/.run-with-it/merge-recovery/issue-${issue}.log"
-  done_file="$(pwd -P)/.run-with-it/done/issue-${issue}-merge-recovery.done"
-  report_file="$(pwd -P)/.run-with-it/reports/merge-recovery-${issue}-report.json"
-  mkdir -p "$(dirname "$context_file")" "$(dirname "$log_file")" "$(dirname "$done_file")" "$(dirname "$report_file")"
+  local issue_dir context_file log_file done_file report_file recovery_status
+  issue_dir="$(issue_dir_for "$issue")"
+  context_file="${issue_dir}/merge-recovery-context.md"
+  log_file="${issue_dir}/merge-recovery.log"
+  done_file="${issue_dir}/merge-recovery.done"
+  report_file="${issue_dir}/merge-recovery-report.json"
+  mkdir -p "$issue_dir"
   write_merge_recovery_context "$issue" "$context_file" "$report_file"
   write_status "STATUS|type=merge-recovery|issue=${issue}|report_file=${report_file}|state=started"
   if "$DISPATCHER" \
@@ -634,6 +648,7 @@ run_merge_recovery() {
     --log-file "$log_file" \
     --done-file "$done_file" \
     --result-file "$report_file" \
+    --issue-dir "$issue_dir" \
     --status-file "$STATUS_FILE" \
     --events-log "$EVENTS_LOG" \
     --poll-seconds "$POLL_SECONDS" \
