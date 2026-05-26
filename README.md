@@ -46,8 +46,10 @@ AI-Skills/
 │   ├── run-agent.ps1
 │   ├── run-with-it-dispatch.sh
 │   ├── run-with-it-dispatch.ps1
+│   ├── run-with-it-github-update.py
 │   ├── run-with-it-pool.sh
 │   ├── run-with-it-pool.ps1
+│   ├── run-with-it-state.py
 │   ├── sub-coordinator-prompt.md
 │   ├── worker-watch.sh
 │   └── worker-watch.ps1
@@ -72,6 +74,7 @@ AI-Skills/
     ├── run-agent.test.sh
     ├── run-with-it-dispatch-ps1.test.sh
     ├── run-with-it-dispatch.test.sh
+    ├── run-with-it-helpers.test.sh
     ├── run-with-it-log-harness.test.sh
     ├── run-with-it-pool-actual-flow.test.sh
     ├── run-with-it-pool-ps1.test.sh
@@ -124,6 +127,8 @@ Durable state and logs live under `.run-with-it/` during orchestration. Worker c
 | [`assets/run-with-it-dispatch.ps1`](assets/run-with-it-dispatch.ps1) | PowerShell dispatcher for native Windows `run-with-it` orchestration. |
 | [`assets/run-with-it-pool.sh`](assets/run-with-it-pool.sh) | Rolling-pool scheduler helper for ready issues and merge recovery handling. |
 | [`assets/run-with-it-pool.ps1`](assets/run-with-it-pool.ps1) | PowerShell rolling-pool scheduler for native Windows orchestration. |
+| [`assets/run-with-it-state.py`](assets/run-with-it-state.py) | Shared state transition helper used by both pool runners. |
+| [`assets/run-with-it-github-update.py`](assets/run-with-it-github-update.py) | Shared terminal issue comment/close helper used by both pool runners. |
 | [`assets/worker-watch.sh`](assets/worker-watch.sh) | Liveness/log-tail watcher for background workers. |
 | [`assets/worker-watch.ps1`](assets/worker-watch.ps1) | PowerShell liveness/log-tail watcher for background workers. |
 | [`assets/prompt.md`](assets/prompt.md) | Implementation worker prompt. |
@@ -247,6 +252,7 @@ bash tests/run-agent-status-bus.test.sh
 bash tests/run-agent-ps1-status-bus.test.sh
 bash tests/run-with-it-dispatch.test.sh
 bash tests/run-with-it-dispatch-ps1.test.sh
+bash tests/run-with-it-helpers.test.sh
 bash tests/run-with-it-pool.test.sh
 bash tests/run-with-it-pool-ps1.test.sh
 bash tests/run-with-it-pool-actual-flow.test.sh
@@ -286,6 +292,8 @@ cp -f \
   ./assets/complexity-prompt.md \
   ./assets/coordinator-rules.md \
   ./assets/main-orchestrator-rules.md \
+  ./assets/run-with-it-state.py \
+  ./assets/run-with-it-github-update.py \
   ./assets/run-agent.sh \
   ./assets/run-with-it-dispatch.sh \
   ./assets/run-with-it-pool.sh \
@@ -296,6 +304,8 @@ chmod +x \
   "$HOME/.ai-skill-collections/assets/run-agent.sh" \
   "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" \
   "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-state.py" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" \
   "$HOME/.ai-skill-collections/assets/worker-watch.sh"
 ```
 
@@ -303,7 +313,7 @@ Manual PowerShell repair from repo root:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
-Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 ### No Git Repo

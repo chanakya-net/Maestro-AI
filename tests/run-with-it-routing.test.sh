@@ -83,8 +83,11 @@ assert_contains 'modifier-prompt.md' "asset discovery includes modifier-prompt.m
 assert_contains 'run-agent.sh' "asset discovery includes run-agent.sh"
 assert_contains 'run-with-it-dispatch.sh' "asset discovery includes shared dispatcher"
 assert_contains 'run-with-it-pool.sh' "asset discovery includes shared rolling pool runner"
+assert_contains 'run-with-it-state.py' "asset discovery includes shared state helper"
+assert_contains 'run-with-it-github-update.py' "asset discovery includes shared GitHub update helper"
 assert_contains 'agent-registry.json' "asset discovery includes agent-registry.json"
 assert_contains 'main-orchestrator-rules.md' "asset discovery includes main-orchestrator-rules.md"
+assert_contains '`python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter' "preflight documents Python helper runtime"
 
 # Architecture
 assert_contains 'Main Orchestrator' "documents main orchestrator section"

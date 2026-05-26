@@ -52,6 +52,8 @@ cp \
   "${ROOT_DIR}/assets/run-agent.ps1" \
   "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" \
   "${ROOT_DIR}/assets/run-with-it-pool.ps1" \
+  "${ROOT_DIR}/assets/run-with-it-state.py" \
+  "${ROOT_DIR}/assets/run-with-it-github-update.py" \
   "${ROOT_DIR}/assets/worker-watch.ps1" \
   "${ROOT_DIR}/assets/sub-coordinator-prompt.md" \
   "${ROOT_DIR}/assets/merge-recovery-prompt.md" \

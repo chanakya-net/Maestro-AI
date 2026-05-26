@@ -162,6 +162,8 @@ Shared required files:
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
 - `merge-recovery-prompt.md`
+- `run-with-it-state.py`
+- `run-with-it-github-update.py`
 
 Bash required helper files:
 
@@ -182,6 +184,7 @@ Selection rules:
 - Use first path that contains all shared files plus the helper files for the detected platform.
 - Bash/macOS/Linux/Git Bash/WSL runs must not require `.ps1` helper files.
 - Native PowerShell runs must not require `.sh` helper files.
+- Both platform pool runners require `python3` (or `PYTHON_BIN` pointing to a Python 3 interpreter) for shared state and GitHub update helper scripts.
 - If none are complete, stop and report missing files.
 - Do not require git to resolve assets.
 - Resolved asset root is the single source for that run.
@@ -194,12 +197,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -220,10 +223,11 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 Before execution verify:
 
 1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
-2. `gh` auth when GitHub intake is required.
-3. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
-4. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
-5. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
+2. `python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter, for the shared pool helper scripts.
+3. `gh` auth when GitHub intake is required.
+4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
+5. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
+6. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 

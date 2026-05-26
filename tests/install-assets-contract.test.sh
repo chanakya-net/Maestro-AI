@@ -37,6 +37,8 @@ assert_contains "${dry_run_output}" "sub-coordinator-prompt.md" "dry-run include
 assert_contains "${dry_run_output}" "merge-recovery-prompt.md" "dry-run includes merge recovery prompt asset"
 assert_contains "${dry_run_output}" "modifier-prompt.md" "dry-run includes modifier prompt asset"
 assert_contains "${dry_run_output}" "coordinator-rules.md" "dry-run includes coordinator-rules asset"
+assert_contains "${dry_run_output}" "run-with-it-state.py" "dry-run includes shared state helper asset"
+assert_contains "${dry_run_output}" "run-with-it-github-update.py" "dry-run includes shared GitHub update helper asset"
 assert_contains "${dry_run_output}" "run-agent.sh" "dry-run includes unified runner asset"
 assert_contains "${dry_run_output}" "run-with-it-dispatch.sh" "dry-run includes shared run-with-it dispatcher asset"
 assert_contains "${dry_run_output}" "run-with-it-pool.sh" "dry-run includes shared run-with-it pool asset"
