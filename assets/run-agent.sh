@@ -181,7 +181,7 @@ forward_status_stream() {
   local target_fd="$1"
   local line
 
-  while IFS= read -r line; do
+  while IFS= read -r line || [[ -n "${line}" ]]; do
     printf '%s\n' "${line}" >&"${target_fd}"
     write_log_line "${line}"
     case "${line}" in

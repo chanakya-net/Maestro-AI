@@ -130,6 +130,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_ISSUE_DIR` | `.run-with-it/issues/<n>` | Issue-scoped artifact folder created by the Sub-Coordinator/pool |
 | `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/issues/<n>/sub-coordinator.log`; workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log` |
 | `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done` |
+| `RUN_WITH_IT_STATE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`; dispatcher-maintained watchdog state |
 | `AGENT` | — | Routing override passed through to Sub-Coordinators |
 | `MODEL` | — | Routing override passed through to Sub-Coordinators |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
@@ -413,7 +414,7 @@ Execution-mode requirement (critical):
 
 ## `run-with-it-dispatch.sh` — Shared Role Launcher
 
-`run-with-it-dispatch.sh` is the shared run-with-it orchestration primitive. The Main Orchestrator uses it with `--role sub-coord`; Sub-Coordinators use it with `--role complexity`, `--role impl`, `--role review`, or `--role modify`. It wraps `run-agent.sh`, forwards the role-specific `RUN_WITH_IT_*` environment, writes dispatch status lines, and monitors the done/result artifacts through `worker-watch.sh`.
+`run-with-it-dispatch.sh` is the shared run-with-it orchestration primitive. The Main Orchestrator uses it with `--role sub-coord`; Sub-Coordinators use it with `--role complexity`, `--role impl`, `--role review`, or `--role modify`. It wraps `run-agent.sh`, forwards the role-specific `RUN_WITH_IT_*` environment, writes dispatch status lines, captures stdout/stderr into the role log, monitors done/result artifacts through `worker-watch.sh`, and writes a dispatcher-owned watchdog state file. Worker heartbeats are advisory; the state file is the source of truth for liveness and silent-worker detection.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -427,12 +428,17 @@ run-with-it-dispatch.sh \
   --log-file <file> \
   --done-file <file> \
   --result-file <file> \
+  --state-file <file> \
   --repo-root <worktree-or-repo-path> \
   --status-file <file> \
-  --events-log <file>
+  --events-log <file> \
+  --quiet-seconds <seconds> \
+  --stall-seconds <seconds>
 ```
 
 Use `--dry-run` to print the wrapped `run-agent.sh` invocation, and `--validate-only` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
+
+Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` means the runner is alive but the captured role log has been silent beyond the quiet threshold. `state="stalled"` with `stall_reason="alive-but-silent"` means the worker is alive, incomplete, and silent beyond the stall threshold. Completion still requires the done sentinel and valid role-specific result artifacts.
 
 ## `run-agent.sh` — Full Syntax Reference
 

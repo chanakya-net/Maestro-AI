@@ -48,15 +48,18 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
 - Spawn every worker through `run-with-it-dispatch.sh`, which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, and monitoring contract.
-- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
+- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
 - Set each worker's `RUN_WITH_IT_LOG_FILE` to an issue-scoped path such as `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log`.
 - Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
+- Set each worker's `RUN_WITH_IT_STATE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`.
 
 ## Progress Monitoring Rules
 
-- Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that PID plus role, cycle, agent, model, log file, done file, and result file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
+- Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that dispatcher PID plus role, cycle, agent, model, log file, done file, result file, and state file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
 - Poll worker liveness every `WORKER_POLL_SECONDS` seconds, default `20`.
-- Summarize worker progress from structured status lines and result artifacts. Do not load raw worker logs into coordinator context.
+- Summarize worker progress from the dispatcher-maintained `RUN_WITH_IT_STATE_FILE` and result artifacts. Do not load raw worker logs into coordinator context.
+- Worker heartbeats are advisory. The watchdog state file is the source of truth for liveness because it is updated by the dispatcher even when the worker agent forgets to emit heartbeat lines.
+- Treat `state="quiet"` as suspicious and `state="stalled"` with `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for the configured stall window.
 - PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
 - Logs never decide completion. Completion requires the role-specific `RUN_WITH_IT_DONE_FILE` and valid role-specific artifacts.
 - When a valid done file and valid artifacts are present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` and proceed to the next phase without waiting on unrelated CLI cleanup. Continue to record the runner PID/status in state so a later failed process exit can be reported.
@@ -64,7 +67,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - **Every STATUS/heartbeat line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - Every forwarded STATUS/heartbeat line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.
 - Do not accumulate progress lines in variables or memory.
-- After 180 seconds of silence, print a stall warning.
+- The default silence thresholds are `WORKER_QUIET_SECONDS=120` and `WORKER_STALL_SECONDS=300`. After a stalled state, follow the role's failure/fallback rule or alert the user if no automatic fallback is safe.
 
 ## Result Processing Rules
 
