@@ -98,6 +98,146 @@ function Write-Status([string]$line) {
     Add-Content -Path $EventsLog -Value $line -Encoding UTF8
 }
 
+function Set-GitHubUpdateState([string]$issue, [string]$status, [string]$detail) {
+    $state = Read-State
+    $entry = Get-IssueEntry $state $issue
+    Set-Prop $entry "github_update_status" $status
+    Set-Prop $entry "github_update_detail" $detail
+    Set-Prop $entry "github_updated_at" ([DateTimeOffset]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))
+    Save-State $state
+}
+
+function Get-TokenTotal($tokens, [string]$kind) {
+    if ($null -eq $tokens) { return $null }
+    $total = 0
+    $found = $false
+    foreach ($prop in $tokens.PSObject.Properties) {
+        $name = $prop.Name.ToLowerInvariant()
+        if ($kind -eq "input" -and -not $name.Contains("input")) { continue }
+        if ($kind -eq "output" -and -not $name.Contains("output")) { continue }
+        if ($kind -eq "cache" -and -not $name.Contains("cache")) { continue }
+        if ($prop.Value -is [int] -or $prop.Value -is [long] -or $prop.Value -is [double]) {
+            $total += [int64]$prop.Value
+            $found = $true
+        }
+    }
+    if ($found) { return $total }
+    return $null
+}
+
+function Format-Token($value) {
+    if ($null -eq $value) { return "unknown" }
+    return "$value"
+}
+
+function New-TerminalComment([string]$reportFile, [string]$fallbackOutcome) {
+    $report = [pscustomobject]@{}
+    if ((Test-Path $reportFile) -and ((Get-Item $reportFile).Length -gt 0)) {
+        try { $report = Get-Content -Path $reportFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch {}
+    }
+    $outcome = Get-Prop $report "outcome" $fallbackOutcome
+    if (-not $outcome) { $outcome = "blocked" }
+    $summary = Get-Prop $report "summary" "No summary provided."
+    $verification = Get-Prop $report "verification" ([pscustomobject]@{})
+    $commands = @(Get-Prop $verification "commands_run" @())
+    $evidence = Get-Prop $verification "evidence" "unknown"
+    $passed = Get-Prop $verification "passed" $null
+    $verificationState = if ($passed -eq $true) { "passed" } elseif ($passed -eq $false) { "failed" } else { "unknown" }
+    $commandText = if ($commands.Count -gt 0) { ($commands -join ", ") } else { "unknown" }
+    $review = Get-Prop $report "review_summary" ([pscustomobject]@{})
+    $cycles = Get-Prop $review "cycles_used" $null
+    $final = Get-Prop $review "final_verdict" "unknown"
+    $reviewer = Get-Prop $review "reviewer_model" "unknown"
+    if ($null -eq $cycles) {
+        $reviewLine = "Review: unknown, final verdict: $final, reviewer model: $reviewer"
+    } elseif ([int]$cycles -le 1 -and $final -eq "approve") {
+        $reviewLine = "Review: approve (1 cycle), final verdict: $final, reviewer model: $reviewer"
+    } else {
+        $reviewLine = "Review: revise ($cycles cycles), final verdict: $final, reviewer model: $reviewer"
+    }
+    $tokens = Get-Prop $report "token_usage" ([pscustomobject]@{})
+    $lines = @(
+        "## Status",
+        "$outcome",
+        "",
+        "## Summary",
+        "$summary",
+        "",
+        "## Verification",
+        "State: $verificationState",
+        "Commands: $commandText",
+        "Evidence: $evidence",
+        "",
+        "## Token Usage",
+        "- Input tokens: $(Format-Token (Get-TokenTotal $tokens "input"))",
+        "- Output tokens: $(Format-Token (Get-TokenTotal $tokens "output"))",
+        "- Cache hit tokens: $(Format-Token (Get-TokenTotal $tokens "cache"))",
+        "",
+        "## Notes",
+        "$reviewLine"
+    )
+    $commit = Get-Prop $report "commit_sha" $null
+    if ($commit) { $lines += "Commit: $commit" }
+    $merge = Get-Prop $report "merge" ([pscustomobject]@{})
+    $mergeSha = Get-Prop $merge "merge_sha" $null
+    if ($mergeSha) { $lines += "Merge: $mergeSha" }
+    $blocking = @(Get-Prop $report "blocking_reasons" @())
+    if ($blocking.Count -gt 0) {
+        $lines += ""
+        $lines += "## Blocking Reasons"
+        foreach ($reason in $blocking) { $lines += "- $reason" }
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Update-GitHubIssue([string]$issue, [string]$outcome, [string]$reportFile) {
+    $closeIssue = $false
+    if ($outcome -eq "completed") {
+        $closeIssue = $true
+    } elseif ($outcome -notin @("blocked", "failed-review", "failed-merge")) {
+        return
+    }
+    if ($env:RUN_WITH_IT_GITHUB_UPDATES -eq "0") {
+        Set-GitHubUpdateState $issue "skipped" "disabled"
+        Write-Status "STATUS|type=github-update|issue=$issue|outcome=$outcome|action=skipped|reason=disabled"
+        return
+    }
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        Set-GitHubUpdateState $issue "skipped" "gh-not-found"
+        Write-Status "STATUS|type=github-update|issue=$issue|outcome=$outcome|action=skipped|reason=gh-not-found"
+        return
+    }
+    $remoteOutput = ""
+    try { $remoteOutput = & git -C $runRoot remote -v 2>$null | Out-String } catch {}
+    if ($remoteOutput -notmatch "github\.com") {
+        Set-GitHubUpdateState $issue "skipped" "no-github-remote"
+        Write-Status "STATUS|type=github-update|issue=$issue|outcome=$outcome|action=skipped|reason=no-github-remote"
+        return
+    }
+    $commentFile = Join-Path ([System.IO.Path]::GetTempPath()) "run-with-it-comment-$PID-$issue.md"
+    try {
+        New-TerminalComment $reportFile $outcome | Set-Content -Path $commentFile -Encoding UTF8
+        Push-Location $runRoot
+        try {
+            & gh issue comment $issue --body-file $commentFile | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "comment failed" }
+            if ($closeIssue) {
+                & gh issue close $issue | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "close failed" }
+            }
+        } finally {
+            Pop-Location
+        }
+        Set-GitHubUpdateState $issue "updated" "commented;closed=$($closeIssue.ToString().ToLowerInvariant())"
+        Write-Status "STATUS|type=github-update|issue=$issue|outcome=$outcome|action=commented|closed=$($closeIssue.ToString().ToLowerInvariant())"
+    } catch {
+        Set-GitHubUpdateState $issue "failed" "$_"
+        Write-Status "STATUS|type=github-update|issue=$issue|outcome=$outcome|action=failed|reason=gh-failed"
+    } finally {
+        Remove-Item -Force $commentFile -ErrorAction SilentlyContinue
+    }
+}
+
 function Remove-ProcessCapture($entry) {
     foreach ($path in @((Get-Prop $entry "stdout_file"), (Get-Prop $entry "stderr_file"))) {
         if ($path) { Remove-Item -Force $path -ErrorAction SilentlyContinue }
@@ -467,6 +607,7 @@ function Run-MergeRecovery([string]$issue) {
         $status = "blocked"
     }
     Write-Status "STATUS|type=merge-recovery|issue=$issue|report_file=$reportFile|state=$status"
+    Update-GitHubIssue $issue $status $reportFile
 }
 
 foreach ($issue in $readyInitial) {
@@ -487,6 +628,8 @@ while ($pool.Count -gt 0) {
         Write-Status "STATUS|type=sub-coord-complete|issue=$issue|outcome=$outcome|report_file=$reportFile"
         if ($outcome -eq "merge_recovery") {
             Run-MergeRecovery $issue
+        } else {
+            Update-GitHubIssue $issue $outcome $reportFile
         }
         Fill-FreeSlots $issue
     }

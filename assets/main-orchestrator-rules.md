@@ -47,11 +47,12 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## GitHub Rules
 
-- GitHub operations (close issues, post terminal comments) are the main orchestrator's SOLE responsibility.
+- GitHub operations (close issues, post terminal comments) are the Main Orchestrator control plane's SOLE responsibility. The pool runner may perform per-issue terminal GitHub updates on the Main Orchestrator's behalf immediately after it finalizes a compact report.
 - Sub-coordinators never touch GitHub under any circumstances.
 - Main Orchestrator may create the final PR from `run-with-it/<run-id>` to the original base branch after all issues are terminal.
 - Main Orchestrator must never merge issue branches; normal merges belong to Sub-Coordinators and failed merges belong to the Merge Recovery Coordinator.
-- Post the terminal comment and close (or leave open) the issue AFTER reading the sub-coordinator's report.
+- Post the terminal comment and close (or leave open) the issue immediately AFTER reading the sub-coordinator's terminal report. Do not wait for unrelated issues or `pool-empty`.
+- For terminal reports, comment with the report summary, verification, token usage, review notes, and blocking reasons. Close only `completed` issues; comment but leave `blocked`, `failed-review`, and `failed-merge` issues open.
 - If `gh` fails because the current tool is sandboxed, use that tool's explicit approved permission-escalation flow when available. If permission escalation is unavailable or denied, record the GitHub update as blocked instead of silently falling back.
 
 ## State Rules
@@ -71,8 +72,8 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never present execution option menus.
 - If all issues are terminal (completed/failed-review/blocked): exit loop and run cleanup.
 - `merge_recovery` is non-terminal. Keep unrelated ready issues moving, but do not schedule dependents until the recovered issue becomes `completed`.
-- If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via the platform dispatcher with `role=merge-recovery`, reads the compact recovery report, and updates the issue to `completed`, `failed-merge`, or `blocked`.
+- If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via the platform dispatcher with `role=merge-recovery`, reads the compact recovery report, updates the issue to `completed`, `failed-merge`, or `blocked`, then immediately performs the terminal GitHub update for that recovered outcome.
 - When Merge Recovery Coordinator succeeds, set the issue status to `completed`, append its compact recovery summary, recalculate dependency readiness, and continue the rolling pool.
 - When Merge Recovery Coordinator fails, set the issue status to `failed-merge` or `blocked`; dependent issues remain blocked with a reason pointing to that issue.
-- After the pool is empty: re-read `main-state.json` (Step A) before selecting any remaining work. GitHub updates are always sequential even when sub-coordinators ran in parallel.
+- After the pool is empty: re-read `main-state.json` (Step A) before selecting any remaining work. GitHub updates are immediate per terminal issue and always sequential even when sub-coordinators ran in parallel.
 - On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_pool_issues` to `[]`. Interrupted pool members must be re-run fresh.

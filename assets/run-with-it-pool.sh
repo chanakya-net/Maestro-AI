@@ -104,6 +104,190 @@ write_status() {
   printf '%s\n' "$line" >> "$EVENTS_LOG"
 }
 
+set_github_update_state() {
+  local issue="$1"
+  local status="$2"
+  local detail="$3"
+  if [ "$JSON_PARSER" = "jq" ]; then
+    local tmp_file
+    tmp_file="$(mktemp -t run-with-it-state.XXXXXX)"
+    jq \
+      --arg issue "$issue" \
+      --arg status "$status" \
+      --arg detail "$detail" \
+      --arg updated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+      '
+        .issue_registry = (.issue_registry // {})
+        | .issue_registry[$issue] = ((.issue_registry[$issue] // {}) + {
+            github_update_status: $status,
+            github_update_detail: $detail,
+            github_updated_at: $updated_at
+          })
+      ' "$STATE_FILE" > "$tmp_file"
+    mv "$tmp_file" "$STATE_FILE"
+  else
+    python3 - "$STATE_FILE" "$issue" "$status" "$detail" <<'PY'
+import datetime, json, sys
+path, issue, status, detail = sys.argv[1:]
+state = json.load(open(path))
+entry = state.setdefault("issue_registry", {}).setdefault(str(issue), {})
+entry["github_update_status"] = status
+entry["github_update_detail"] = detail
+entry["github_updated_at"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+json.dump(state, open(path, "w"), indent=2)
+PY
+  fi
+}
+
+write_terminal_comment() {
+  python3 - "$1" "$2" > "$3" <<'PY'
+import json, sys
+
+report_file, fallback_outcome = sys.argv[1:3]
+try:
+    report = json.load(open(report_file))
+except Exception:
+    report = {}
+
+outcome = report.get("outcome") or fallback_outcome or "blocked"
+summary = report.get("summary") or "No summary provided."
+verification = report.get("verification") or {}
+if isinstance(verification, dict):
+    commands = verification.get("commands_run") or []
+    evidence = verification.get("evidence") or ""
+    passed = verification.get("passed")
+    state = "passed" if passed is True else "failed" if passed is False else "unknown"
+    command_text = ", ".join(str(x) for x in commands) if commands else "unknown"
+    verification_text = f"State: {state}\nCommands: {command_text}\nEvidence: {evidence or 'unknown'}"
+else:
+    verification_text = str(verification) if verification else "unknown"
+
+tokens = report.get("token_usage") or {}
+def token_sum(kind):
+    if not isinstance(tokens, dict):
+        return None
+    total = 0
+    found = False
+    for key, value in tokens.items():
+        key_l = str(key).lower()
+        if kind == "input" and "input" not in key_l:
+            continue
+        if kind == "output" and "output" not in key_l:
+            continue
+        if kind == "cache" and "cache" not in key_l:
+            continue
+        if isinstance(value, (int, float)):
+            total += int(value)
+            found = True
+    return total if found else None
+
+def fmt(value):
+    return str(value) if value is not None else "unknown"
+
+review = report.get("review_summary") or {}
+cycles = review.get("cycles_used")
+final = review.get("final_verdict") or "unknown"
+reviewer = review.get("reviewer_model") or "unknown"
+if cycles is None:
+    review_line = f"Review: unknown, final verdict: {final}, reviewer model: {reviewer}"
+elif int(cycles) <= 1 and final == "approve":
+    review_line = f"Review: approve (1 cycle), final verdict: {final}, reviewer model: {reviewer}"
+else:
+    review_line = f"Review: revise ({cycles} cycles), final verdict: {final}, reviewer model: {reviewer}"
+
+blocking = report.get("blocking_reasons") or []
+
+print("## Status")
+print(outcome)
+print()
+print("## Summary")
+print(summary)
+print()
+print("## Verification")
+print(verification_text)
+print()
+print("## Token Usage")
+print(f"- Input tokens: {fmt(token_sum('input'))}")
+print(f"- Output tokens: {fmt(token_sum('output'))}")
+print(f"- Cache hit tokens: {fmt(token_sum('cache'))}")
+print()
+print("## Notes")
+print(review_line)
+if report.get("commit_sha"):
+    print(f"Commit: {report['commit_sha']}")
+merge = report.get("merge") or {}
+if isinstance(merge, dict) and merge.get("merge_sha"):
+    print(f"Merge: {merge['merge_sha']}")
+if blocking:
+    print()
+    print("## Blocking Reasons")
+    for reason in blocking:
+        print(f"- {reason}")
+PY
+}
+
+update_github_issue() {
+  local issue="$1"
+  local outcome="$2"
+  local report_file="$3"
+  local close_issue="false"
+  local comment_file
+
+  case "$outcome" in
+    completed) close_issue="true" ;;
+    blocked|failed-review|failed-merge) close_issue="false" ;;
+    *) return 0 ;;
+  esac
+
+  if [ "${RUN_WITH_IT_GITHUB_UPDATES:-1}" = "0" ]; then
+    set_github_update_state "$issue" "skipped" "disabled"
+    write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=skipped|reason=disabled"
+    return 0
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    set_github_update_state "$issue" "skipped" "gh-not-found"
+    write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=skipped|reason=gh-not-found"
+    return 0
+  fi
+  if ! git -C "$RUN_ROOT" remote -v 2>/dev/null | grep -qi 'github.com'; then
+    set_github_update_state "$issue" "skipped" "no-github-remote"
+    write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=skipped|reason=no-github-remote"
+    return 0
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    set_github_update_state "$issue" "skipped" "python3-not-found"
+    write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=skipped|reason=python3-not-found"
+    return 0
+  fi
+
+  comment_file="$(mktemp -t run-with-it-comment.XXXXXX.md)"
+  if ! write_terminal_comment "$report_file" "$outcome" "$comment_file"; then
+    rm -f "$comment_file"
+    set_github_update_state "$issue" "failed" "comment-render-failed"
+    write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=failed|reason=comment-render-failed"
+    return 0
+  fi
+
+  if ! (cd "$RUN_ROOT" && gh issue comment "$issue" --body-file "$comment_file" >/dev/null); then
+    rm -f "$comment_file"
+    set_github_update_state "$issue" "failed" "comment-failed"
+    write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=failed|reason=comment-failed"
+    return 0
+  fi
+  rm -f "$comment_file"
+
+  if [ "$close_issue" = "true" ]; then
+    if ! (cd "$RUN_ROOT" && gh issue close "$issue" >/dev/null); then
+      set_github_update_state "$issue" "failed" "close-failed"
+      write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=commented|closed=false|reason=close-failed"
+      return 0
+    fi
+  fi
+
+  set_github_update_state "$issue" "updated" "commented;closed=${close_issue}"
+  write_status "STATUS|type=github-update|issue=${issue}|outcome=${outcome}|action=commented|closed=${close_issue}"
+}
+
 ready_issues() {
   if [ "$JSON_PARSER" = "jq" ]; then
     jq -r --argjson limit "$1" '
@@ -688,6 +872,7 @@ PY
     fi
   fi
   write_status "STATUS|type=merge-recovery|issue=${issue}|report_file=${report_file}|state=${recovery_status}"
+  update_github_issue "$issue" "$recovery_status" "$report_file"
 }
 
 for issue in $READY_INITIAL; do
@@ -709,6 +894,8 @@ while [ -n "$POOL_ISSUES" ]; do
 	    write_status "STATUS|type=sub-coord-complete|issue=${issue}|outcome=${outcome}|report_file=${report_file}"
 	    if [ "$outcome" = "merge_recovery" ]; then
 	      run_merge_recovery "$issue"
+	    else
+	      update_github_issue "$issue" "$outcome" "$report_file"
 	    fi
 	    fill_free_slots "$issue"
   done

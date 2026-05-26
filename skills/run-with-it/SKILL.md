@@ -20,14 +20,14 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
 - **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/issues/<n>/sub-coordinator.log`. Do not tail raw logs into AI context; only read the compact report JSON from `.run-with-it/issues/<n>/report.json`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
-- **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
+- **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
 - **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
 - **Run the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
 - **Use the platform worker watcher (`worker-watch.sh` / `worker-watch.ps1`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
-- **GitHub operations on completion are sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as it completes to avoid race conditions.
+- **GitHub operations on completion are immediate and sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as soon as that issue reaches a terminal outcome to avoid race conditions.
 - **Preserve local fallback behavior when GitHub or git is unavailable.**
 - **Keep changes minimal and focused to orchestration/control-plane behavior.**
 
@@ -52,11 +52,11 @@ Preferred upstream flow:
 - Creates one shared run feature branch (`run-with-it/<run-id>`) from the original base branch, pushes it when a GitHub remote exists, and uses it as the final PR head branch
 - Determines execution order with a dependency graph and topological sort based primarily on each issue's `## Blocked by` section; cycles or unresolved external blockers are marked blocked before execution
 - Maintains a rolling pool of up to `PARALLEL_JOBS` active **Sub-Coordinators** via the platform dispatcher — freed slots fill immediately when any job completes rather than waiting for whole batches
-- As each Sub-Coordinator completes, reads its compact report and immediately spawns the next ready issue into the freed slot
+- As each Sub-Coordinator completes, reads its compact report, immediately posts the terminal GitHub comment and closes/updates that issue when it has a terminal outcome, then spawns the next ready issue into the freed slot
 - Writes its own status log to `.run-with-it/main/main.log`
 - Reads ONLY the compact report JSON — never the implementation diffs or log files
 - Updates `main-state.json` after each issue (its full external memory)
-- Posts terminal GitHub comments and closes/updates issues
+- Posts terminal GitHub comments and closes/updates issues immediately per issue, not only after the full pool finishes
 - Spawns a Merge Recovery Coordinator when a Sub-Coordinator reports `merge_failed`; Main Orchestrator never merges issue branches itself
 - Creates one final PR from the shared run feature branch after all issues are terminal
 - Re-reads `main-state.json` at the top of every loop iteration to survive context compression
@@ -441,6 +441,7 @@ Execution-mode requirement (critical):
 
   Persist `POOL_PID` in `main-state.json` for recovery visibility, then monitor that single process until
   it emits `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by the platform pool runner.
+  The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
 ```
@@ -698,8 +699,8 @@ After context compression (conversation history cleared), treat the situation as
 
 ### Terminal Issue Comments
 
-Post issue comments only for terminal outcomes: `completed`, `blocked`, or `failed-review`.
-Each terminal comment must be posted only after reading the compact report.
+Post issue comments immediately for terminal outcomes: `completed`, `blocked`, or `failed-review`.
+Each terminal comment must be posted only after reading the compact report for that issue, and must not wait for unrelated issues or the full pool to finish.
 Populate all fields from the Sub-Coordinator's compact report JSON.
 
 Use the same markdown template for every terminal outcome, with this fixed section order:

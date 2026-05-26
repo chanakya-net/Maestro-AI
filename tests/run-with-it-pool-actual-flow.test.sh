@@ -48,6 +48,20 @@ if actual != expected:
 PY
 }
 
+assert_json_github_update() {
+  local state_file="$1"
+  local issue="$2"
+  local expected="$3"
+  python3 - "$state_file" "$issue" "$expected" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+actual = state["issue_registry"][sys.argv[2]].get("github_update_status")
+expected = sys.argv[3]
+if actual != expected:
+    raise SystemExit(f"issue {sys.argv[2]} github_update_status expected {expected}, got {actual}")
+PY
+}
+
 make_fixture() {
   local root="$1"
   local asset_root="${root}/assets"
@@ -150,7 +164,7 @@ run_pool() {
   local fake_bin="${root}/bin"
   (
     cd "$project"
-    PATH="$fake_bin:$PATH" "$asset_root/run-with-it-pool.sh" \
+    RUN_WITH_IT_GITHUB_UPDATES=0 PATH="$fake_bin:$PATH" "$asset_root/run-with-it-pool.sh" \
       --asset-root "$asset_root" \
       --state-file "$project/.run-with-it/main-state.json" \
       --parallel-jobs "$parallel_jobs" \
@@ -219,8 +233,11 @@ assert_spawned_issue_artifacts "$SUCCESS_PROJECT" 10 "STATUS|type=merge-complete
 assert_spawned_issue_artifacts "$SUCCESS_PROJECT" 11 "STATUS|type=merge-complete|issue=11"
 assert_spawned_issue_artifacts "$SUCCESS_PROJECT" 12 "STATUS|type=merge-complete|issue=12"
 assert_file_contains "$SUCCESS_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=10|outcome=completed" "events log records issue 10 completion"
+assert_file_contains "$SUCCESS_PROJECT/.run-with-it/status/events.log" "STATUS|type=github-update|issue=10|outcome=completed|action=skipped|reason=disabled" "events log records immediate issue 10 GitHub update attempt"
 assert_file_contains "$SUCCESS_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=11|outcome=completed" "events log records issue 11 completion"
+assert_file_contains "$SUCCESS_PROJECT/.run-with-it/status/events.log" "STATUS|type=github-update|issue=11|outcome=completed|action=skipped|reason=disabled" "events log records immediate issue 11 GitHub update attempt"
 assert_file_contains "$SUCCESS_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=12|outcome=completed" "events log records issue 12 completion"
+assert_json_github_update "$SUCCESS_PROJECT/.run-with-it/main-state.json" 10 skipped
 assert_file_contains "$SUCCESS_PROJECT/.run-with-it/main/main.log" "STATUS|type=pool-empty" "main log records pool empty"
 
 MIXED_ROOT="$WORK_DIR/mixed"
