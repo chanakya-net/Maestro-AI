@@ -85,7 +85,13 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Required files: `prompt.md`, `run-agent.sh`, `run-agent.ps1`, `run-with-it-dispatch.sh`, `run-with-it-dispatch.ps1`, `worker-watch.sh`, `worker-watch.ps1`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Shared required files: `prompt.md`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+
+Bash required helper files: `run-agent.sh`, `run-with-it-dispatch.sh`, `worker-watch.sh`.
+
+PowerShell required helper files: `run-agent.ps1`, `run-with-it-dispatch.ps1`, `worker-watch.ps1`.
+
+Use the first asset root that contains the shared files plus the helper files for the detected platform. Do not require `.ps1` files for Bash/macOS/Linux/Git Bash/WSL runs, and do not require `.sh` files for native PowerShell runs.
 
 ## Issue Worktree Bootstrap
 

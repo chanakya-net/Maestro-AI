@@ -101,7 +101,7 @@ function Try-Run {
 function Install-Assets {
     Say "→ Installing shared assets"
 
-    $files   = @("prompt.md", "sub-coordinator-prompt.md", "main-orchestrator-rules.md", "merge-recovery-prompt.md", "complexity-prompt.md", "review-prompt.md", "modifier-prompt.md", "coordinator-rules.md", "run-agent.sh", "run-agent.ps1", "run-with-it-dispatch.sh", "run-with-it-dispatch.ps1", "run-with-it-pool.sh", "run-with-it-pool.ps1", "worker-watch.sh", "worker-watch.ps1", "agent-registry.json")
+    $files   = @("prompt.md", "sub-coordinator-prompt.md", "main-orchestrator-rules.md", "merge-recovery-prompt.md", "complexity-prompt.md", "review-prompt.md", "modifier-prompt.md", "coordinator-rules.md", "run-agent.ps1", "run-with-it-dispatch.ps1", "run-with-it-pool.ps1", "worker-watch.ps1", "agent-registry.json")
     $baseUrl = "https://raw.githubusercontent.com/$REPO/$ASSETS_REF/assets"
 
     if ($DryRun) {

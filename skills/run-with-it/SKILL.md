@@ -150,29 +150,37 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Required files:
+Shared required files:
 
 - `prompt.md`
-- `run-agent.sh`
-- `run-agent.ps1`
-- `run-with-it-dispatch.sh`
-- `run-with-it-dispatch.ps1`
-- `run-with-it-pool.sh`
-- `run-with-it-pool.ps1`
 - `agent-registry.json`
 - `review-prompt.md`
 - `modifier-prompt.md`
 - `complexity-prompt.md`
 - `coordinator-rules.md`
-- `worker-watch.sh`
-- `worker-watch.ps1`
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
 - `merge-recovery-prompt.md`
 
+Bash required helper files:
+
+- `run-agent.sh`
+- `run-with-it-dispatch.sh`
+- `run-with-it-pool.sh`
+- `worker-watch.sh`
+
+PowerShell required helper files:
+
+- `run-agent.ps1`
+- `run-with-it-dispatch.ps1`
+- `run-with-it-pool.ps1`
+- `worker-watch.ps1`
+
 Selection rules:
 
-- Use first path that contains all required files.
+- Use first path that contains all shared files plus the helper files for the detected platform.
+- Bash/macOS/Linux/Git Bash/WSL runs must not require `.ps1` helper files.
+- Native PowerShell runs must not require `.sh` helper files.
 - If none are complete, stop and report missing files.
 - Do not require git to resolve assets.
 - Resolved asset root is the single source for that run.
@@ -185,12 +193,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-dispatch.sh, .\assets\run-with-it-pool.ps1, .\assets\run-with-it-pool.sh, .\assets\worker-watch.ps1, .\assets\worker-watch.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/run-with-it-dispatch.sh ./assets/run-with-it-dispatch.ps1 ./assets/run-with-it-pool.sh ./assets/run-with-it-pool.ps1 ./assets/worker-watch.sh ./assets/worker-watch.ps1 ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
 ```
 
 ## Main Orchestrator Rules File
@@ -212,7 +220,7 @@ Before execution verify:
 
 1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
 2. `gh` auth when GitHub intake is required.
-3. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears.
+3. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
 4. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
 5. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
@@ -296,7 +304,7 @@ Issues in READY_ISSUES must have no unmet dependencies on each other.
 If POOL_SLOTS_FREE > 0 and READY_ISSUES is non-empty:
   Select NEWLY_QUEUED = READY_ISSUES[0 : POOL_SLOTS_FREE].
   For each issue <n> in NEWLY_QUEUED:
-    Leave issue status="pending" until `run-with-it-pool.sh` spawns it.
+    Leave issue status="pending" until the platform pool runner spawns it.
     Ensure its context file path is recorded in main-state.json during Step C.
     The pool runner marks status="in_progress" and appends <n> to active_pool_issues when it captures the dispatcher PID.
   Emit: STATUS|type=pool-fill|active=<len(ACTIVE_POOL)+len(NEWLY_QUEUED)>

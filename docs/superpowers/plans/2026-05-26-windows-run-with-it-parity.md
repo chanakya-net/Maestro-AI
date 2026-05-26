@@ -64,7 +64,8 @@ Confirmed gaps:
   - Document platform helper selection.
 
 - Modify: `install.sh`, `install.ps1`, and `README.md`
-  - Include `run-with-it-dispatch.ps1`, `run-with-it-pool.ps1`, and `worker-watch.ps1`.
+  - Keep `install.sh` scoped to Bash/macOS/Linux/Git Bash helper assets.
+  - Include `run-with-it-dispatch.ps1`, `run-with-it-pool.ps1`, and `worker-watch.ps1` in `install.ps1`.
   - Clarify the supported Windows modes: native PowerShell and Git Bash/WSL.
 
 - Add tests:

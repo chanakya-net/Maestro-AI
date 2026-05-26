@@ -66,6 +66,7 @@ AI-Skills/
     ├── create-git-issue-routing.test.sh
     ├── help-me-debug-contract.test.sh
     ├── install-assets-contract.test.sh
+    ├── install-assets-powershell-contract.test.sh
     ├── run-agent-status-bus.test.sh
     ├── run-agent-ps1-status-bus.test.sh
     ├── run-agent.test.sh
@@ -239,6 +240,7 @@ Focused tests:
 
 ```bash
 bash tests/install-assets-contract.test.sh
+bash tests/install-assets-powershell-contract.test.sh
 bash tests/uninstall-contract.test.sh
 bash tests/run-agent.test.sh
 bash tests/run-agent-status-bus.test.sh
@@ -269,6 +271,8 @@ bash install.sh
 .\install.ps1
 ```
 
+`install.sh` installs the Bash/macOS/Linux/Git Bash helper family only. `install.ps1` installs the native PowerShell helper family only. Both install the shared prompt, rule, and registry assets.
+
 Manual Unix repair from repo root:
 
 ```bash
@@ -283,13 +287,9 @@ cp -f \
   ./assets/coordinator-rules.md \
   ./assets/main-orchestrator-rules.md \
   ./assets/run-agent.sh \
-  ./assets/run-agent.ps1 \
   ./assets/run-with-it-dispatch.sh \
-  ./assets/run-with-it-dispatch.ps1 \
   ./assets/run-with-it-pool.sh \
-  ./assets/run-with-it-pool.ps1 \
   ./assets/worker-watch.sh \
-  ./assets/worker-watch.ps1 \
   ./assets/agent-registry.json \
   "$HOME/.ai-skill-collections/assets/"
 chmod +x \
@@ -303,7 +303,7 @@ Manual PowerShell repair from repo root:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
-Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-dispatch.sh, .\assets\run-with-it-pool.ps1, .\assets\run-with-it-pool.sh, .\assets\worker-watch.ps1, .\assets\worker-watch.sh, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 ### No Git Repo

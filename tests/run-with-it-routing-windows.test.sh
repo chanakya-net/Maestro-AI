@@ -45,6 +45,7 @@ assert_file "${ROOT_DIR}/assets/run-with-it-pool.ps1" "PowerShell pool asset exi
 assert_contains_file "$SKILL_FILE" "run-with-it-dispatch.ps1" "skill documents PowerShell dispatcher"
 assert_contains_file "$SKILL_FILE" "run-with-it-pool.ps1" "skill documents PowerShell pool"
 assert_contains_file "$SKILL_FILE" "worker-watch.ps1" "skill documents PowerShell watcher"
+assert_contains_file "$SKILL_FILE" "run-agent.ps1\") --list-agents --detected-only" "skill uses PowerShell runner for native Windows preflight"
 assert_not_contains_file "$SKILL_FILE" "native PowerShell can install assets and run \`run-agent.ps1\`, but \`run-with-it\` orchestration requires Bash-only" "skill no longer blocks native PowerShell orchestration"
 
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "run-with-it-dispatch.ps1" "sub-coordinator prompt uses PowerShell dispatcher"
@@ -58,10 +59,14 @@ assert_contains_file "$COORDINATOR_RULES_FILE" "run-with-it-dispatch.ps1" "coord
 assert_contains_file "$COORDINATOR_RULES_FILE" "worker-watch.ps1" "coordinator rules document PowerShell watcher"
 assert_contains_file "$ORCHESTRATOR_RULES_FILE" "run-with-it-pool.ps1" "orchestrator rules document PowerShell pool"
 
-for file in "$INSTALL_SH" "$INSTALL_PS1" "$README_FILE"; do
-  assert_contains_file "$file" "run-with-it-dispatch.ps1" "$(basename "$file") includes PowerShell dispatcher asset"
-  assert_contains_file "$file" "run-with-it-pool.ps1" "$(basename "$file") includes PowerShell pool asset"
-  assert_contains_file "$file" "worker-watch.ps1" "$(basename "$file") includes PowerShell watcher asset"
-done
+assert_contains_file "$INSTALL_PS1" "run-with-it-dispatch.ps1" "install.ps1 includes PowerShell dispatcher asset"
+assert_contains_file "$INSTALL_PS1" "run-with-it-pool.ps1" "install.ps1 includes PowerShell pool asset"
+assert_contains_file "$INSTALL_PS1" "worker-watch.ps1" "install.ps1 includes PowerShell watcher asset"
+assert_not_contains_file "$INSTALL_SH" "run-with-it-dispatch.ps1" "install.sh excludes PowerShell dispatcher asset"
+assert_not_contains_file "$INSTALL_SH" "run-with-it-pool.ps1" "install.sh excludes PowerShell pool asset"
+assert_not_contains_file "$INSTALL_SH" "worker-watch.ps1" "install.sh excludes PowerShell watcher asset"
+assert_contains_file "$README_FILE" "run-with-it-dispatch.ps1" "README includes PowerShell dispatcher asset"
+assert_contains_file "$README_FILE" "run-with-it-pool.ps1" "README includes PowerShell pool asset"
+assert_contains_file "$README_FILE" "worker-watch.ps1" "README includes PowerShell watcher asset"
 
 echo "PASS: run-with-it Windows routing documentation contract"
