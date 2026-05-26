@@ -102,26 +102,30 @@ for agent_id, agent in agents.items():
     check(isinstance(agent.get("fallback_order"), list), f"{agent_id} has fallback order")
     check("requires_user_model_config" in agent.get("user_model_configuration", {}), f"{agent_id} declares user model config behavior")
 
-for agent_id in ["codex", "claude", "github-copilot", "agy"]:
+for agent_id in ["claude", "github-copilot", "agy"]:
     model = agents[agent_id]["model"]
     check(model.get("default"), f"{agent_id} has default model metadata")
     check(model.get("known_models"), f"{agent_id} has known model metadata")
     check(agents[agent_id]["user_model_configuration"]["requires_user_model_config"] is False, f"{agent_id} does not require user model config")
+
+codex_model = agents["codex"]["model"]
+check(codex_model.get("default") == "", "codex does not pin a default model")
+check(codex_model.get("known_models"), "codex has known model metadata")
+check(agents["codex"]["user_model_configuration"]["requires_user_model_config"] is False, "codex does not require user model config")
 
 check(model_routing.get("cost_basis") is None, "subscription routing no longer carries API cost basis")
 for model_id, catalog_entry in model_catalog.items():
     for removed_key in ("price_input_per_1m", "price_output_per_1m", "price_tier"):
         check(removed_key not in catalog_entry, f"{model_id} omits {removed_key} under subscription routing")
 
-codex_model = agents["codex"]["model"]
 expected_codex_models = [
-    "gpt-5.3-codex-spark",
-    "gpt-5.3-codex",
-    "gpt-5.2",
     "gpt-5.5",
     "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex",
+    "gpt-5.3-codex-spark",
+    "gpt-5.2",
 ]
-check(codex_model.get("default") == "gpt-5.3-codex-spark", "codex defaults to spark coding model")
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
 check(codex_model.get("pricing_basis") == "subscription", "codex declares subscription pricing basis")
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")

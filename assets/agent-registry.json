@@ -522,14 +522,15 @@
         ]
       },
       "model": {
-        "default": "gpt-5.3-codex-spark",
+        "default": "",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "gpt-5.3-codex-spark",
-          "gpt-5.3-codex",
-          "gpt-5.2",
           "gpt-5.5",
-          "gpt-5.4"
+          "gpt-5.4",
+          "gpt-5.4-mini",
+          "gpt-5.3-codex",
+          "gpt-5.3-codex-spark",
+          "gpt-5.2"
         ],
         "pricing_basis": "subscription",
         "metered_api_cost": false
