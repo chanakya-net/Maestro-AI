@@ -452,7 +452,7 @@ Execution-mode requirement (critical):
 
 ## Platform Dispatchers — Shared Role Launcher
 
-`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are advisory; the state file is the source of truth for liveness and silent-worker detection.
+`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -651,7 +651,6 @@ Emit parseable one-line status messages:
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
 - live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
 - worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
-- live heartbeat: `STATUS|type=heartbeat|issue=<n>|role=<impl|review|modify>|phase=<exploring|implementing|testing|review>|progress=<short-text>`
 - sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|merge_failed|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
 - merge start: `STATUS|type=merge-start|issue=<n>|branch=<issue_branch>|target=<feature_branch>`
 - merge complete: `STATUS|type=merge-complete|issue=<n>|merge_sha=<sha>|pushed=<true|false>`

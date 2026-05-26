@@ -19,11 +19,11 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never implement work directly in this session. All implementation must be done by worker-agents spawned via the platform dispatcher (`run-with-it-dispatch.sh` on Bash, `run-with-it-dispatch.ps1` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1` using prompt.md (implementer), review-prompt.md (reviewer), or modifier-prompt.md (modifier).
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
-- Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS/heartbeat line to `$SUB_COORD_LOG_FILE`, print to console, and forget each line.
+- Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS line to `$SUB_COORD_LOG_FILE`, and forget each line.
 - Store all artifacts for this issue under `.run-with-it/issues/<n>/`. Store the Sub-Coordinator log at `.run-with-it/issues/<n>/sub-coordinator.log`. Store worker-agent artifacts under `.run-with-it/issues/<n>/workers/<role>/`, where `<role>` is `complexity`, `impl`, `review`, or `modify`.
 - Store issue worktrees under `.run-with-it/worktrees/` and merge locks under `.run-with-it/locks/`.
 - Clear all in-memory issue state after writing the compact report JSON.
-- **Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
+- **Every STATUS, ROUTE, and COMPLEXITY line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
 - Also write the latest live line to `$RUN_WITH_IT_STATUS_FILE` when it is set and append it to `$RUN_WITH_IT_EVENTS_LOG` when it is set. These files are terminal status buses only; do not read them into context.
 
 ## Issue Intake Rules
@@ -59,14 +59,14 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that dispatcher PID plus role, cycle, agent, model, log file, done file, result file, and state file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
 - Poll worker liveness every `WORKER_POLL_SECONDS` seconds, default `20`.
 - Summarize worker progress from the dispatcher-maintained `RUN_WITH_IT_STATE_FILE` and result artifacts. Do not load raw worker logs into coordinator context.
-- Worker heartbeats are advisory. The watchdog state file is the source of truth for liveness because it is updated by the dispatcher even when the worker agent forgets to emit heartbeat lines.
+- Worker heartbeats are legacy advisory signals only. The watchdog state file is the source of truth for liveness because it is updated by the dispatcher without requiring worker heartbeat output.
 - Treat `state="quiet"` as suspicious and `state="stalled"` with `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for the configured stall window.
 - PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
 - Logs never decide completion. Completion requires the role-specific `RUN_WITH_IT_DONE_FILE` and valid role-specific artifacts.
 - When a valid done file and valid artifacts are present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` and proceed to the next phase without waiting on unrelated CLI cleanup. Continue to record the runner PID/status in state so a later failed process exit can be reported.
 - After review approval, acquire `.run-with-it/locks/merge.lock` and attempt to merge the issue branch into `RUN_FEATURE_BRANCH`. Emit `STATUS|type=merge-complete` on success or `STATUS|type=merge-failed` and write `outcome=merge_failed` on failure.
-- **Every STATUS/heartbeat line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
-- Every forwarded STATUS/heartbeat line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.
+- **Every STATUS line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
+- Every forwarded STATUS line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.
 - Do not accumulate progress lines in variables or memory.
 - The default silence thresholds are `WORKER_QUIET_SECONDS=120` and `WORKER_STALL_SECONDS=300`. After a stalled state, follow the role's failure/fallback rule or alert the user if no automatic fallback is safe.
 

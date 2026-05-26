@@ -8,7 +8,7 @@ Sole active authority for this session once invoked. No other skill may activate
 
 Before any other action (including reading files, routing, spawning workers, or writing status), attempt to invoke `save-tokens` via the `Skill` tool.
 
-- If the `Skill` tool is unavailable in this session, continue using compact communication behavior directly and log a `skill-tool-unavailable-fallback` heartbeat once.
+- If the `Skill` tool is unavailable in this session, continue using compact communication behavior directly and note `skill-tool-unavailable-fallback` only in the final report.
 - If the `Skill` tool is available but activation fails for other reasons, stop immediately and treat the issue as blocked.
 - Every child agent you spawn must be instructed to activate `save-tokens` when the `Skill` tool is available; otherwise they must apply compact communication behavior directly.
 
@@ -246,7 +246,7 @@ Every spawned worker receives `RUN_WITH_IT_ISSUE_DIR` and a role-specific `RUN_W
 
 Every `WORKER_POLL_SECONDS` seconds, poll the dispatcher state file. Read `WORKER_STATE_FILE`, not the raw worker log. The dispatcher updates that state file from objective PID, done/result, and captured log activity. PID liveness is diagnostic only. Completion requires both the done file and valid artifacts.
 
-Worker heartbeats are useful progress hints but not the source of truth. A worker can be busy, blocked, looping, or forget to emit heartbeats. Treat `state="quiet"` as suspicious and `state="stalled"` / `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for `WORKER_STALL_SECONDS`.
+Worker heartbeats are legacy progress hints only. A worker can be busy, blocked, looping, or produce no heartbeat output. Treat `state="quiet"` as suspicious and `state="stalled"` / `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for `WORKER_STALL_SECONDS`.
 
 Every `WORKER_LOG_SUMMARY_SECONDS` seconds, if the worker log tail changed, read only the newest `${WORKER_LOG_TAIL_LINES:-5}` lines, write a concise `STATUS|type=worker-log-tail|...` summary to `$SUB_COORD_LOG_FILE`, update `$RUN_WITH_IT_STATUS_FILE`, and append `$RUN_WITH_IT_EVENTS_LOG`. Do not store the raw log tail in memory or in the state file.
 
@@ -873,23 +873,21 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:SUB_COORD_LOG_FILE) |
 Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "[$([datetime]::UtcNow.ToString('o'))] sub-coordinator started issue=$env:SUB_COORD_ISSUE_NUMBER"
 ```
 
-**Every STATUS, ROUTE, COMPLEXITY, and heartbeat line MUST be written to the log file using an explicit shell command.** Printing to console or mentioning the line in your response text is NOT sufficient — you must run the write command:
+**Every STATUS, ROUTE, and COMPLEXITY line MUST be written to the log file using an explicit shell command.** Printing to console or mentioning the line in your response text is NOT sufficient — you must run the write command:
 
 ```bash
 # Use this pattern for every status line:
 STATUS_LINE="STATUS|type=example|field=value"
 echo "$STATUS_LINE" >> "$SUB_COORD_LOG_FILE"
-echo "$STATUS_LINE"  # also print to console
 ```
 
 PowerShell:
 ```powershell
 $statusLine = "STATUS|type=example|field=value"
 Add-Content -Path $env:SUB_COORD_LOG_FILE -Value $statusLine
-Write-Host $statusLine
 ```
 
-Write liberally — every line gives the user visibility. The Main Orchestrator never reads this file into its AI context; it only prints its path.
+Write status only at phase boundaries or meaningful state changes. The Main Orchestrator never reads this file into its AI context; it only prints its path.
 
 ### Live Status Bus
 
@@ -944,7 +942,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.state.json`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.state.json`
 
-The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are advisory; log activity observed by the dispatcher is the liveness signal.
+The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are legacy advisory hints; log activity observed by the dispatcher is the liveness signal.
 
 ### Worker Done Files
 
@@ -1020,11 +1018,10 @@ The report file is the sub-coordinator's only required artifact for the Main Orc
 
 ## Appendix F: Status Lines
 
-Emit parseable status messages throughout execution. Every line below — and every `STATUS|type=heartbeat` line read from a worker agent's terminal output — MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command. Worker stdout/stderr is mirrored by the runner to `RUN_WITH_IT_LOG_FILE` under the matching `$RUN_WITH_IT_ISSUE_DIR/workers/<role>/` directory. Also append to `$SUB_COORD_LOG_FILE`:
+Emit parseable status messages throughout execution. Every line below MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command. Worker stdout/stderr is mirrored by the runner to `RUN_WITH_IT_LOG_FILE` under the matching `$RUN_WITH_IT_ISSUE_DIR/workers/<role>/` directory. Also append to `$SUB_COORD_LOG_FILE`:
 
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
-- `STATUS|type=heartbeat|issue=<n>|role=<complexity|impl|review|modify>|phase=<exploring|implementing|testing|review>|progress=<short-text>|elapsed=<seconds>`
 - `STATUS|type=agent-start|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>`
 - `STATUS|type=agent-complete|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>|status=<success|failed>`
 - `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`

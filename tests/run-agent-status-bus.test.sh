@@ -20,6 +20,16 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+
+  if [[ "${haystack}" == *"${needle}"* ]]; then
+    fail "${message} (unexpected: ${needle})"
+  fi
+}
+
 assert_equals() {
   local expected="$1"
   local actual="$2"
@@ -120,7 +130,7 @@ status_events="$(<"${EVENTS_LOG}")"
 role_log="$(<"${ROLE_LOG}")"
 done_signal="$(<"${DONE_FILE}")"
 
-assert_contains "${stdout_output}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner preserves heartbeat stdout"
+assert_not_contains "${stdout_output}" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner suppresses heartbeat stdout"
 assert_contains "${stdout_output}" "fake-agent done" "runner preserves normal stdout"
 assert_contains "${stderr_output}" "STATUS|type=agent-start|issue=42|role=impl|agent=fake|model=fake-default" "runner prints agent-start status"
 assert_contains "${stderr_output}" "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "runner prints agent-complete status"

@@ -32,6 +32,13 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "$message (missing: $needle)"
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "$haystack" != *"$needle"* ]] || fail "$message (unexpected: $needle)"
+}
+
 assert_equals() {
   local expected="$1"
   local actual="$2"
@@ -122,7 +129,7 @@ status_events="$(tr -d '\r' < "$EVENTS_LOG")"
 role_log="$(tr -d '\r' < "$ROLE_LOG")"
 done_signal="$(tr -d '\r' < "$DONE_FILE")"
 
-assert_contains "$stdout_output" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner preserves heartbeat stdout"
+assert_not_contains "$stdout_output" "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests" "runner suppresses heartbeat stdout"
 assert_contains "$stdout_output" "fake-agent stdout" "runner preserves normal stdout"
 assert_contains "$stderr_output" "fake-agent stderr" "runner preserves normal stderr"
 assert_contains "$stderr_output" "STATUS|type=agent-complete|issue=42|role=impl|agent=fake|model=fake-default|status=success" "runner prints agent-complete status"

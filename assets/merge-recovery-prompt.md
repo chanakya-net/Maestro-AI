@@ -14,7 +14,7 @@ If the `Skill` tool is available, do not read files, run commands, edit files, o
 If the `Skill` tool is unavailable in this session, continue without activation and follow the equivalent behavior directly:
 - Keep communication concise as `save-tokens` intends.
 - Follow test-first discipline as `tdd-implementation` intends.
-- Emit one explicit status heartbeat noting `skill-tool-unavailable-fallback` before proceeding.
+- Note `skill-tool-unavailable-fallback` only in the final output report.
 
 ## Scope
 
@@ -74,13 +74,9 @@ trap 'rmdir .run-with-it/locks/merge.lock 2>/dev/null || true' EXIT
 12. Write `RUN_WITH_IT_DONE_FILE`.
 13. Release the merge lock.
 
-## Progress Heartbeats
+## Progress Visibility
 
-Emit short parseable progress lines:
-
-`STATUS|type=heartbeat|issue=<issue>|role=merge-recovery|phase=<merging|resolving|testing|pushing>|progress=<short-text>`
-
-Keep `progress` under 8 words.
+Do not emit periodic heartbeat or status-check lines while working. The dispatcher and log monitor track liveness from captured process output and watchdog state so you can stay focused on merge recovery.
 
 ## Output Contract
 

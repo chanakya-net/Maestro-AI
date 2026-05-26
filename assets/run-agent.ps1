@@ -193,6 +193,10 @@ function Forward-AgentLine([string]$line, [string]$stream) {
         Write-StatusLine $line
     }
 
+    if ($line.StartsWith("STATUS|type=heartbeat|")) {
+        return
+    }
+
     if ($stream -eq "stderr") {
         [Console]::Error.WriteLine($line)
     } else {

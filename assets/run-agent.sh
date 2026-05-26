@@ -181,10 +181,19 @@ emit_run_status() {
 
 forward_status_stream() {
   local target_fd="$1"
-  local line
+  local line suppress_console
 
   while IFS= read -r line || [[ -n "${line}" ]]; do
-    printf '%s\n' "${line}" >&"${target_fd}"
+    suppress_console=0
+    case "${line}" in
+      STATUS\|type=heartbeat\|*)
+        suppress_console=1
+        ;;
+    esac
+
+    if [[ "${suppress_console}" != "1" ]]; then
+      printf '%s\n' "${line}" >&"${target_fd}"
+    fi
     write_log_line "${line}"
     case "${line}" in
       STATUS\|*|ROUTE\|*|COMPLEXITY\|*)

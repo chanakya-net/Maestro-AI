@@ -14,7 +14,7 @@ If the `Skill` tool is available, do not read files, run commands, edit files, o
 If the `Skill` tool is unavailable in this session, continue without activation and follow the equivalent behavior directly:
 - Keep communication concise as `save-tokens` intends.
 - Follow test-first discipline as `tdd-implementation` intends.
-- Emit one explicit status heartbeat noting `skill-tool-unavailable-fallback` before proceeding.
+- Note `skill-tool-unavailable-fallback` only in the final output report.
 
 Your job is to address reviewer comments on an existing implementation, run verification, and leave the repository in a passing state.
 
@@ -60,17 +60,9 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 6. Re-run verification until all required checks pass.
 7. Produce the final output report only after verification passes.
 
-## Progress Heartbeats
+## Progress Visibility
 
-While working, emit short parseable progress lines so the coordinator can show what you are doing:
-
-`STATUS|type=heartbeat|issue=<issue-or-unknown>|role=modify|phase=<exploring|implementing|testing>|progress=<short-text>`
-
-Emit a heartbeat when you enter each phase and at least once every 60 seconds during long-running work. Keep `progress` under 8 words, for example `reading reviewer json`, `patching requested fix`, or `rerunning tests`.
-
-Use `RUN_WITH_IT_ISSUE` for the `issue` field when it is present; otherwise use `unknown`.
-
-Heartbeat lines are live progress updates, not the final report. Continue to produce the final output contract below when the work is complete.
+Do not emit periodic heartbeat or status-check lines while working. The dispatcher and log monitor track liveness from captured process output and watchdog state so you can stay focused on the assigned modification task.
 
 ## Mandatory Commit Before Handoff
 
