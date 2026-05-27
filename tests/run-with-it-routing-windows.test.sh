@@ -59,6 +59,8 @@ assert_contains_file "$COORDINATOR_RULES_FILE" "run-with-it-dispatch.ps1" "coord
 assert_contains_file "$COORDINATOR_RULES_FILE" "worker-watch.ps1" "coordinator rules document PowerShell watcher"
 assert_contains_file "$ORCHESTRATOR_RULES_FILE" "run-with-it-pool.ps1" "orchestrator rules document PowerShell pool"
 
+assert_contains_file "$INSTALL_PS1" "run-with-it-router.py" "install.ps1 includes shared router helper asset"
+assert_contains_file "$INSTALL_PS1" "run-with-it-artifacts.py" "install.ps1 includes shared artifact helper asset"
 assert_contains_file "$INSTALL_PS1" "run-with-it-dispatch.ps1" "install.ps1 includes PowerShell dispatcher asset"
 assert_contains_file "$INSTALL_PS1" "run-with-it-pool.ps1" "install.ps1 includes PowerShell pool asset"
 assert_contains_file "$INSTALL_PS1" "worker-watch.ps1" "install.ps1 includes PowerShell watcher asset"
@@ -67,6 +69,7 @@ assert_not_contains_file "$INSTALL_SH" "run-with-it-pool.ps1" "install.sh exclud
 assert_not_contains_file "$INSTALL_SH" "worker-watch.ps1" "install.sh excludes PowerShell watcher asset"
 assert_contains_file "$README_FILE" "run-with-it-dispatch.ps1" "README includes PowerShell dispatcher asset"
 assert_contains_file "$README_FILE" "run-with-it-pool.ps1" "README includes PowerShell pool asset"
+assert_contains_file "$README_FILE" "run-with-it-artifacts.py" "README includes shared artifact helper asset"
 assert_contains_file "$README_FILE" "worker-watch.ps1" "README includes PowerShell watcher asset"
 
 echo "PASS: run-with-it Windows routing documentation contract"

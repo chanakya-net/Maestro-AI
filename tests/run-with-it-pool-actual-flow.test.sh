@@ -74,6 +74,7 @@ make_fixture() {
     "${ROOT_DIR}/assets/run-with-it-pool.sh" \
     "${ROOT_DIR}/assets/run-with-it-state.py" \
     "${ROOT_DIR}/assets/run-with-it-github-update.py" \
+    "${ROOT_DIR}/assets/run-with-it-artifacts.py" \
     "${ROOT_DIR}/assets/merge-recovery-prompt.md" \
     "$asset_root/"
   chmod +x "$asset_root/run-agent.sh" \
@@ -81,7 +82,8 @@ make_fixture() {
     "$asset_root/run-with-it-dispatch.sh" \
     "$asset_root/run-with-it-pool.sh" \
     "$asset_root/run-with-it-state.py" \
-    "$asset_root/run-with-it-github-update.py"
+    "$asset_root/run-with-it-github-update.py" \
+    "$asset_root/run-with-it-artifacts.py"
 
   cat > "$asset_root/agent-registry.json" <<'JSON'
 {

@@ -46,9 +46,11 @@ AI-Skills/
 │   ├── run-agent.ps1
 │   ├── run-with-it-dispatch.sh
 │   ├── run-with-it-dispatch.ps1
+│   ├── run-with-it-artifacts.py
 │   ├── run-with-it-github-update.py
 │   ├── run-with-it-pool.sh
 │   ├── run-with-it-pool.ps1
+│   ├── run-with-it-router.py
 │   ├── run-with-it-state.py
 │   ├── sub-coordinator-prompt.md
 │   ├── worker-watch.sh
@@ -129,6 +131,8 @@ Durable state and logs live under `.run-with-it/` during orchestration. Worker c
 | [`assets/run-with-it-pool.ps1`](assets/run-with-it-pool.ps1) | PowerShell rolling-pool scheduler for native Windows orchestration. |
 | [`assets/run-with-it-state.py`](assets/run-with-it-state.py) | Shared state transition helper used by both pool runners. |
 | [`assets/run-with-it-github-update.py`](assets/run-with-it-github-update.py) | Shared terminal issue comment/close helper used by both pool runners. |
+| [`assets/run-with-it-router.py`](assets/run-with-it-router.py) | Deterministic subscription-aware worker agent/model router and usage ledger writer. |
+| [`assets/run-with-it-artifacts.py`](assets/run-with-it-artifacts.py) | Shared role artifact validator and safe synthesis helper used by both dispatchers. |
 | [`assets/worker-watch.sh`](assets/worker-watch.sh) | Liveness/log-tail watcher for background workers. |
 | [`assets/worker-watch.ps1`](assets/worker-watch.ps1) | PowerShell liveness/log-tail watcher for background workers. |
 | [`assets/prompt.md`](assets/prompt.md) | Implementation worker prompt. |
@@ -217,7 +221,7 @@ OpenCode users should configure model defaults in their own OpenCode setup.
 
 ## Routing Controls
 
-`run-with-it` uses `agent-registry.json` plus complexity scoring to select agent/model combinations.
+`run-with-it` uses `agent-registry.json`, complexity scoring, and `run-with-it-router.py` to select agent/model combinations. The default subscription distribution target is Codex 50%, Agy 20%, GitHub Copilot 20%, and Claude 10%, with role-specific protections for complexity scoring, review, and merge recovery.
 
 Supported overrides:
 
@@ -294,6 +298,8 @@ cp -f \
   ./assets/main-orchestrator-rules.md \
   ./assets/run-with-it-state.py \
   ./assets/run-with-it-github-update.py \
+  ./assets/run-with-it-router.py \
+  ./assets/run-with-it-artifacts.py \
   ./assets/run-agent.sh \
   ./assets/run-with-it-dispatch.sh \
   ./assets/run-with-it-pool.sh \
@@ -306,6 +312,8 @@ chmod +x \
   "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" \
   "$HOME/.ai-skill-collections/assets/run-with-it-state.py" \
   "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-router.py" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py" \
   "$HOME/.ai-skill-collections/assets/worker-watch.sh"
 ```
 
@@ -313,7 +321,7 @@ Manual PowerShell repair from repo root:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
-Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 ### No Git Repo

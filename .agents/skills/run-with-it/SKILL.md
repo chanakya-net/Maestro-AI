@@ -12,22 +12,22 @@ Sole active authority once invoked — no other skill may activate unless called
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
 
 - **Re-read `.run-with-it/main-state.json` before every loop iteration.** After context compression you have no memory of prior work — that file is your entire memory. Never derive issue state from conversation history.
-- **Never implement work directly in this session.** All implementation belongs to Sub-Coordinators spawned via `run-with-it-dispatch.sh --role sub-coord`, which wraps `run-agent.sh --prompt-file sub-coordinator-prompt.md`. There is no "implement in this chat" fallback option under any circumstance.
+- **Never implement work directly in this session.** All implementation belongs to Sub-Coordinators spawned via the platform dispatcher (`run-with-it-dispatch.sh` on Bash, `run-with-it-dispatch.ps1` on native PowerShell) with `role=sub-coord`, which wraps `run-agent.sh` / `run-agent.ps1` with `sub-coordinator-prompt.md`. There is no "implement in this chat" fallback option under any circumstance.
 - **Never run tests, build commands, or compile the project** in this session. Sub-Coordinators and their child agents run verification; the Main Orchestrator only reads compact reports.
 - **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately after the execution plan is written.
 - **Never present execution option menus** (Option A / B / C style choices).
 - **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` is unavailable, authentication fails, an approved permission-escalation attempt fails, or no GitHub remote exists.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
-- **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/sub/`. A shell watcher may print only the last two changed lines with `tail -n 2`; only read the compact report JSON from `.run-with-it/reports/`.
+- **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/issues/<n>/sub-coordinator.log`. Do not tail raw logs into AI context; only read the compact report JSON from `.run-with-it/issues/<n>/report.json`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
-- **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator's sole responsibility.** Sub-Coordinators never touch GitHub.
+- **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
-- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After `run-with-it-dispatch.sh` calls `run-agent.sh`, those values are locked and the Main Orchestrator must not attempt to change them.
-- **Run `run-with-it-pool.sh` as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
-- **Use the `worker-watch.sh` asset inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
+- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
+- **Run the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
+- **Use the platform worker watcher (`worker-watch.sh` / `worker-watch.ps1`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
-- **GitHub operations on completion are sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as it completes to avoid race conditions.
+- **GitHub operations on completion are immediate and sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as soon as that issue reaches a terminal outcome to avoid race conditions.
 - **Preserve local fallback behavior when GitHub or git is unavailable.**
 - **Keep changes minimal and focused to orchestration/control-plane behavior.**
 
@@ -51,12 +51,12 @@ Preferred upstream flow:
 - Fetches all `ready-for-agent` issues once at startup
 - Creates one shared run feature branch (`run-with-it/<run-id>`) from the original base branch, pushes it when a GitHub remote exists, and uses it as the final PR head branch
 - Determines execution order with a dependency graph and topological sort based primarily on each issue's `## Blocked by` section; cycles or unresolved external blockers are marked blocked before execution
-- Maintains a rolling pool of up to `PARALLEL_JOBS` active **Sub-Coordinators** via `run-with-it-dispatch.sh` — freed slots fill immediately when any job completes rather than waiting for whole batches
-- As each Sub-Coordinator completes, reads its compact report and immediately spawns the next ready issue into the freed slot
+- Maintains a rolling pool of up to `PARALLEL_JOBS` active **Sub-Coordinators** via the platform dispatcher — freed slots fill immediately when any job completes rather than waiting for whole batches
+- As each Sub-Coordinator completes, reads its compact report, immediately posts the terminal GitHub comment and closes/updates that issue when it has a terminal outcome, then spawns the next ready issue into the freed slot
 - Writes its own status log to `.run-with-it/main/main.log`
 - Reads ONLY the compact report JSON — never the implementation diffs or log files
 - Updates `main-state.json` after each issue (its full external memory)
-- Posts terminal GitHub comments and closes/updates issues
+- Posts terminal GitHub comments and closes/updates issues immediately per issue, not only after the full pool finishes
 - Spawns a Merge Recovery Coordinator when a Sub-Coordinator reports `merge_failed`; Main Orchestrator never merges issue branches itself
 - Creates one final PR from the shared run feature branch after all issues are terminal
 - Re-reads `main-state.json` at the top of every loop iteration to survive context compression
@@ -67,8 +67,8 @@ Preferred upstream flow:
 - Runs complexity analysis, deterministic routing, implementation, review, and modification loops
 - Runs child workers with `REPO_ROOT` pointing at the issue worktree while keeping logs/reports under the root `.run-with-it/`
 - Attempts the normal merge back into the shared feature branch under `.run-with-it/locks/merge.lock`
-- Writes a compact report JSON and a full log file under `.run-with-it/sub/` when done
-- Spawns worker agents whose logs are written under `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, and `.run-with-it/modify/`
+- Writes a compact report JSON and full log file under `.run-with-it/issues/<n>/` when done
+- Spawns worker agents whose logs/results/done sentinels are written under `.run-with-it/issues/<n>/workers/<role>/`
 - Never touches GitHub; never updates `main-state.json`
 
 **Merge Recovery Coordinator** (spawned via `merge-recovery-prompt.md`, runs only after `merge_failed`):
@@ -92,7 +92,7 @@ This isolation means each issue's implementation complexity is contained to its 
 
 Detect the current OS before asset discovery and runner selection, and capture it in the `OS_FAMILY` environment variable:
 
-- **Windows (native PowerShell) (`OS_FAMILY=windows`):** native PowerShell can install assets and run `run-agent.ps1`, but `run-with-it` orchestration requires Bash-only pool/dispatcher helpers. Stop with a clear message asking the user to run from Git Bash or WSL.
+- **Windows (native PowerShell) (`OS_FAMILY=windows`):** use `.ps1` runners (`run-with-it-pool.ps1`, `run-with-it-dispatch.ps1`, `worker-watch.ps1`, `run-agent.ps1`) and `$env:USERPROFILE` for home dir.
 - **macOS / Linux / Git Bash / WSL (`OS_FAMILY=unix`):** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
 
 Adapt all shell commands in this skill to the detected runtime:
@@ -127,8 +127,11 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `LOG_TAIL_POLL_SECONDS` | `120` | Shell polling cadence for sub-coordinator log tail |
 | `RUN_WITH_IT_STATUS_FILE` | `.run-with-it/status/current.txt` | Single-line status bus (overwritten each update) |
 | `RUN_WITH_IT_EVENTS_LOG` | `.run-with-it/status/events.log` | Append-only event log — terminal inspection only; never load into AI context |
-| `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/sub/sub-<n>.log`; workers: `.run-with-it/<role>/...` |
-| `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/done/issue-<n>-<role>-cycle-<cycle>.done` |
+| `RUN_WITH_IT_ISSUE_DIR` | `.run-with-it/issues/<n>` | Issue-scoped artifact folder created by the Sub-Coordinator/pool |
+| `RUN_WITH_IT_LOG_FILE` | role-specific | Sub-Coordinators: `.run-with-it/issues/<n>/sub-coordinator.log`; workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log` |
+| `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done` |
+| `RUN_WITH_IT_RESULT_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json` |
+| `RUN_WITH_IT_STATE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`; dispatcher-maintained watchdog state |
 | `AGENT` | — | Routing override passed through to Sub-Coordinators |
 | `MODEL` | — | Routing override passed through to Sub-Coordinators |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
@@ -148,26 +151,42 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Required files:
+Shared required files:
 
 - `prompt.md`
-- `run-agent.sh`
-- `run-agent.ps1`
-- `run-with-it-dispatch.sh`
-- `run-with-it-pool.sh`
 - `agent-registry.json`
 - `review-prompt.md`
 - `modifier-prompt.md`
 - `complexity-prompt.md`
 - `coordinator-rules.md`
-- `worker-watch.sh`
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
 - `merge-recovery-prompt.md`
+- `run-with-it-state.py`
+- `run-with-it-github-update.py`
+- `run-with-it-router.py`
+- `run-with-it-artifacts.py`
+
+Bash required helper files:
+
+- `run-agent.sh`
+- `run-with-it-dispatch.sh`
+- `run-with-it-pool.sh`
+- `worker-watch.sh`
+
+PowerShell required helper files:
+
+- `run-agent.ps1`
+- `run-with-it-dispatch.ps1`
+- `run-with-it-pool.ps1`
+- `worker-watch.ps1`
 
 Selection rules:
 
-- Use first path that contains all required files.
+- Use first path that contains all shared files plus the helper files for the detected platform.
+- Bash/macOS/Linux/Git Bash/WSL runs must not require `.ps1` helper files.
+- Native PowerShell runs must not require `.sh` helper files.
+- Both platform pool runners require `python3` (or `PYTHON_BIN` pointing to a Python 3 interpreter) for shared state, GitHub update, and routing helper scripts.
 - If none are complete, stop and report missing files.
 - Do not require git to resolve assets.
 - Resolved asset root is the single source for that run.
@@ -180,12 +199,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-agent.sh, .\assets\run-with-it-dispatch.sh, .\assets\run-with-it-pool.sh, .\assets\worker-watch.sh, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-agent.ps1 ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -205,11 +224,12 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 
 Before execution verify:
 
-1. Resolved asset root exists and contains all required files listed in Asset Discovery; runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) are executable.
-2. `gh` auth when GitHub intake is required.
-3. `SUB_COORD_AGENT` is installed (detected): run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only` and confirm `SUB_COORD_AGENT` appears.
-4. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
-5. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
+1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
+2. `python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter, for the shared pool helper scripts.
+3. `gh` auth when GitHub intake is required.
+4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
+5. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
+6. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
    - If it exists, pause and present exactly this prompt to the user:
 
@@ -226,7 +246,7 @@ If any required file from Asset Discovery is missing at the resolved asset root,
 
 ## Initial Batch Issue Fetch
 
-If issue data is missing in context, fetch all `ready-for-agent` issues at startup.
+If issue data is missing in context, fetch only open issues with the configured intake label (`ready-for-agent` by default) at startup.
 
 Use `ISSUE_LIMIT` (default `1000`) as the `--limit` argument — this fetches all matching issues by default. Do not cap the result unless the user explicitly sets `ISSUE_LIMIT` to a lower value.
 
@@ -250,13 +270,16 @@ Before fetching work begins, create the shared run feature branch:
 
 After fetching all issues:
 
-1. Build a dependency graph: for each issue, identify which other issues it depends on from `## Blocked by`, issue body, labels, or cross-references. `## Blocked by` is the primary source of truth. Normalize `#123`, full GitHub issue URLs, and plain issue numbers. Treat `None - can start immediately` as no dependencies.
-2. Detect cycles and unresolved dependencies; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
-3. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
-4. Issues whose dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
-5. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
-6. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
-7. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
+1. Filter the fetched issue set before planning: every executable issue must have the configured intake label (`ready-for-agent` by default). Do not add unlabelled issues, PRD/parent issues, `needs-triage` issues, or issues discovered only through cross-references to `main-state.json`.
+2. Build a dependency graph only from each executable issue's `## Blocked by` section. Normalize `#123`, full GitHub issue URLs, and plain issue numbers. Treat `None - can start immediately` as no dependencies.
+3. Treat PRD/parent references as context, not dependencies. Ignore issue references from `## Parent`, titles such as `PRD: ...`, labels such as `needs-triage`, and incidental issue links elsewhere in the body when computing `deps`.
+4. A dependency is actionable only if it points to another fetched executable issue in the same intake set. If `## Blocked by` names a PRD/parent issue or an issue outside the intake set, ignore it and record the ignored reference in `dependency_proof` as non-blocking context rather than marking the issue blocked.
+5. Detect cycles and unresolved dependencies among executable issues only; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
+6. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
+7. Issues whose executable dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
+8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
+9. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
+10. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
 ## Main Orchestrator Loop
 
@@ -291,7 +314,7 @@ Issues in READY_ISSUES must have no unmet dependencies on each other.
 If POOL_SLOTS_FREE > 0 and READY_ISSUES is non-empty:
   Select NEWLY_QUEUED = READY_ISSUES[0 : POOL_SLOTS_FREE].
   For each issue <n> in NEWLY_QUEUED:
-    Leave issue status="pending" until `run-with-it-pool.sh` spawns it.
+    Leave issue status="pending" until the platform pool runner spawns it.
     Ensure its context file path is recorded in main-state.json during Step C.
     The pool runner marks status="in_progress" and appends <n> to active_pool_issues when it captures the dispatcher PID.
   Emit: STATUS|type=pool-fill|active=<len(ACTIVE_POOL)+len(NEWLY_QUEUED)>
@@ -320,8 +343,9 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
   4. Environment configuration block (append at end of context file):
      SUB_COORD_ISSUE_NUMBER=<n>
      OS_FAMILY=<unix|windows>
-     SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/reports/sub-<n>-report.json>
-     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/sub/sub-<n>.log>
+     RUN_WITH_IT_ISSUE_DIR=<abs-path-to-.run-with-it/issues/<n>>
+     SUB_COORD_REPORT_FILE=<abs-path-to-.run-with-it/issues/<n>/report.json>
+     SUB_COORD_LOG_FILE=<abs-path-to-.run-with-it/issues/<n>/sub-coordinator.log>
      RUN_FEATURE_BRANCH=<shared-run-feature-branch>
      RUN_BASE_BRANCH=<original-base-branch>
      RUN_BASE_SHA=<original-base-sha>
@@ -348,11 +372,12 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
   worker cannot mistake them for execution instructions.
 
 Create directories before spawning:
-  mkdir -p .run-with-it/main .run-with-it/sub .run-with-it/reports .run-with-it/status .run-with-it/done .run-with-it/complexity .run-with-it/impl .run-with-it/review .run-with-it/modify .run-with-it/merge-recovery .run-with-it/worktrees .run-with-it/locks
+  mkdir -p .run-with-it/main .run-with-it/issues/<n>/workers .run-with-it/status .run-with-it/worktrees .run-with-it/locks
 
 Resolve live status files before spawning:
   MAIN_LOG_FILE="${MAIN_LOG_FILE:-$(pwd -P)/.run-with-it/main/main.log}"
-  SUB_COORD_LOG_FILE="$(pwd -P)/.run-with-it/sub/sub-<n>.log"
+  RUN_WITH_IT_ISSUE_DIR="$(pwd -P)/.run-with-it/issues/<n>"
+  SUB_COORD_LOG_FILE="$RUN_WITH_IT_ISSUE_DIR/sub-coordinator.log"
   RUN_WITH_IT_STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-$(pwd -P)/.run-with-it/status/current.txt}"
   RUN_WITH_IT_EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
   STATUS_POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
@@ -368,9 +393,9 @@ For EACH issue <n> in NEWLY_QUEUED:
 
 Print to user for each issue:
   "Starting sub-coordinator for issue #<n>: <title>"
-  "Log: .run-with-it/sub/sub-<n>.log"
+  "Log: .run-with-it/issues/<n>/sub-coordinator.log"
   "To watch live progress in a separate terminal:"
-  "  tail -f .run-with-it/sub/sub-<n>.log"
+  "  tail -f .run-with-it/issues/<n>/sub-coordinator.log"
 
 ══ STEP D: SPAWN NEWLY QUEUED + ROLLING POOL MONITOR ════════════════════════════
 
@@ -378,8 +403,8 @@ Execution-mode requirement (critical):
   Run Step D as ONE long-lived shell session that performs both spawn and monitor.
   Do not split spawn and monitor into separate shell invocations. Do not write a
   bespoke rolling-pool script in the Main Orchestrator session. Use the shared
-  `run-with-it-pool.sh` executable; it maintains the pool and calls
-  `run-with-it-dispatch.sh --role sub-coord` for each active issue.
+  platform pool runner; it maintains the pool and calls the platform dispatcher
+  with `role=sub-coord` for each active issue.
 
   Required handoff before Step D:
   - Each ready issue in `main-state.json` must have `issue_registry[<n>].context_file`
@@ -402,15 +427,34 @@ Execution-mode requirement (critical):
 
     POOL_PID=$!
 
+  PowerShell (Windows):
+
+    $poolProcess = Start-Process -FilePath "powershell" -ArgumentList @(
+      "-NoProfile", "-File", (Join-Path $ASSET_ROOT "run-with-it-pool.ps1"),
+      "-AssetRoot", $ASSET_ROOT,
+      "-StateFile", (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main-state.json"),
+      "-ParallelJobs", $env:PARALLEL_JOBS,
+      "-Agent", $env:SUB_COORD_AGENT,
+      "-Model", $env:SUB_COORD_MODEL,
+      "-StatusFile", $env:RUN_WITH_IT_STATUS_FILE,
+      "-EventsLog", $env:RUN_WITH_IT_EVENTS_LOG,
+      "-MainLog", $MAIN_LOG_FILE,
+      "-PollSeconds", $env:STATUS_POLL_SECONDS,
+      "-TimeoutSeconds", $env:SUB_COORD_TIMEOUT_SECONDS
+    ) -PassThru
+
+    $POOL_PID = $poolProcess.Id
+
   Persist `POOL_PID` in `main-state.json` for recovery visibility, then monitor that single process until
-  it emits `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by `run-with-it-pool.sh`.
+  it emits `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by the platform pool runner.
+  The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
 ```
 
-## `run-with-it-dispatch.sh` — Shared Role Launcher
+## Platform Dispatchers — Shared Role Launcher
 
-`run-with-it-dispatch.sh` is the shared run-with-it orchestration primitive. The Main Orchestrator uses it with `--role sub-coord`; Sub-Coordinators use it with `--role complexity`, `--role impl`, `--role review`, or `--role modify`. It wraps `run-agent.sh`, forwards the role-specific `RUN_WITH_IT_*` environment, writes dispatch status lines, and monitors the done/result artifacts through `worker-watch.sh`.
+`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -424,12 +468,19 @@ run-with-it-dispatch.sh \
   --log-file <file> \
   --done-file <file> \
   --result-file <file> \
+  --state-file <file> \
   --repo-root <worktree-or-repo-path> \
   --status-file <file> \
-  --events-log <file>
+  --events-log <file> \
+  --quiet-seconds <seconds> \
+  --stall-seconds <seconds>
 ```
 
-Use `--dry-run` to print the wrapped `run-agent.sh` invocation, and `--validate-only` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
+PowerShell uses the same field names with PowerShell-style parameters, for example `-Role impl -Issue 123 -LogFile <file> -DoneFile <file> -ResultFile <file> -StateFile <file>`.
+
+Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--validate-only` / `-ValidateOnly` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
+
+Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` means the runner is alive but the captured role log has been silent beyond the quiet threshold. `state="stalled"` with `stall_reason="alive-but-silent"` means the worker is alive, incomplete, and silent beyond the stall threshold. Completion still requires the done sentinel and valid role-specific result artifacts.
 
 ## `run-agent.sh` — Full Syntax Reference
 
@@ -442,7 +493,7 @@ run-agent.sh --list-models <agent>
 
 | Flag | Env var equivalent | Required | Description |
 |------|--------------------|----------|-------------|
-| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `gemini`) |
+| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `agy`) |
 | `--model <model>` | `MODEL` | Yes (always pass explicitly) | Model id to use |
 | `--context-file <file>` | `CONTEXT_PAYLOAD_FILE` | Yes | Path to the assembled context payload file |
 | `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `<script-dir>/prompt.md`) | Path to the prompt file |
@@ -478,7 +529,7 @@ On successful run completion:
 
 - Delete all `$SUB_COORD_CONTEXT_FILE` temp files (should already be deleted after each issue, but clean up any stragglers).
 - Delete `.run-with-it/main-state.json`, `.run-with-it/main-orchestrator-rules.md`, `.run-with-it/coordinator-rules.md`.
-- Before deleting tracked files, worktrees, or any file outside `.run-with-it/`, print the planned cleanup targets and ask the user to confirm. After confirmation, delete generated files under `.run-with-it/reports/`, `.run-with-it/sub/`, `.run-with-it/main/`, `.run-with-it/done/`, `.run-with-it/complexity/`, `.run-with-it/impl/`, `.run-with-it/review/`, `.run-with-it/modify/`, `.run-with-it/reviews/`, `.run-with-it/worktrees/`, `.run-with-it/locks/`, and `.run-with-it/merge-recovery/`.
+- Before deleting tracked files, worktrees, or any file outside `.run-with-it/`, print the planned cleanup targets and ask the user to confirm. After confirmation, delete generated files under `.run-with-it/issues/`, `.run-with-it/main/`, `.run-with-it/status/`, `.run-with-it/worktrees/`, and `.run-with-it/locks/`.
 - Remove issue worktrees with `git worktree remove` when possible. Preserve the shared run feature branch after final PR creation.
 - Remove `.run-with-it/` directory if empty.
 - For each of `technical_requirements.md`, `prd.md`, and `issues.md` present in the workspace root: run `git status --short <file>`. Delete the file **only if** it is untracked (`??`) or clean (not listed). If the file has user modifications (any other status), skip deletion and emit `STATUS|type=cleanup|action=skipped-dirty-file|file=<file>` — never delete user-modified workspace files.
@@ -537,9 +588,10 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
       "title": "issue title",
       "deps": [],
       "dependency_proof": "Blocked by: None",
-      "report_file": ".run-with-it/reports/sub-36-report.json",
-      "merge_recovery_report_file": ".run-with-it/reports/merge-recovery-36-report.json",
-      "log_file": ".run-with-it/sub/sub-36.log",
+      "issue_dir": ".run-with-it/issues/36",
+      "report_file": ".run-with-it/issues/36/report.json",
+      "merge_recovery_report_file": ".run-with-it/issues/36/merge-recovery-report.json",
+      "log_file": ".run-with-it/issues/36/sub-coordinator.log",
       "issue_branch": "run-with-it/<run-id>/issue-36",
       "worktree_path": ".run-with-it/worktrees/issue-36",
       "commit_sha": "abc1234"
@@ -601,7 +653,6 @@ Emit parseable one-line status messages:
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
 - live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
 - worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
-- live heartbeat: `STATUS|type=heartbeat|issue=<n>|role=<impl|review|modify>|phase=<exploring|implementing|testing|review>|progress=<short-text>`
 - sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|merge_failed|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
 - merge start: `STATUS|type=merge-start|issue=<n>|branch=<issue_branch>|target=<feature_branch>`
 - merge complete: `STATUS|type=merge-complete|issue=<n>|merge_sha=<sha>|pushed=<true|false>`
@@ -653,8 +704,8 @@ After context compression (conversation history cleared), treat the situation as
 
 ### Terminal Issue Comments
 
-Post issue comments only for terminal outcomes: `completed`, `blocked`, or `failed-review`.
-Each terminal comment must be posted only after reading the compact report.
+Post issue comments immediately for terminal outcomes: `completed`, `blocked`, or `failed-review`.
+Each terminal comment must be posted only after reading the compact report for that issue, and must not wait for unrelated issues or the full pool to finish.
 Populate all fields from the Sub-Coordinator's compact report JSON.
 
 Use the same markdown template for every terminal outcome, with this fixed section order:

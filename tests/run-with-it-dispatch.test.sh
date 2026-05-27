@@ -123,8 +123,8 @@ SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
 SMOKE_BIN="${WORK_DIR}/bin"
 mkdir -p "${SMOKE_ASSET_ROOT}" "${SMOKE_PROJECT}" "${SMOKE_REPO_ROOT}" "${SMOKE_BIN}"
-cp "${ROOT_DIR}/assets/run-agent.sh" "${ROOT_DIR}/assets/worker-watch.sh" "${ROOT_DIR}/assets/run-with-it-dispatch.sh" "${SMOKE_ASSET_ROOT}/"
-chmod +x "${SMOKE_ASSET_ROOT}/run-agent.sh" "${SMOKE_ASSET_ROOT}/worker-watch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/run-agent.sh" "${ROOT_DIR}/assets/worker-watch.sh" "${ROOT_DIR}/assets/run-with-it-dispatch.sh" "${ROOT_DIR}/assets/run-with-it-artifacts.py" "${SMOKE_ASSET_ROOT}/"
+chmod +x "${SMOKE_ASSET_ROOT}/run-agent.sh" "${SMOKE_ASSET_ROOT}/worker-watch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py"
 
 cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'JSON'
 {
@@ -468,5 +468,209 @@ assert_file_contains "${RECOVER_RESULT}" '"recovered.txt"' "synthesized result r
 assert_file_contains "${RECOVER_RESULT}" '"source": "dispatcher-synthesized"' "synthesized result is auditable"
 assert_file_contains "${RECOVER_STATE}" '"state": "completed"' "recoverable missing result completes"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=45|role=impl|cycle=1" "recovery emits synthesis status"
+
+cat > "${SMOKE_BIN}/review-instructions-only-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'review-instructions-only-agent 1.0\n'
+  exit 0
+fi
+instructions_file="${RUN_WITH_IT_RESULT_FILE%-status.json}-instructions.json"
+mkdir -p "$(dirname "$instructions_file")" "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf '{"verdict":"approve","summary":"review approved from instructions","comments":[],"blocking_reasons":[]}\n' > "$instructions_file"
+printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+SH
+chmod +x "${SMOKE_BIN}/review-instructions-only-agent"
+
+cat > "${SMOKE_BIN}/review-approve-status-only-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'review-approve-status-only-agent 1.0\n'
+  exit 0
+fi
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")" "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf '{"verdict":"approve","comment_count":0,"nitpick_only":false}\n' > "$RUN_WITH_IT_RESULT_FILE"
+printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+SH
+chmod +x "${SMOKE_BIN}/review-approve-status-only-agent"
+
+cat > "${SMOKE_BIN}/review-revise-status-only-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'review-revise-status-only-agent 1.0\n'
+  exit 0
+fi
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")" "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf '{"verdict":"revise","comment_count":1,"nitpick_only":false}\n' > "$RUN_WITH_IT_RESULT_FILE"
+printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+SH
+chmod +x "${SMOKE_BIN}/review-revise-status-only-agent"
+
+cat > "${SMOKE_BIN}/invalid-complexity-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'invalid-complexity-agent 1.0\n'
+  exit 0
+fi
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")" "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf '{"bad":true}\n' > "$RUN_WITH_IT_RESULT_FILE"
+printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+SH
+chmod +x "${SMOKE_BIN}/invalid-complexity-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+for name in (
+    "review-instructions-only",
+    "review-approve-status-only",
+    "review-revise-status-only",
+    "invalid-complexity",
+):
+    registry["agents"][name] = {
+        "display_name": name,
+        "detection": {"command": f"{name}-agent", "args": ["--version"]},
+        "invocation": {
+            "command": f"{name}-agent",
+            "args_template": ["{{repo_root}}", "{{prompt}}"],
+            "prompt_argument_template": "{{prompt}}",
+        },
+        "permission_modes": {"default": "", "available": [""]},
+        "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+        "capability_band": "balanced",
+        "fallback_order": [],
+        "user_model_configuration": {
+            "requires_user_model_config": False,
+            "config_paths": [],
+            "skip_when_unconfigured": False,
+            "skip_message": "",
+        },
+    }
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+REVIEW_SYNTH_STATUS_DIR="${SMOKE_PROJECT}/.run-with-it/issues/46"
+REVIEW_SYNTH_STATUS_RESULT="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2-status.json"
+REVIEW_SYNTH_STATUS_LOG="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2.log"
+REVIEW_SYNTH_STATUS_DONE="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2.done"
+REVIEW_SYNTH_STATUS_STATE="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2.state.json"
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role review \
+  --issue 46 \
+  --cycle 2 \
+  --agent review-instructions-only \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${REVIEW_SYNTH_STATUS_LOG}" \
+  --done-file "${REVIEW_SYNTH_STATUS_DONE}" \
+  --result-file "${REVIEW_SYNTH_STATUS_RESULT}" \
+  --state-file "${REVIEW_SYNTH_STATUS_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${REVIEW_SYNTH_STATUS_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+assert_json_file "${REVIEW_SYNTH_STATUS_RESULT}" "review status is synthesized from valid instructions"
+assert_file_contains "${REVIEW_SYNTH_STATUS_RESULT}" '"source": "dispatcher-synthesized"' "synthesized review status is auditable"
+assert_file_contains "${REVIEW_SYNTH_STATUS_STATE}" '"state": "completed"' "review instructions-only worker completes after status synthesis"
+
+REVIEW_SYNTH_INSTRUCTIONS_DIR="${SMOKE_PROJECT}/.run-with-it/issues/47"
+REVIEW_SYNTH_INSTRUCTIONS_RESULT="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2-status.json"
+REVIEW_SYNTH_INSTRUCTIONS_FILE="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2-instructions.json"
+REVIEW_SYNTH_INSTRUCTIONS_LOG="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2.log"
+REVIEW_SYNTH_INSTRUCTIONS_DONE="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2.done"
+REVIEW_SYNTH_INSTRUCTIONS_STATE="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2.state.json"
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role review \
+  --issue 47 \
+  --cycle 2 \
+  --agent review-approve-status-only \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${REVIEW_SYNTH_INSTRUCTIONS_LOG}" \
+  --done-file "${REVIEW_SYNTH_INSTRUCTIONS_DONE}" \
+  --result-file "${REVIEW_SYNTH_INSTRUCTIONS_RESULT}" \
+  --state-file "${REVIEW_SYNTH_INSTRUCTIONS_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${REVIEW_SYNTH_INSTRUCTIONS_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+assert_json_file "${REVIEW_SYNTH_INSTRUCTIONS_FILE}" "approve review instructions are synthesized from valid status"
+assert_file_contains "${REVIEW_SYNTH_INSTRUCTIONS_FILE}" '"source": "dispatcher-synthesized"' "synthesized review instructions are auditable"
+assert_file_contains "${REVIEW_SYNTH_INSTRUCTIONS_STATE}" '"state": "completed"' "approve status-only worker completes after instructions synthesis"
+
+REVIEW_MISSING_INSTRUCTIONS_DIR="${SMOKE_PROJECT}/.run-with-it/issues/48"
+REVIEW_MISSING_INSTRUCTIONS_RESULT="${REVIEW_MISSING_INSTRUCTIONS_DIR}/workers/review/cycle-2-status.json"
+REVIEW_MISSING_INSTRUCTIONS_LOG="${REVIEW_MISSING_INSTRUCTIONS_DIR}/workers/review/cycle-2.log"
+REVIEW_MISSING_INSTRUCTIONS_DONE="${REVIEW_MISSING_INSTRUCTIONS_DIR}/workers/review/cycle-2.done"
+REVIEW_MISSING_INSTRUCTIONS_STATE="${REVIEW_MISSING_INSTRUCTIONS_DIR}/workers/review/cycle-2.state.json"
+REVIEW_MISSING_INSTRUCTIONS_OUTPUT="${WORK_DIR}/review-missing-instructions.out"
+set +e
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role review \
+  --issue 48 \
+  --cycle 2 \
+  --agent review-revise-status-only \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${REVIEW_MISSING_INSTRUCTIONS_LOG}" \
+  --done-file "${REVIEW_MISSING_INSTRUCTIONS_DONE}" \
+  --result-file "${REVIEW_MISSING_INSTRUCTIONS_RESULT}" \
+  --state-file "${REVIEW_MISSING_INSTRUCTIONS_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${REVIEW_MISSING_INSTRUCTIONS_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >"${REVIEW_MISSING_INSTRUCTIONS_OUTPUT}" 2>&1
+review_missing_instructions_status="$?"
+set -e
+[[ "${review_missing_instructions_status}" != "0" ]] || fail "revise review without instructions must not complete"
+assert_file_contains "${REVIEW_MISSING_INSTRUCTIONS_OUTPUT}" "reason=missing-review-instructions-artifact" "revise review without instructions fails with precise reason"
+assert_file_contains "${REVIEW_MISSING_INSTRUCTIONS_STATE}" '"stall_reason": "missing-review-instructions-artifact"' "review state records missing instructions reason"
+
+COMPLEXITY_INVALID_DIR="${SMOKE_PROJECT}/.run-with-it/issues/49"
+COMPLEXITY_INVALID_RESULT="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1-result.json"
+COMPLEXITY_INVALID_LOG="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1.log"
+COMPLEXITY_INVALID_DONE="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1.done"
+COMPLEXITY_INVALID_STATE="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1.state.json"
+COMPLEXITY_INVALID_OUTPUT="${WORK_DIR}/complexity-invalid.out"
+set +e
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity \
+  --issue 49 \
+  --cycle 1 \
+  --agent invalid-complexity \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${COMPLEXITY_INVALID_LOG}" \
+  --done-file "${COMPLEXITY_INVALID_DONE}" \
+  --result-file "${COMPLEXITY_INVALID_RESULT}" \
+  --state-file "${COMPLEXITY_INVALID_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${COMPLEXITY_INVALID_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >"${COMPLEXITY_INVALID_OUTPUT}" 2>&1
+complexity_invalid_status="$?"
+set -e
+[[ "${complexity_invalid_status}" != "0" ]] || fail "invalid complexity JSON must not complete"
+assert_file_contains "${COMPLEXITY_INVALID_OUTPUT}" "reason=invalid-complexity-result-artifact" "invalid complexity output has precise failure reason"
+assert_file_contains "${COMPLEXITY_INVALID_STATE}" '"stall_reason": "invalid-complexity-result-artifact"' "complexity state records invalid artifact reason"
 
 echo "PASS: run-with-it dispatcher contract"

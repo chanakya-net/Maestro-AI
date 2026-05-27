@@ -88,6 +88,8 @@ fi
 RUN_AGENT="${ASSET_ROOT}/run-agent.sh"
 WORKER_WATCH="${ASSET_ROOT}/worker-watch.sh"
 REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
+ARTIFACT_HELPER="${ASSET_ROOT}/run-with-it-artifacts.py"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 [ -n "$ROLE" ] || fail "--role is required"
 [ -n "$ISSUE" ] || fail "--issue is required"
@@ -102,11 +104,13 @@ REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
 [ -x "$RUN_AGENT" ] || fail "runner not executable: $RUN_AGENT"
 [ -x "$WORKER_WATCH" ] || fail "worker watcher not executable: $WORKER_WATCH"
 [ -f "$REGISTRY_FILE" ] || fail "agent registry not found: $REGISTRY_FILE"
+[ -f "$ARTIFACT_HELPER" ] || fail "artifact helper not found: $ARTIFACT_HELPER"
 [ -f "$CONTEXT_FILE" ] || fail "context file not found: $CONTEXT_FILE"
 [ -f "$PROMPT_FILE" ] || fail "prompt file not found: $PROMPT_FILE"
 if [ -n "$REPO_ROOT_OVERRIDE" ]; then
   [ -d "$REPO_ROOT_OVERRIDE" ] || fail "repo root not found: $REPO_ROOT_OVERRIDE"
 fi
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
 
 if [ -z "$STATE_FILE" ]; then
   log_name="$(basename "$LOG_FILE")"
@@ -171,134 +175,24 @@ repo_root_for_worker() {
   printf '%s\n' "${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}"
 }
 
-implementation_result_field() {
-  local field="$1"
-  python3 - "$RESULT_FILE" "$field" <<'PY' 2>/dev/null
-import json
-import sys
-
-path, field = sys.argv[1], sys.argv[2]
-with open(path, "r", encoding="utf-8") as handle:
-    payload = json.load(handle)
-value = payload.get(field)
-if value is None:
-    raise SystemExit(1)
-print(value)
-PY
-}
-
-implementation_result_json_valid() {
-  python3 - "$RESULT_FILE" "$ISSUE" "$ROLE" <<'PY' >/dev/null 2>&1
-import json
-import sys
-
-path, issue, role = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, "r", encoding="utf-8") as handle:
-    payload = json.load(handle)
-
-if not isinstance(payload, dict):
-    raise SystemExit(1)
-if str(payload.get("issue")) != str(issue):
-    raise SystemExit(1)
-if payload.get("role") != role:
-    raise SystemExit(1)
-if payload.get("status") != "success":
-    raise SystemExit(1)
-commit_sha = payload.get("commit_sha")
-if not isinstance(commit_sha, str) or not commit_sha or commit_sha == "NONE":
-    raise SystemExit(1)
-files_committed = payload.get("files_committed")
-if not isinstance(files_committed, list) or not files_committed:
-    raise SystemExit(1)
-verification = payload.get("verification")
-if not isinstance(verification, dict):
-    raise SystemExit(1)
-PY
-}
-
-synthesize_implementation_result_if_possible() {
-  local repo_root current_head files_json tmp_file
-
-  is_implementation_role || return 1
-  [ ! -s "$RESULT_FILE" ] || return 1
-  [ -s "$DONE_FILE" ] || return 1
-
-  repo_root="$(repo_root_for_worker)"
-  git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
-  current_head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
-  [ -n "$current_head" ] || return 1
-  [ -n "${pre_spawn_head:-}" ] || return 1
-  [ "$current_head" != "$pre_spawn_head" ] || return 1
-
-  files_json="$(git -C "$repo_root" show --name-only --pretty=format: "$current_head" 2>/dev/null \
-    | sed '/^[[:space:]]*$/d' \
-    | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')"
-  [ "$files_json" != "[]" ] || return 1
-
-  tmp_file="${RESULT_FILE}.tmp.$$"
-  mkdir -p "$(dirname "$RESULT_FILE")"
-  python3 - "$tmp_file" "$ISSUE" "$ROLE" "$current_head" "$files_json" <<'PY'
-import json
-import sys
-
-path, issue, role, commit_sha, files_json = sys.argv[1:]
-payload = {
-    "schema_version": 1,
-    "issue": issue,
-    "role": role,
-    "status": "success",
-    "commit_sha": commit_sha,
-    "files_committed": json.loads(files_json),
-    "verification": {
-        "passed": False,
-        "commands": [],
-        "source": "dispatcher-synthesized",
-        "note": "Worker exited successfully and advanced HEAD but did not write RUN_WITH_IT_RESULT_FILE; verification evidence was not machine-readable.",
-    },
-    "source": "dispatcher-synthesized",
-}
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
-PY
-  mv "$tmp_file" "$RESULT_FILE"
-  implementation_result_json_valid
-}
-
 result_artifact_failure_reason() {
-  local repo_root commit_sha current_head
+  "$PYTHON_BIN" "$ARTIFACT_HELPER" failure-reason \
+    --role "$ROLE" \
+    --issue "$ISSUE" \
+    --result-file "$RESULT_FILE" \
+    --done-file "$DONE_FILE" \
+    --repo-root "$(repo_root_for_worker)" \
+    --pre-spawn-head "${pre_spawn_head:-}"
+}
 
-  if [ ! -s "$RESULT_FILE" ]; then
-    printf 'missing-result-artifact\n'
-    return 0
-  fi
-
-  if ! is_implementation_role; then
-    return 0
-  fi
-
-  if ! implementation_result_json_valid; then
-    printf 'invalid-result-artifact\n'
-    return 0
-  fi
-
-  repo_root="$(repo_root_for_worker)"
-  if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    printf 'implementation-repo-unavailable\n'
-    return 0
-  fi
-
-  commit_sha="$(implementation_result_field commit_sha || true)"
-  current_head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
-  if [ -z "$current_head" ] || [ "$current_head" != "$commit_sha" ]; then
-    printf 'commit-outside-issue-worktree\n'
-    return 0
-  fi
-
-  if [ -n "${pre_spawn_head:-}" ] && [ "$commit_sha" = "$pre_spawn_head" ]; then
-    printf 'missing-implementation-commit\n'
-    return 0
-  fi
+synthesize_result_artifact_if_possible() {
+  "$PYTHON_BIN" "$ARTIFACT_HELPER" synthesize \
+    --role "$ROLE" \
+    --issue "$ISSUE" \
+    --result-file "$RESULT_FILE" \
+    --done-file "$DONE_FILE" \
+    --repo-root "$(repo_root_for_worker)" \
+    --pre-spawn-head "${pre_spawn_head:-}" >/dev/null 2>&1
 }
 
 completion_failure_reason() {
@@ -539,7 +433,7 @@ while true; do
     wait "$pid" 2>/dev/null
     exit_code="$?"
     set -e
-    if [ "$exit_code" = "0" ] && synthesize_implementation_result_if_possible; then
+    if [ "$exit_code" = "0" ] && synthesize_result_artifact_if_possible; then
       write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
       last_log_signature="$(log_signature)"
     fi

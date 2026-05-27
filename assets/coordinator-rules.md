@@ -44,6 +44,8 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 - Assemble the context payload file before spawning each worker-agent. Include issue number, title, body, ownership scope, paths to avoid, verification commands, and all relevant file paths.
 - Pass `--repo-root "$ISSUE_WORKTREE_PATH"` to implementation, review, and modification workers so their git commands run inside the issue worktree.
+- Select worker agent/model pairs through `$ASSET_ROOT/run-with-it-router.py` when available. It must record every route in `.run-with-it/usage-ledger.json` so subscription usage stays near the configured overall target: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%.
+- If the router helper fails, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the prompt fallback router once for that phase.
 - Spawn exactly one implementer worker-agent per implementation pass.
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
@@ -53,6 +55,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
 - Set each worker's `RUN_WITH_IT_RESULT_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
 - Set each worker's `RUN_WITH_IT_STATE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`.
+- The dispatcher validates role artifacts through `run-with-it-artifacts.py`. Treat its `stall_reason` values as authoritative for missing/invalid artifacts; do not infer completion from logs or chat output.
 
 ## Progress Monitoring Rules
 
@@ -64,6 +67,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
 - Logs never decide completion. Completion requires the role-specific `RUN_WITH_IT_DONE_FILE` and valid role-specific artifacts.
 - When a valid done file and valid artifacts are present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` and proceed to the next phase without waiting on unrelated CLI cleanup. Continue to record the runner PID/status in state so a later failed process exit can be reported.
+- For review artifact failures (`missing-result-artifact`, `invalid-review-status-artifact`, `missing-review-instructions-artifact`, `invalid-review-instructions-artifact`, or `review-artifact-verdict-mismatch`), retry the same review cycle with a different reviewer model up to `MAX_REVIEW_ARTIFACT_RETRIES` attempts. If retries are exhausted, write `outcome="blocked"` with `blocking_reasons=["reviewer-missing-result-artifact"]`. Artifact infrastructure failures must not be reported as `failed-review`.
 - After review approval, acquire `.run-with-it/locks/merge.lock` and attempt to merge the issue branch into `RUN_FEATURE_BRANCH`. Emit `STATUS|type=merge-complete` on success or `STATUS|type=merge-failed` and write `outcome=merge_failed` on failure.
 - **Every STATUS line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - Every forwarded STATUS line must also update `$RUN_WITH_IT_STATUS_FILE` and append to `$RUN_WITH_IT_EVENTS_LOG` when those env vars are set.
@@ -73,7 +77,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 ## Result Processing Rules
 
 - After the final worker-agent (implementer or modifier) completes, read its output report.
-- Validate all required fields are present. Treat missing or malformed output as a failed-review outcome.
+- Validate all required fields are present. Treat missing commits, failed verification, reviewer `reject`, or valid `revise` verdict cycle-cap exhaustion as `failed-review`. Treat missing/malformed artifacts caused by worker handoff infrastructure as role-specific retry candidates first, and as `blocked` after retries are exhausted.
 - Do NOT post GitHub comments. Do NOT close the GitHub issue. Those are the Main Orchestrator's responsibility.
 - Write the compact report JSON to `$SUB_COORD_REPORT_FILE`. This is your only output artifact.
 - Clear all in-memory state after writing the report.

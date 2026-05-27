@@ -50,6 +50,15 @@ function Get-PowerShellExe {
     return "powershell"
 }
 
+function Get-PythonExe {
+    if ($env:PYTHON_BIN) { return $env:PYTHON_BIN }
+    $candidate = Get-Command python3 -ErrorAction SilentlyContinue
+    if ($candidate) { return $candidate.Source }
+    $candidate = Get-Command python -ErrorAction SilentlyContinue
+    if ($candidate) { return $candidate.Source }
+    Fail "python helper runtime not found"
+}
+
 function Quote-ProcessArgument([string]$arg) {
     if ($null -eq $arg) { return '""' }
     if ($arg.Length -eq 0) { return '""' }
@@ -191,6 +200,55 @@ function Write-WorkerState(
     Move-Item -Force $tmpFile $StateFile
 }
 
+function Test-ImplementationRole {
+    return ($Role -eq "impl" -or $Role -eq "modify")
+}
+
+function Get-RepoRootForWorker {
+    if ($RepoRoot) { return $RepoRoot }
+    if ($env:REPO_ROOT) { return $env:REPO_ROOT }
+    return (Get-Location).Path
+}
+
+function Invoke-ArtifactHelper([string]$command) {
+    $repoRootValue = Get-RepoRootForWorker
+    $preSpawnHead = if ($script:preSpawnHead) { $script:preSpawnHead } else { "" }
+    & $script:PythonExe $script:ArtifactHelper $command `
+        --role $Role `
+        --issue $Issue `
+        --result-file $ResultFile `
+        --done-file $DoneFile `
+        --repo-root $repoRootValue `
+        --pre-spawn-head $preSpawnHead
+}
+
+function Get-ResultArtifactFailureReason {
+    $output = Invoke-ArtifactHelper "failure-reason" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return "artifact-helper-failed"
+    }
+    return (($output -join "`n").Trim())
+}
+
+function Try-SynthesizeResultArtifact {
+    Invoke-ArtifactHelper "synthesize" *> $null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Get-CompletionFailureReason {
+    if (-not ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0))) {
+        return "missing-done-sentinel"
+    }
+    return Get-ResultArtifactFailureReason
+}
+
+function Test-CompletionReady {
+    if (-not ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0))) {
+        return $false
+    }
+    return ((Get-ResultArtifactFailureReason) -eq "")
+}
+
 if (-not $AssetRoot) {
     $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
     if (Test-Path (Join-Path $homeAssetRoot "run-agent.ps1")) {
@@ -203,10 +261,13 @@ if (-not $AssetRoot) {
 $RunAgent = Join-Path $AssetRoot "run-agent.ps1"
 $WorkerWatch = Join-Path $AssetRoot "worker-watch.ps1"
 $RegistryFile = Join-Path $AssetRoot "agent-registry.json"
+$script:ArtifactHelper = Join-Path $AssetRoot "run-with-it-artifacts.py"
+$script:PythonExe = Get-PythonExe
 
 if (-not (Test-Path $RunAgent)) { Fail "runner not found: $RunAgent" }
 if (-not (Test-Path $WorkerWatch)) { Fail "worker watcher not found: $WorkerWatch" }
 if (-not (Test-Path $RegistryFile)) { Fail "agent registry not found: $RegistryFile" }
+if (-not (Test-Path $script:ArtifactHelper)) { Fail "artifact helper not found: $script:ArtifactHelper" }
 if (-not (Test-Path $ContextFile)) { Fail "context file not found: $ContextFile" }
 if (-not (Test-Path $PromptFile)) { Fail "prompt file not found: $PromptFile" }
 if ($RepoRoot -and -not (Test-Path $RepoRoot)) { Fail "repo root not found: $RepoRoot" }
@@ -255,6 +316,18 @@ $script:lastHeartbeatLine = ""
 $script:lastLogSignature = Get-LogSignature
 $script:lastState = "ready"
 $script:runnerPid = $null
+$script:preSpawnHead = ""
+if (Test-ImplementationRole) {
+    try {
+        $repoRootValue = Get-RepoRootForWorker
+        & git -C $repoRootValue rev-parse --is-inside-work-tree *> $null
+        if ($LASTEXITCODE -eq 0) {
+            $script:preSpawnHead = ((& git -C $repoRootValue rev-parse HEAD 2>$null) -join "").Trim()
+        }
+    } catch {
+        $script:preSpawnHead = ""
+    }
+}
 
 Write-Status "STATUS|type=dispatch-ready|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|result_file=$ResultFile"
 Write-WorkerState "ready" $false
@@ -332,7 +405,7 @@ while ($true) {
         & $powerShellExe -NoProfile -File $WorkerWatch -Pid $process.Id -DoneFile $DoneFile -LogFile $LogFile -TailStateFile $TailStateFile -TailLines 5 | Out-Null
     } catch {}
 
-    if ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0) -and (Test-Path $ResultFile) -and ((Get-Item $ResultFile).Length -gt 0)) {
+    if (Test-CompletionReady) {
         $process.Refresh()
         Write-WorkerState "completed" (-not $process.HasExited)
         Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
@@ -342,13 +415,18 @@ while ($true) {
     $process.Refresh()
     if ($process.HasExited) {
         $exitCode = $process.ExitCode
-        if ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0) -and (Test-Path $ResultFile) -and ((Get-Item $ResultFile).Length -gt 0)) {
+        if (($exitCode -eq 0) -and (Try-SynthesizeResultArtifact)) {
+            Write-Status "STATUS|type=result-artifact-synthesized|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+        }
+        if (Test-CompletionReady) {
             Write-WorkerState "completed" $false $exitCode
             Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
             exit 0
         }
-        Write-WorkerState "failed" $false $exitCode "process-exited-missing-done-or-result"
-        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=missing-done-or-result|done_file=$DoneFile|result_file=$ResultFile"
+        $failureReason = Get-CompletionFailureReason
+        if (-not $failureReason) { $failureReason = "process-exited-missing-done-or-result" }
+        Write-WorkerState "failed" $false $exitCode $failureReason
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$failureReason|done_file=$DoneFile|result_file=$ResultFile"
         exit 1
     }
 

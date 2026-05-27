@@ -82,7 +82,7 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Shared required files: `prompt.md`, `agent-registry.json`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Shared required files: `prompt.md`, `agent-registry.json`, `run-with-it-router.py`, `run-with-it-artifacts.py`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
 
 Bash required helper files: `run-agent.sh`, `run-with-it-dispatch.sh`, `worker-watch.sh`.
 
@@ -251,6 +251,75 @@ If the PID is dead, immediately `wait "$WORKER_PID"` to capture the runner exit 
 
 ## Appendix A: Routing Contract
 
+### Deterministic Router Helper (Mandatory)
+
+Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST` and `AGENT_DENYLIST`, and records the decision in `.run-with-it/usage-ledger.json`.
+
+Usage target summary from `agent-registry.json`:
+- overall default: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%
+- complexity: prefer Agy and GitHub Copilot, protect direct Claude
+- implementation/modification: use Codex heavily for higher bands, shift easier work to Agy/Copilot when Codex is over target
+- review: prefer an independent Codex/Claude/Copilot model, avoid Agy unless higher-priority review tools are unavailable
+- merge recovery: prefer Codex, then Claude
+
+Bash helper shape:
+```bash
+ROUTER_FILE="$ASSET_ROOT/run-with-it-router.py"
+ROUTER_LEDGER_FILE="${RUN_WITH_IT_USAGE_LEDGER_FILE:-.run-with-it/usage-ledger.json}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+DETECTED_AGENTS="$("$ASSET_ROOT/run-agent.sh" --list-agents --detected-only | cut -f1 | paste -sd, -)"
+ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
+  --registry-file "$ASSET_ROOT/agent-registry.json" \
+  --ledger-file "$ROUTER_LEDGER_FILE" \
+  --role "$ROUTE_ROLE" \
+  --complexity-level "$ROUTE_COMPLEXITY_LEVEL" \
+  --detected-agents "$DETECTED_AGENTS" \
+  --allowlist "${AGENT_ALLOWLIST:-}" \
+  --denylist "${AGENT_DENYLIST:-}" \
+  --forced-agent "${FORCED_AGENT:-}" \
+  --forced-model "${FORCED_MODEL:-}" \
+  --exclude-model "${EXCLUDE_MODEL:-}" \
+  --record)"
+AGENT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["agent"])')"
+MODEL="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\n' \
+  "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" \
+  "$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')" \
+  >> "$SUB_COORD_LOG_FILE"
+```
+
+PowerShell helper shape:
+```powershell
+$routerFile = Join-Path $ASSET_ROOT "run-with-it-router.py"
+$routerLedgerFile = if ($env:RUN_WITH_IT_USAGE_LEDGER_FILE) { $env:RUN_WITH_IT_USAGE_LEDGER_FILE } else { ".run-with-it/usage-ledger.json" }
+$pythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python3" }
+$detectedAgents = (& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only | ForEach-Object { ($_ -split "`t")[0] }) -join ","
+$routeJson = & $pythonBin $routerFile `
+  --registry-file (Join-Path $ASSET_ROOT "agent-registry.json") `
+  --ledger-file $routerLedgerFile `
+  --role $env:ROUTE_ROLE `
+  --complexity-level $env:ROUTE_COMPLEXITY_LEVEL `
+  --detected-agents $detectedAgents `
+  --allowlist $env:AGENT_ALLOWLIST `
+  --denylist $env:AGENT_DENYLIST `
+  --forced-agent $env:FORCED_AGENT `
+  --forced-model $env:FORCED_MODEL `
+  --exclude-model $env:EXCLUDE_MODEL `
+  --record
+$route = $routeJson | ConvertFrom-Json
+$AGENT = $route.agent
+$MODEL = $route.model
+Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "STATUS|type=route-selected|issue=$env:SUB_COORD_ISSUE_NUMBER|role=$env:ROUTE_ROLE|agent=$AGENT|model=$MODEL|reason=$($route.selection_reason)"
+```
+
+Route helper inputs by phase:
+- complexity worker: `ROUTE_ROLE=complexity`, `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}` unless an explicit runtime override skips complexity entirely
+- implementer worker: `ROUTE_ROLE=impl`, use the scored complexity level from the complexity worker or fallback
+- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity level and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed
+- modifier worker: `ROUTE_ROLE=modify`, use the current implementation band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
+
+If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
+
 ### Complexity Sub-Agent Delegation
 
 After reading the issue context, **always spawn the complexity sub-agent** to independently score the work. Never skip it based on issue content, labels, or hints.
@@ -262,11 +331,9 @@ Override handling:
   `STATUS|type=complexity-skipped|reason=override`
 
 Sub-agent selection for complexity:
-1. Reuse the model-first selection algorithm below.
-2. Restrict the candidate pool to easy-medium band only: `complexity_weight` `1–6`. Exclude any model where `exclude_from_complexity` is `true`.
-3. Randomly pick from the filtered pool.
-4. Apply provider routing rules: Google/Gemini models must run through `agy`; the standalone `gemini` agent is not used.
-5. Pass both `AGENT` and `MODEL` explicitly to the sub-agent runner.
+1. Use `run-with-it-router.py` with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
+2. The helper restricts the candidate pool to easy-medium band models, excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
+3. Pass both selected `AGENT` and selected `MODEL` explicitly to the sub-agent runner.
 
 Before spawning the complexity sub-agent, create a dedicated sanitized payload file:
 
@@ -374,9 +441,9 @@ Fallback chain:
 
 If the fallback is used, set `complexity_source=fallback`. If the override path is used, set `complexity_source=override`. Otherwise set `complexity_source=sub-agent`.
 
-### Deterministic Router
+### Prompt Fallback Router
 
-The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above.
+Use this section only when `run-with-it-router.py` is unavailable or exits non-zero. The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above. The fallback is intentionally bounded to one phase so a helper failure is visible instead of silently changing routing behavior for the whole run.
 
 #### Step 1 — Map Score to Target Weight Range
 
@@ -401,7 +468,7 @@ Raise `weight_min` if any condition is true:
 
 Use the higher of the table `weight_min` and any override.
 
-#### Step 3 — Build Pool and Randomly Select Model
+#### Step 3 — Build Pool and Select Model
 
 From `model_catalog` in `agent-registry.json`:
 1. Collect all models where `complexity_weight` is within `[weight_min, weight_max]`.
@@ -410,7 +477,7 @@ From `model_catalog` in `agent-registry.json`:
 4. Sort by `(complexity_weight ASC, context_window DESC, ability fit)`.
 5. Take the top `selection_pool_size` (default 4) as the base pool.
 6. Append any models listed in `model_routing.band_required_models[current_level]` not already in the pool.
-7. **Randomly pick one model** from the final pool.
+7. Prefer the agent/model pair that is furthest below its subscription usage target; if usage data is unavailable, pick from the highest target share for that role/band.
 8. If fewer than 2 candidates exist, expand `weight_max` by 1 and retry (up to 3 expansions).
 
 #### Step 4 — Select Agent
@@ -418,10 +485,10 @@ From `model_catalog` in `agent-registry.json`:
 1. Find all agents that list the chosen model in their `known_models`.
 2. Apply `AGENT_ALLOWLIST` and `AGENT_DENYLIST`.
 3. Keep only detected (installed) agents.
-4. `codex` and `github-copilot` are interchangeable for GPT models — pick one at random.
+4. `codex` and `github-copilot` are interchangeable for GPT models — prefer whichever is furthest below its subscription usage target.
 5. If the chosen model is `claude-haiku-4-5` and both `github-copilot` and `claude` are available, choose `github-copilot` first.
 6. For any Claude-provider model available through both `github-copilot` and direct `claude`, prefer `github-copilot`.
-7. If one agent remains, use it. If multiple non-interchangeable agents remain, prefer registry `agent_preference_rules`; otherwise random pick.
+7. If one agent remains, use it. If multiple non-interchangeable agents remain, prefer registry `agent_preference_rules`; otherwise prefer whichever is furthest below its subscription usage target.
 8. If no agent remains, fail with clear filter diagnostics.
 
 #### Step 5 — Pass to Runner
@@ -462,6 +529,7 @@ mkdir -p "$IMPL_WORKER_DIR"
   --done-file "$IMPL_DONE_FILE" \
   --result-file "$IMPL_RESULT_FILE" \
   --state-file "$IMPL_STATE_FILE" \
+  --repo-root "$ISSUE_WORKTREE_PATH" \
   --issue-dir "$RUN_WITH_IT_ISSUE_DIR" \
   --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
   --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
@@ -656,6 +724,28 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 6. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never read `REVIEWER_INSTRUCTIONS_FILE`** — that file is for the modifier only.
 7. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` for this cycle. Do not read its contents.
 8. Emit after step 6: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
+
+### Review Artifact Guardrail
+
+The dispatcher validates review artifacts through `run-with-it-artifacts.py`. It may safely repair two partial review handoffs:
+- valid `REVIEWER_INSTRUCTIONS_FILE` but missing/invalid status file → synthesize the minimal status JSON;
+- valid status file with `verdict="approve"` but missing/invalid instructions file → synthesize an empty approve instructions JSON.
+
+For any review worker state with `state="failed"` and `stall_reason` in this set:
+- `missing-result-artifact`
+- `invalid-review-status-artifact`
+- `missing-review-instructions-artifact`
+- `invalid-review-instructions-artifact`
+- `review-artifact-verdict-mismatch`
+
+apply this exact policy:
+1. Emit `STATUS|type=review-artifact-failed|issue=<n>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
+2. Retry the **same review cycle** up to `MAX_REVIEW_ARTIFACT_RETRIES` attempts (default `2`) with a different reviewer model when available. Re-run routing with the previous reviewer model in `EXCLUDE_MODEL`; if the same agent is selected with a different model, that is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-status.json` and `cycle-${CYCLE}-attempt-${ATTEMPT}-instructions.json` so stale partial JSON cannot satisfy the retry.
+3. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not reviewer verdicts.
+4. If a retry produces valid review artifacts, continue normal verdict routing for the original cycle.
+5. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["reviewer-missing-result-artifact"]` plus the final dispatcher `stall_reason`, `REVIEW_STATE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` paths in the summary/evidence. Do not report `failed-review`, do not spawn a modifier, and do not merge.
+
+Artifact infrastructure failures must never be reported as `failed-review`. `failed-review` is reserved for actual review verdicts (`reject`), review-cycle cap exhaustion after valid `revise` verdicts, failed verification, or missing implementation/modification commits.
 
 ### Verdict Routing
 
@@ -954,7 +1044,7 @@ The worker may write this file when its required artifacts are complete. The pla
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
 - impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`)
-- review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON
+- review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
 When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.
 
@@ -1027,6 +1117,8 @@ Emit parseable status messages throughout execution. Every line below MUST be wr
 - `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent`
 - `STATUS|type=complexity-skipped|reason=override`
 - `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
+- `STATUS|type=route-selected|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>|reason=<selection-reason>`
+- `STATUS|type=route-helper-failed|issue=<n>|role=<complexity|impl|review|modify>|action=prompt-fallback`
 - `STATUS|type=compact|action=user-required|state_file=<path>`
 - `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 

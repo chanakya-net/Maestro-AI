@@ -51,8 +51,14 @@ SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
 mkdir -p "$SMOKE_ASSET_ROOT" "$SMOKE_PROJECT" "$SMOKE_REPO_ROOT"
-cp "${ROOT_DIR}/assets/run-agent.ps1" "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" "${ROOT_DIR}/assets/worker-watch.ps1" "$SMOKE_ASSET_ROOT/"
+cp "${ROOT_DIR}/assets/run-agent.ps1" "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" "${ROOT_DIR}/assets/worker-watch.ps1" "${ROOT_DIR}/assets/run-with-it-artifacts.py" "$SMOKE_ASSET_ROOT/"
 cp "${ROOT_DIR}/assets/prompt.md" "$SMOKE_ASSET_ROOT/"
+git -C "$SMOKE_REPO_ROOT" init -q
+git -C "$SMOKE_REPO_ROOT" config user.email "test@example.com"
+git -C "$SMOKE_REPO_ROOT" config user.name "Test User"
+printf 'baseline\n' > "$SMOKE_REPO_ROOT/README.md"
+git -C "$SMOKE_REPO_ROOT" add README.md
+git -C "$SMOKE_REPO_ROOT" commit -m "baseline" >/dev/null
 
 FAKE_AGENT="${WORK_DIR}/fake-agent.ps1"
 cat > "$FAKE_AGENT" <<'PS1'
@@ -68,7 +74,10 @@ Write-Output "fake-agent stdout is captured"
 New-Item -ItemType Directory -Force -Path $RepoRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $resultFile) | Out-Null
 Set-Content -Path (Join-Path $RepoRoot "marker.txt") -Value "seen" -Encoding UTF8
-Set-Content -Path $resultFile -Value "{`"outcome`":`"completed`",`"repo_root_seen`":`"$RepoRoot`"}" -Encoding UTF8
+& git -C $RepoRoot add marker.txt | Out-Null
+& git -C $RepoRoot commit -m "impl fake marker" | Out-Null
+$commitSha = (& git -C $RepoRoot rev-parse HEAD).Trim()
+Set-Content -Path $resultFile -Value "{`"schema_version`":1,`"issue`":`"$env:RUN_WITH_IT_ISSUE`",`"role`":`"$env:RUN_WITH_IT_ROLE`",`"status`":`"success`",`"commit_sha`":`"$commitSha`",`"files_committed`":[`"marker.txt`"],`"verification`":{`"passed`":true,`"commands`":[`"fake`"]},`"repo_root_seen`":`"$RepoRoot`"}" -Encoding UTF8
 PS1
 
 SILENT_AGENT="${WORK_DIR}/silent-agent.ps1"
@@ -81,7 +90,26 @@ if ($Prompt -eq "--version") {
 $resultFile = (($Prompt -split "`n") | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", ""
 Start-Sleep -Seconds 4
 New-Item -ItemType Directory -Force -Path (Split-Path $resultFile) | Out-Null
-Set-Content -Path $resultFile -Value "{`"outcome`":`"completed`",`"silent`":true}" -Encoding UTF8
+Set-Content -Path (Join-Path $RepoRoot "silent.txt") -Value "silent" -Encoding UTF8
+& git -C $RepoRoot add silent.txt | Out-Null
+& git -C $RepoRoot commit -m "impl silent marker" | Out-Null
+$commitSha = (& git -C $RepoRoot rev-parse HEAD).Trim()
+Set-Content -Path $resultFile -Value "{`"schema_version`":1,`"issue`":`"$env:RUN_WITH_IT_ISSUE`",`"role`":`"$env:RUN_WITH_IT_ROLE`",`"status`":`"success`",`"commit_sha`":`"$commitSha`",`"files_committed`":[`"silent.txt`"],`"verification`":{`"passed`":true,`"commands`":[`"fake`"]},`"silent`":true}" -Encoding UTF8
+PS1
+
+REVIEW_INSTRUCTIONS_ONLY_AGENT="${WORK_DIR}/review-instructions-only-agent.ps1"
+cat > "$REVIEW_INSTRUCTIONS_ONLY_AGENT" <<'PS1'
+param([string]$RepoRoot, [string]$Prompt)
+if ($Prompt -eq "--version") {
+  Write-Output "review-instructions-only-agent 1.0"
+  exit 0
+}
+$statusFile = $env:RUN_WITH_IT_RESULT_FILE
+$instructionsFile = $statusFile -replace "-status\.json$", "-instructions.json"
+New-Item -ItemType Directory -Force -Path (Split-Path $instructionsFile) | Out-Null
+Set-Content -Path $instructionsFile -Value "{`"verdict`":`"approve`",`"summary`":`"review approved from instructions`",`"comments`":[],`"blocking_reasons`":[]}" -Encoding UTF8
+New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
+Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=review|status=success|source=agent" -Encoding UTF8
 PS1
 
 cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<JSON
@@ -109,6 +137,20 @@ cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<JSON
       "invocation": {
         "command": "${PS_CMD}",
         "args_template": ["-NoProfile", "-File", "${SILENT_AGENT}", "{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": { "default": "", "available": [""] },
+      "model": { "default": "fake-model", "flag_template": "", "known_models": ["fake-model"] },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": { "requires_user_model_config": false, "config_paths": [], "skip_when_unconfigured": false, "skip_message": "" }
+    },
+    "review-instructions-only": {
+      "display_name": "Review Instructions Only",
+      "detection": { "command": "${PS_CMD}", "args": ["-NoProfile", "-File", "${REVIEW_INSTRUCTIONS_ONLY_AGENT}", "unused", "--version"] },
+      "invocation": {
+        "command": "${PS_CMD}",
+        "args_template": ["-NoProfile", "-File", "${REVIEW_INSTRUCTIONS_ONLY_AGENT}", "{{repo_root}}", "{{prompt}}"],
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": { "default": "", "available": [""] },
@@ -228,5 +270,34 @@ wait "$silent_pid"
 assert_json_file "$SILENT_STATE" "silent final state JSON is valid"
 assert_file_contains "$SILENT_STATE" '"state": "completed"' "silent worker eventually completes"
 assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled event"
+
+REVIEW_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/44"
+REVIEW_LOG="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.log"
+REVIEW_DONE="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.done"
+REVIEW_RESULT="${REVIEW_ISSUE_DIR}/workers/review/cycle-2-status.json"
+REVIEW_STATE="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.state.json"
+
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role review \
+  -Issue 44 \
+  -Cycle 2 \
+  -Agent review-instructions-only \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "$REVIEW_LOG" \
+  -DoneFile "$REVIEW_DONE" \
+  -ResultFile "$REVIEW_RESULT" \
+  -StateFile "$REVIEW_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$REVIEW_ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 >/dev/null
+
+assert_json_file "$REVIEW_RESULT" "PowerShell dispatcher synthesizes missing review status from instructions"
+assert_file_contains "$REVIEW_RESULT" '"source": "dispatcher-synthesized"' "PowerShell synthesized review status is auditable"
+assert_file_contains "$REVIEW_STATE" '"state": "completed"' "PowerShell review instructions-only worker completes"
 
 echo "PASS: run-with-it-dispatch.ps1 contract"
