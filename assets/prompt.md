@@ -82,19 +82,19 @@ Commit sequence:
 Bash:
 ```bash
 # Stage all modified and new files for this issue
-git add -A
+git -C "${REPO_ROOT:?REPO_ROOT is required}" add -A
 # Commit with an issue-scoped message
-git commit -m "impl(#${RUN_WITH_IT_ISSUE:-unknown}): implementation complete"
+git -C "${REPO_ROOT:?REPO_ROOT is required}" commit -m "impl(#${RUN_WITH_IT_ISSUE:-unknown}): implementation complete"
 # Capture and print the SHA so the sub-coordinator can record it
-IMPL_COMMIT_SHA=$(git rev-parse HEAD)
+IMPL_COMMIT_SHA=$(git -C "${REPO_ROOT:?REPO_ROOT is required}" rev-parse HEAD)
 printf 'IMPL_COMMIT_SHA=%s\n' "$IMPL_COMMIT_SHA"
 ```
 
 PowerShell:
 ```powershell
-git add -A
-git commit -m "impl(#$env:RUN_WITH_IT_ISSUE): implementation complete"
-$implCommitSha = git rev-parse HEAD
+git -C $env:REPO_ROOT add -A
+git -C $env:REPO_ROOT commit -m "impl(#$env:RUN_WITH_IT_ISSUE): implementation complete"
+$implCommitSha = git -C $env:REPO_ROOT rev-parse HEAD
 Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 ```
 
@@ -122,12 +122,14 @@ Bash:
 mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
 python3 - "$RUN_WITH_IT_RESULT_FILE" "$RUN_WITH_IT_ISSUE" "$IMPL_COMMIT_SHA" <<'PY'
 import json
+import os
 import subprocess
 import sys
 
 path, issue, commit_sha = sys.argv[1], sys.argv[2], sys.argv[3]
+repo_root = os.environ["REPO_ROOT"]
 files = subprocess.check_output(
-    ["git", "show", "--name-only", "--pretty=format:", commit_sha],
+    ["git", "-C", repo_root, "show", "--name-only", "--pretty=format:", commit_sha],
     text=True,
 ).splitlines()
 payload = {
@@ -150,7 +152,7 @@ PY
 
 PowerShell:
 ```powershell
-$filesCommitted = git show --name-only --pretty=format: $implCommitSha | Where-Object { $_ }
+$filesCommitted = git -C $env:REPO_ROOT show --name-only --pretty=format: $implCommitSha | Where-Object { $_ }
 $payload = @{
   schema_version = 1
   issue = $env:RUN_WITH_IT_ISSUE

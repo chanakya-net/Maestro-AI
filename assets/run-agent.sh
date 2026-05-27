@@ -566,6 +566,7 @@ json_value exists "${AGENT}" || fail "unknown agent: ${AGENT}"
 [[ -n "${CONTEXT_PAYLOAD_FILE}" ]] || fail "context payload file is required. Pass --context-file or set CONTEXT_PAYLOAD_FILE."
 [[ -f "${CONTEXT_PAYLOAD_FILE}" ]] || fail "context payload file not found: ${CONTEXT_PAYLOAD_FILE}"
 [[ -f "${PROMPT_FILE}" ]] || fail "prompt file not found: ${PROMPT_FILE}"
+[[ -d "${REPO_ROOT}" ]] || fail "repo root not found: ${REPO_ROOT}"
 
 if [[ -z "${MODEL}" ]]; then
   MODEL="$(json_value default_model "${AGENT}")"
@@ -686,14 +687,14 @@ if [[ -n "${RUN_WITH_IT_STATUS_FILE}" || -n "${RUN_WITH_IT_EVENTS_LOG}" || -n "$
   forward_status_stream 2 < "${stderr_fifo}" &
   stderr_forward_pid=$!
 
-  "${cmd[@]}" > "${stdout_fifo}" 2> "${stderr_fifo}"
+  (cd -- "${REPO_ROOT}" && "${cmd[@]}") > "${stdout_fifo}" 2> "${stderr_fifo}"
   command_status=$?
   wait "${stdout_forward_pid}"
   wait "${stderr_forward_pid}"
   rm -rf "${status_stream_dir}"
   status_stream_dir=""
 else
-  "${cmd[@]}"
+  (cd -- "${REPO_ROOT}" && "${cmd[@]}")
   command_status=$?
 fi
 set -e

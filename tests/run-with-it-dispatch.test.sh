@@ -401,6 +401,92 @@ assert_json_file "${SILENT_STATE}" "silent worker final watchdog state JSON is v
 assert_file_contains "${SILENT_STATE}" '"state": "completed"' "silent worker eventually completes"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled status"
 
+cat > "${SMOKE_BIN}/noarg-commit-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'noarg-commit-agent 1.0\n'
+  exit 0
+fi
+git config user.email "test@example.com"
+git config user.name "Test User"
+printf 'plain git used cwd\n' > noarg-commit.txt
+git add noarg-commit.txt
+git commit -m "impl noarg cwd" >/dev/null
+commit_sha="$(git rev-parse HEAD)"
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
+printf '{"schema_version":1,"issue":"%s","role":"impl","status":"success","commit_sha":"%s","files_committed":["noarg-commit.txt"],"verification":{"passed":true,"commands":["plain git cwd smoke"]}}\n' "${RUN_WITH_IT_ISSUE:-unknown}" "$commit_sha" > "$RUN_WITH_IT_RESULT_FILE"
+SH
+chmod +x "${SMOKE_BIN}/noarg-commit-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+registry["agents"]["noarg-commit"] = {
+    "display_name": "No Arg Commit",
+    "detection": {"command": "noarg-commit-agent", "args": ["--version"]},
+    "invocation": {
+        "command": "noarg-commit-agent",
+        "args_template": ["{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}",
+    },
+    "permission_modes": {"default": "", "available": [""]},
+    "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+    "capability_band": "balanced",
+    "fallback_order": [],
+    "user_model_configuration": {
+        "requires_user_model_config": False,
+        "config_paths": [],
+        "skip_when_unconfigured": False,
+        "skip_message": "",
+    },
+}
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+NOARG_REPO="${WORK_DIR}/noarg-repo"
+NOARG_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/48"
+NOARG_CONTEXT="${SMOKE_PROJECT}/noarg-context.md"
+NOARG_RESULT="${NOARG_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+NOARG_LOG="${NOARG_ISSUE_DIR}/workers/impl/cycle-1.log"
+NOARG_DONE="${NOARG_ISSUE_DIR}/workers/impl/cycle-1.done"
+NOARG_STATE="${NOARG_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+mkdir -p "${NOARG_REPO}"
+git -C "${NOARG_REPO}" init -q
+git -C "${NOARG_REPO}" config user.email "test@example.com"
+git -C "${NOARG_REPO}" config user.name "Test User"
+printf 'baseline\n' > "${NOARG_REPO}/README.md"
+git -C "${NOARG_REPO}" add README.md
+git -C "${NOARG_REPO}" commit -m "baseline" >/dev/null
+printf '# no repo arg\n' > "${NOARG_CONTEXT}"
+
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl \
+  --issue 48 \
+  --cycle 1 \
+  --agent noarg-commit \
+  --model fake-model \
+  --context-file "${NOARG_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${NOARG_LOG}" \
+  --done-file "${NOARG_DONE}" \
+  --result-file "${NOARG_RESULT}" \
+  --state-file "${NOARG_STATE}" \
+  --repo-root "${NOARG_REPO}" \
+  --issue-dir "${NOARG_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+
+assert_json_file "${NOARG_RESULT}" "no-arg implementation result is valid"
+assert_file_contains "${NOARG_RESULT}" '"noarg-commit.txt"' "no-arg implementation records committed file"
+assert_file_contains "${NOARG_STATE}" '"state": "completed"' "no-arg implementation completes through dispatcher"
+[[ -f "${NOARG_REPO}/noarg-commit.txt" ]] || fail "no-arg implementation committed in supplied repo root"
+
 cat > "${SMOKE_BIN}/done-only-agent" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

@@ -330,6 +330,35 @@ cat > "${CUSTOM_REGISTRY}" <<JSON
         "skip_message": ""
       }
     },
+    "cwd-probe": {
+      "display_name": "CWD Probe",
+      "detection": {
+        "command": "cwd-probe-agent",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "cwd-probe-agent",
+        "args_template": ["{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "",
+        "available": [""]
+      },
+      "model": {
+        "default": "",
+        "flag_template": "",
+        "known_models": []
+      },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
     "empty-models": {
       "display_name": "Empty Models",
       "detection": {
@@ -365,6 +394,9 @@ JSON
 
 printf '#!/usr/bin/env bash\nexit 7\n' > "${FAKE_BIN}/failing-agent"
 chmod +x "${FAKE_BIN}/failing-agent"
+
+printf '#!/usr/bin/env bash\nif [[ "${1:-}" == "--version" ]]; then printf "cwd-probe-agent 1.0\\n"; exit 0; fi\npwd > "${CWD_CAPTURE_FILE:?}"\nprintf "cwd-probe done\\n"\n' > "${FAKE_BIN}/cwd-probe-agent"
+chmod +x "${FAKE_BIN}/cwd-probe-agent"
 
 OPENCODE_REGISTRY="${WORK_DIR}/opencode-registry.json"
 cat > "${OPENCODE_REGISTRY}" <<'JSON'
@@ -472,6 +504,26 @@ assert_contains "${env_dry_run_output}" "--model fake-pro" "environment MODEL se
 assert_contains "${env_dry_run_output}" "--unsafe" "environment dry-run includes default permission mode"
 
 echo "PASS: run-agent supports environment argument parity"
+
+CWD_LAUNCH_DIR="${WORK_DIR}/cwd-launch"
+CWD_REPO_ROOT="${WORK_DIR}/cwd-repo-root"
+CWD_CAPTURE_FILE="${WORK_DIR}/cwd-capture.txt"
+mkdir -p "${CWD_LAUNCH_DIR}" "${CWD_REPO_ROOT}"
+(
+  cd "${CWD_LAUNCH_DIR}"
+  PATH="${FAKE_BIN}:${PATH}" \
+    AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" \
+    REPO_ROOT="${CWD_REPO_ROOT}" \
+    CWD_CAPTURE_FILE="${CWD_CAPTURE_FILE}" \
+    AGENT=cwd-probe \
+    CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" \
+    PROMPT_FILE="${PROMPT_FILE}" \
+    UNATTENDED=1 \
+    "${RUNNER_PATH}" >/dev/null
+)
+assert_equals "${CWD_REPO_ROOT}" "$(<"${CWD_CAPTURE_FILE}")" "run-agent executes agents from REPO_ROOT even without a repo-root argument"
+
+echo "PASS: run-agent enforces REPO_ROOT as child working directory"
 
 successful_run_stdout="${WORK_DIR}/successful-run.stdout"
 successful_run_stderr="${WORK_DIR}/successful-run.stderr"
