@@ -106,6 +106,12 @@ Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable implementation handoff.
 
+Path contract:
+- Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
+- Write the done sentinel exactly to `RUN_WITH_IT_DONE_FILE`.
+- Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
+- Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
+
 Bash:
 ```bash
 mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
@@ -128,7 +134,7 @@ payload = {
     "files_committed": [item for item in files if item],
     "verification": {
         "passed": True,
-        "commands": [],
+        "commands": ["REPLACE_WITH_EXACT_COMMANDS_RUN"],
     },
 }
 with open(path, "w", encoding="utf-8") as handle:
@@ -149,7 +155,7 @@ $payload = @{
   files_committed = @($filesCommitted)
   verification = @{
     passed = $true
-    commands = @()
+    commands = @("REPLACE_WITH_EXACT_COMMANDS_RUN")
   }
 }
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null

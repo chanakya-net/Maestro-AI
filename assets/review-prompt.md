@@ -77,6 +77,12 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 Write exactly **two** JSON files.
 
+Path contract:
+- `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `run-with-it-dispatch.sh`.
+- Write the full actionable review JSON exactly to `REVIEWER_INSTRUCTIONS_FILE`.
+- Write `RUN_WITH_IT_DONE_FILE` only after both JSON files exist and parse as valid JSON.
+- Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.
+
 ### Status File — write to `REVIEWER_STATUS_FILE`
 
 This is the only file the Sub-Coordinator reads. Keep it minimal:

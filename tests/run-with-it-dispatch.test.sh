@@ -389,4 +389,84 @@ set -e
 assert_file_contains "${DONE_ONLY_OUTPUT}" "reason=missing-result-artifact" "done-only failure reports missing result artifact"
 assert_file_contains "${DONE_ONLY_STATE}" '"stall_reason": "missing-result-artifact"' "done-only state records precise missing result reason"
 
+cat > "${SMOKE_BIN}/commit-without-result-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'commit-without-result-agent 1.0\n'
+  exit 0
+fi
+repo_root="$1"
+git -C "$repo_root" config user.email "test@example.com"
+git -C "$repo_root" config user.name "Test User"
+printf 'committed without result\n' > "$repo_root/recovered.txt"
+git -C "$repo_root" add recovered.txt
+git -C "$repo_root" commit -m "impl without result" >/dev/null
+SH
+chmod +x "${SMOKE_BIN}/commit-without-result-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+registry["agents"]["commit-without-result"] = {
+    "display_name": "Commit Without Result",
+    "detection": {"command": "commit-without-result-agent", "args": ["--version"]},
+    "invocation": {
+        "command": "commit-without-result-agent",
+        "args_template": ["{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}",
+    },
+    "permission_modes": {"default": "", "available": [""]},
+    "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+    "capability_band": "balanced",
+    "fallback_order": [],
+    "user_model_configuration": {
+        "requires_user_model_config": False,
+        "config_paths": [],
+        "skip_when_unconfigured": False,
+        "skip_message": "",
+    },
+}
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+RECOVER_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/45"
+RECOVER_CONTEXT="${SMOKE_PROJECT}/recover-context.md"
+RECOVER_RESULT="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+RECOVER_LOG="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.log"
+RECOVER_DONE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.done"
+RECOVER_STATE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+printf '# recover missing result\n' > "${RECOVER_CONTEXT}"
+
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl \
+  --issue 45 \
+  --cycle 1 \
+  --agent commit-without-result \
+  --model fake-model \
+  --context-file "${RECOVER_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${RECOVER_LOG}" \
+  --done-file "${RECOVER_DONE}" \
+  --result-file "${RECOVER_RESULT}" \
+  --state-file "${RECOVER_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${RECOVER_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+
+assert_json_file "${RECOVER_RESULT}" "missing implementation result is synthesized from committed work"
+assert_file_contains "${RECOVER_RESULT}" '"issue": "45"' "synthesized result records issue"
+assert_file_contains "${RECOVER_RESULT}" '"role": "impl"' "synthesized result records role"
+assert_file_contains "${RECOVER_RESULT}" '"status": "success"' "synthesized result validates as successful handoff"
+assert_file_contains "${RECOVER_RESULT}" '"recovered.txt"' "synthesized result records committed file"
+assert_file_contains "${RECOVER_RESULT}" '"source": "dispatcher-synthesized"' "synthesized result is auditable"
+assert_file_contains "${RECOVER_STATE}" '"state": "completed"' "recoverable missing result completes"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=45|role=impl|cycle=1" "recovery emits synthesis status"
+
 echo "PASS: run-with-it dispatcher contract"

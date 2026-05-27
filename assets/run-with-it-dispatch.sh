@@ -216,6 +216,55 @@ if not isinstance(verification, dict):
 PY
 }
 
+synthesize_implementation_result_if_possible() {
+  local repo_root current_head files_json tmp_file
+
+  is_implementation_role || return 1
+  [ ! -s "$RESULT_FILE" ] || return 1
+  [ -s "$DONE_FILE" ] || return 1
+
+  repo_root="$(repo_root_for_worker)"
+  git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  current_head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+  [ -n "$current_head" ] || return 1
+  [ -n "${pre_spawn_head:-}" ] || return 1
+  [ "$current_head" != "$pre_spawn_head" ] || return 1
+
+  files_json="$(git -C "$repo_root" show --name-only --pretty=format: "$current_head" 2>/dev/null \
+    | sed '/^[[:space:]]*$/d' \
+    | python3 -c 'import json, sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.rstrip("\n")]))')"
+  [ "$files_json" != "[]" ] || return 1
+
+  tmp_file="${RESULT_FILE}.tmp.$$"
+  mkdir -p "$(dirname "$RESULT_FILE")"
+  python3 - "$tmp_file" "$ISSUE" "$ROLE" "$current_head" "$files_json" <<'PY'
+import json
+import sys
+
+path, issue, role, commit_sha, files_json = sys.argv[1:]
+payload = {
+    "schema_version": 1,
+    "issue": issue,
+    "role": role,
+    "status": "success",
+    "commit_sha": commit_sha,
+    "files_committed": json.loads(files_json),
+    "verification": {
+        "passed": False,
+        "commands": [],
+        "source": "dispatcher-synthesized",
+        "note": "Worker exited successfully and advanced HEAD but did not write RUN_WITH_IT_RESULT_FILE; verification evidence was not machine-readable.",
+    },
+    "source": "dispatcher-synthesized",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2)
+    handle.write("\n")
+PY
+  mv "$tmp_file" "$RESULT_FILE"
+  implementation_result_json_valid
+}
+
 result_artifact_failure_reason() {
   local repo_root commit_sha current_head
 
@@ -490,6 +539,10 @@ while true; do
     wait "$pid" 2>/dev/null
     exit_code="$?"
     set -e
+    if [ "$exit_code" = "0" ] && synthesize_implementation_result_if_possible; then
+      write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+      last_log_signature="$(log_signature)"
+    fi
     if completion_ready; then
       write_worker_state "completed" "false" "$exit_code"
       write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"

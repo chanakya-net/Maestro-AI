@@ -54,6 +54,20 @@ assert_contains "${prompt_contract}" "## Progress Visibility" "implementation pr
 assert_contains "${prompt_contract}" "Do not emit periodic heartbeat or status-check lines while working." "implementation prompt keeps workers focused"
 assert_not_contains "${prompt_contract}" "STATUS|type=heartbeat|issue=<issue-or-unknown>|role=impl" "implementation prompt does not request child heartbeat output"
 assert_not_contains "${prompt_contract}" "at least once every 60 seconds" "implementation prompt does not request heartbeat cadence"
+assert_contains "${prompt_contract}" 'RUN_WITH_IT_RESULT_FILE' "implementation prompt names dispatcher result path"
+assert_contains "${prompt_contract}" 'RUN_WITH_IT_DONE_FILE' "implementation prompt names dispatcher done path"
+
+modifier_contract="$(<"${ROOT_DIR}/assets/modifier-prompt.md")"
+assert_contains "${modifier_contract}" 'RUN_WITH_IT_RESULT_FILE' "modifier prompt names dispatcher result path"
+assert_contains "${modifier_contract}" 'RUN_WITH_IT_DONE_FILE' "modifier prompt names dispatcher done path"
+
+review_contract="$(<"${ROOT_DIR}/assets/review-prompt.md")"
+assert_contains "${review_contract}" 'RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE' "review prompt ties dispatcher result path to reviewer status JSON"
+assert_contains "${review_contract}" 'RUN_WITH_IT_DONE_FILE' "review prompt names dispatcher done path"
+
+complexity_contract="$(<"${ROOT_DIR}/assets/complexity-prompt.md")"
+assert_contains "${complexity_contract}" 'The only file you may write is RUN_WITH_IT_RESULT_FILE' "complexity prompt permits required dispatcher result artifact"
+assert_contains "${complexity_contract}" 'RUN_WITH_IT_DONE_FILE is runner-owned' "complexity prompt keeps done file runner-owned"
 
 runner_preamble="$(sed -n '1,8p' "${RUNNER_PATH}")"
 assert_not_contains "${runner_preamble}" "set -euo pipefail" "run-agent avoids nounset so VS Code zsh prompt hooks are not tripped"
