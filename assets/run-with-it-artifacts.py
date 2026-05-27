@@ -106,6 +106,18 @@ def git_output(repo_root: str, *args: str) -> str:
     ).strip()
 
 
+def git_success(repo_root: str, *args: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "-C", repo_root, *args],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
 def current_head(repo_root: str) -> str:
     return git_output(repo_root, "rev-parse", "HEAD")
 
@@ -115,6 +127,62 @@ def repo_available(repo_root: str) -> bool:
         return git_output(repo_root, "rev-parse", "--is-inside-work-tree") == "true"
     except Exception:
         return False
+
+
+def working_tree_clean(repo_root: str) -> bool:
+    try:
+        return git_output(repo_root, "status", "--porcelain") == ""
+    except Exception:
+        return False
+
+
+def commit_exists(repo_root: str, commit_sha: str) -> bool:
+    return git_success(repo_root, "cat-file", "-e", f"{commit_sha}^{{commit}}")
+
+
+def is_ancestor(repo_root: str, ancestor: str, descendant: str) -> bool:
+    return git_success(repo_root, "merge-base", "--is-ancestor", ancestor, descendant)
+
+
+def abort_cherry_pick(repo_root: str) -> None:
+    git_success(repo_root, "cherry-pick", "--abort")
+
+
+def recover_wrong_worktree_commit(args: argparse.Namespace, payload: dict[str, Any], head: str, commit_sha: str) -> bool:
+    if not args.pre_spawn_head:
+        return False
+    if head != args.pre_spawn_head:
+        return False
+    if not working_tree_clean(args.repo_root):
+        return False
+    if not commit_exists(args.repo_root, commit_sha):
+        return False
+    if not is_ancestor(args.repo_root, args.pre_spawn_head, commit_sha):
+        return False
+
+    result = subprocess.run(
+        ["git", "-C", args.repo_root, "cherry-pick", "--no-edit", commit_sha],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        abort_cherry_pick(args.repo_root)
+        return False
+
+    try:
+        recovered_head = current_head(args.repo_root)
+    except Exception:
+        return False
+    if recovered_head == head:
+        return False
+
+    recovered_payload = dict(payload)
+    recovered_payload["commit_sha"] = recovered_head
+    recovered_payload["recovered_from_commit"] = commit_sha
+    recovered_payload["recovery"] = "cherry-picked commit from outside issue worktree into issue worktree"
+    write_json_atomic(args.result_file, recovered_payload)
+    return True
 
 
 def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
@@ -143,6 +211,8 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
     except Exception:
         return "implementation-repo-unavailable"
     if head != commit_sha:
+        if recover_wrong_worktree_commit(args, payload, head, commit_sha):
+            return ""
         return "commit-outside-issue-worktree"
     if args.pre_spawn_head and commit_sha == args.pre_spawn_head:
         return "missing-implementation-commit"

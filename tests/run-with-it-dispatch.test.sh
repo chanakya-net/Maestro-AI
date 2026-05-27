@@ -17,6 +17,13 @@ assert_contains() {
   [[ "${haystack}" == *"${needle}"* ]] || fail "${message} (missing: ${needle})"
 }
 
+assert_eq() {
+  local actual="$1"
+  local expected="$2"
+  local message="$3"
+  [[ "${actual}" == "${expected}" ]] || fail "${message} (expected: ${expected}, got: ${actual})"
+}
+
 assert_file_contains() {
   local file="$1"
   local needle="$2"
@@ -221,6 +228,57 @@ assert_file_contains "${SMOKE_STATE}" '"state": "completed"' "actual dispatch re
 assert_file_contains "${SMOKE_STATE}" '"result_present": true' "actual dispatch records result artifact presence"
 heartbeat_count="$(grep -Fc "STATUS|type=heartbeat|issue=42|role=merge-recovery|phase=testing|progress=repo-root" "${SMOKE_LOG}")"
 assert_contains "${heartbeat_count}" "1" "actual dispatch does not duplicate child heartbeat in role log"
+
+RECOVERY_PARENT="${WORK_DIR}/recovery-parent"
+RECOVERY_ISSUE="${WORK_DIR}/recovery-issue"
+mkdir -p "${RECOVERY_PARENT}"
+git -C "${RECOVERY_PARENT}" init -q
+git -C "${RECOVERY_PARENT}" config user.name "Run With It Test"
+git -C "${RECOVERY_PARENT}" config user.email "run-with-it@example.test"
+printf 'base\n' > "${RECOVERY_PARENT}/item.txt"
+git -C "${RECOVERY_PARENT}" add item.txt
+git -C "${RECOVERY_PARENT}" commit -q -m "base"
+RECOVERY_BASE_SHA="$(git -C "${RECOVERY_PARENT}" rev-parse HEAD)"
+git -C "${RECOVERY_PARENT}" branch issue-42
+git -C "${RECOVERY_PARENT}" worktree add -q "${RECOVERY_ISSUE}" issue-42
+git -C "${RECOVERY_PARENT}" checkout -q -b wrong-worktree
+printf 'base\nwrong worktree change\n' > "${RECOVERY_PARENT}/item.txt"
+git -C "${RECOVERY_PARENT}" add item.txt
+git -C "${RECOVERY_PARENT}" commit -q -m "modifier committed in wrong worktree"
+RECOVERY_WRONG_SHA="$(git -C "${RECOVERY_PARENT}" rev-parse HEAD)"
+
+RECOVERY_RESULT="${WORK_DIR}/recovery-result.json"
+RECOVERY_DONE="${WORK_DIR}/recovery.done"
+cat > "${RECOVERY_RESULT}" <<JSON
+{
+  "schema_version": 1,
+  "issue": "42",
+  "role": "modify",
+  "status": "success",
+  "commit_sha": "${RECOVERY_WRONG_SHA}",
+  "files_committed": ["item.txt"],
+  "verification": {
+    "passed": true,
+    "commands": ["fake verification"]
+  }
+}
+JSON
+printf 'DONE|issue=42|role=modify|status=success\n' > "${RECOVERY_DONE}"
+
+recovery_reason="$(python3 "${ROOT_DIR}/assets/run-with-it-artifacts.py" failure-reason \
+  --role modify \
+  --issue 42 \
+  --result-file "${RECOVERY_RESULT}" \
+  --done-file "${RECOVERY_DONE}" \
+  --repo-root "${RECOVERY_ISSUE}" \
+  --pre-spawn-head "${RECOVERY_BASE_SHA}")"
+assert_eq "${recovery_reason}" "" "artifact helper recovers wrong-worktree modifier commit"
+RECOVERY_ISSUE_HEAD="$(git -C "${RECOVERY_ISSUE}" rev-parse HEAD)"
+[[ "${RECOVERY_ISSUE_HEAD}" != "${RECOVERY_BASE_SHA}" ]] || fail "recovery advances issue worktree HEAD"
+assert_file_contains "${RECOVERY_ISSUE}/item.txt" "wrong worktree change" "recovery cherry-picks reported commit into issue worktree"
+assert_file_contains "${RECOVERY_RESULT}" "\"commit_sha\": \"${RECOVERY_ISSUE_HEAD}\"" "recovery rewrites result commit to recovered issue-worktree commit"
+assert_file_contains "${RECOVERY_RESULT}" "\"recovered_from_commit\": \"${RECOVERY_WRONG_SHA}\"" "recovery records original wrong-worktree commit"
+assert_file_contains "${RECOVERY_RESULT}" '"recovery": "cherry-picked commit from outside issue worktree into issue worktree"' "recovery records recovery note"
 
 DETACH_PROJECT="${WORK_DIR}/detach-project"
 DETACH_CONTEXT="${DETACH_PROJECT}/context.md"

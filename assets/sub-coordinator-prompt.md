@@ -278,9 +278,16 @@ RUN_WITH_IT_RESULT_FILE=<absolute .run-with-it/issues/<n>/workers/<role>/cycle-<
 RUN_WITH_IT_DONE_FILE=<absolute .run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done>
 RUN_WITH_IT_ROLE=<impl|review|modify|complexity>
 RUN_WITH_IT_ISSUE=<n>
+RUN_WITH_IT_REPO_ROOT=<absolute ISSUE_WORKTREE_PATH>
+RUN_WITH_IT_ISSUE_BRANCH=<issue branch name>
+RUN_WITH_IT_SHARED_FEATURE_BRANCH=<shared run feature branch name>
+CHECKIN_TARGET=issue-worktree
+CHECKIN_OWNER=<impl-worker|modify-worker|not-applicable>
 ```
 
 Worker payloads must not include `SUB_COORD_REPORT_FILE`. Do not pass `SUB_COORD_REPORT_FILE` to worker payloads and do not instruct workers to write `.run-with-it/issues/<n>/report.json`; that path is reserved for the Sub-Coordinator's final compact report.
+
+For implementation and modification workers, the check-in metadata is mandatory. These workers own their handoff commit and must commit only to `RUN_WITH_IT_REPO_ROOT` on `RUN_WITH_IT_ISSUE_BRANCH`; the shared feature branch is merge/recovery territory, not worker check-in territory.
 
 Every `WORKER_POLL_SECONDS` seconds, poll the dispatcher state file. Read `WORKER_STATE_FILE`, not the raw worker log. The dispatcher updates that state file from objective PID, done/result, and captured log activity. PID liveness is diagnostic only. Completion requires both the done file and valid artifacts.
 
@@ -548,6 +555,14 @@ Store `ISSUE_BASE_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` immediately. T
 
 Bash (macOS / Linux / Git Bash; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions):
 ```bash
+cat >> "$CONTEXT_PAYLOAD_FILE" <<EOF
+RUN_WITH_IT_REPO_ROOT=$ISSUE_WORKTREE_PATH
+RUN_WITH_IT_ISSUE_BRANCH=$ISSUE_BRANCH
+RUN_WITH_IT_SHARED_FEATURE_BRANCH=$RUN_FEATURE_BRANCH
+CHECKIN_TARGET=issue-worktree
+CHECKIN_OWNER=impl-worker
+EOF
+
 IMPL_WORKER_DIR="$RUN_WITH_IT_ISSUE_DIR/workers/impl"
 IMPL_LOG_FILE="$IMPL_WORKER_DIR/cycle-${CYCLE:-1}.log"
 IMPL_DONE_FILE="$IMPL_WORKER_DIR/cycle-${CYCLE:-1}.done"
@@ -807,10 +822,18 @@ The implementer (or modifier) has already committed all changes as part of its m
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`.
+   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, and `CHECKIN_OWNER=modify-worker`.
    - Run via this background-worker shape; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions:
 
      ```bash
+     cat >> "$MODIFIER_CONTEXT_PAYLOAD_FILE" <<EOF
+RUN_WITH_IT_REPO_ROOT=$ISSUE_WORKTREE_PATH
+RUN_WITH_IT_ISSUE_BRANCH=$ISSUE_BRANCH
+RUN_WITH_IT_SHARED_FEATURE_BRANCH=$RUN_FEATURE_BRANCH
+CHECKIN_TARGET=issue-worktree
+CHECKIN_OWNER=modify-worker
+EOF
+
      MODIFY_WORKER_DIR="$RUN_WITH_IT_ISSUE_DIR/workers/modify"
      MODIFY_LOG_FILE="$MODIFY_WORKER_DIR/cycle-${CYCLE}.log"
      MODIFY_DONE_FILE="$MODIFY_WORKER_DIR/cycle-${CYCLE}.done"

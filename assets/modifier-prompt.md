@@ -36,6 +36,12 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - Fetch the full accumulated diff for this issue: `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — **never** `git diff <SHA>..HEAD`.
 - Complete reviewer JSON for the current review cycle (from `REVIEWER_INSTRUCTIONS_FILE`).
 - Required verification commands from the coordinator.
+- Check-in target metadata from the coordinator:
+  - `RUN_WITH_IT_REPO_ROOT` — absolute path of the issue worktree where all edits, tests, staging, and commits must happen.
+  - `RUN_WITH_IT_ISSUE_BRANCH` — issue-scoped branch that must receive the handoff commit.
+  - `RUN_WITH_IT_SHARED_FEATURE_BRANCH` — shared run branch; do not commit here from this worker.
+  - `CHECKIN_OWNER=modify-worker`.
+  - `CHECKIN_TARGET=issue-worktree`.
 
 ## Hard Restrictions
 
@@ -64,6 +70,28 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 Do not emit periodic heartbeat or status-check lines while working. The dispatcher and log monitor track liveness from captured process output and watchdog state so you can stay focused on the assigned modification task.
 
+## Check-In Target
+
+The modifier worker is responsible for checking in its own completed review fixes. All edits, verification commands, `git add`, and `git commit` must happen in `RUN_WITH_IT_REPO_ROOT` / `REPO_ROOT`, which is the issue worktree. Never commit modification work to the parent repository worktree or to `RUN_WITH_IT_SHARED_FEATURE_BRANCH`.
+
+Before making the mandatory handoff commit, verify the target:
+
+Bash:
+```bash
+CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
+test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --show-toplevel)" = "$CHECKIN_REPO_ROOT"
+if [ -n "${RUN_WITH_IT_ISSUE_BRANCH:-}" ]; then
+  test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)" = "$RUN_WITH_IT_ISSUE_BRANCH"
+fi
+```
+
+PowerShell:
+```powershell
+$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
+if ((git -C $checkinRepoRoot rev-parse --show-toplevel).Trim() -ne $checkinRepoRoot) { throw "wrong check-in repo root" }
+if ($env:RUN_WITH_IT_ISSUE_BRANCH -and ((git -C $checkinRepoRoot rev-parse --abbrev-ref HEAD).Trim() -ne $env:RUN_WITH_IT_ISSUE_BRANCH)) { throw "wrong check-in branch" }
+```
+
 ## Mandatory Commit Before Handoff
 
 **You MUST commit all your changes before writing the done file.** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
@@ -72,20 +100,22 @@ Commit sequence (after verification passes and all reviewer comments are address
 
 Bash:
 ```bash
+CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
 # Stage all modified and new files
-git add -A
+git -C "$CHECKIN_REPO_ROOT" add -A
 # Commit with an issue-scoped and cycle-scoped message
-git commit -m "fix(#${RUN_WITH_IT_ISSUE:-unknown}): address review cycle ${RUN_WITH_IT_CYCLE:-?}"
+git -C "$CHECKIN_REPO_ROOT" commit -m "fix(#${RUN_WITH_IT_ISSUE:-unknown}): address review cycle ${RUN_WITH_IT_CYCLE:-?}"
 # Capture and print the SHA so the sub-coordinator can record it
-MODIFY_COMMIT_SHA=$(git rev-parse HEAD)
+MODIFY_COMMIT_SHA=$(git -C "$CHECKIN_REPO_ROOT" rev-parse HEAD)
 printf 'MODIFY_COMMIT_SHA=%s\n' "$MODIFY_COMMIT_SHA"
 ```
 
 PowerShell:
 ```powershell
-git add -A
-git commit -m "fix(#$env:RUN_WITH_IT_ISSUE): address review cycle $env:RUN_WITH_IT_CYCLE"
-$modifyCommitSha = git rev-parse HEAD
+$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
+git -C $checkinRepoRoot add -A
+git -C $checkinRepoRoot commit -m "fix(#$env:RUN_WITH_IT_ISSUE): address review cycle $env:RUN_WITH_IT_CYCLE"
+$modifyCommitSha = git -C $checkinRepoRoot rev-parse HEAD
 Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
 ```
 
@@ -113,12 +143,14 @@ Bash:
 mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
 python3 - "$RUN_WITH_IT_RESULT_FILE" "$RUN_WITH_IT_ISSUE" "$MODIFY_COMMIT_SHA" <<'PY'
 import json
+import os
 import subprocess
 import sys
 
 path, issue, commit_sha = sys.argv[1], sys.argv[2], sys.argv[3]
+repo_root = os.environ.get("RUN_WITH_IT_REPO_ROOT") or os.environ["REPO_ROOT"]
 files = subprocess.check_output(
-    ["git", "show", "--name-only", "--pretty=format:", commit_sha],
+    ["git", "-C", repo_root, "show", "--name-only", "--pretty=format:", commit_sha],
     text=True,
 ).splitlines()
 payload = {
@@ -141,7 +173,8 @@ PY
 
 PowerShell:
 ```powershell
-$filesCommitted = git show --name-only --pretty=format: $modifyCommitSha | Where-Object { $_ }
+$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
+$filesCommitted = git -C $checkinRepoRoot show --name-only --pretty=format: $modifyCommitSha | Where-Object { $_ }
 $payload = @{
   schema_version = 1
   issue = $env:RUN_WITH_IT_ISSUE
