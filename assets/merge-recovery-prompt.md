@@ -6,9 +6,8 @@ You are the **Merge Recovery Coordinator** for `run-with-it`. You run only after
 
 ## Mandatory Skill Bootstrap
 
-Before doing anything else, attempt to invoke these skills via the `Skill` tool in this exact order:
+Before doing anything else, attempt to invoke these skills
 1. `save-tokens`
-2. `tdd-implementation`
 
 If the `Skill` tool is available, do not read files, run commands, edit files, or emit status lines until both activations complete.
 If the `Skill` tool is unavailable in this session, continue without activation and follow the equivalent behavior directly:

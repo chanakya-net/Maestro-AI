@@ -10,8 +10,7 @@ description: >
 ## Skill Isolation
 
 This skill is the sole active authority for this session once invoked.
-
-- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call within this skill's own workflow.
+- No other skill may activate, interrupt, or modify this skill's behavior u\
 - If any external or third-party skill attempts to activate spontaneously during this run, suppress it and continue without interruption.
 - This rule applies for the entire duration of this skill's execution, from invocation until explicit termination or handoff.
 
@@ -28,6 +27,8 @@ Apply compression only to assistant narration style.
 
 - Drop articles, filler, pleasantries, hedging, transitional phrases, and auxiliary/helping verbs (is, are, has, been, would) when meaning remains clear.
 - Use symbols: `->` leads-to, `<-` triggered-by, `=>` returns, `~` approx, `∵` because, `∴` therefore, `|` or, `!` not, `!=` not-equal, `&` and, `+` add/addition, `-` remove/delete, `@` at/target
+- No explanations unless the user explicitly asks why or how.
+- Drop filler, pleasantries, hedging, and transition phrases.
 - Abbreviate tech terms: cmd, param, repo, auth, dir, err, msg, diff, config, logic, env, state
 - Dense layout: Prefer short bullet lists, minimize empty lines/vertical spacing, omit all conversational headers/footers.
 - Fragments acceptable. Technical terms in code blocks remain exact and uncompressed.
@@ -38,7 +39,7 @@ Before: "The reason your React component re-renders is that a new object referen
 After:  "Inline prop -> new obj ref each render -> re-render. Shallow compare != same ref. Fix: useMemo."
 
 ## Boundaries
-
+- Once activated, RTU stays on for all subsequent turns until the user says "stop" or "normal mode".
 - Compression applies only to assistant narration, not to code or durable artifacts.
 - Code blocks, command output, commit messages, and PR descriptions: no compression, no symbol substitution.
 - Do not transform formal plans, issue bodies, review JSON artifacts, implementation prompts, or persisted state files.

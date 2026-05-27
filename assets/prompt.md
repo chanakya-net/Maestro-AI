@@ -6,7 +6,7 @@ This prompt is implementation-only for already assigned work.
 
 ## Mandatory Skill Bootstrap
 
-Before doing anything else, attempt to invoke these skills via the `Skill` tool in this exact order:
+Before doing anything else, attempt to invoke these skills
 1. `save-tokens`
 2. `tdd-implementation`
 
