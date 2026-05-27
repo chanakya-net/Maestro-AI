@@ -71,6 +71,8 @@ assert_contains "${review_contract}" 'RUN_WITH_IT_DONE_FILE' "review prompt name
 
 complexity_contract="$(<"${ROOT_DIR}/assets/complexity-prompt.md")"
 assert_contains "${complexity_contract}" 'The only file you may write is RUN_WITH_IT_RESULT_FILE' "complexity prompt permits required dispatcher result artifact"
+assert_contains "${complexity_contract}" 'plus the single required write to `RUN_WITH_IT_RESULT_FILE`' "complexity prompt exempts the required result write from read-only exploration"
+assert_not_contains "${complexity_contract}" 'Read-only tools only.' "complexity prompt does not contradict the required result artifact write"
 assert_contains "${complexity_contract}" 'RUN_WITH_IT_DONE_FILE is runner-owned' "complexity prompt keeps done file runner-owned"
 
 runner_preamble="$(sed -n '1,8p' "${RUNNER_PATH}")"

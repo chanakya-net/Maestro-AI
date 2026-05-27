@@ -221,6 +221,7 @@ function Invoke-ArtifactHelper([string]$command) {
         --issue $Issue `
         --result-file $ResultFile `
         --done-file $DoneFile `
+        --log-file $LogFile `
         --issue-dir $IssueDir `
         --repo-root $repoRootValue `
         --pre-spawn-head $preSpawnHead

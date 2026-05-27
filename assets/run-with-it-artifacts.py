@@ -164,6 +164,30 @@ def valid_complexity_payload(payload: Any) -> bool:
     return all(isinstance(scores[key], int) and 1 <= scores[key] <= 5 for key in COMPLEXITY_SCORE_KEYS)
 
 
+def complexity_payload_from_log(log_file: str) -> dict[str, Any] | None:
+    if not log_file or not os.path.exists(log_file) or os.path.getsize(log_file) == 0:
+        return None
+    try:
+        text = Path(log_file).read_text(encoding="utf-8")
+    except Exception:
+        return None
+
+    decoder = json.JSONDecoder()
+    index = 0
+    while True:
+        start = text.find("{", index)
+        if start == -1:
+            return None
+        try:
+            payload, end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            index = start + 1
+            continue
+        if valid_complexity_payload(payload):
+            return payload
+        index = start + max(end, 1)
+
+
 def valid_review_status(payload: Any) -> bool:
     return (
         isinstance(payload, dict)
@@ -339,8 +363,25 @@ def synthesize_review(args: argparse.Namespace) -> bool:
     return False
 
 
+def synthesize_complexity(args: argparse.Namespace) -> bool:
+    if args.role != "complexity":
+        return False
+    if os.path.exists(args.result_file) and os.path.getsize(args.result_file) > 0:
+        return False
+    if not args.done_file or not os.path.exists(args.done_file) or os.path.getsize(args.done_file) == 0:
+        return False
+
+    payload = complexity_payload_from_log(getattr(args, "log_file", ""))
+    if payload is None:
+        return False
+    payload = dict(payload)
+    payload["source"] = "dispatcher-synthesized-from-log"
+    write_json_atomic(args.result_file, payload)
+    return result_failure_reason(args) == ""
+
+
 def synthesize(args: argparse.Namespace) -> int:
-    ok = synthesize_implementation(args) or synthesize_review(args)
+    ok = synthesize_implementation(args) or synthesize_review(args) or synthesize_complexity(args)
     return 0 if ok else 1
 
 
@@ -358,6 +399,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--issue", required=True)
         sub.add_argument("--result-file", required=True)
         sub.add_argument("--done-file", default="")
+        sub.add_argument("--log-file", default="")
         sub.add_argument("--issue-dir", default="")
         sub.add_argument("--repo-root", default="")
         sub.add_argument("--pre-spawn-head", default="")

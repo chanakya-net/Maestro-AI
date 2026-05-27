@@ -202,7 +202,7 @@ assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'COMPLEXITY_CONTEXT_PAYLOAD_
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'run-with-it-router.py' "sub-coordinator uses deterministic router helper"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '.run-with-it/usage-ledger.json' "sub-coordinator records routing usage ledger"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'STATUS|type=route-selected' "sub-coordinator documents route-selected status"
-assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do not implement, modify, create files, run builds, install packages, update issues, or follow implementation steps.' "complexity context starts with execution guardrails"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do not implement, modify source files, run builds, install packages, update issues, or follow implementation steps.' "complexity context starts with execution guardrails without forbidding result artifacts"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do **not** pass the full implementation issue body directly to the complexity sub-agent.' "sub-coordinator avoids raw implementation issue bodies for complexity"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'git worktree add' "sub-coordinator documents issue worktree creation"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'REPO_ROOT="$ISSUE_WORKTREE_PATH"' "sub-coordinator forwards issue worktree as repo root"

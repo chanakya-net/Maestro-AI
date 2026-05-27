@@ -709,6 +709,47 @@ printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH
 SH
 chmod +x "${SMOKE_BIN}/invalid-complexity-agent"
 
+cat > "${SMOKE_BIN}/stdout-complexity-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'stdout-complexity-agent 1.0\n'
+  exit 0
+fi
+mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+cat <<'JSON'
+COMPLEXITY|score=14|level=easy|d1=2|d2=1|d3=2|d4=1|d5=2|d6=1|d7=2|d8=1|d9=2
+{
+  "total": 14,
+  "level": "easy",
+  "scores": {
+    "dependency_complexity": 2,
+    "ownership_overlap_risk": 1,
+    "architecture_risk": 2,
+    "orchestration_burden": 1,
+    "verification_risk": 2,
+    "ambiguity_of_requirements": 1,
+    "integration_surface_breadth": 2,
+    "rollback_recovery_risk": 1,
+    "blast_radius": 2
+  },
+  "rationale": {
+    "dependency_complexity": "Uses a few stable local dependencies.",
+    "ownership_overlap_risk": "Single owner surface.",
+    "architecture_risk": "Small architectural surface.",
+    "orchestration_burden": "No orchestration required.",
+    "verification_risk": "Unit tests can cover the behavior.",
+    "ambiguity_of_requirements": "Requirements are clear.",
+    "integration_surface_breadth": "One stable integration point.",
+    "rollback_recovery_risk": "Instant revert.",
+    "blast_radius": "Small user-visible surface."
+  }
+}
+JSON
+printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+SH
+chmod +x "${SMOKE_BIN}/stdout-complexity-agent"
+
 python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -719,6 +760,7 @@ for name in (
     "review-approve-status-only",
     "review-revise-status-only",
     "invalid-complexity",
+    "stdout-complexity",
 ):
     registry["agents"][name] = {
         "display_name": name,
@@ -828,6 +870,34 @@ set -e
 [[ "${review_missing_instructions_status}" != "0" ]] || fail "revise review without instructions must not complete"
 assert_file_contains "${REVIEW_MISSING_INSTRUCTIONS_OUTPUT}" "reason=missing-review-instructions-artifact" "revise review without instructions fails with precise reason"
 assert_file_contains "${REVIEW_MISSING_INSTRUCTIONS_STATE}" '"stall_reason": "missing-review-instructions-artifact"' "review state records missing instructions reason"
+
+COMPLEXITY_STDOUT_DIR="${SMOKE_PROJECT}/.run-with-it/issues/50"
+COMPLEXITY_STDOUT_RESULT="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1-result.json"
+COMPLEXITY_STDOUT_LOG="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.log"
+COMPLEXITY_STDOUT_DONE="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.done"
+COMPLEXITY_STDOUT_STATE="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.state.json"
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity \
+  --issue 50 \
+  --cycle 1 \
+  --agent stdout-complexity \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${COMPLEXITY_STDOUT_LOG}" \
+  --done-file "${COMPLEXITY_STDOUT_DONE}" \
+  --result-file "${COMPLEXITY_STDOUT_RESULT}" \
+  --state-file "${COMPLEXITY_STDOUT_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${COMPLEXITY_STDOUT_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+assert_json_file "${COMPLEXITY_STDOUT_RESULT}" "valid complexity stdout JSON is synthesized into result artifact"
+assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"level": "easy"' "synthesized complexity artifact preserves level"
+assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"source": "dispatcher-synthesized-from-log"' "synthesized complexity artifact is auditable"
+assert_file_contains "${COMPLEXITY_STDOUT_STATE}" '"state": "completed"' "complexity stdout-only worker completes after result synthesis"
 
 COMPLEXITY_INVALID_DIR="${SMOKE_PROJECT}/.run-with-it/issues/49"
 COMPLEXITY_INVALID_RESULT="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1-result.json"

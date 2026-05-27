@@ -199,6 +199,7 @@ synthesize_result_artifact_if_possible() {
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \
     --done-file "$DONE_FILE" \
+    --log-file "$LOG_FILE" \
     --issue-dir "$ISSUE_DIR" \
     --repo-root "$(repo_root_for_worker)" \
     --pre-spawn-head "${pre_spawn_head:-}" >/dev/null 2>&1
