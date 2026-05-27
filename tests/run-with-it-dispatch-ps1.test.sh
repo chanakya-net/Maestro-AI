@@ -39,6 +39,9 @@ assert_json_file() {
   python3 -m json.tool "$file" >/dev/null || fail "$message (invalid JSON: $file)"
 }
 
+assert_file_contains "$DISPATCHER" '[switch]$Detach' "PowerShell dispatcher exposes detach switch"
+assert_file_contains "$DISPATCHER" 'STATUS|type=dispatch-detached' "PowerShell dispatcher reports detached launch"
+
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"
 mkdir -p "$WORK_DIR"
@@ -224,6 +227,50 @@ assert_file_contains "$DONE_FILE" "DONE|issue=42|role=impl" "dispatch writes don
 assert_json_file "$RESULT_FILE" "dispatch result JSON is valid"
 assert_json_file "$STATE_FILE" "dispatch state JSON is valid"
 assert_file_contains "$STATE_FILE" '"state": "completed"' "dispatch records completed state"
+
+DETACH_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/45"
+DETACH_CONTEXT="${SMOKE_PROJECT}/detach-context.md"
+DETACH_LOG="${DETACH_ISSUE_DIR}/workers/impl/cycle-1.log"
+DETACH_DONE="${DETACH_ISSUE_DIR}/workers/impl/cycle-1.done"
+DETACH_RESULT="${DETACH_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+DETACH_STATE="${DETACH_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+DETACH_OUT="${DETACH_ISSUE_DIR}/workers/impl/cycle-1.dispatch.out"
+mkdir -p "$(dirname "$DETACH_RESULT")"
+printf 'RESULT_FILE=%s\n' "$DETACH_RESULT" > "$DETACH_CONTEXT"
+
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -Detach \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role impl \
+  -Issue 45 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$DETACH_CONTEXT" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "$DETACH_LOG" \
+  -DoneFile "$DETACH_DONE" \
+  -ResultFile "$DETACH_RESULT" \
+  -StateFile "$DETACH_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$DETACH_ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -DispatchOutFile "$DETACH_OUT" \
+  -PollSeconds 1 >/dev/null
+
+for _ in {1..40}; do
+  if [[ -f "$DETACH_LOG" ]] && grep -Fq "STATUS|type=dispatch-complete|issue=45|role=impl" "$DETACH_LOG"; then
+    break
+  fi
+  sleep 0.25
+done
+
+assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-detached|issue=45|role=impl|cycle=1" "detached PowerShell dispatcher logs parent handoff"
+assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-start|issue=45|role=impl|cycle=1" "detached PowerShell dispatcher starts child monitor"
+assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-pid|issue=45|role=impl|cycle=1" "detached PowerShell dispatcher captures runner pid"
+assert_json_file "$DETACH_STATE" "detached PowerShell dispatcher writes state JSON"
+assert_json_file "$DETACH_RESULT" "detached PowerShell dispatcher writes result JSON"
 
 SILENT_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/43"
 SILENT_CONTEXT="${SMOKE_PROJECT}/silent-context.md"

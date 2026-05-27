@@ -60,6 +60,43 @@ def write_json_atomic(path: str, payload: dict[str, Any]) -> None:
     os.replace(tmp_path, target)
 
 
+def issue_report_path(args: argparse.Namespace) -> Path | None:
+    issue_dir = getattr(args, "issue_dir", "") or ""
+    if not issue_dir:
+        return None
+    return Path(issue_dir) / "report.json"
+
+
+def is_issue_report_path(path: Path, issue_dir: Path | None) -> bool:
+    if issue_dir is None:
+        return False
+    try:
+        return path.resolve() == (issue_dir / "report.json").resolve()
+    except OSError:
+        return False
+
+
+def result_file_is_issue_report(args: argparse.Namespace) -> bool:
+    if args.role not in {"impl", "modify"}:
+        return False
+    report_path = issue_report_path(args)
+    if report_path is None:
+        return False
+    return is_issue_report_path(Path(args.result_file), report_path.parent)
+
+
+def worker_payload_written_to_issue_report(args: argparse.Namespace) -> bool:
+    if args.role not in {"impl", "modify"}:
+        return False
+    report_path = issue_report_path(args)
+    if report_path is None:
+        return False
+    payload, error = load_json(str(report_path))
+    if error or not isinstance(payload, dict):
+        return False
+    return str(payload.get("issue")) == str(args.issue) and payload.get("role") == args.role
+
+
 def git_output(repo_root: str, *args: str) -> str:
     return subprocess.check_output(
         ["git", "-C", repo_root, *args],
@@ -187,6 +224,8 @@ def review_result_reason(args: argparse.Namespace, status_payload: Any, status_e
 
 
 def result_failure_reason(args: argparse.Namespace) -> str:
+    if result_file_is_issue_report(args):
+        return "worker-result-path-is-sub-coordinator-report"
     payload, error = load_json(args.result_file)
     if error == "missing":
         return "missing-result-artifact"
@@ -208,7 +247,11 @@ def result_failure_reason(args: argparse.Namespace) -> str:
 def synthesize_implementation(args: argparse.Namespace) -> bool:
     if args.role not in {"impl", "modify"}:
         return False
+    if result_file_is_issue_report(args):
+        return False
     if os.path.exists(args.result_file) and os.path.getsize(args.result_file) > 0:
+        return False
+    if worker_payload_written_to_issue_report(args):
         return False
     if not args.done_file or not os.path.exists(args.done_file) or os.path.getsize(args.done_file) == 0:
         return False
@@ -315,6 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--issue", required=True)
         sub.add_argument("--result-file", required=True)
         sub.add_argument("--done-file", default="")
+        sub.add_argument("--issue-dir", default="")
         sub.add_argument("--repo-root", default="")
         sub.add_argument("--pre-spawn-head", default="")
     return parser

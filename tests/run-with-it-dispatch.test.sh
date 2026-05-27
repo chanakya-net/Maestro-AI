@@ -24,6 +24,13 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "${message} (missing: ${needle})"
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "${haystack}" != *"${needle}"* ]] || fail "${message} (unexpected: ${needle})"
+}
+
 assert_json_file() {
   local file="$1"
   local message="$2"
@@ -213,6 +220,86 @@ assert_file_contains "${SMOKE_STATE}" '"state": "completed"' "actual dispatch re
 assert_file_contains "${SMOKE_STATE}" '"result_present": true' "actual dispatch records result artifact presence"
 heartbeat_count="$(grep -Fc "STATUS|type=heartbeat|issue=42|role=merge-recovery|phase=testing|progress=repo-root" "${SMOKE_LOG}")"
 assert_contains "${heartbeat_count}" "1" "actual dispatch does not duplicate child heartbeat in role log"
+
+DETACH_PROJECT="${WORK_DIR}/detach-project"
+DETACH_CONTEXT="${DETACH_PROJECT}/context.md"
+DETACH_PROMPT="${DETACH_PROJECT}/prompt.md"
+DETACH_LOG="${DETACH_PROJECT}/workers/impl/cycle-1.log"
+DETACH_DONE="${DETACH_PROJECT}/workers/impl/cycle-1.done"
+DETACH_RESULT="${DETACH_PROJECT}/workers/impl/cycle-1-result.json"
+DETACH_STATE="${DETACH_PROJECT}/workers/impl/cycle-1.state.json"
+mkdir -p "${DETACH_PROJECT}/workers/impl"
+printf 'detached context\n' > "${DETACH_CONTEXT}"
+printf 'detached prompt\n' > "${DETACH_PROMPT}"
+
+(
+  cd "${DETACH_PROJECT}"
+  PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+    --asset-root "${SMOKE_ASSET_ROOT}" \
+    --role impl \
+    --issue 46 \
+    --cycle 1 \
+    --agent fake \
+    --model fake-model \
+    --context-file "${DETACH_CONTEXT}" \
+    --prompt-file "${DETACH_PROMPT}" \
+    --log-file "${DETACH_LOG}" \
+    --done-file "${DETACH_DONE}" \
+    --result-file "${DETACH_RESULT}" \
+    --state-file "${DETACH_STATE}" \
+    --repo-root "${SMOKE_REPO_ROOT}" \
+    --issue-dir "${DETACH_PROJECT}" \
+    --poll-seconds 1 \
+    --detach >"${DETACH_PROJECT}/dispatch.out" 2>&1
+)
+
+for _ in 1 2 3 4 5; do
+  if grep -Fq "STATUS|type=dispatch-complete|issue=46|role=impl" "${DETACH_LOG}" 2>/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+assert_file_contains "${DETACH_LOG}" "STATUS|type=dispatch-detached|issue=46|role=impl|cycle=1" "detached dispatcher records detached pid"
+assert_file_contains "${DETACH_LOG}" "STATUS|type=dispatch-start|issue=46|role=impl|cycle=1" "detached dispatcher starts after parent shell exits"
+assert_file_contains "${DETACH_LOG}" "STATUS|type=dispatch-pid|issue=46|role=impl|cycle=1" "detached dispatcher captures runner pid"
+assert_json_file "${DETACH_STATE}" "detached dispatcher writes final state JSON"
+assert_json_file "${DETACH_RESULT}" "detached worker writes result JSON"
+
+PRESTART_DIR="${WORK_DIR}/prestart-project"
+PRESTART_LOG="${PRESTART_DIR}/cycle-1.log"
+PRESTART_DONE="${PRESTART_DIR}/cycle-1.done"
+PRESTART_RESULT="${PRESTART_DIR}/cycle-1-result.json"
+PRESTART_STATE="${PRESTART_DIR}/cycle-1.state.json"
+PRESTART_CONTEXT="${PRESTART_DIR}/context.md"
+PRESTART_PROMPT="${PRESTART_DIR}/prompt.md"
+mkdir -p "${PRESTART_DIR}"
+printf 'context\n' > "${PRESTART_CONTEXT}"
+printf 'prompt\n' > "${PRESTART_PROMPT}"
+
+set +e
+RUN_WITH_IT_TEST_FAIL_READY_STATE=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity \
+  --issue 47 \
+  --cycle 1 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${PRESTART_CONTEXT}" \
+  --prompt-file "${PRESTART_PROMPT}" \
+  --log-file "${PRESTART_LOG}" \
+  --done-file "${PRESTART_DONE}" \
+  --result-file "${PRESTART_RESULT}" \
+  --state-file "${PRESTART_STATE}" \
+  --issue-dir "${PRESTART_DIR}" \
+  --poll-seconds 1 >"${PRESTART_DIR}/dispatch.out" 2>&1
+prestart_status="$?"
+set -e
+
+[[ "${prestart_status}" != "0" ]] || fail "pre-start state failure must not exit success"
+assert_file_contains "${PRESTART_LOG}" "STATUS|type=dispatch-ready|issue=47|role=complexity|cycle=1" "pre-start failure reaches ready"
+assert_file_contains "${PRESTART_LOG}" "STATUS|type=dispatch-pre-start-failed|issue=47|role=complexity|cycle=1" "pre-start failure is classified"
+assert_not_contains "$(cat "${PRESTART_LOG}")" "STATUS|type=dispatch-start|issue=47|role=complexity|cycle=1" "pre-start failure never starts runner"
 
 cat > "${SMOKE_BIN}/silent-agent" <<'SH'
 #!/usr/bin/env bash
@@ -468,6 +555,106 @@ assert_file_contains "${RECOVER_RESULT}" '"recovered.txt"' "synthesized result r
 assert_file_contains "${RECOVER_RESULT}" '"source": "dispatcher-synthesized"' "synthesized result is auditable"
 assert_file_contains "${RECOVER_STATE}" '"state": "completed"' "recoverable missing result completes"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=45|role=impl|cycle=1" "recovery emits synthesis status"
+
+cat > "${SMOKE_BIN}/wrong-path-modifier-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'wrong-path-modifier-agent 1.0\n'
+  exit 0
+fi
+repo_root="$1"
+git -C "$repo_root" config user.email "test@example.com"
+git -C "$repo_root" config user.name "Test User"
+printf 'change\n' > "$repo_root/wrong-path.txt"
+git -C "$repo_root" add wrong-path.txt
+git -C "$repo_root" commit -q -m "wrong path change"
+commit_sha="$(git -C "$repo_root" rev-parse HEAD)"
+wrong_file="${RUN_WITH_IT_ISSUE_DIR}/report.json"
+mkdir -p "$(dirname "$wrong_file")" "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf '{"schema_version":1,"issue":"%s","role":"modify","status":"success","commit_sha":"%s","files_committed":["wrong-path.txt"],"verification":{"passed":true,"commands":["fake pass"]}}\n' "${RUN_WITH_IT_ISSUE}" "$commit_sha" > "$wrong_file"
+printf 'DONE|issue=%s|role=modify|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE}" > "$RUN_WITH_IT_DONE_FILE"
+SH
+chmod +x "${SMOKE_BIN}/wrong-path-modifier-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+registry["agents"]["wrong-path-modifier"] = {
+    "display_name": "Wrong Path Modifier",
+    "detection": {"command": "wrong-path-modifier-agent", "args": ["--version"]},
+    "invocation": {
+        "command": "wrong-path-modifier-agent",
+        "args_template": ["{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}",
+    },
+    "permission_modes": {"default": "", "available": [""]},
+    "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+    "capability_band": "balanced",
+    "fallback_order": [],
+    "user_model_configuration": {
+        "requires_user_model_config": False,
+        "config_paths": [],
+        "skip_when_unconfigured": False,
+        "skip_message": "",
+    },
+}
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+WRONG_PATH_REPO="${WORK_DIR}/wrong-path-repo"
+WRONG_PATH_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/50"
+WRONG_PATH_CONTEXT="${SMOKE_PROJECT}/wrong-path-context.md"
+WRONG_PATH_RESULT="${WRONG_PATH_ISSUE_DIR}/workers/modify/cycle-1-result.json"
+WRONG_PATH_LOG="${WRONG_PATH_ISSUE_DIR}/workers/modify/cycle-1.log"
+WRONG_PATH_DONE="${WRONG_PATH_ISSUE_DIR}/workers/modify/cycle-1.done"
+WRONG_PATH_STATE="${WRONG_PATH_ISSUE_DIR}/workers/modify/cycle-1.state.json"
+WRONG_PATH_OUTPUT="${WORK_DIR}/wrong-path-dispatch.out"
+mkdir -p "${WRONG_PATH_REPO}"
+git -C "${WRONG_PATH_REPO}" init -q
+git -C "${WRONG_PATH_REPO}" config user.email "test@example.com"
+git -C "${WRONG_PATH_REPO}" config user.name "Test User"
+printf 'baseline\n' > "${WRONG_PATH_REPO}/README.md"
+git -C "${WRONG_PATH_REPO}" add README.md
+git -C "${WRONG_PATH_REPO}" commit -m "baseline" >/dev/null
+printf '# wrong path\n' > "${WRONG_PATH_CONTEXT}"
+
+set +e
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role modify \
+  --issue 50 \
+  --cycle 1 \
+  --agent wrong-path-modifier \
+  --model fake-model \
+  --context-file "${WRONG_PATH_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${WRONG_PATH_LOG}" \
+  --done-file "${WRONG_PATH_DONE}" \
+  --result-file "${WRONG_PATH_RESULT}" \
+  --state-file "${WRONG_PATH_STATE}" \
+  --repo-root "${WRONG_PATH_REPO}" \
+  --issue-dir "${WRONG_PATH_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >"${WRONG_PATH_OUTPUT}" 2>&1
+wrong_path_status="$?"
+set -e
+[[ "${wrong_path_status}" != "0" ]] || fail "wrong-path worker result must not complete"
+assert_file_contains "${WRONG_PATH_OUTPUT}" "reason=missing-result-artifact" "wrong report path does not count as worker result"
+assert_not_contains "$(cat "${WRONG_PATH_RESULT}" 2>/dev/null || true)" '"commands":["fake pass"]' "dispatcher does not trust wrong-path report as worker result"
+report_path_reason="$(python3 "${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py" failure-reason \
+  --role modify \
+  --issue 50 \
+  --result-file "${WRONG_PATH_ISSUE_DIR}/report.json" \
+  --done-file "${WRONG_PATH_DONE}" \
+  --issue-dir "${WRONG_PATH_ISSUE_DIR}" \
+  --repo-root "${WRONG_PATH_REPO}" \
+  --pre-spawn-head "")"
+[[ "${report_path_reason}" == "worker-result-path-is-sub-coordinator-report" ]] || fail "artifact helper rejects report.json as worker result path"
 
 cat > "${SMOKE_BIN}/review-instructions-only-agent" <<'SH'
 #!/usr/bin/env bash

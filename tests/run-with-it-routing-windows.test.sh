@@ -49,6 +49,7 @@ assert_contains_file "$SKILL_FILE" "run-agent.ps1\") --list-agents --detected-on
 assert_not_contains_file "$SKILL_FILE" "native PowerShell can install assets and run \`run-agent.ps1\`, but \`run-with-it\` orchestration requires Bash-only" "skill no longer blocks native PowerShell orchestration"
 
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "run-with-it-dispatch.ps1" "sub-coordinator prompt uses PowerShell dispatcher"
+assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "-Detach" "PowerShell worker launch uses detached dispatcher"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "-StateFile \$WORKER_STATE_FILE" "PowerShell worker launch passes state file"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\issues" "PowerShell examples use issue-scoped artifact folder"
 assert_not_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\done\\issue-" "PowerShell examples do not use legacy done folder"

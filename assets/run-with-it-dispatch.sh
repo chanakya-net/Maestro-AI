@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
+ORIGINAL_ARGS=("$@")
 
 ASSET_ROOT="${ASSETS_DEST:-}"
 ROLE=""
@@ -28,6 +29,9 @@ STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-300}"
 TIMEOUT_SECONDS="${RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS:-0}"
 DRY_RUN=0
 VALIDATE_ONLY=0
+DETACH=0
+DETACHED_CHILD="${RUN_WITH_IT_DETACHED_CHILD:-0}"
+DISPATCH_OUT_FILE=""
 
 fail() {
   echo "run-with-it-dispatch.sh: $1" >&2
@@ -44,6 +48,7 @@ Usage:
 Modes:
   --dry-run        Print the wrapped run-agent.sh invocation.
   --validate-only Validate inputs and emit dispatch-ready status, but do not spawn.
+  --detach        Start a durable detached dispatcher child and return after recording its PID.
 EOF
 }
 
@@ -72,6 +77,8 @@ while [ "$#" -gt 0 ]; do
     --timeout-seconds) TIMEOUT_SECONDS="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --validate-only) VALIDATE_ONLY=1; shift ;;
+    --detach) DETACH=1; shift ;;
+    --dispatch-out-file) DISPATCH_OUT_FILE="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -181,6 +188,7 @@ result_artifact_failure_reason() {
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \
     --done-file "$DONE_FILE" \
+    --issue-dir "$ISSUE_DIR" \
     --repo-root "$(repo_root_for_worker)" \
     --pre-spawn-head "${pre_spawn_head:-}"
 }
@@ -191,6 +199,7 @@ synthesize_result_artifact_if_possible() {
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \
     --done-file "$DONE_FILE" \
+    --issue-dir "$ISSUE_DIR" \
     --repo-root "$(repo_root_for_worker)" \
     --pre-spawn-head "${pre_spawn_head:-}" >/dev/null 2>&1
 }
@@ -288,6 +297,10 @@ write_worker_state() {
   if [ -n "$stall_reason" ]; then stall_reason_json="$(json_string "$stall_reason")"; fi
 
   tmp_file="${STATE_FILE}.tmp.$$"
+  if [ "${RUN_WITH_IT_TEST_FAIL_READY_STATE:-0}" = "1" ] && [ "$state" = "ready" ]; then
+    : > "$tmp_file"
+    return 98
+  fi
   cat > "$tmp_file" <<JSON
 {
   "schema_version": 1,
@@ -354,10 +367,36 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
+if [ "$DETACH" = 1 ] && [ "$DETACHED_CHILD" != "1" ] && [ "$VALIDATE_ONLY" != "1" ]; then
+  if [ -z "$DISPATCH_OUT_FILE" ]; then
+    if [[ "$LOG_FILE" == *.log ]]; then
+      DISPATCH_OUT_FILE="${LOG_FILE%.log}.dispatch.out"
+    else
+      DISPATCH_OUT_FILE="${LOG_FILE}.dispatch.out"
+    fi
+  fi
+  mkdir -p "$(dirname "$DISPATCH_OUT_FILE")"
+  RUN_WITH_IT_DETACHED_CHILD=1 nohup "$0" "${ORIGINAL_ARGS[@]}" >"$DISPATCH_OUT_FILE" 2>&1 < /dev/null &
+  detached_pid="$!"
+  write_status "STATUS|type=dispatch-detached|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${detached_pid}|out_file=${DISPATCH_OUT_FILE}"
+  exit 0
+fi
+
 pre_spawn_head=""
 if is_implementation_role && git -C "$(repo_root_for_worker)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   pre_spawn_head="$(git -C "$(repo_root_for_worker)" rev-parse HEAD 2>/dev/null || true)"
 fi
+
+dispatch_phase="pre-ready"
+on_dispatch_error() {
+  local exit_code="$?"
+  trap - ERR
+  if [ "${dispatch_phase:-}" = "ready-state" ]; then
+    write_status "STATUS|type=dispatch-pre-start-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|reason=state-write-failed|exit_code=${exit_code}|state_file=${STATE_FILE}"
+  fi
+  exit "$exit_code"
+}
+trap on_dispatch_error ERR
 
 started_at="$(date +%s)"
 started_iso="$(iso_now)"
@@ -371,16 +410,20 @@ last_state="ready"
 
 write_status "STATUS|type=dispatch-ready|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}|result_file=${RESULT_FILE}"
 last_log_signature="$(log_signature)"
+dispatch_phase="ready-state"
 write_worker_state "ready" "false"
 
 if [ "$VALIDATE_ONLY" = 1 ]; then
+  dispatch_phase="validate-complete"
   exit 0
 fi
 
+dispatch_phase="starting"
 write_status "STATUS|type=dispatch-start|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}"
 last_log_signature="$(log_signature)"
 last_state="starting"
 write_worker_state "starting" "false"
+dispatch_phase="running"
 
 GUI_MODE="${GUI_MODE:-0}" \
 AGENT_REGISTRY_FILE="$REGISTRY_FILE" \

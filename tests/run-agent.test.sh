@@ -56,10 +56,14 @@ assert_not_contains "${prompt_contract}" "STATUS|type=heartbeat|issue=<issue-or-
 assert_not_contains "${prompt_contract}" "at least once every 60 seconds" "implementation prompt does not request heartbeat cadence"
 assert_contains "${prompt_contract}" 'RUN_WITH_IT_RESULT_FILE' "implementation prompt names dispatcher result path"
 assert_contains "${prompt_contract}" 'RUN_WITH_IT_DONE_FILE' "implementation prompt names dispatcher done path"
+assert_contains "${prompt_contract}" 'Never write implementation handoff JSON to SUB_COORD_REPORT_FILE' "implementation prompt forbids report path handoff"
+assert_contains "${prompt_contract}" 'If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins' "implementation prompt resolves path ambiguity"
 
 modifier_contract="$(<"${ROOT_DIR}/assets/modifier-prompt.md")"
 assert_contains "${modifier_contract}" 'RUN_WITH_IT_RESULT_FILE' "modifier prompt names dispatcher result path"
 assert_contains "${modifier_contract}" 'RUN_WITH_IT_DONE_FILE' "modifier prompt names dispatcher done path"
+assert_contains "${modifier_contract}" 'Never write modification handoff JSON to SUB_COORD_REPORT_FILE' "modifier prompt forbids report path handoff"
+assert_contains "${modifier_contract}" 'If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins' "modifier prompt resolves path ambiguity"
 
 review_contract="$(<"${ROOT_DIR}/assets/review-prompt.md")"
 assert_contains "${review_contract}" 'RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE' "review prompt ties dispatcher result path to reviewer status JSON"

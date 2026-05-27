@@ -456,6 +456,10 @@ Execution-mode requirement (critical):
 
 `run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
 
+When a Sub-Coordinator launches worker dispatchers from a short-lived shell/tool call, use `--detach` on Bash or `-Detach` on native PowerShell, then read the dispatcher PID from the dispatcher-owned state file. Do not rely on a raw shell background job and `WORKER_PID=$!` for worker dispatches.
+
+Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json`; those paths are reserved for the Sub-Coordinator's final compact report. Worker result artifacts belong under `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
+
 ```bash
 run-with-it-dispatch.sh \
   --role <sub-coord|complexity|impl|review|modify|merge-recovery> \
@@ -473,10 +477,11 @@ run-with-it-dispatch.sh \
   --status-file <file> \
   --events-log <file> \
   --quiet-seconds <seconds> \
-  --stall-seconds <seconds>
+  --stall-seconds <seconds> \
+  --detach
 ```
 
-PowerShell uses the same field names with PowerShell-style parameters, for example `-Role impl -Issue 123 -LogFile <file> -DoneFile <file> -ResultFile <file> -StateFile <file>`.
+PowerShell uses the same field names with PowerShell-style parameters, for example `-Role impl -Issue 123 -LogFile <file> -DoneFile <file> -ResultFile <file> -StateFile <file> -Detach`.
 
 Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--validate-only` / `-ValidateOnly` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
 

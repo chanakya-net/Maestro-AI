@@ -112,6 +112,11 @@ Path contract:
 - Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
 - Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
 
+Path safety:
+- Never write implementation handoff JSON to SUB_COORD_REPORT_FILE.
+- Never write implementation handoff JSON to `.run-with-it/issues/<n>/report.json`.
+- If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins.
+
 Bash:
 ```bash
 mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"

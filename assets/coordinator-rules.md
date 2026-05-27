@@ -50,16 +50,18 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Do not spawn multiple worker-agents for the same role and cycle.
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
 - Spawn every worker through the platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`), which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, state-file, and monitoring contract through `worker-watch.sh` / `worker-watch.ps1`.
+- Launch worker dispatchers with `--detach` when invoking them from a short-lived shell/tool call. A raw background `&` job may receive shell job-control cleanup before it writes `dispatch-start`.
 - Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_RESULT_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
 - Set each worker's `RUN_WITH_IT_LOG_FILE` to an issue-scoped path such as `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log`.
 - Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
 - Set each worker's `RUN_WITH_IT_RESULT_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
+- Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json`; those paths are reserved for the Sub-Coordinator's final compact report.
 - Set each worker's `RUN_WITH_IT_STATE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`.
 - The dispatcher validates role artifacts through `run-with-it-artifacts.py`. Treat its `stall_reason` values as authoritative for missing/invalid artifacts; do not infer completion from logs or chat output.
 
 ## Progress Monitoring Rules
 
-- Start every worker-agent as a background process, capture `WORKER_PID=$!`, and persist that dispatcher PID plus role, cycle, agent, model, log file, done file, result file, and state file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
+- Start every worker-agent through the detached dispatcher mode, capture the dispatcher PID from `RUN_WITH_IT_STATE_FILE`, and persist that dispatcher PID plus role, cycle, agent, model, log file, done file, result file, and state file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
 - Poll worker liveness every `WORKER_POLL_SECONDS` seconds, default `20`.
 - Summarize worker progress from the dispatcher-maintained `RUN_WITH_IT_STATE_FILE` and result artifacts. Do not load raw worker logs into coordinator context.
 - Worker heartbeats are legacy advisory signals only. The watchdog state file is the source of truth for liveness because it is updated by the dispatcher without requiring worker heartbeat output.

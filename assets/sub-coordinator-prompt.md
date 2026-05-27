@@ -148,12 +148,39 @@ State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_
 
 ## Background Worker Monitoring Contract
 
-Start every worker as a monitored background process. After spawning a background worker, monitor it until either:
+Start every worker through the detached platform dispatcher. After spawning a worker dispatcher, monitor it until either:
 
 1. `RUN_WITH_IT_DONE_FILE` exists and the role-specific artifacts are valid, or
 2. the process exits without valid artifacts.
 
 Every worker launch must use the platform dispatcher so the Sub-Coordinator and Main Orchestrator share the same launch and monitor contract. The dispatcher wraps `run-agent.sh` / `run-agent.ps1`, forwards the `RUN_WITH_IT_*` environment, captures the child PID, writes dispatch status lines, and monitors with `assets/worker-watch.sh` / `assets/worker-watch.ps1`.
+
+Define this Bash helper once before the first worker dispatch and use it after every detached dispatcher invocation:
+
+```bash
+wait_for_worker_dispatcher_pid() {
+  local state_file="$1"
+  python3 - "$state_file" <<'PY'
+import json
+import sys
+import time
+
+path = sys.argv[1]
+for _ in range(100):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        pid = data.get("dispatcher_pid")
+        if pid:
+            print(pid)
+            raise SystemExit(0)
+    except (OSError, json.JSONDecodeError):
+        pass
+    time.sleep(0.1)
+raise SystemExit(1)
+PY
+}
+```
 
 Every Bash worker launch must follow this shape:
 
@@ -183,9 +210,10 @@ WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.j
   --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
   --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
   --quiet-seconds "$WORKER_QUIET_SECONDS" \
-  --stall-seconds "$WORKER_STALL_SECONDS" &
+  --stall-seconds "$WORKER_STALL_SECONDS" \
+  --detach
 
-WORKER_PID=$!
+WORKER_PID="$(wait_for_worker_dispatcher_pid "$WORKER_STATE_FILE")"
 ```
 
 Every native PowerShell worker launch must follow this shape and keep all artifacts under `.run-with-it\issues\<n>\workers\<role>`:
@@ -201,33 +229,31 @@ $IMPL_DONE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).done"
 $IMPL_RESULT_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE)-result.json"
 $WORKER_STATE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).state.json"
 New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
-$WORKER_PROCESS = Start-Process -FilePath "powershell" -ArgumentList @(
-  "-NoProfile", "-File", (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1"),
-  "-AssetRoot", $ASSET_ROOT,
-  "-Role", "impl",
-  "-Issue", $env:SUB_COORD_ISSUE_NUMBER,
-  "-Cycle", $env:CYCLE,
-  "-Agent", $AGENT,
-  "-Model", $MODEL,
-  "-ContextFile", $CONTEXT_PAYLOAD_FILE,
-  "-PromptFile", (Join-Path $ASSET_ROOT "prompt.md"),
-  "-LogFile", $IMPL_LOG_FILE,
-  "-DoneFile", $IMPL_DONE_FILE,
-  "-ResultFile", $IMPL_RESULT_FILE,
-  "-StateFile", $WORKER_STATE_FILE,
-  "-RepoRoot", $ISSUE_WORKTREE_PATH,
-  "-IssueDir", $RUN_WITH_IT_ISSUE_DIR,
-  "-StatusFile", $env:RUN_WITH_IT_STATUS_FILE,
-  "-EventsLog", $env:RUN_WITH_IT_EVENTS_LOG,
-  "-PollSeconds", $WORKER_POLL_SECONDS,
-  "-QuietSeconds", $WORKER_QUIET_SECONDS,
-  "-StallSeconds", $WORKER_STALL_SECONDS
-) -PassThru
-# Foreground/debug equivalent: -StateFile $WORKER_STATE_FILE
-$WORKER_PID = $WORKER_PROCESS.Id
+& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+  -AssetRoot $ASSET_ROOT `
+  -Role impl `
+  -Issue $env:SUB_COORD_ISSUE_NUMBER `
+  -Cycle $env:CYCLE `
+  -Agent $AGENT `
+  -Model $MODEL `
+  -ContextFile $CONTEXT_PAYLOAD_FILE `
+  -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
+  -LogFile $IMPL_LOG_FILE `
+  -DoneFile $IMPL_DONE_FILE `
+  -ResultFile $IMPL_RESULT_FILE `
+  -StateFile $WORKER_STATE_FILE `
+  -RepoRoot $ISSUE_WORKTREE_PATH `
+  -IssueDir $RUN_WITH_IT_ISSUE_DIR `
+  -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
+  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
+  -PollSeconds $WORKER_POLL_SECONDS `
+  -QuietSeconds $WORKER_QUIET_SECONDS `
+  -StallSeconds $WORKER_STALL_SECONDS `
+  -Detach
+$WORKER_PID = (Get-Content -Raw -Path $WORKER_STATE_FILE | ConvertFrom-Json).dispatcher_pid
 ```
 
-Immediately after `WORKER_PID=$!`, write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with the captured dispatcher PID, role, cycle, agent, model, log file, done file, result file, state file, and started timestamp before monitoring begins.
+Immediately after resolving `WORKER_PID` from the dispatcher state file, write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with the captured dispatcher PID, role, cycle, agent, model, log file, done file, result file, state file, and started timestamp before monitoring begins.
 
 Use this issue directory setup before creating any worker paths:
 
@@ -241,13 +267,24 @@ SUB_COORD_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/sub-state.json"
 
 Every spawned worker receives `RUN_WITH_IT_ISSUE_DIR` and a role-specific `RUN_WITH_IT_WORKER_DIR="$RUN_WITH_IT_ISSUE_DIR/workers/<role>"`.
 
+Worker payloads must include `RUN_WITH_IT_RESULT_FILE=` at the top, followed by the other role-specific artifact paths:
+
+```text
+RUN_WITH_IT_RESULT_FILE=<absolute .run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json>
+RUN_WITH_IT_DONE_FILE=<absolute .run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done>
+RUN_WITH_IT_ROLE=<impl|review|modify|complexity>
+RUN_WITH_IT_ISSUE=<n>
+```
+
+Worker payloads must not include `SUB_COORD_REPORT_FILE`. Do not pass `SUB_COORD_REPORT_FILE` to worker payloads and do not instruct workers to write `.run-with-it/issues/<n>/report.json`; that path is reserved for the Sub-Coordinator's final compact report.
+
 Every `WORKER_POLL_SECONDS` seconds, poll the dispatcher state file. Read `WORKER_STATE_FILE`, not the raw worker log. The dispatcher updates that state file from objective PID, done/result, and captured log activity. PID liveness is diagnostic only. Completion requires both the done file and valid artifacts.
 
 Worker heartbeats are legacy progress hints only. A worker can be busy, blocked, looping, or produce no heartbeat output. Treat `state="quiet"` as suspicious and `state="stalled"` / `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for `WORKER_STALL_SECONDS`.
 
 Every `WORKER_LOG_SUMMARY_SECONDS` seconds, if the worker log tail changed, read only the newest `${WORKER_LOG_TAIL_LINES:-5}` lines, write a concise `STATUS|type=worker-log-tail|...` summary to `$SUB_COORD_LOG_FILE`, update `$RUN_WITH_IT_STATUS_FILE`, and append `$RUN_WITH_IT_EVENTS_LOG`. Do not store the raw log tail in memory or in the state file.
 
-If the PID is dead, immediately `wait "$WORKER_PID"` to capture the runner exit code. If done file and valid artifacts are valid, continue to the next phase. If not, treat the phase as failed or follow the documented fallback chain for that phase.
+If the PID is dead, inspect only the done file and required artifacts. If done file and valid artifacts are valid, continue to the next phase. If not, treat the phase as failed or follow the documented fallback chain for that phase.
 
 ## Appendix A: Routing Contract
 
@@ -395,9 +432,10 @@ mkdir -p "$COMPLEXITY_WORKER_DIR"
   --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
   --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
   --quiet-seconds "$WORKER_QUIET_SECONDS" \
-  --stall-seconds "$WORKER_STALL_SECONDS" &
+  --stall-seconds "$WORKER_STALL_SECONDS" \
+  --detach
 
-WORKER_PID=$!
+WORKER_PID="$(wait_for_worker_dispatcher_pid "$COMPLEXITY_STATE_FILE")"
 ```
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, `COMPLEXITY_LOG_FILE`, `COMPLEXITY_DONE_FILE`, `COMPLEXITY_RESULT_FILE`, and `COMPLEXITY_STATE_FILE`. Monitor `COMPLEXITY_STATE_FILE`; complexity is complete only after the done file and valid artifacts include a valid `COMPLEXITY|` line and JSON blob.
@@ -425,7 +463,8 @@ New-Item -ItemType Directory -Force -Path $COMPLEXITY_WORKER_DIR | Out-Null
   -StateFile $COMPLEXITY_STATE_FILE `
   -IssueDir $RUN_WITH_IT_ISSUE_DIR `
   -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
-  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG
+  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
+  -Detach
 ```
 
 Sub-agent output handling:
@@ -534,9 +573,10 @@ mkdir -p "$IMPL_WORKER_DIR"
   --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
   --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
   --quiet-seconds "$WORKER_QUIET_SECONDS" \
-  --stall-seconds "$WORKER_STALL_SECONDS" &
+  --stall-seconds "$WORKER_STALL_SECONDS" \
+  --detach
 
-WORKER_PID=$!
+WORKER_PID="$(wait_for_worker_dispatcher_pid "$IMPL_STATE_FILE")"
 ```
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
@@ -565,7 +605,8 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -RepoRoot $ISSUE_WORKTREE_PATH `
   -IssueDir $RUN_WITH_IT_ISSUE_DIR `
   -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
-  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG
+  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
+  -Detach
 ```
 
 After the implementer runner completes, **immediately capture the commit SHA and validate a commit was actually made**:
@@ -714,9 +755,10 @@ Gather the `--numstat` data already collected via Appendix C after the implement
      --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
      --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
      --quiet-seconds "$WORKER_QUIET_SECONDS" \
-     --stall-seconds "$WORKER_STALL_SECONDS" &
+     --stall-seconds "$WORKER_STALL_SECONDS" \
+     --detach
 
-   WORKER_PID=$!
+   WORKER_PID="$(wait_for_worker_dispatcher_pid "$REVIEW_STATE_FILE")"
    ```
 
 4. Emit before reviewer starts: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
@@ -794,9 +836,10 @@ The implementer (or modifier) has already committed all changes as part of its m
        --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
        --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
        --quiet-seconds "$WORKER_QUIET_SECONDS" \
-       --stall-seconds "$WORKER_STALL_SECONDS" &
+       --stall-seconds "$WORKER_STALL_SECONDS" \
+       --detach
 
-     WORKER_PID=$!
+     WORKER_PID="$(wait_for_worker_dispatcher_pid "$MODIFY_STATE_FILE")"
      ```
 
      Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.

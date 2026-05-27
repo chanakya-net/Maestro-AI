@@ -20,6 +20,9 @@ param(
     [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
     [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
     [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
+    [string]$DispatchOutFile = "",
+    [switch]$Detach,
+    [switch]$DetachedChild,
     [switch]$DryRun,
     [switch]$ValidateOnly
 )
@@ -218,6 +221,7 @@ function Invoke-ArtifactHelper([string]$command) {
         --issue $Issue `
         --result-file $ResultFile `
         --done-file $DoneFile `
+        --issue-dir $IssueDir `
         --repo-root $repoRootValue `
         --pre-spawn-head $preSpawnHead
 }
@@ -306,6 +310,51 @@ if ($DryRun) {
     exit 0
 }
 
+if ($Detach -and -not $DetachedChild -and -not $ValidateOnly) {
+    if (-not $DispatchOutFile) {
+        if ($LogFile.EndsWith(".log", [StringComparison]::OrdinalIgnoreCase)) {
+            $DispatchOutFile = "$($LogFile.Substring(0, $LogFile.Length - 4)).dispatch.out"
+        } else {
+            $DispatchOutFile = "$LogFile.dispatch.out"
+        }
+    }
+    Ensure-ParentDir $DispatchOutFile
+    $dispatchErrFile = "$DispatchOutFile.err"
+    Ensure-ParentDir $dispatchErrFile
+    $powerShellExe = Get-PowerShellExe
+    $detachArgs = @(
+        "-NoProfile",
+        "-File", $PSCommandPath,
+        "-AssetRoot", $AssetRoot,
+        "-Role", $Role,
+        "-Issue", $Issue,
+        "-Cycle", $Cycle,
+        "-Agent", $Agent,
+        "-Model", $Model,
+        "-ContextFile", $ContextFile,
+        "-PromptFile", $PromptFile,
+        "-LogFile", $LogFile,
+        "-DoneFile", $DoneFile,
+        "-ResultFile", $ResultFile,
+        "-StateFile", $StateFile,
+        "-RepoRoot", $RepoRoot,
+        "-IssueDir", $IssueDir,
+        "-StatusFile", $StatusFile,
+        "-EventsLog", $EventsLog,
+        "-TailStateFile", $TailStateFile,
+        "-PollSeconds", $PollSeconds,
+        "-QuietSeconds", $QuietSeconds,
+        "-StallSeconds", $StallSeconds,
+        "-TimeoutSeconds", $TimeoutSeconds,
+        "-DispatchOutFile", $DispatchOutFile,
+        "-Detach",
+        "-DetachedChild"
+    )
+    $process = Start-Process -FilePath $powerShellExe -ArgumentList (Join-ProcessArguments $detachArgs) -RedirectStandardOutput $DispatchOutFile -RedirectStandardError $dispatchErrFile -PassThru
+    Write-Status "STATUS|type=dispatch-detached|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|out_file=$DispatchOutFile"
+    exit 0
+}
+
 $script:startedAt = Get-UnixNow
 $script:startedIso = Get-IsoNow
 $script:lastOutputEpoch = $script:startedAt
@@ -329,8 +378,13 @@ if (Test-ImplementationRole) {
     }
 }
 
-Write-Status "STATUS|type=dispatch-ready|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|result_file=$ResultFile"
-Write-WorkerState "ready" $false
+try {
+    Write-Status "STATUS|type=dispatch-ready|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|result_file=$ResultFile"
+    Write-WorkerState "ready" $false
+} catch {
+    Write-Status "STATUS|type=dispatch-pre-start-failed|issue=$Issue|role=$Role$cycleField|reason=state-write-failed|state_file=$StateFile"
+    throw
+}
 
 if ($ValidateOnly) {
     exit 0
