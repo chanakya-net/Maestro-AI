@@ -33,6 +33,7 @@ trap cleanup EXIT
 
 STATE_FILE="$WORK_DIR/main-state.json"
 REPORT_FILE="$WORK_DIR/report.json"
+DERIVED_REPORT_FILE="$WORK_DIR/report-derived.json"
 RECOVERY_CONTEXT="$WORK_DIR/merge-recovery-context.md"
 RECOVERY_REPORT="$WORK_DIR/merge-recovery-report.json"
 
@@ -105,6 +106,43 @@ assert issue["status"] == "completed"
 assert state["active_pool_issues"] == []
 assert any(row == f"STATUS|type=ledger|task=2|outcome=completed|report={sys.argv[1].replace('main-state.json', 'report.json')}" for row in state["ledger_rows"])
 assert state["completed_summaries"][-1]["commit_sha"] == "abc123"
+PY
+
+python3 "$STATE_HELPER" mark-in-progress \
+  --state-file "$STATE_FILE" \
+  --issue 3 \
+  --pid 12346 \
+  --context-file "$WORK_DIR/sub-3.md" \
+  --log-file "$WORK_DIR/issue-3.log" \
+  --done-file "$WORK_DIR/issue-3.done" \
+  --report-file "$DERIVED_REPORT_FILE" \
+  --issue-dir "$WORK_DIR/issues/3"
+
+cat > "$DERIVED_REPORT_FILE" <<'JSON'
+{
+  "outcome": "completed",
+  "summary": "helper completed with compact file stats",
+  "files_modified": [
+    { "path": "alpha.md", "lines_added": 5, "lines_deleted": 0 },
+    { "path": "bravo.md", "lines_added": 2, "lines_deleted": 1 }
+  ],
+  "review_cycles": 0,
+  "commit_sha": "def456"
+}
+JSON
+
+derived_outcome="$(python3 "$STATE_HELPER" finalize-issue --state-file "$STATE_FILE" --issue 3 --report-file "$DERIVED_REPORT_FILE")"
+assert_eq "$derived_outcome" "completed" "state helper reports finalized derived issue outcome"
+
+python3 - "$STATE_FILE" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+summary = state["completed_summaries"][-1]
+assert summary["issue"] == 3
+assert summary["files_modified_count"] == 2
+assert summary["lines_added"] == 7
+assert summary["lines_deleted"] == 1
+assert summary["commit_sha"] == "def456"
 PY
 
 comment="$(python3 "$GITHUB_HELPER" render-comment --outcome completed --report-file "$REPORT_FILE")"

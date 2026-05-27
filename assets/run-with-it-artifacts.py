@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -214,6 +215,20 @@ def review_instructions_file(result_file: str) -> str:
     return ""
 
 
+def canonical_review_retry_status_file(result_file: str) -> str:
+    match = re.match(r"^(.*cycle-[0-9]+)-attempt-[0-9]+-status\.json$", result_file)
+    if not match:
+        return ""
+    return f"{match.group(1)}-status.json"
+
+
+def canonical_complexity_retry_result_file(result_file: str) -> str:
+    match = re.match(r"^(.*cycle-[0-9]+)-attempt-[0-9]+-result\.json$", result_file)
+    if not match:
+        return ""
+    return f"{match.group(1)}-result.json"
+
+
 def nitpick_only(comments: list[Any]) -> bool:
     if not comments:
         return False
@@ -322,6 +337,32 @@ def synthesize_review(args: argparse.Namespace) -> bool:
     if args.role != "review":
         return False
 
+    canonical_status_file = canonical_review_retry_status_file(args.result_file)
+    if canonical_status_file:
+        canonical_status_payload, canonical_status_error = load_json(canonical_status_file)
+        canonical_instructions_file = review_instructions_file(canonical_status_file)
+        canonical_instructions_payload: Any | None = None
+        canonical_instructions_error: str | None = "missing"
+        if canonical_instructions_file:
+            canonical_instructions_payload, canonical_instructions_error = load_json(canonical_instructions_file)
+
+        if (
+            not canonical_status_error
+            and valid_review_status(canonical_status_payload)
+            and not canonical_instructions_error
+            and valid_review_instructions(canonical_instructions_payload)
+            and canonical_status_payload.get("verdict") == canonical_instructions_payload.get("verdict")
+        ):
+            status_copy = dict(canonical_status_payload)
+            instructions_copy = dict(canonical_instructions_payload)
+            status_copy.setdefault("source", "dispatcher-copied-from-canonical-retry")
+            instructions_copy.setdefault("source", "dispatcher-copied-from-canonical-retry")
+            write_json_atomic(args.result_file, status_copy)
+            attempt_instructions_file = review_instructions_file(args.result_file)
+            if attempt_instructions_file:
+                write_json_atomic(attempt_instructions_file, instructions_copy)
+            return result_failure_reason(args) == ""
+
     status_payload, status_error = load_json(args.result_file)
     instructions_file = review_instructions_file(args.result_file)
     instructions_payload: Any | None = None
@@ -368,6 +409,16 @@ def synthesize_complexity(args: argparse.Namespace) -> bool:
         return False
     if os.path.exists(args.result_file) and os.path.getsize(args.result_file) > 0:
         return False
+
+    canonical_result_file = canonical_complexity_retry_result_file(args.result_file)
+    if canonical_result_file:
+        canonical_payload, canonical_error = load_json(canonical_result_file)
+        if not canonical_error and valid_complexity_payload(canonical_payload):
+            payload = dict(canonical_payload)
+            payload.setdefault("source", "dispatcher-copied-from-canonical-retry")
+            write_json_atomic(args.result_file, payload)
+            return result_failure_reason(args) == ""
+
     if not args.done_file or not os.path.exists(args.done_file) or os.path.getsize(args.done_file) == 0:
         return False
 

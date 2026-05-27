@@ -216,6 +216,10 @@ WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.j
 WORKER_PID="$(wait_for_worker_dispatcher_pid "$WORKER_STATE_FILE")"
 ```
 
+Bash `--detach` is implemented by the dispatcher as a new process session/process group launch. Do not replace it with a raw `nohup ... &` or plain background job; those can stay tied to the short-lived tool call and die before `dispatch-pid`.
+
+If the detached dispatcher command exits non-zero, emits `STATUS|type=dispatch-bootstrap-failed`, or the dispatcher PID is dead while `RUN_WITH_IT_STATE_FILE` still has no `runner_pid`, treat this as launch bootstrap loss rather than a worker/model result. Retry that same worker once in foreground monitor mode by invoking `run-with-it-dispatch.sh` without `--detach` and with the **same** log, done, result, state, repo-root, issue-dir, status, and events paths. Only after the foreground retry produces a concrete dispatcher failure or missing/invalid artifact should you consume the role's fallback budget.
+
 Every native PowerShell worker launch must follow this shape and keep all artifacts under `.run-with-it\issues\<n>\workers\<role>`:
 
 ```powershell
@@ -782,7 +786,7 @@ For any review worker state with `state="failed"` and `stall_reason` in this set
 
 apply this exact policy:
 1. Emit `STATUS|type=review-artifact-failed|issue=<n>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
-2. Retry the **same review cycle** up to `MAX_REVIEW_ARTIFACT_RETRIES` attempts (default `2`) with a different reviewer model when available. Re-run routing with the previous reviewer model in `EXCLUDE_MODEL`; if the same agent is selected with a different model, that is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-status.json` and `cycle-${CYCLE}-attempt-${ATTEMPT}-instructions.json` so stale partial JSON cannot satisfy the retry.
+2. Retry the **same review cycle** up to `MAX_REVIEW_ARTIFACT_RETRIES` attempts (default `2`) with a different reviewer model when available. Re-run routing with the previous reviewer model in `EXCLUDE_MODEL`; if the same agent is selected with a different model, that is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-status.json` and `cycle-${CYCLE}-attempt-${ATTEMPT}-instructions.json` so stale partial JSON cannot satisfy the retry. When you use attempt-specific paths, regenerate the reviewer context payload so its `RUN_WITH_IT_RESULT_FILE`, `REVIEWER_STATUS_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` entries exactly match the dispatcher `--result-file` and sibling instructions path for that attempt.
 3. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not reviewer verdicts.
 4. If a retry produces valid review artifacts, continue normal verdict routing for the original cycle.
 5. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["reviewer-missing-result-artifact"]` plus the final dispatcher `stall_reason`, `REVIEW_STATE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` paths in the summary/evidence. Do not report `failed-review`, do not spawn a modifier, and do not merge.
@@ -1073,6 +1077,8 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.state.json`
 
 The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are legacy advisory hints; log activity observed by the dispatcher is the liveness signal.
+
+For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Treat this as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
 
 ### Worker Done Files
 

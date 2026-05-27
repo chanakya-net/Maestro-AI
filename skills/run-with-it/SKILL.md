@@ -458,6 +458,10 @@ Execution-mode requirement (critical):
 
 When a Sub-Coordinator launches worker dispatchers from a short-lived shell/tool call, use `--detach` on Bash or `-Detach` on native PowerShell, then read the dispatcher PID from the dispatcher-owned state file. Do not rely on a raw shell background job and `WORKER_PID=$!` for worker dispatches.
 
+Bash `--detach` creates a new process session/process group before returning. This is required because plain `nohup ... &` can remain attached to the tool-call process group and be killed before the worker runner PID is recorded.
+
+If a detached worker dispatcher exits or emits `STATUS|type=dispatch-bootstrap-failed` before the state file records `runner_pid`, treat it as launch bootstrap loss rather than a worker/model result. Retry the same worker once in foreground monitor mode with the same log, done, result, state, repo-root, issue-dir, status, and events paths so the dispatcher captures either `dispatch-pid` or a concrete artifact failure.
+
 Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json`; those paths are reserved for the Sub-Coordinator's final compact report. Worker result artifacts belong under `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
 
 ```bash
@@ -486,6 +490,8 @@ PowerShell uses the same field names with PowerShell-style parameters, for examp
 Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--validate-only` / `-ValidateOnly` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
 
 Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` means the runner is alive but the captured role log has been silent beyond the quiet threshold. `state="stalled"` with `stall_reason="alive-but-silent"` means the worker is alive, incomplete, and silent beyond the stall threshold. Completion still requires the done sentinel and valid role-specific result artifacts.
+
+On Bash, stalled roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` auto-fail in the dispatcher. The default is `complexity`, so a silent complexity scorer is terminated and surfaced as `dispatch-failed` instead of blocking the rolling pool indefinitely.
 
 ## `run-agent.sh` — Full Syntax Reference
 

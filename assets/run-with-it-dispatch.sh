@@ -27,6 +27,8 @@ POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
 QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
 STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-300}"
 TIMEOUT_SECONDS="${RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS:-0}"
+DETACH_BOOTSTRAP_SECONDS="${RUN_WITH_IT_DETACH_BOOTSTRAP_SECONDS:-3}"
+AUTO_FAIL_STALLED_ROLES="${RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity}"
 DRY_RUN=0
 VALIDATE_ONLY=0
 DETACH=0
@@ -178,6 +180,13 @@ is_implementation_role() {
   [ "$ROLE" = "impl" ] || [ "$ROLE" = "modify" ]
 }
 
+should_auto_fail_stalled_role() {
+  case ",${AUTO_FAIL_STALLED_ROLES}," in
+    *",${ROLE},"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 repo_root_for_worker() {
   printf '%s\n' "${REPO_ROOT_OVERRIDE:-${REPO_ROOT:-$(pwd -P)}}"
 }
@@ -302,6 +311,10 @@ write_worker_state() {
     : > "$tmp_file"
     return 98
   fi
+  if [ "${RUN_WITH_IT_TEST_FAIL_STARTING_STATE:-0}" = "1" ] && [ "$state" = "starting" ]; then
+    : > "$tmp_file"
+    return 97
+  fi
   cat > "$tmp_file" <<JSON
 {
   "schema_version": 1,
@@ -356,6 +369,23 @@ refresh_log_activity() {
   fi
 }
 
+terminate_runner_tree() {
+  local target="${1:-${pid:-}}" child
+  if [ -z "$target" ]; then
+    return 0
+  fi
+  if command -v pgrep >/dev/null 2>&1; then
+    for child in $(pgrep -P "$target" 2>/dev/null || true); do
+      terminate_runner_tree "$child"
+    done
+  fi
+  kill -TERM "$target" 2>/dev/null || true
+  sleep 1
+  if kill -0 "$target" 2>/dev/null; then
+    kill -KILL "$target" 2>/dev/null || true
+  fi
+}
+
 cycle_field=""
 if [ -n "$CYCLE" ]; then
   cycle_field="|cycle=${CYCLE}"
@@ -377,9 +407,82 @@ if [ "$DETACH" = 1 ] && [ "$DETACHED_CHILD" != "1" ] && [ "$VALIDATE_ONLY" != "1
     fi
   fi
   mkdir -p "$(dirname "$DISPATCH_OUT_FILE")"
-  RUN_WITH_IT_DETACHED_CHILD=1 nohup "$0" "${ORIGINAL_ARGS[@]}" >"$DISPATCH_OUT_FILE" 2>&1 < /dev/null &
-  detached_pid="$!"
+  # nohup alone can remain in the caller's process group; create a new session
+  # so short-lived tool-call cleanup cannot kill the dispatcher before runner PID.
+  detached_pid="$("$PYTHON_BIN" - "$DISPATCH_OUT_FILE" "$0" "${ORIGINAL_ARGS[@]}" <<'PY'
+import os
+import subprocess
+import sys
+
+out_file = sys.argv[1]
+command = sys.argv[2:]
+env = os.environ.copy()
+env["RUN_WITH_IT_DETACHED_CHILD"] = "1"
+
+with open(os.devnull, "rb") as stdin, open(out_file, "wb") as stdout:
+    process = subprocess.Popen(
+        command,
+        stdin=stdin,
+        stdout=stdout,
+        stderr=subprocess.STDOUT,
+        env=env,
+        close_fds=True,
+        start_new_session=True,
+    )
+
+print(process.pid)
+PY
+)"
   write_status "STATUS|type=dispatch-detached|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${detached_pid}|out_file=${DISPATCH_OUT_FILE}"
+  bootstrap_checks=0
+  case "$DETACH_BOOTSTRAP_SECONDS" in
+    ''|*[!0-9]*) bootstrap_checks=30 ;;
+    *) bootstrap_checks=$((DETACH_BOOTSTRAP_SECONDS * 10)) ;;
+  esac
+  while [ "$bootstrap_checks" -gt 0 ]; do
+    if "$PYTHON_BIN" - "$STATE_FILE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    raise SystemExit(1)
+if data.get("runner_pid") or data.get("state") in {"completed", "failed"}:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+    then
+      exit 0
+    fi
+    if ! kill -0 "$detached_pid" 2>/dev/null; then
+      set +e
+      wait "$detached_pid" 2>/dev/null
+      detached_status="$?"
+      set -e
+      if ! "$PYTHON_BIN" - "$STATE_FILE" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    raise SystemExit(1)
+if data.get("runner_pid") or data.get("state") in {"completed", "failed"}:
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+      then
+        write_status "STATUS|type=dispatch-bootstrap-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${detached_pid}|reason=dispatcher-exited-before-runner-pid|exit_code=${detached_status}|state_file=${STATE_FILE}"
+        exit 1
+      fi
+      exit 0
+    fi
+    bootstrap_checks=$((bootstrap_checks - 1))
+    sleep 0.1
+  done
   exit 0
 fi
 
@@ -392,9 +495,14 @@ dispatch_phase="pre-ready"
 on_dispatch_error() {
   local exit_code="$?"
   trap - ERR
-  if [ "${dispatch_phase:-}" = "ready-state" ]; then
-    write_status "STATUS|type=dispatch-pre-start-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|reason=state-write-failed|exit_code=${exit_code}|state_file=${STATE_FILE}"
-  fi
+  case "${dispatch_phase:-}" in
+    ready-state)
+      write_status "STATUS|type=dispatch-pre-start-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|reason=state-write-failed|exit_code=${exit_code}|state_file=${STATE_FILE}"
+      ;;
+    starting)
+      write_status "STATUS|type=dispatch-bootstrap-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|reason=state-write-failed-before-runner-pid|exit_code=${exit_code}|state_file=${STATE_FILE}"
+      ;;
+  esac
   exit "$exit_code"
 }
 trap on_dispatch_error ERR
@@ -516,6 +624,16 @@ while true; do
       last_log_signature="$(log_signature)"
     fi
     last_state="$state"
+  fi
+
+  if [ "$state" = "stalled" ] && should_auto_fail_stalled_role; then
+    write_status "STATUS|type=worker-stall-timeout|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|action=terminate-runner"
+    write_worker_state "failed" "false" "124" "alive-but-silent"
+    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+    set +e
+    terminate_runner_tree "$pid" >/dev/null 2>&1
+    set -e
+    exit 1
   fi
 
   if [ "$TIMEOUT_SECONDS" != "0" ]; then

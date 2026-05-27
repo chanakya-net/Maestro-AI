@@ -65,6 +65,7 @@ printf '{"outcome":"completed"}\n' > "${RESULT_FILE}"
 
 [[ -f "${DISPATCHER}" ]] || fail "run-with-it-dispatch.sh exists"
 assert_executable "${DISPATCHER}"
+assert_file_contains "${DISPATCHER}" "start_new_session=True" "detached dispatcher starts in a new session"
 
 dry_output="$("${DISPATCHER}" \
   --dry-run \
@@ -300,6 +301,42 @@ set -e
 assert_file_contains "${PRESTART_LOG}" "STATUS|type=dispatch-ready|issue=47|role=complexity|cycle=1" "pre-start failure reaches ready"
 assert_file_contains "${PRESTART_LOG}" "STATUS|type=dispatch-pre-start-failed|issue=47|role=complexity|cycle=1" "pre-start failure is classified"
 assert_not_contains "$(cat "${PRESTART_LOG}")" "STATUS|type=dispatch-start|issue=47|role=complexity|cycle=1" "pre-start failure never starts runner"
+
+START_FAIL_DIR="${WORK_DIR}/start-fail-project"
+START_FAIL_LOG="${START_FAIL_DIR}/cycle-1.log"
+START_FAIL_DONE="${START_FAIL_DIR}/cycle-1.done"
+START_FAIL_RESULT="${START_FAIL_DIR}/cycle-1-result.json"
+START_FAIL_STATE="${START_FAIL_DIR}/cycle-1.state.json"
+START_FAIL_CONTEXT="${START_FAIL_DIR}/context.md"
+START_FAIL_PROMPT="${START_FAIL_DIR}/prompt.md"
+START_FAIL_OUTPUT="${START_FAIL_DIR}/dispatch.out"
+mkdir -p "${START_FAIL_DIR}"
+printf 'context\n' > "${START_FAIL_CONTEXT}"
+printf 'prompt\n' > "${START_FAIL_PROMPT}"
+
+set +e
+RUN_WITH_IT_TEST_FAIL_STARTING_STATE=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity \
+  --issue 52 \
+  --cycle 1 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${START_FAIL_CONTEXT}" \
+  --prompt-file "${START_FAIL_PROMPT}" \
+  --log-file "${START_FAIL_LOG}" \
+  --done-file "${START_FAIL_DONE}" \
+  --result-file "${START_FAIL_RESULT}" \
+  --state-file "${START_FAIL_STATE}" \
+  --issue-dir "${START_FAIL_DIR}" \
+  --poll-seconds 1 >"${START_FAIL_OUTPUT}" 2>&1
+start_fail_status="$?"
+set -e
+
+[[ "${start_fail_status}" != "0" ]] || fail "start-state bootstrap failure must not exit success"
+assert_file_contains "${START_FAIL_LOG}" "STATUS|type=dispatch-start|issue=52|role=complexity|cycle=1" "start-state failure reaches dispatch start"
+assert_file_contains "${START_FAIL_LOG}" "STATUS|type=dispatch-bootstrap-failed|issue=52|role=complexity|cycle=1" "start-state failure is classified as bootstrap failure"
+assert_not_contains "$(cat "${START_FAIL_LOG}")" "STATUS|type=dispatch-pid|issue=52|role=complexity|cycle=1" "start-state failure never reports runner pid"
 
 cat > "${SMOKE_BIN}/silent-agent" <<'SH'
 #!/usr/bin/env bash
@@ -782,6 +819,23 @@ printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_
 SH
 chmod +x "${SMOKE_BIN}/review-revise-status-only-agent"
 
+cat > "${SMOKE_BIN}/review-canonical-retry-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'review-canonical-retry-agent 1.0\n'
+  exit 0
+fi
+canonical_status="$(printf '%s' "$RUN_WITH_IT_RESULT_FILE" | sed -E 's/-attempt-[0-9]+-status\.json$/-status.json/')"
+canonical_instructions="${canonical_status%-status.json}-instructions.json"
+canonical_done="$(printf '%s' "$RUN_WITH_IT_DONE_FILE" | sed -E 's/-attempt-[0-9]+\.done$/.done/')"
+mkdir -p "$(dirname "$canonical_status")" "$(dirname "$canonical_done")"
+printf '{"verdict":"approve","comment_count":0,"nitpick_only":false}\n' > "$canonical_status"
+printf '{"verdict":"approve","summary":"canonical retry review approved","comments":[],"blocking_reasons":[]}\n' > "$canonical_instructions"
+printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$canonical_done"
+SH
+chmod +x "${SMOKE_BIN}/review-canonical-retry-agent"
+
 cat > "${SMOKE_BIN}/invalid-complexity-agent" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -794,6 +848,46 @@ printf '{"bad":true}\n' > "$RUN_WITH_IT_RESULT_FILE"
 printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
 SH
 chmod +x "${SMOKE_BIN}/invalid-complexity-agent"
+
+cat > "${SMOKE_BIN}/complexity-canonical-retry-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'complexity-canonical-retry-agent 1.0\n'
+  exit 0
+fi
+canonical_result="$(printf '%s' "$RUN_WITH_IT_RESULT_FILE" | sed -E 's/-attempt-[0-9]+-result\.json$/-result.json/')"
+mkdir -p "$(dirname "$canonical_result")"
+cat > "$canonical_result" <<'JSON'
+{
+  "total": 18,
+  "level": "medium",
+  "scores": {
+    "dependency_complexity": 2,
+    "ownership_overlap_risk": 2,
+    "architecture_risk": 2,
+    "orchestration_burden": 2,
+    "verification_risk": 3,
+    "ambiguity_of_requirements": 2,
+    "integration_surface_breadth": 2,
+    "rollback_recovery_risk": 1,
+    "blast_radius": 2
+  },
+  "rationale": {
+    "dependency_complexity": "A few stable dependencies are involved.",
+    "ownership_overlap_risk": "Ownership is mostly local.",
+    "architecture_risk": "The architecture surface is modest.",
+    "orchestration_burden": "A small amount of coordination is needed.",
+    "verification_risk": "Some integration verification may be needed.",
+    "ambiguity_of_requirements": "The requirements are mostly clear.",
+    "integration_surface_breadth": "A couple of integration points are touched.",
+    "rollback_recovery_risk": "Rollback is straightforward.",
+    "blast_radius": "The affected surface is moderate."
+  }
+}
+JSON
+SH
+chmod +x "${SMOKE_BIN}/complexity-canonical-retry-agent"
 
 cat > "${SMOKE_BIN}/stdout-complexity-agent" <<'SH'
 #!/usr/bin/env bash
@@ -836,6 +930,20 @@ printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH
 SH
 chmod +x "${SMOKE_BIN}/stdout-complexity-agent"
 
+cat > "${SMOKE_BIN}/hanging-complexity-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'hanging-complexity-agent 1.0\n'
+  exit 0
+fi
+trap 'exit 143' TERM INT
+while true; do
+  sleep 60
+done
+SH
+chmod +x "${SMOKE_BIN}/hanging-complexity-agent"
+
 python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
 import json, sys
 path = sys.argv[1]
@@ -845,8 +953,11 @@ for name in (
     "review-instructions-only",
     "review-approve-status-only",
     "review-revise-status-only",
+    "review-canonical-retry",
     "invalid-complexity",
+    "complexity-canonical-retry",
     "stdout-complexity",
+    "hanging-complexity",
 ):
     registry["agents"][name] = {
         "display_name": name,
@@ -957,6 +1068,62 @@ set -e
 assert_file_contains "${REVIEW_MISSING_INSTRUCTIONS_OUTPUT}" "reason=missing-review-instructions-artifact" "revise review without instructions fails with precise reason"
 assert_file_contains "${REVIEW_MISSING_INSTRUCTIONS_STATE}" '"stall_reason": "missing-review-instructions-artifact"' "review state records missing instructions reason"
 
+REVIEW_CANONICAL_RETRY_DIR="${SMOKE_PROJECT}/.run-with-it/issues/51"
+REVIEW_CANONICAL_RETRY_RESULT="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2-status.json"
+REVIEW_CANONICAL_RETRY_INSTRUCTIONS="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2-instructions.json"
+REVIEW_CANONICAL_RETRY_LOG="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2.log"
+REVIEW_CANONICAL_RETRY_DONE="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2.done"
+REVIEW_CANONICAL_RETRY_STATE="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2.state.json"
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role review \
+  --issue 51 \
+  --cycle 1 \
+  --agent review-canonical-retry \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${REVIEW_CANONICAL_RETRY_LOG}" \
+  --done-file "${REVIEW_CANONICAL_RETRY_DONE}" \
+  --result-file "${REVIEW_CANONICAL_RETRY_RESULT}" \
+  --state-file "${REVIEW_CANONICAL_RETRY_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${REVIEW_CANONICAL_RETRY_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+assert_json_file "${REVIEW_CANONICAL_RETRY_RESULT}" "attempt-specific review status is repaired from canonical retry output"
+assert_json_file "${REVIEW_CANONICAL_RETRY_INSTRUCTIONS}" "attempt-specific review instructions are repaired from canonical retry output"
+assert_file_contains "${REVIEW_CANONICAL_RETRY_RESULT}" '"source": "dispatcher-copied-from-canonical-retry"' "canonical retry status repair is auditable"
+assert_file_contains "${REVIEW_CANONICAL_RETRY_STATE}" '"state": "completed"' "canonical retry output completes attempt-specific dispatcher monitoring"
+
+COMPLEXITY_CANONICAL_RETRY_DIR="${SMOKE_PROJECT}/.run-with-it/issues/52"
+COMPLEXITY_CANONICAL_RETRY_RESULT="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2-result.json"
+COMPLEXITY_CANONICAL_RETRY_LOG="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2.log"
+COMPLEXITY_CANONICAL_RETRY_DONE="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2.done"
+COMPLEXITY_CANONICAL_RETRY_STATE="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2.state.json"
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity \
+  --issue 52 \
+  --cycle 1 \
+  --agent complexity-canonical-retry \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${COMPLEXITY_CANONICAL_RETRY_LOG}" \
+  --done-file "${COMPLEXITY_CANONICAL_RETRY_DONE}" \
+  --result-file "${COMPLEXITY_CANONICAL_RETRY_RESULT}" \
+  --state-file "${COMPLEXITY_CANONICAL_RETRY_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${COMPLEXITY_CANONICAL_RETRY_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+assert_json_file "${COMPLEXITY_CANONICAL_RETRY_RESULT}" "attempt-specific complexity result is repaired from canonical retry output"
+assert_file_contains "${COMPLEXITY_CANONICAL_RETRY_RESULT}" '"source": "dispatcher-copied-from-canonical-retry"' "canonical complexity retry repair is auditable"
+assert_file_contains "${COMPLEXITY_CANONICAL_RETRY_STATE}" '"state": "completed"' "canonical complexity retry output completes attempt-specific dispatcher monitoring"
+
 COMPLEXITY_STDOUT_DIR="${SMOKE_PROJECT}/.run-with-it/issues/50"
 COMPLEXITY_STDOUT_RESULT="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1-result.json"
 COMPLEXITY_STDOUT_LOG="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.log"
@@ -984,6 +1151,41 @@ assert_json_file "${COMPLEXITY_STDOUT_RESULT}" "valid complexity stdout JSON is 
 assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"level": "easy"' "synthesized complexity artifact preserves level"
 assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"source": "dispatcher-synthesized-from-log"' "synthesized complexity artifact is auditable"
 assert_file_contains "${COMPLEXITY_STDOUT_STATE}" '"state": "completed"' "complexity stdout-only worker completes after result synthesis"
+
+COMPLEXITY_HANG_DIR="${SMOKE_PROJECT}/.run-with-it/issues/53"
+COMPLEXITY_HANG_RESULT="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1-result.json"
+COMPLEXITY_HANG_LOG="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1.log"
+COMPLEXITY_HANG_DONE="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1.done"
+COMPLEXITY_HANG_STATE="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1.state.json"
+COMPLEXITY_HANG_OUTPUT="${WORK_DIR}/complexity-hang.out"
+set +e
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity \
+  --issue 53 \
+  --cycle 1 \
+  --agent hanging-complexity \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${COMPLEXITY_HANG_LOG}" \
+  --done-file "${COMPLEXITY_HANG_DONE}" \
+  --result-file "${COMPLEXITY_HANG_RESULT}" \
+  --state-file "${COMPLEXITY_HANG_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${COMPLEXITY_HANG_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 \
+  --quiet-seconds 1 \
+  --stall-seconds 1 >"${COMPLEXITY_HANG_OUTPUT}" 2>&1
+complexity_hang_status="$?"
+set -e
+[[ "${complexity_hang_status}" != "0" ]] || fail "stalled complexity worker must fail instead of hanging forever"
+assert_file_contains "${COMPLEXITY_HANG_OUTPUT}" "STATUS|type=worker-stall-timeout|issue=53|role=complexity|cycle=1" "stalled complexity worker is terminated"
+assert_file_contains "${COMPLEXITY_HANG_OUTPUT}" "STATUS|type=dispatch-failed|issue=53|role=complexity|cycle=1" "stalled complexity worker exits dispatcher as failed"
+assert_file_contains "${COMPLEXITY_HANG_STATE}" '"state": "failed"' "stalled complexity worker records failed state"
+assert_file_contains "${COMPLEXITY_HANG_STATE}" '"stall_reason": "alive-but-silent"' "stalled complexity worker records precise reason"
 
 COMPLEXITY_INVALID_DIR="${SMOKE_PROJECT}/.run-with-it/issues/49"
 COMPLEXITY_INVALID_RESULT="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1-result.json"

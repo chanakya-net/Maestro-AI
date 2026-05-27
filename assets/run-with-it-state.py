@@ -41,6 +41,35 @@ def load_report(path: str) -> dict[str, Any]:
         return {}
 
 
+def report_file_metrics(report: dict[str, Any]) -> dict[str, int]:
+    files = report.get("files_modified", [])
+    file_items = [item for item in files if isinstance(item, dict)] if isinstance(files, list) else []
+
+    def explicit_int(name: str) -> int | None:
+        value = report.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return value
+
+    def item_int(item: dict[str, Any], name: str) -> int:
+        value = item.get(name, 0)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return 0
+        return value
+
+    return {
+        "files_modified_count": explicit_int("files_modified_count")
+        if explicit_int("files_modified_count") is not None
+        else len(file_items),
+        "lines_added": explicit_int("lines_added")
+        if explicit_int("lines_added") is not None
+        else sum(item_int(item, "lines_added") for item in file_items),
+        "lines_deleted": explicit_int("lines_deleted")
+        if explicit_int("lines_deleted") is not None
+        else sum(item_int(item, "lines_deleted") for item in file_items),
+    }
+
+
 def unique(values: list[Any]) -> list[Any]:
     seen: set[str] = set()
     result: list[Any] = []
@@ -174,12 +203,13 @@ def finalize_issue(args: argparse.Namespace) -> int:
     state["active_pool_issues"] = [
         value for value in state.get("active_pool_issues", []) if str(value) != str(args.issue)
     ]
+    metrics = report_file_metrics(report)
     summary = {
         "issue": int(args.issue),
         "outcome": status,
-        "files_modified_count": report.get("files_modified_count", 0),
-        "lines_added": report.get("lines_added", 0),
-        "lines_deleted": report.get("lines_deleted", 0),
+        "files_modified_count": metrics["files_modified_count"],
+        "lines_added": metrics["lines_added"],
+        "lines_deleted": metrics["lines_deleted"],
         "review_cycles": report.get("review_cycles", 0),
         "commit_sha": report.get("commit_sha"),
     }
@@ -248,14 +278,13 @@ def finalize_merge_recovery(args: argparse.Namespace) -> int:
     else:
         entry["blocking_reasons"] = unique(entry.get("blocking_reasons", []) + report.get("blocking_reasons", []))
 
-    files = report.get("files_modified", [])
-    file_items = [item for item in files if isinstance(item, dict)]
+    metrics = report_file_metrics(report)
     summary = {
         "issue": int(args.issue),
         "outcome": status,
-        "files_modified_count": report.get("files_modified_count", len(files)),
-        "lines_added": report.get("lines_added", sum(item.get("lines_added", 0) for item in file_items)),
-        "lines_deleted": report.get("lines_deleted", sum(item.get("lines_deleted", 0) for item in file_items)),
+        "files_modified_count": metrics["files_modified_count"],
+        "lines_added": metrics["lines_added"],
+        "lines_deleted": metrics["lines_deleted"],
         "review_cycles": report.get("review_cycles", 0),
         "commit_sha": report.get("merge_sha") or report.get("commit_sha"),
     }

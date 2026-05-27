@@ -71,6 +71,9 @@ if ($Prompt -eq "--version") {
   exit 0
 }
 $resultFile = (($Prompt -split "`n") | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", ""
+if (-not $RepoRoot) {
+  $RepoRoot = $env:REPO_ROOT
+}
 Write-Output "STATUS|type=heartbeat|issue=$env:RUN_WITH_IT_ISSUE|role=$env:RUN_WITH_IT_ROLE|phase=testing|progress=repo-root"
 Write-Output "fake-agent stdout is captured"
 [Console]::Error.WriteLine("fake-agent stderr is captured")
@@ -91,6 +94,9 @@ if ($Prompt -eq "--version") {
   exit 0
 }
 $resultFile = (($Prompt -split "`n") | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", ""
+if (-not $RepoRoot) {
+  $RepoRoot = $env:REPO_ROOT
+}
 Start-Sleep -Seconds 4
 New-Item -ItemType Directory -Force -Path (Split-Path $resultFile) | Out-Null
 Set-Content -Path (Join-Path $RepoRoot "silent.txt") -Value "silent" -Encoding UTF8
