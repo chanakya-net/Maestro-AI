@@ -703,7 +703,7 @@ When `context_tokens_est / host_context_window >= 0.50` (first crossing only):
 
 ### Per-Cycle Steps
 
-The review and modification loop runs up to a cap of **4 cycles**, hardcoded.
+The review and modification loop runs up to a cap of **8 cycles**, hardcoded.
 
 **Step 0 — Review Gate Check (cycle 1 only)**
 
@@ -818,7 +818,7 @@ The implementer (or modifier) has already committed all changes as part of its m
 
 **`verdict=revise`**
 
-1. If the current cycle equals the cap (4), terminate the issue as `failed-review` immediately.
+1. If the current cycle equals the cap (8), terminate the issue as `failed-review` immediately.
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
@@ -1006,7 +1006,7 @@ When resumed after compaction:
 1. Read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` to rehydrate state.
 2. If in the review loop, retrieve the `REVIEWER_INSTRUCTIONS_FILE` path for the current cycle from state. Do not re-read the status file — use the stored verdict from state instead.
 3. Continue from where you left off.
-4. The 4-cycle cap is enforced against the restored `cycles_used`.
+4. The 8-cycle cap is enforced against the restored `cycles_used`.
 5. Tasks with a restored `non_approval_count` of 2 or more must resume with the escalated implementation band.
 
 Emit: `STATUS|type=sub-resume|state_file=$RUN_WITH_IT_ISSUE_DIR/sub-state.json|cycles_used=<n>|non_approval_count=<n>`
