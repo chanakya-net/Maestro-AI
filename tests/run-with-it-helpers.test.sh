@@ -323,4 +323,9 @@ assert summary["model_usage"][0]["model"] == "gpt-5.3-codex"
 assert summary["commit_sha"] == "999aaa"
 PY
 
+recovery_pr_body="$(python3 "$PR_BODY_HELPER" render --state-file "$STATE_FILE")"
+assert_contains "$recovery_pr_body" "| #2 | merge-recovery | 1 | codex | gpt-5.3-codex | merge-conflict |" "PR body uses recovery model data instead of stale registry report"
+assert_contains "$recovery_pr_body" "| #2 | passed | merge recovery verified |" "PR body uses recovery verification instead of stale registry report"
+assert_not_contains "$recovery_pr_body" "fake test passed" "PR body avoids stale registry report verification after merge recovery"
+
 echo "PASS: run-with-it Python helper contracts"

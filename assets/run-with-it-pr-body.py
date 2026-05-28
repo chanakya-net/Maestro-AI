@@ -101,10 +101,14 @@ def summary_by_issue(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def report_for_issue(
     state: dict[str, Any], issue: str, run_root: Path, summary: dict[str, Any]
 ) -> dict[str, Any]:
+    summary_report = resolve_path(summary.get("report_file"), run_root)
+    if summary_report:
+        return load_json(summary_report)
+
     info = state.get("issue_registry", {}).get(str(issue), {})
     if not isinstance(info, dict):
         info = {}
-    for report_ref in (info.get("report_file"), summary.get("report_file")):
+    for report_ref in (info.get("merge_recovery_report_file"), info.get("report_file")):
         report_path = resolve_path(report_ref, run_root)
         if report_path:
             report = load_json(report_path)
