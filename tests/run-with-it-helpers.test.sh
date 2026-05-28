@@ -44,6 +44,7 @@ REPORT_FILE="$WORK_DIR/report.json"
 DERIVED_REPORT_FILE="$WORK_DIR/report-derived.json"
 RECOVERY_CONTEXT="$WORK_DIR/merge-recovery-context.md"
 RECOVERY_REPORT="$WORK_DIR/merge-recovery-report.json"
+FALLBACK_STATE_FILE="$WORK_DIR/fallback-main-state.json"
 
 cat > "$STATE_FILE" <<JSON
 {
@@ -136,8 +137,13 @@ issue = state["issue_registry"]["2"]
 assert issue["status"] == "completed"
 assert state["active_pool_issues"] == []
 assert any(row == f"STATUS|type=ledger|task=2|outcome=completed|report={sys.argv[1].replace('main-state.json', 'report.json')}" for row in state["ledger_rows"])
-assert state["completed_summaries"][-1]["commit_sha"] == "abc123"
-model_usage = state["completed_summaries"][-1]["model_usage"]
+summary = state["completed_summaries"][-1]
+assert summary["commit_sha"] == "abc123"
+assert summary["summary"] == "helper completed"
+assert summary["verification"]["passed"] is True
+assert summary["verification"]["evidence"] == "fake test passed"
+assert summary["report_file"] == sys.argv[1].replace("main-state.json", "report.json")
+model_usage = summary["model_usage"]
 assert model_usage[0]["role"] == "complexity"
 assert model_usage[0]["agent"] == "agy"
 assert model_usage[1]["model"] == "gpt-5.3-codex"
@@ -188,7 +194,10 @@ assert_contains "$comment" "Output tokens: 5" "GitHub helper sums output tokens"
 assert_contains "$comment" "Cache hit tokens: 2" "GitHub helper reports cache tokens"
 
 pr_body="$(python3 "$PR_BODY_HELPER" render --state-file "$STATE_FILE")"
+assert_contains "$pr_body" "## Summary" "PR body includes summary section"
 assert_contains "$pr_body" "## Closed Issues" "PR body includes closed issues section"
+assert_contains "$pr_body" "## Models Used" "PR body includes models section"
+assert_contains "$pr_body" "## Verification" "PR body includes verification section"
 assert_contains "$pr_body" "- #2" "PR body links completed issue 2"
 assert_contains "$pr_body" "- #3" "PR body links completed issue 3"
 assert_not_contains "$pr_body" "Closes #" "PR body avoids auto-closing keyword Closes"
@@ -198,6 +207,50 @@ assert_contains "$pr_body" "| #2 | complexity | 1 | agy | gemini-3.5-flash-mediu
 assert_contains "$pr_body" "| #2 | impl | 1 | codex | gpt-5.3-codex | under-target |" "PR body includes implementation model row"
 assert_contains "$pr_body" "| #2 | review | 1 | claude | claude-sonnet-4-6 | independent-review |" "PR body includes review model row"
 assert_contains "$pr_body" "| #3 | unknown | - | unknown | unknown | missing-model-usage |" "PR body falls back when model usage is absent"
+
+cat > "$FALLBACK_STATE_FILE" <<JSON
+{
+  "schema_version": 4,
+  "execution_plan": { "parallel_jobs": 1, "topo_order": [4] },
+  "issue_registry": {
+    "4": { "status": "completed", "report_file": "$WORK_DIR/missing-report.json" }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [
+    {
+      "issue": 4,
+      "outcome": "completed",
+      "summary": "summary fallback completed",
+      "verification": {
+        "passed": true,
+        "evidence": "summary fallback verified"
+      },
+      "report_file": "$WORK_DIR/invalid-report.json",
+      "model_usage": [
+        {
+          "role": "impl",
+          "cycle": 2,
+          "agent": "codex",
+          "model": "gpt-5.3-codex",
+          "selection_reason": "summary-fallback"
+        }
+      ],
+      "files_modified_count": 1,
+      "lines_added": 2,
+      "lines_deleted": 0,
+      "review_cycles": 1,
+      "commit_sha": "fed987"
+    }
+  ],
+  "ledger_rows": []
+}
+JSON
+printf '{invalid json' > "$WORK_DIR/invalid-report.json"
+
+fallback_pr_body="$(python3 "$PR_BODY_HELPER" render --state-file "$FALLBACK_STATE_FILE")"
+assert_contains "$fallback_pr_body" "- #4" "PR body links completed fallback issue"
+assert_contains "$fallback_pr_body" "| #4 | impl | 2 | codex | gpt-5.3-codex | summary-fallback |" "PR body uses summary model usage when report files are unavailable"
+assert_contains "$fallback_pr_body" "| #4 | passed | summary fallback verified |" "PR body uses summary verification when report files are unavailable"
 
 update_output="$(RUN_WITH_IT_GITHUB_UPDATES=0 python3 "$GITHUB_HELPER" update --state-file "$STATE_FILE" --run-root "$WORK_DIR" --issue 2 --outcome completed --report-file "$REPORT_FILE")"
 assert_contains "$update_output" "STATUS|type=github-update|issue=2|outcome=completed|action=skipped|reason=disabled" "GitHub helper emits disabled update status"
