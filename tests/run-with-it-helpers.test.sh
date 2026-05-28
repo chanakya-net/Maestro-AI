@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_HELPER="${ROOT_DIR}/assets/run-with-it-state.py"
 GITHUB_HELPER="${ROOT_DIR}/assets/run-with-it-github-update.py"
+PR_BODY_HELPER="${ROOT_DIR}/assets/run-with-it-pr-body.py"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -23,6 +24,13 @@ assert_contains() {
   local needle="$2"
   local message="$3"
   [[ "$haystack" == *"$needle"* ]] || fail "$message (missing: $needle)"
+}
+
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "$haystack" != *"$needle"* ]] || fail "$message (forbidden: $needle)"
 }
 
 WORK_DIR="$(mktemp -d)"
@@ -87,6 +95,29 @@ cat > "$REPORT_FILE" <<'JSON'
     "final_verdict": "approve",
     "reviewer_model": "fake-reviewer"
   },
+  "model_usage": [
+    {
+      "role": "complexity",
+      "cycle": 1,
+      "agent": "agy",
+      "model": "gemini-3.5-flash-medium",
+      "selection_reason": "complexity-scorer"
+    },
+    {
+      "role": "impl",
+      "cycle": 1,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "under-target"
+    },
+    {
+      "role": "review",
+      "cycle": 1,
+      "agent": "claude",
+      "model": "claude-sonnet-4-6",
+      "selection_reason": "independent-review"
+    }
+  ],
   "token_usage": {
     "impl_input": 10,
     "impl_output": 5,
@@ -106,6 +137,10 @@ assert issue["status"] == "completed"
 assert state["active_pool_issues"] == []
 assert any(row == f"STATUS|type=ledger|task=2|outcome=completed|report={sys.argv[1].replace('main-state.json', 'report.json')}" for row in state["ledger_rows"])
 assert state["completed_summaries"][-1]["commit_sha"] == "abc123"
+model_usage = state["completed_summaries"][-1]["model_usage"]
+assert model_usage[0]["role"] == "complexity"
+assert model_usage[0]["agent"] == "agy"
+assert model_usage[1]["model"] == "gpt-5.3-codex"
 PY
 
 python3 "$STATE_HELPER" mark-in-progress \
@@ -151,6 +186,18 @@ assert_contains "$comment" "helper completed" "GitHub helper includes report sum
 assert_contains "$comment" "Input tokens: 10" "GitHub helper sums input tokens"
 assert_contains "$comment" "Output tokens: 5" "GitHub helper sums output tokens"
 assert_contains "$comment" "Cache hit tokens: 2" "GitHub helper reports cache tokens"
+
+pr_body="$(python3 "$PR_BODY_HELPER" render --state-file "$STATE_FILE")"
+assert_contains "$pr_body" "## Closed Issues" "PR body includes closed issues section"
+assert_contains "$pr_body" "- #2" "PR body links completed issue 2"
+assert_contains "$pr_body" "- #3" "PR body links completed issue 3"
+assert_not_contains "$pr_body" "Closes #" "PR body avoids auto-closing keyword Closes"
+assert_not_contains "$pr_body" "Fixes #" "PR body avoids auto-closing keyword Fixes"
+assert_not_contains "$pr_body" "Resolves #" "PR body avoids auto-closing keyword Resolves"
+assert_contains "$pr_body" "| #2 | complexity | 1 | agy | gemini-3.5-flash-medium | complexity-scorer |" "PR body includes complexity model row"
+assert_contains "$pr_body" "| #2 | impl | 1 | codex | gpt-5.3-codex | under-target |" "PR body includes implementation model row"
+assert_contains "$pr_body" "| #2 | review | 1 | claude | claude-sonnet-4-6 | independent-review |" "PR body includes review model row"
+assert_contains "$pr_body" "| #3 | unknown | - | unknown | unknown | missing-model-usage |" "PR body falls back when model usage is absent"
 
 update_output="$(RUN_WITH_IT_GITHUB_UPDATES=0 python3 "$GITHUB_HELPER" update --state-file "$STATE_FILE" --run-root "$WORK_DIR" --issue 2 --outcome completed --report-file "$REPORT_FILE")"
 assert_contains "$update_output" "STATUS|type=github-update|issue=2|outcome=completed|action=skipped|reason=disabled" "GitHub helper emits disabled update status"
