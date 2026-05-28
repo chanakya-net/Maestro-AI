@@ -503,7 +503,7 @@ After all issues are terminal and before `gh pr create`, render the PR body from
 gh pr create --body-file .run-with-it/final-pr-body.md
 ```
 
-The rendered body must list completed/closed issues as plain issue links such as `#123`. Do not use auto-closing keywords such as `Closes`, `Fixes`, or `Resolves` in the final PR body because issues are already closed by the per-issue GitHub update flow.
+The rendered body must list completed/closed issues as plain issue links such as `#123`. Do not use auto-closing keywords in the final PR body because issues are already closed by the per-issue GitHub update flow. Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
 
 ## `run-agent.sh` — Full Syntax Reference
 

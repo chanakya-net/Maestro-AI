@@ -43,6 +43,35 @@ assert_file_contains() {
   fi
 }
 
+assert_file_section_contains() {
+  local file="$1"
+  local start="$2"
+  local end="$3"
+  local needle="$4"
+  local message="$5"
+  local section
+  section="$(awk -v start="$start" -v end="$end" '
+    index($0, start) { in_section = 1 }
+    in_section { print }
+    in_section && index($0, end) { exit }
+  ' "$file")"
+  if [[ "$section" != *"$needle"* ]]; then
+    fail "${message} (missing in targeted section: ${needle})"
+  fi
+}
+
+assert_file_line_contains() {
+  local file="$1"
+  local anchor="$2"
+  local needle="$3"
+  local message="$4"
+  local line
+  line="$(grep -F -- "$anchor" "$file" | head -n 1 || true)"
+  if [[ -z "$line" || "$line" != *"$needle"* ]]; then
+    fail "${message} (missing on targeted line: ${needle})"
+  fi
+}
+
 assert_not_present_in_active_files() {
   local needle="$1"
   local message="$2"
@@ -88,6 +117,9 @@ assert_contains 'run-with-it-pool.sh' "asset discovery includes shared rolling p
 assert_contains 'run-with-it-state.py' "asset discovery includes shared state helper"
 assert_contains 'run-with-it-github-update.py' "asset discovery includes shared GitHub update helper"
 assert_contains 'run-with-it-pr-body.py' "asset discovery includes shared PR body renderer"
+assert_file_section_contains "$SKILL_FILE" 'Shared required files:' 'Bash required helper files:' '- `run-with-it-pr-body.py`' "shared required file list includes PR body renderer"
+assert_file_line_contains "$SKILL_FILE" '$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force' '.\assets\run-with-it-pr-body.py' "PowerShell asset copy example includes PR body renderer"
+assert_file_line_contains "$SKILL_FILE" 'mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f' './assets/run-with-it-pr-body.py' "Bash asset copy example includes PR body renderer"
 assert_contains 'run-with-it-router.py' "asset discovery includes shared router helper"
 assert_contains 'run-with-it-artifacts.py' "asset discovery includes shared artifact helper"
 assert_contains 'agent-registry.json' "asset discovery includes agent-registry.json"
@@ -138,10 +170,18 @@ assert_contains 'A dependency is actionable only if it points to another fetched
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" '`issue_registry` must contain only executable intake issues with the configured intake label (`ready-for-agent` by default).' "runtime rules enforce ready-for-agent-only registry"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'PRD/parent references are non-blocking context and must not prevent dispatch.' "runtime rules enforce PRD references are non-blocking"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'run-with-it-pr-body.py' "runtime rules require PR body renderer"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.' "runtime rules ban auto-closing keyword variants"
 assert_file_contains "$SKILL_FILE" 'run-with-it-pr-body.py' "skill documents PR body renderer"
+assert_file_contains "$SKILL_FILE" 'Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.' "skill bans auto-closing keyword variants"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '"model_usage"' "sub-coordinator report schema includes model usage"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'selection_reason' "sub-coordinator model usage records selection reason"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `selection_reason`' "sub-state in-flight schema preserves selection reason"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`' "complexity sub-state write preserves selection reason"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`' "implementation sub-state write preserves selection reason"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=review`, `cycle`, reviewer agent/model, selected route `selection_reason`' "review sub-state write preserves selection reason"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`' "modifier sub-state write preserves selection reason"
 assert_file_contains "$COORDINATOR_RULES_FILE" 'model_usage' "coordinator rules require model usage in compact report"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'Normal Sub-Coordinators report only routed task roles `complexity`, `impl`, `review`, and `modify`; Merge Recovery Coordinator reports may contain `merge-recovery`.' "coordinator rules split normal and merge-recovery model usage ownership"
 
 # Resume
 assert_contains 'Resume Flow' "documents resume flow"
