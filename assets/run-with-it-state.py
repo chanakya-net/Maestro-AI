@@ -306,6 +306,10 @@ def finalize_merge_recovery(args: argparse.Namespace) -> int:
     summary = {
         "issue": int(args.issue),
         "outcome": status,
+        "summary": report.get("summary"),
+        "verification": report.get("verification") if isinstance(report.get("verification"), dict) else {},
+        "report_file": args.report_file,
+        "model_usage": compact_model_usage(report),
         "files_modified_count": metrics["files_modified_count"],
         "lines_added": metrics["lines_added"],
         "lines_deleted": metrics["lines_deleted"],

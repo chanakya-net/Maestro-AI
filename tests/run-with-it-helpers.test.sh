@@ -44,7 +44,10 @@ REPORT_FILE="$WORK_DIR/report.json"
 DERIVED_REPORT_FILE="$WORK_DIR/report-derived.json"
 RECOVERY_CONTEXT="$WORK_DIR/merge-recovery-context.md"
 RECOVERY_REPORT="$WORK_DIR/merge-recovery-report.json"
+MERGE_FINAL_REPORT="$WORK_DIR/merge-final-report.json"
 FALLBACK_STATE_FILE="$WORK_DIR/fallback-main-state.json"
+MISSING_STATE_FILE="$WORK_DIR/missing-main-state.json"
+MALFORMED_STATE_FILE="$WORK_DIR/malformed-main-state.json"
 
 cat > "$STATE_FILE" <<JSON
 {
@@ -223,7 +226,7 @@ cat > "$FALLBACK_STATE_FILE" <<JSON
       "summary": "summary fallback completed",
       "verification": {
         "passed": true,
-        "evidence": "summary fallback verified"
+        "evidence": "Fixes #123 and Resolves owner/repo#789"
       },
       "report_file": "$WORK_DIR/invalid-report.json",
       "model_usage": [
@@ -232,7 +235,7 @@ cat > "$FALLBACK_STATE_FILE" <<JSON
           "cycle": 2,
           "agent": "codex",
           "model": "gpt-5.3-codex",
-          "selection_reason": "summary-fallback"
+          "selection_reason": "Closes #456"
         }
       ],
       "files_modified_count": 1,
@@ -249,8 +252,24 @@ printf '{invalid json' > "$WORK_DIR/invalid-report.json"
 
 fallback_pr_body="$(python3 "$PR_BODY_HELPER" render --state-file "$FALLBACK_STATE_FILE")"
 assert_contains "$fallback_pr_body" "- #4" "PR body links completed fallback issue"
-assert_contains "$fallback_pr_body" "| #4 | impl | 2 | codex | gpt-5.3-codex | summary-fallback |" "PR body uses summary model usage when report files are unavailable"
-assert_contains "$fallback_pr_body" "| #4 | passed | summary fallback verified |" "PR body uses summary verification when report files are unavailable"
+assert_contains "$fallback_pr_body" "| #4 | impl | 2 | codex | gpt-5.3-codex | Closes \#456 |" "PR body uses sanitized summary model usage when report files are unavailable"
+assert_contains "$fallback_pr_body" "| #4 | passed | Fixes \#123 and Resolves owner/repo\#789 |" "PR body uses sanitized summary verification when report files are unavailable"
+assert_not_contains "$fallback_pr_body" "Closes #" "PR body sanitizes summary fallback closing keyword Closes"
+assert_not_contains "$fallback_pr_body" "Fixes #" "PR body sanitizes summary fallback closing keyword Fixes"
+assert_not_contains "$fallback_pr_body" "Resolves owner/repo#" "PR body sanitizes owner/repo closing references"
+
+if python3 "$PR_BODY_HELPER" render --state-file "$MISSING_STATE_FILE" >"$WORK_DIR/missing-state.out" 2>"$WORK_DIR/missing-state.err"; then
+  fail "PR body renderer fails for missing required state file"
+fi
+missing_state_error="$(cat "$WORK_DIR/missing-state.err")"
+assert_contains "$missing_state_error" "error: failed to load state file" "PR body renderer reports missing required state file"
+
+printf '{invalid json' > "$MALFORMED_STATE_FILE"
+if python3 "$PR_BODY_HELPER" render --state-file "$MALFORMED_STATE_FILE" >"$WORK_DIR/malformed-state.out" 2>"$WORK_DIR/malformed-state.err"; then
+  fail "PR body renderer fails for malformed required state file"
+fi
+malformed_state_error="$(cat "$WORK_DIR/malformed-state.err")"
+assert_contains "$malformed_state_error" "error: failed to load state file" "PR body renderer reports malformed required state file"
 
 update_output="$(RUN_WITH_IT_GITHUB_UPDATES=0 python3 "$GITHUB_HELPER" update --state-file "$STATE_FILE" --run-root "$WORK_DIR" --issue 2 --outcome completed --report-file "$REPORT_FILE")"
 assert_contains "$update_output" "STATUS|type=github-update|issue=2|outcome=completed|action=skipped|reason=disabled" "GitHub helper emits disabled update status"
@@ -261,5 +280,47 @@ python3 "$STATE_HELPER" write-merge-recovery-context \
   --context-file "$RECOVERY_CONTEXT" \
   --recovery-report-file "$RECOVERY_REPORT"
 grep -Fq "MERGE_RECOVERY_CONTEXT_JSON" "$RECOVERY_CONTEXT" || fail "recovery context contains JSON payload"
+
+cat > "$MERGE_FINAL_REPORT" <<'JSON'
+{
+  "outcome": "completed",
+  "summary": "merge recovery completed",
+  "files_modified_count": 1,
+  "lines_added": 4,
+  "lines_deleted": 2,
+  "review_cycles": 0,
+  "merge_sha": "999aaa",
+  "verification": {
+    "passed": true,
+    "evidence": "merge recovery verified"
+  },
+  "model_usage": [
+    {
+      "role": "merge-recovery",
+      "cycle": 1,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "merge-conflict"
+    }
+  ]
+}
+JSON
+merge_outcome="$(python3 "$STATE_HELPER" finalize-merge-recovery --state-file "$STATE_FILE" --issue 2 --report-file "$MERGE_FINAL_REPORT")"
+assert_eq "$merge_outcome" "completed" "state helper reports finalized merge recovery outcome"
+
+python3 - "$STATE_FILE" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+summary = state["completed_summaries"][-1]
+assert summary["issue"] == 2
+assert summary["outcome"] == "completed"
+assert summary["summary"] == "merge recovery completed"
+assert summary["verification"]["passed"] is True
+assert summary["verification"]["evidence"] == "merge recovery verified"
+assert summary["report_file"] == sys.argv[1].replace("main-state.json", "merge-final-report.json")
+assert summary["model_usage"][0]["role"] == "merge-recovery"
+assert summary["model_usage"][0]["model"] == "gpt-5.3-codex"
+assert summary["commit_sha"] == "999aaa"
+PY
 
 echo "PASS: run-with-it Python helper contracts"

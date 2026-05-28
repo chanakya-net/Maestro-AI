@@ -5,9 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
+
+AUTO_CLOSE_REF_PATTERN = re.compile(
+    r"\b(close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)(\s+)((?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?)(#\d+)\b",
+    re.IGNORECASE,
+)
 
 
 def load_json(path: str) -> dict[str, Any]:
@@ -17,6 +23,17 @@ def load_json(path: str) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
     except Exception:
         return {}
+
+
+def load_state(path: str) -> dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except Exception as exc:
+        raise SystemExit(f"error: failed to load state file {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"error: state file {path} must contain a JSON object")
+    return value
 
 
 def run_root_for(state_file: str) -> Path:
@@ -45,7 +62,12 @@ def issue_sort_key(value: Any) -> tuple[int, str]:
 
 def one_line(value: Any) -> str:
     text = "unknown" if value is None or value == "" else str(value)
-    return " ".join(text.replace("|", "\\|").split())
+    text = " ".join(text.replace("|", "\\|").split())
+    return sanitize_auto_close_refs(text)
+
+
+def sanitize_auto_close_refs(text: str) -> str:
+    return AUTO_CLOSE_REF_PATTERN.sub(lambda match: f"{match[1]}{match[2]}{match[3]}\\{match[4]}", text)
 
 
 def status_counts(state: dict[str, Any]) -> dict[str, int]:
@@ -136,7 +158,7 @@ def verification_state(report: dict[str, Any], summary: dict[str, Any]) -> tuple
 
 
 def render_pr_body(state_file: str) -> str:
-    state = load_json(state_file)
+    state = load_state(state_file)
     run_root = run_root_for(state_file)
     counts = status_counts(state)
     summaries = summary_by_issue(state)
