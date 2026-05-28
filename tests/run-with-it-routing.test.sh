@@ -87,6 +87,7 @@ assert_contains 'Worker result files must never be `$SUB_COORD_REPORT_FILE`' "sk
 assert_contains 'run-with-it-pool.sh' "asset discovery includes shared rolling pool runner"
 assert_contains 'run-with-it-state.py' "asset discovery includes shared state helper"
 assert_contains 'run-with-it-github-update.py' "asset discovery includes shared GitHub update helper"
+assert_contains 'run-with-it-pr-body.py' "asset discovery includes shared PR body renderer"
 assert_contains 'run-with-it-router.py' "asset discovery includes shared router helper"
 assert_contains 'run-with-it-artifacts.py' "asset discovery includes shared artifact helper"
 assert_contains 'agent-registry.json' "asset discovery includes agent-registry.json"
@@ -136,6 +137,11 @@ assert_contains 'Treat PRD/parent references as context, not dependencies.' "doc
 assert_contains 'A dependency is actionable only if it points to another fetched executable issue in the same intake set.' "documents dependencies must be executable intake issues"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" '`issue_registry` must contain only executable intake issues with the configured intake label (`ready-for-agent` by default).' "runtime rules enforce ready-for-agent-only registry"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'PRD/parent references are non-blocking context and must not prevent dispatch.' "runtime rules enforce PRD references are non-blocking"
+assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'run-with-it-pr-body.py' "runtime rules require PR body renderer"
+assert_file_contains "$SKILL_FILE" 'run-with-it-pr-body.py' "skill documents PR body renderer"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '"model_usage"' "sub-coordinator report schema includes model usage"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'selection_reason' "sub-coordinator model usage records selection reason"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'model_usage' "coordinator rules require model usage in compact report"
 
 # Resume
 assert_contains 'Resume Flow' "documents resume flow"

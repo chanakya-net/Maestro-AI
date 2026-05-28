@@ -1154,6 +1154,15 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     "modify_input": 0, "modify_output": 0,
     "complexity_input": 0, "complexity_output": 0
   },
+  "model_usage": [
+    {
+      "role": "impl",
+      "cycle": 1,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "under-target"
+    }
+  ],
   "commit_sha": "abc1234",
   "issue_branch": "run-with-it/<run-id>/issue-36",
   "feature_branch": "run-with-it/<run-id>",
@@ -1172,6 +1181,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
 2. Write to `$SUB_COORD_REPORT_FILE` (provided in context).
 3. If `$SUB_COORD_REPORT_FILE` is missing from context, write to `$RUN_WITH_IT_ISSUE_DIR/report.json` as fallback.
 4. Ensure the JSON is fully written and valid before exiting.
+
+`model_usage` must include every worker route selected for the issue. If a role is skipped, omit that role; do not invent model names.
 
 The report file is the sub-coordinator's only required artifact for the Main Orchestrator.
 
