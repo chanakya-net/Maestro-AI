@@ -49,7 +49,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 - GitHub operations (close issues, post terminal comments) are the Main Orchestrator control plane's SOLE responsibility. The pool runner may perform per-issue terminal GitHub updates on the Main Orchestrator's behalf immediately after it finalizes a compact report.
 - Sub-coordinators never touch GitHub under any circumstances.
-- Main Orchestrator may create the final PR from `run-with-it/<run-id>` to the original base branch after all issues are terminal.
+- Main Orchestrator may create the final PR from `run-with-it/<run-id>` to the original base branch after all issues are terminal. Before `gh pr create`, render the body with `$ASSET_ROOT/run-with-it-pr-body.py render --state-file .run-with-it/main-state.json > .run-with-it/final-pr-body.md` and pass that file via `gh pr create --body-file .run-with-it/final-pr-body.md`. The rendered body must list closed issues as plain links like `#123` and must not use auto-closing keywords. Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
 - Main Orchestrator must never merge issue branches; normal merges belong to Sub-Coordinators and failed merges belong to the Merge Recovery Coordinator.
 - Post the terminal comment and close (or leave open) the issue immediately AFTER reading the sub-coordinator's terminal report. Do not wait for unrelated issues or `pool-empty`.
 - For terminal reports, comment with the report summary, verification, token usage, review notes, and blocking reasons. Close only `completed` issues; comment but leave `blocked`, `failed-review`, and `failed-merge` issues open.

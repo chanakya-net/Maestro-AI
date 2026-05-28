@@ -58,7 +58,7 @@ Preferred upstream flow:
 - Updates `main-state.json` after each issue (its full external memory)
 - Posts terminal GitHub comments and closes/updates issues immediately per issue, not only after the full pool finishes
 - Spawns a Merge Recovery Coordinator when a Sub-Coordinator reports `merge_failed`; Main Orchestrator never merges issue branches itself
-- Creates one final PR from the shared run feature branch after all issues are terminal
+- Creates one final PR from the shared run feature branch after all issues are terminal, using `run-with-it-pr-body.py` to render the body from `.run-with-it/main-state.json`
 - Re-reads `main-state.json` at the top of every loop iteration to survive context compression
 
 **Sub-Coordinator** (spawned via `sub-coordinator-prompt.md`, runs in a child agent session):
@@ -164,6 +164,7 @@ Shared required files:
 - `merge-recovery-prompt.md`
 - `run-with-it-state.py`
 - `run-with-it-github-update.py`
+- `run-with-it-pr-body.py`
 - `run-with-it-router.py`
 - `run-with-it-artifacts.py`
 
@@ -199,12 +200,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -224,7 +225,7 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 
 Before execution verify:
 
-1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
+1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-pr-body.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
 2. `python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter, for the shared pool helper scripts.
 3. `gh` auth when GitHub intake is required.
 4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
@@ -493,6 +494,17 @@ Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `s
 
 On Bash, stalled roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` auto-fail in the dispatcher. The default is `complexity`, so a silent complexity scorer is terminated and surfaced as `dispatch-failed` instead of blocking the rolling pool indefinitely.
 
+## Final PR Creation
+
+After all issues are terminal and before `gh pr create`, render the PR body from the persisted run state:
+
+```bash
+"$ASSET_ROOT/run-with-it-pr-body.py" render --state-file .run-with-it/main-state.json > .run-with-it/final-pr-body.md
+gh pr create --body-file .run-with-it/final-pr-body.md
+```
+
+The rendered body must list completed/closed issues as plain issue links such as `#123`. Do not use auto-closing keywords in the final PR body because issues are already closed by the per-issue GitHub update flow. Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
+
 ## `run-agent.sh` — Full Syntax Reference
 
 ```
@@ -613,11 +625,26 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
     {
       "issue": 36,
       "outcome": "completed",
+      "summary": "One paragraph compact report summary.",
       "files_modified_count": 3,
       "lines_added": 42,
       "lines_deleted": 7,
       "review_cycles": 1,
-      "commit_sha": "abc1234"
+      "commit_sha": "abc1234",
+      "verification": {
+        "passed": true,
+        "evidence": "15 tests passed, 0 failed"
+      },
+      "model_usage": [
+        {
+          "role": "impl",
+          "cycle": 1,
+          "agent": "codex",
+          "model": "gpt-5.3-codex",
+          "selection_reason": "under-target"
+        }
+      ],
+      "report_file": ".run-with-it/issues/36/report.json"
     }
   ],
   "ledger_rows": [
@@ -630,7 +657,7 @@ Key invariants:
 - `issue_registry` has one entry per issue
 - `run_branch` captures the shared feature branch used for the final PR
 - `topo_order` and `dependency_tiers` are derived from issue dependency topological sorting
-- `completed_summaries` accumulates one compact record per finished issue — this is what the main orchestrator reads back after compression
+- `completed_summaries` accumulates one compact record per finished issue, including compact `summary`, `verification`, `model_usage`, and `report_file` fields — this is what the main orchestrator reads back after compression
 - `merge_recovery` is non-terminal; dependencies are satisfied only by `completed`
 - `ledger_rows` stores verbatim STATUS lines for the final ledger printout
 - `active_pool_issues` lists which issues had active Sub-Coordinators; on resume all `in_progress` issues in `active_pool_issues` are reset to `pending` (Sub-Coordinators are ephemeral — re-spawn them fresh)
@@ -684,6 +711,7 @@ Also print a final summary of all `completed_summaries` entries showing:
 - Total issues processed
 - Completed / failed-review / blocked counts
 - Total lines added/deleted across all issues
+- Task-level model usage (`role`, `cycle`, `agent`, `model`, `selection_reason`) from each issue's `model_usage`
 - Aggregate token usage (sum `token_usage` fields from all report JSONs for issues that have completed)
 
 ## Appendix C: Resume and State Contract

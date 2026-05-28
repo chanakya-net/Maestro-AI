@@ -48,6 +48,7 @@ AI-Skills/
 │   ├── run-with-it-dispatch.ps1
 │   ├── run-with-it-artifacts.py
 │   ├── run-with-it-github-update.py
+│   ├── run-with-it-pr-body.py
 │   ├── run-with-it-pool.sh
 │   ├── run-with-it-pool.ps1
 │   ├── run-with-it-router.py
@@ -131,6 +132,7 @@ Durable state and logs live under `.run-with-it/` during orchestration. Worker c
 | [`assets/run-with-it-pool.ps1`](assets/run-with-it-pool.ps1) | PowerShell rolling-pool scheduler for native Windows orchestration. |
 | [`assets/run-with-it-state.py`](assets/run-with-it-state.py) | Shared state transition helper used by both pool runners. |
 | [`assets/run-with-it-github-update.py`](assets/run-with-it-github-update.py) | Shared terminal issue comment/close helper used by both pool runners. |
+| [assets/run-with-it-pr-body.py](assets/run-with-it-pr-body.py) | Shared final PR body renderer for closed issue links and task-level model summaries. |
 | [`assets/run-with-it-router.py`](assets/run-with-it-router.py) | Deterministic subscription-aware worker agent/model router and usage ledger writer. |
 | [`assets/run-with-it-artifacts.py`](assets/run-with-it-artifacts.py) | Shared role artifact validator and safe synthesis helper used by both dispatchers. |
 | [`assets/worker-watch.sh`](assets/worker-watch.sh) | Liveness/log-tail watcher for background workers. |
@@ -298,6 +300,7 @@ cp -f \
   ./assets/main-orchestrator-rules.md \
   ./assets/run-with-it-state.py \
   ./assets/run-with-it-github-update.py \
+  ./assets/run-with-it-pr-body.py \
   ./assets/run-with-it-router.py \
   ./assets/run-with-it-artifacts.py \
   ./assets/run-agent.sh \
@@ -312,6 +315,7 @@ chmod +x \
   "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" \
   "$HOME/.ai-skill-collections/assets/run-with-it-state.py" \
   "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" \
+  "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" \
   "$HOME/.ai-skill-collections/assets/run-with-it-router.py" \
   "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py" \
   "$HOME/.ai-skill-collections/assets/worker-watch.sh"
@@ -321,7 +325,7 @@ Manual PowerShell repair from repo root:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
-Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
+Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 ### No Git Repo

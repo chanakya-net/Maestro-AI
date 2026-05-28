@@ -84,6 +84,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - After the final worker-agent (implementer or modifier) completes, read its output report.
 - Validate all required fields are present. Treat missing commits, failed verification, reviewer `reject`, or valid `revise` verdict cycle-cap exhaustion as `failed-review`. Treat missing/malformed artifacts caused by worker handoff infrastructure as role-specific retry candidates first, and as `blocked` after retries are exhausted.
 - Do NOT post GitHub comments. Do NOT close the GitHub issue. Those are the Main Orchestrator's responsibility.
+- Include `model_usage` in the compact report. Normal Sub-Coordinators report only routed task roles `complexity`, `impl`, `review`, and `modify`; Merge Recovery Coordinator reports may contain `merge-recovery`. Add one entry per routed role with `role`, `cycle`, `agent`, `model`, and `selection_reason`. Do not read raw logs to reconstruct this; use the route decisions already selected and persisted in Sub-Coordinator state.
 - Write the compact report JSON to `$SUB_COORD_REPORT_FILE`. This is your only output artifact.
 - Clear all in-memory state after writing the report.
 

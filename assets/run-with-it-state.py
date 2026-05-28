@@ -70,6 +70,26 @@ def report_file_metrics(report: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def compact_model_usage(report: dict[str, Any]) -> list[dict[str, Any]]:
+    usage = report.get("model_usage")
+    if not isinstance(usage, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in usage:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "role": str(item.get("role") or "unknown"),
+                "cycle": item.get("cycle") if isinstance(item.get("cycle"), int) else None,
+                "agent": str(item.get("agent") or "unknown"),
+                "model": str(item.get("model") or "unknown"),
+                "selection_reason": str(item.get("selection_reason") or item.get("reason") or "unknown"),
+            }
+        )
+    return rows
+
+
 def unique(values: list[Any]) -> list[Any]:
     seen: set[str] = set()
     result: list[Any] = []
@@ -207,6 +227,10 @@ def finalize_issue(args: argparse.Namespace) -> int:
     summary = {
         "issue": int(args.issue),
         "outcome": status,
+        "summary": report.get("summary"),
+        "verification": report.get("verification") if isinstance(report.get("verification"), dict) else {},
+        "report_file": args.report_file,
+        "model_usage": compact_model_usage(report),
         "files_modified_count": metrics["files_modified_count"],
         "lines_added": metrics["lines_added"],
         "lines_deleted": metrics["lines_deleted"],
@@ -282,6 +306,10 @@ def finalize_merge_recovery(args: argparse.Namespace) -> int:
     summary = {
         "issue": int(args.issue),
         "outcome": status,
+        "summary": report.get("summary"),
+        "verification": report.get("verification") if isinstance(report.get("verification"), dict) else {},
+        "report_file": args.report_file,
+        "model_usage": compact_model_usage(report),
         "files_modified_count": metrics["files_modified_count"],
         "lines_added": metrics["lines_added"],
         "lines_deleted": metrics["lines_deleted"],

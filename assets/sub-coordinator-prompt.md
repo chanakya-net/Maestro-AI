@@ -144,7 +144,7 @@ Initial schema:
 
 Write this file before every major phase transition and immediately after every worker PID is captured. On context compression/resume, read this file first. If a listed worker still has no valid result artifact, use its stored `pid`, `done_file`, `log_file`, and `result_file` to decide whether to continue waiting, process completed artifacts, or re-spawn the phase.
 
-State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_agents`, `review_history`, and `updated_at`. Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `log_file`, `done_file`, `result_file`, and `started_at`.
+State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_agents`, `review_history`, and `updated_at`. Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `selection_reason`, `log_file`, `done_file`, `result_file`, and `started_at`. Populate `selection_reason` from the selected route decision, never from raw logs.
 
 ## Background Worker Monitoring Contract
 
@@ -257,7 +257,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
 $WORKER_PID = (Get-Content -Raw -Path $WORKER_STATE_FILE | ConvertFrom-Json).dispatcher_pid
 ```
 
-Immediately after resolving `WORKER_PID` from the dispatcher state file, write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with the captured dispatcher PID, role, cycle, agent, model, log file, done file, result file, state file, and started timestamp before monitoring begins.
+Immediately after resolving `WORKER_PID` from the dispatcher state file, write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with the captured dispatcher PID, role, cycle, agent, model, selected route `selection_reason`, log file, done file, result file, state file, and started timestamp before monitoring begins.
 
 Use this issue directory setup before creating any worker paths:
 
@@ -330,9 +330,9 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --record)"
 AGENT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["agent"])')"
 MODEL="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+SELECTION_REASON="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
 printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\n' \
-  "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" \
-  "$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')" \
+  "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" "$SELECTION_REASON" \
   >> "$SUB_COORD_LOG_FILE"
 ```
 
@@ -357,7 +357,8 @@ $routeJson = & $pythonBin $routerFile `
 $route = $routeJson | ConvertFrom-Json
 $AGENT = $route.agent
 $MODEL = $route.model
-Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "STATUS|type=route-selected|issue=$env:SUB_COORD_ISSUE_NUMBER|role=$env:ROUTE_ROLE|agent=$AGENT|model=$MODEL|reason=$($route.selection_reason)"
+$SELECTION_REASON = $route.selection_reason
+Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "STATUS|type=route-selected|issue=$env:SUB_COORD_ISSUE_NUMBER|role=$env:ROUTE_ROLE|agent=$AGENT|model=$MODEL|reason=$SELECTION_REASON"
 ```
 
 Route helper inputs by phase:
@@ -449,7 +450,7 @@ mkdir -p "$COMPLEXITY_WORKER_DIR"
 WORKER_PID="$(wait_for_worker_dispatcher_pid "$COMPLEXITY_STATE_FILE")"
 ```
 
-Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, `COMPLEXITY_LOG_FILE`, `COMPLEXITY_DONE_FILE`, `COMPLEXITY_RESULT_FILE`, and `COMPLEXITY_STATE_FILE`. Monitor `COMPLEXITY_STATE_FILE`; complexity is complete only after the done file and valid artifacts include a valid `COMPLEXITY|` line and JSON blob.
+Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `COMPLEXITY_LOG_FILE`, `COMPLEXITY_DONE_FILE`, `COMPLEXITY_RESULT_FILE`, and `COMPLEXITY_STATE_FILE`. Monitor `COMPLEXITY_STATE_FILE`; complexity is complete only after the done file and valid artifacts include a valid `COMPLEXITY|` line and JSON blob.
 
 PowerShell (Windows):
 ```powershell
@@ -598,7 +599,7 @@ mkdir -p "$IMPL_WORKER_DIR"
 WORKER_PID="$(wait_for_worker_dispatcher_pid "$IMPL_STATE_FILE")"
 ```
 
-Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
+Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
 
 PowerShell (Windows):
 ```powershell
@@ -781,7 +782,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    ```
 
 4. Emit before reviewer starts: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
-5. Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=review`, `cycle`, reviewer agent/model, `REVIEW_LOG_FILE`, `REVIEW_DONE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEW_STATE_FILE`. Monitor `REVIEW_STATE_FILE`; review is complete only after the done file and valid artifacts include both reviewer JSON files.
+5. Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=review`, `cycle`, reviewer agent/model, selected route `selection_reason`, `REVIEW_LOG_FILE`, `REVIEW_DONE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEW_STATE_FILE`. Monitor `REVIEW_STATE_FILE`; review is complete only after the done file and valid artifacts include both reviewer JSON files.
 6. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never read `REVIEWER_INSTRUCTIONS_FILE`** — that file is for the modifier only.
 7. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` for this cycle. Do not read its contents.
 8. Emit after step 6: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
@@ -869,7 +870,7 @@ EOF
      WORKER_PID="$(wait_for_worker_dispatcher_pid "$MODIFY_STATE_FILE")"
      ```
 
-     Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
+     Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
    - After the modifier runner completes, **capture and validate the modifier commit**:
      ```bash
      cd "$ISSUE_WORKTREE_PATH"
@@ -979,7 +980,21 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
     "completed": []
   },
   "ledger_rows": [],
-  "in_flight_agents": [],
+  "in_flight_agents": [
+    {
+      "role": "impl",
+      "cycle": 1,
+      "pid": 12345,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "under-target",
+      "log_file": ".run-with-it/issues/36/workers/impl/cycle-1.log",
+      "done_file": ".run-with-it/issues/36/workers/impl/cycle-1.done",
+      "result_file": ".run-with-it/issues/36/workers/impl/cycle-1-result.json",
+      "state_file": ".run-with-it/issues/36/workers/impl/cycle-1.state.json",
+      "started_at": "2026-05-15T00:00:00Z"
+    }
+  ],
   "review_history": [
     {
       "task": 36,
@@ -1154,6 +1169,15 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     "modify_input": 0, "modify_output": 0,
     "complexity_input": 0, "complexity_output": 0
   },
+  "model_usage": [
+    {
+      "role": "impl",
+      "cycle": 1,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "under-target"
+    }
+  ],
   "commit_sha": "abc1234",
   "issue_branch": "run-with-it/<run-id>/issue-36",
   "feature_branch": "run-with-it/<run-id>",
@@ -1172,6 +1196,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
 2. Write to `$SUB_COORD_REPORT_FILE` (provided in context).
 3. If `$SUB_COORD_REPORT_FILE` is missing from context, write to `$RUN_WITH_IT_ISSUE_DIR/report.json` as fallback.
 4. Ensure the JSON is fully written and valid before exiting.
+
+`model_usage` must include every worker route selected for the issue. If a role is skipped, omit that role; do not invent model names.
 
 The report file is the sub-coordinator's only required artifact for the Main Orchestrator.
 
