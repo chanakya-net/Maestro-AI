@@ -297,6 +297,43 @@ Every `WORKER_LOG_SUMMARY_SECONDS` seconds, if the worker log tail changed, read
 
 If the PID is dead, inspect only the done file and required artifacts. If done file and valid artifacts are valid, continue to the next phase. If not, treat the phase as failed or follow the documented fallback chain for that phase.
 
+### Worker Artifact Recovery Contract
+
+Implementation and modification worker artifact failures are infrastructure/handoff failures before they are issue failures. Do not terminal-block on the first missing or malformed implementation/modification result artifact.
+
+For any `impl` or `modify` worker state with `state="failed"` and `stall_reason` in this set:
+- `missing-result-artifact`
+- `invalid-result-artifact`
+- `process-exited-missing-done-or-result`
+- `alive-but-silent`
+- done file exists but the result JSON is absent or invalid
+
+apply this exact policy:
+1. Read only the dispatcher state JSON and cheap git status metadata. Do not read the raw worker log into context.
+2. Emit `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
+3. If `git -C "$ISSUE_WORKTREE_PATH" status --short` is non-empty, preserve the dirty work before retrying:
+   ```bash
+   RECOVERY_DIR="$RUN_WITH_IT_ISSUE_DIR/recovery"
+   mkdir -p "$RECOVERY_DIR"
+   RECOVERY_PATCH="$RECOVERY_DIR/${ROLE}-cycle-${CYCLE}-attempt-${ATTEMPT}.patch"
+   git -C "$ISSUE_WORKTREE_PATH" diff > "$RECOVERY_PATCH"
+   git -C "$ISSUE_WORKTREE_PATH" diff --cached >> "$RECOVERY_PATCH"
+   git -C "$ISSUE_WORKTREE_PATH" status --short --untracked-files=all > "$RECOVERY_DIR/${ROLE}-cycle-${CYCLE}-attempt-${ATTEMPT}.status"
+   UNTRACKED_DIR="$RECOVERY_DIR/${ROLE}-cycle-${CYCLE}-attempt-${ATTEMPT}-untracked"
+   mkdir -p "$UNTRACKED_DIR"
+   git -C "$ISSUE_WORKTREE_PATH" ls-files --others --exclude-standard -z | while IFS= read -r -d '' file; do
+     mkdir -p "$UNTRACKED_DIR/$(dirname "$file")"
+     cp "$ISSUE_WORKTREE_PATH/$file" "$UNTRACKED_DIR/$file"
+   done
+   ```
+4. Retry the same role and same review/implementation cycle up to `MAX_AGENT_FALLBACKS` attempts. Re-run routing with the failed model in `EXCLUDE_MODEL` when possible; a different model on the same agent is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-result.json`, `.done`, `.log`, and `.state.json` so stale partial artifacts cannot satisfy the retry.
+5. When retrying after a dirty-worktree failure, tell the next worker that uncommitted partial work exists, include the recovery patch/status paths in its context payload, and instruct it to inspect the current worktree before deciding whether to salvage or replace the partial changes.
+6. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not implementation/review verdicts.
+7. If a retry produces a valid result artifact and commit, continue normal commit verification, review, or next-cycle routing.
+8. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["impl-missing-result-artifact"]` or `["modify-missing-result-artifact"]`. The report must include failed role, cycle, attempt count, agent/model, final `stall_reason`, state/log/done/result paths, dirty worktree status, changed files, recovery patch/status/untracked paths if created, and a concrete recovery plan.
+
+This recovery contract covers `impl`, `review`, and `modify` together with the separate Review Artifact Guardrail below. Artifact infrastructure failures must not be reported as `failed-review` unless a valid worker result exists and the failure is actual verification failure, missing handoff commit, reviewer `reject`, or valid `revise` cycle-cap exhaustion.
+
 ## Appendix A: Routing Contract
 
 ### Deterministic Router Helper (Mandatory)
@@ -601,6 +638,8 @@ WORKER_PID="$(wait_for_worker_dispatcher_pid "$IMPL_STATE_FILE")"
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
 
+If `IMPL_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before writing any terminal report. The next implementer attempt must receive the failed state file path, expected result file path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` implementation artifact retries are exhausted may this issue become `blocked`.
+
 PowerShell (Windows):
 ```powershell
 $IMPL_WORKER_DIR = Join-Path (Join-Path $RUN_WITH_IT_ISSUE_DIR "workers") "impl"
@@ -871,6 +910,7 @@ EOF
      ```
 
      Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
+   - If `MODIFY_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before advancing the review cycle or writing any terminal report. The next modifier attempt must receive the failed state file path, expected result file path, reviewer instructions path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` modification artifact retries are exhausted may this issue become `blocked`.
    - After the modifier runner completes, **capture and validate the modifier commit**:
      ```bash
      cd "$ISSUE_WORKTREE_PATH"
@@ -1189,7 +1229,23 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     "failure_reason": null,
     "conflict_files": []
   },
-  "blocking_reasons": []
+  "blocking_reasons": [],
+  "evidence": {
+    "failed_role": "impl | review | modify | null",
+    "failed_cycle": 1,
+    "failed_attempts": 0,
+    "final_stall_reason": null,
+    "state_file": null,
+    "log_file": null,
+    "done_file": null,
+    "result_file": null,
+    "dirty_worktree": false,
+    "changed_files": [],
+    "recovery_patch": null,
+    "recovery_status": null,
+    "recovery_untracked_dir": null,
+    "recovery_plan": null
+  }
 }
 ```
 
@@ -1201,6 +1257,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
 
 The report file is the sub-coordinator's only required artifact for the Main Orchestrator.
 
+For `blocked` outcomes caused by worker artifact failures, `evidence` is mandatory and must be populated with concrete paths and recovery details. `recovery_plan` must be specific enough for a later Sub-Coordinator or implementation agent to resume safely without reading the raw worker logs.
+
 ## Appendix F: Status Lines
 
 Emit parseable status messages throughout execution. Every line below MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command. Worker stdout/stderr is mirrored by the runner to `RUN_WITH_IT_LOG_FILE` under the matching `$RUN_WITH_IT_ISSUE_DIR/workers/<role>/` directory. Also append to `$SUB_COORD_LOG_FILE`:
@@ -1208,6 +1266,8 @@ Emit parseable status messages throughout execution. Every line below MUST be wr
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
 - `STATUS|type=agent-start|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>`
+- `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<missing-result-artifact|invalid-result-artifact|process-exited-missing-done-or-result|alive-but-silent>|action=<retry|blocked>`
+- `STATUS|type=worker-artifact-recovery|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|dirty=<true|false>|patch_file=<path-or-none>|status_file=<path-or-none>`
 - `STATUS|type=agent-complete|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>|status=<success|failed>`
 - `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`

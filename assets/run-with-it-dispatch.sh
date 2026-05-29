@@ -176,6 +176,27 @@ json_nullable_string() {
   fi
 }
 
+worktree_status_json() {
+  if [ -z "$REPO_ROOT_OVERRIDE" ] || ! is_implementation_role || ! git -C "$REPO_ROOT_OVERRIDE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    printf '{"dirty": false, "changed_files": []}'
+    return 0
+  fi
+
+  git -C "$REPO_ROOT_OVERRIDE" status --short --untracked-files=all | "$PYTHON_BIN" -c '
+import json
+import sys
+
+rows = [line.rstrip("\n") for line in sys.stdin if line.strip()]
+files = []
+for row in rows[:200]:
+    path = row[3:] if len(row) > 3 else row
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    files.append(path)
+print(json.dumps({"dirty": bool(rows), "changed_files": files, "changed_files_truncated": len(rows) > len(files)}))
+'
+}
+
 is_implementation_role() {
   [ "$ROLE" = "impl" ] || [ "$ROLE" = "modify" ]
 }
@@ -305,6 +326,7 @@ write_worker_state() {
   if [ -n "$exit_code" ]; then exit_code_json="$exit_code"; fi
   stall_reason_json="null"
   if [ -n "$stall_reason" ]; then stall_reason_json="$(json_string "$stall_reason")"; fi
+  worktree_status="$(worktree_status_json)"
 
   tmp_file="${STATE_FILE}.tmp.$$"
   if [ "${RUN_WITH_IT_TEST_FAIL_READY_STATE:-0}" = "1" ] && [ "$state" = "ready" ]; then
@@ -345,7 +367,8 @@ write_worker_state() {
   "last_heartbeat_at": $(json_nullable_string "${last_heartbeat_at:-}"),
   "updated_at": $(json_string "$now_iso"),
   "stall_reason": ${stall_reason_json},
-  "exit_code": ${exit_code_json}
+  "exit_code": ${exit_code_json},
+  "worktree": ${worktree_status}
 }
 JSON
   mv "$tmp_file" "$STATE_FILE"
