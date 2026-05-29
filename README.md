@@ -1,403 +1,319 @@
 # AI-Skills
 
-> 📖 **[explainer.html](explainer.html)** — detailed walkthrough. &nbsp;|&nbsp; 📊 **[diagram.pdf](diagram.pdf)** — sequence diagram.
+> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, cost-optimized model routing, and automatic merge recovery across 4 providers and 27 models.
 
-> Personal AI skills for coding agents — install once, use across Codex, Claude, Copilot, Gemini, and related tools.
+📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram &nbsp;·&nbsp; License: [MIT](LICENSE)
 
-## What This Repo Does
+## Overview
 
-AI-Skills is a portable skill collection plus shared runtime assets for coding agents.
-It supports an issue-driven workflow from requirement discovery to PRD/slice creation to coordinated multi-agent execution.
+AI-Skills coordinates multiple AI coding agents (Codex, Claude, Copilot, Gemini) through a two-layer orchestration runtime. It takes GitHub issues from "ready" to "merged PR" without human intervention — routing each task to the best agent/model based on complexity, managing parallel execution in isolated git worktrees, recovering from merge conflicts automatically, and opening a single final pull request.
 
-Core flow:
+The system runs end-to-end:
+1. Analyze requirements and discover dependencies
+2. Generate a PRD and break it into implementation issues
+3. Route each issue to the right agent/model using real-time subscription-debt balancing
+4. Execute in parallel with isolated worktrees, review loops, and automatic merge recovery
+5. Open a single PR with issue links, model usage summaries, and verification results
 
-1. `break-req` resolves functional/non-functional requirements.
-2. `create-git-issue` turns those decisions into a PRD and dependency-aware implementation issues.
-3. `run-with-it` schedules ready issues, routes work to suitable agents/models, and coordinates execution.
-4. `tdd-implementation` guides assigned implementation with red-green-refactor discipline.
-5. `save-tokens` compresses assistant narration for long sessions.
-6. `help-me-debug` performs deep diagnosis and generates human/LLM debugging reports.
+## Requirements
+
+- **Git** — orchestration runs in isolated `git worktree`s (works without git too; it just skips commit-history context)
+- **Python 3** — the routing, state, artifact, and PR-body helpers are Python scripts
+- **GitHub CLI (`gh`)**, authenticated — for issue intake, comments, and the final PR (optional; falls back to local files when unavailable)
+- **At least one supported coding agent** — Codex, Claude Code, GitHub Copilot, Gemini/Antigravity, or OpenCode
+
+## Installation
+
+**macOS / Linux / Git Bash:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+```
+
+**Windows PowerShell:**
+
+```powershell
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
+```
+
+The installer detects which coding agents you have (Codex, Claude, Copilot, Gemini, Agy) and installs skills + shared assets for each. Assets go to `~/.ai-skill-collections/assets` (macOS/Linux) or `%USERPROFILE%\.ai-skill-collections\assets` (Windows).
+
+**Per-agent install (without shared assets):**
+
+```bash
+claude plugin install github:chanakya-net/AI-Skills              # Claude Code
+gemini extensions install github.com/chanakya-net/AI-Skills       # Gemini CLI
+npx -y skills add chanakya-net/AI-Skills -a codex                # Codex
+npx -y skills add chanakya-net/AI-Skills -a github-copilot        # GitHub Copilot
+npx -y skills add chanakya-net/AI-Skills -a antigravity           # Antigravity
+```
+
+Override the asset destination or the git ref the installer pulls from:
+
+```bash
+ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main bash install.sh
+```
+
+## Quick Start
+
+The skills run inside your coding agent — invoke them by slash command (e.g. `/break-req` in Claude Code) or in plain language. A full run from idea to merged PR chains four skills:
+
+```text
+break-req  →  create-git-issue  →  run-with-it
+   ▲                                    │
+ (idea)                          (single final PR)
+```
+
+1. **Discover requirements** — `break-req` interviews you one question at a time and captures constraints.
+2. **Create issues** — `create-git-issue` turns those decisions into a PRD and publishes dependency-aware `ready-for-agent` issues to GitHub.
+3. **Run it** — `run-with-it` fetches every `ready-for-agent` issue, plans a topological order, and executes them in a rolling pool, opening one final PR when everything reaches a terminal state.
+
+If you already have labeled issues, skip straight to `run-with-it`. Tune the run with environment variables — for example, sequential execution with a custom label:
+
+```bash
+PARALLEL_JOBS=1 ISSUE_LABEL=ready-for-agent  # then invoke run-with-it
+```
+
+## Uninstall
+
+```bash
+# macOS / Linux / Git Bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
+
+# Windows PowerShell
+irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
+```
+
+Preview before removing: use `--dry-run` (bash) or `-DryRun` (PowerShell).
+
+## Skills
+
+Each skill is a standalone `SKILL.md` file that AI coding agents load as specialized instructions.
+
+| Skill | What it does |
+|-------|-------------|
+| `break-req` | Interviews you one question at a time to discover requirements, map dependencies, and capture technical constraints before planning. |
+| `create-git-issue` | Turns resolved requirements into a PRD and publishes dependency-aware tracer-bullet implementation issues to GitHub. |
+| `run-with-it` | Two-layer orchestration runtime — schedules ready issues with topological ordering, routes work to the best agent/model, runs them in parallel pools with isolated worktrees, and recovers from merge conflicts automatically. |
+| `tdd-implementation` | Strict red-green-refactor loop — one test at a time, never cuts horizontal slices, verifies everything before committing. |
+| `help-me-debug` | Deep diagnosis workflow that produces both a human-readable root-cause report and a deterministic LLM-ready context file for handoff. |
+| `save-tokens` | Ultra-compressed narration mode — drops articles, filler, and pleasantries while keeping code and technical terms exact. |
+
+## Runtime Assets
+
+The `assets/` directory contains the shared prompts, scripts, and configuration that power `run-with-it`.
+
+### Runner & Dispatcher
+
+| File | What it does |
+|------|-------------|
+| `run-agent.sh` / `.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Copilot, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading. |
+| `run-with-it-dispatch.sh` / `.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
+| `run-with-it-pool.sh` / `.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
+
+### Prompts (agent instructions)
+
+| File | Role |
+|------|------|
+| `sub-coordinator-prompt.md` | Full Sub-Coordinator instructions — worktree bootstrap, complexity scoring, routing, implementation, review, modify loop, and merge back to shared branch. |
+| `prompt.md` | Implementation worker — writes code, commits to issue worktree, produces result artifact JSON with verification evidence. |
+| `review-prompt.md` | Review worker — read-only diff analysis producing JSON verdict with file/line/severity/fix comments. |
+| `modifier-prompt.md` | Modify worker — addresses reviewer comments, re-verifies, commits fixes on the issue branch. |
+| `complexity-prompt.md` | Complexity scoring agent — scores issues on 9 dimensions (dependency risk, architecture risk, blast radius, etc.) for routing decisions. |
+| `merge-recovery-prompt.md` | Merge Recovery Coordinator — resolves conflicts when an issue branch can't merge into the shared feature branch. |
+| `coordinator-rules.md` | Compact Sub-Coordinator rules re-read before every major phase for compaction survival. |
+| `main-orchestrator-rules.md` | Compact Main Orchestrator rules re-read every loop iteration after context compression. |
+
+### Routing & State
+
+| File | What it does |
+|------|-------------|
+| `agent-registry.json` | Agent catalog — detection commands, invocation templates, 27-model catalog with complexity weights, routing rules, and subscription distribution targets. |
+| `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across 4 providers with role-specific and complexity-band-specific targets (default: Codex 50%, Agy 20%, Copilot 20%, Claude 10%). |
+| `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, and merge recovery state transitions. |
+| `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
+| `run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |
+| `run-with-it-pr-body.py` | Final PR body renderer — generates markdown with closed issue links, per-issue model usage tables, and verification summaries. |
+| `worker-watch.sh` / `.ps1` | Liveness watcher — checks PID existence, done sentinel presence, and log tail changes for background workers. |
+
+## Runtime Architecture
+
+`run-with-it` uses a three-tier architecture designed to survive LLM context compression over multi-hour runs.
+
+### Stage 1: Planning
+
+The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It creates a shared feature branch (`run-with-it/<run-id>`) that will eventually hold all merged work. The execution plan and initial state are written to `.run-with-it/main-state.json`.
+
+### Stage 2: Execution (Rolling Pool)
+
+The pool runner maintains up to `PARALLEL_JOBS` (default 4) concurrent Sub-Coordinators. Each Sub-Coordinator gets exactly one issue and follows this lifecycle:
+
+1. **Worktree bootstrap** — Creates an isolated issue branch and `git worktree` from the shared feature branch
+2. **Complexity scoring** — Spawns a complexity agent to score the issue on 9 dimensions
+3. **Model routing** — `run-with-it-router.py` selects the best agent/model pair based on complexity band, role-specific usage targets, and current subscription debt
+4. **Implementation** — Worker agent writes code in the issue worktree, commits, and produces a result JSON with verification evidence
+5. **Review** — Review worker analyzes the diff and produces a verdict (approve/request-changes)
+6. **Modify** (if needed) — Modify worker addresses reviewer comments and re-verifies. Up to 8 review/modify cycles.
+7. **Merge** — Sub-Coordinator acquires the merge lock, fetches latest shared branch, merges the issue branch, verifies, and pushes
+
+After each Sub-Coordinator completes, the pool immediately fills the freed slot with the next ready issue. The Main Orchestrator reads only compact report JSONs — never raw logs — keeping its context window bounded regardless of run duration.
+
+### Stage 3: Merge Recovery
+
+When an issue branch conflicts with the shared feature branch, the Sub-Coordinator reports `outcome=merge_failed`. The pool runner transitions the issue to `merge_recovery` status and spawns a Merge Recovery Coordinator — a specialized agent that:
+
+- Acquires the exclusive merge lock
+- Has holistic access to both the shared branch and the failed issue branch
+- Resolves conflicts, runs verification, commits, and pushes
+- Writes a compact recovery report
+
+Issues waiting on a `merge_recovery` issue remain blocked until recovery succeeds. Unrelated issues continue running in parallel.
+
+### Stage 4: Final PR
+
+When all issues reach a terminal state (completed, failed, or blocked), the Main Orchestrator creates a single pull request from the shared feature branch. The PR body includes:
+
+- Processed issue list with statuses
+- Per-issue model usage table (which agent/model ran each role and cycle)
+- Verification summaries
+- Links to closed GitHub issues
+
+### Compaction Survival
+
+The system is built to survive LLM context compression — the Main Orchestrator's session may be compressed to a fraction of its original size after long runs. Key design decisions:
+
+- All state lives in `.run-with-it/main-state.json`, re-read before every loop iteration
+- Compact rules files (`coordinator-rules.md`, `main-orchestrator-rules.md`) are re-read after compression
+- The Main Orchestrator never loads worker logs — only compact JSON reports
+- Sub-Coordinators never touch GitHub state — only the pool runner does
+- Worker completion requires both done sentinels and result artifacts; PID liveness alone is diagnostic
+
+## Routing Controls
+
+Override routing behavior with environment variables:
+
+| Variable | Effect |
+|----------|--------|
+| `AGENT` | Force a specific agent (codex, claude, github-copilot, agy) |
+| `MODEL` | Force a specific model |
+| `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
+| `AGENT_DENYLIST` | Comma-separated agent slugs to block |
+| `COMPLEXITY_LEVEL` | Force complexity band (quite-easy through holy-fuck) |
+| `COMPLEXITY_SCORE` | Force a numeric complexity score |
+| `AGENT_REGISTRY_FILE` | Override the path to `agent-registry.json` |
+
+### Orchestration knobs
+
+Control how `run-with-it` schedules and intakes work:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PARALLEL_JOBS` | `4` | Rolling pool size — freed slots fill immediately. Set to `1` for sequential execution. |
+| `ISSUE_LABEL` | `ready-for-agent` | Label filter for issue intake |
+| `ISSUE_STATE` | `open` | Issue state filter |
+| `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before a non-completing Sub-Coordinator raises a stall alert |
+
+## Testing
+
+```bash
+# Run all tests
+for test_file in tests/*.test.sh; do bash "$test_file"; done
+
+# Focused
+bash tests/run-agent.test.sh
+bash tests/run-with-it-dispatch.test.sh
+bash tests/run-with-it-pool.test.sh
+bash tests/run-with-it-routing.test.sh
+```
+
+The suite is contract-heavy — verifying exact string presence in output, skill boundaries, routing language, status events, done sentinels, and orchestration state transitions.
+
+## Troubleshooting
+
+### Missing shared assets
+Re-run the installer: `bash install.sh` or `.\install.ps1`
+
+### Manual asset repair (Unix)
+
+```bash
+mkdir -p "$HOME/.ai-skill-collections/assets"
+for f in assets/*; do cp "$f" "$HOME/.ai-skill-collections/assets/"; done
+chmod +x "$HOME/.ai-skill-collections/assets/"*.sh "$HOME/.ai-skill-collections/assets/"*.py
+```
+
+### No git repo
+`run-with-it` works without git — it skips commit-history context and continues with issue/local context.
+
+## Adding a Skill
+
+1. Create `skills/<name>/SKILL.md` with YAML front matter (`name`, `description`)
+2. Add supporting files under `assets/` if needed
+3. Add or update contract tests under `tests/`
+4. Re-run relevant tests before publishing
 
 ## Repository Structure
 
-```text
+```
 AI-Skills/
 ├── README.md
 ├── LICENSE
-├── explainer.html
-├── diagram.pdf
-├── gemini-extension.json
-├── technical_requirements.md
-├── install.sh
-├── install.ps1
-├── uninstall.sh
-├── uninstall.ps1
-├── add-two-numbers.sh
-├── assets/
-│   ├── agent-registry.json
-│   ├── complexity-prompt.md
-│   ├── coordinator-rules.md
-│   ├── main-orchestrator-rules.md
-│   ├── merge-recovery-prompt.md
-│   ├── modifier-prompt.md
-│   ├── prompt.md
-│   ├── review-prompt.md
-│   ├── run-agent.sh
-│   ├── run-agent.ps1
-│   ├── run-with-it-dispatch.sh
-│   ├── run-with-it-dispatch.ps1
-│   ├── run-with-it-artifacts.py
-│   ├── run-with-it-github-update.py
-│   ├── run-with-it-pr-body.py
-│   ├── run-with-it-pool.sh
-│   ├── run-with-it-pool.ps1
-│   ├── run-with-it-router.py
-│   ├── run-with-it-state.py
-│   ├── sub-coordinator-prompt.md
-│   ├── worker-watch.sh
-│   └── worker-watch.ps1
-├── docs/
-│   └── superpowers/plans/
-├── skills/
+├── explainer.html                         # Detailed project walkthrough
+├── diagram.pdf                            # Architecture sequence diagram
+├── gemini-extension.json                  # Gemini CLI extension manifest
+├── technical_requirements.md              # run-with-it feature spec (break-req output)
+├── install.sh / install.ps1               # Smart cross-platform installers
+├── uninstall.sh / uninstall.ps1           # Full cleanup utilities
+├── skills-lock.json                       # SHA-256 integrity hashes for all skills
+│
+├── skills/                                # Agent-facing skill instructions
 │   ├── break-req/SKILL.md
 │   ├── create-git-issue/SKILL.md
 │   ├── help-me-debug/SKILL.md
 │   ├── run-with-it/SKILL.md
 │   ├── save-tokens/SKILL.md
 │   └── tdd-implementation/SKILL.md
-└── tests/
-    ├── add-two-numbers.test.sh
-    ├── break-req-contract.test.sh
-    ├── create-git-issue-routing.test.sh
-    ├── help-me-debug-contract.test.sh
-    ├── install-assets-contract.test.sh
-    ├── install-assets-powershell-contract.test.sh
-    ├── run-agent-status-bus.test.sh
-    ├── run-agent-ps1-status-bus.test.sh
-    ├── run-agent.test.sh
-    ├── run-with-it-dispatch-ps1.test.sh
-    ├── run-with-it-dispatch.test.sh
-    ├── run-with-it-helpers.test.sh
-    ├── run-with-it-log-harness.test.sh
-    ├── run-with-it-pool-actual-flow.test.sh
-    ├── run-with-it-pool-ps1.test.sh
-    ├── run-with-it-pool.test.sh
-    ├── run-with-it-routing-windows.test.sh
-    ├── run-with-it-routing.test.sh
-    ├── uninstall-contract.test.sh
-    ├── worker-watch-ps1.test.sh
-    └── worker-watch.test.sh
+│
+├── assets/                                # Shared prompts, scripts, and configs
+│   ├── agent-registry.json                # Agent detection, invocation, model catalog
+│   ├── run-agent.sh / run-agent.ps1       # Cross-agent CLI runner
+│   ├── run-with-it-dispatch.sh / .ps1     # Worker dispatcher with stall detection
+│   ├── run-with-it-pool.sh / .ps1         # Rolling-pool supervisor
+│   ├── run-with-it-router.py              # Deterministic usage-debt model router
+│   ├── run-with-it-state.py               # Atomic JSON state mutations
+│   ├── run-with-it-artifacts.py           # Artifact validation and synthesis
+│   ├── run-with-it-github-update.py       # GitHub issue comment/close helper
+│   ├── run-with-it-pr-body.py             # Final PR body renderer
+│   ├── worker-watch.sh / worker-watch.ps1 # Worker liveness watcher
+│   ├── prompt.md                          # Implementation worker prompt
+│   ├── sub-coordinator-prompt.md          # Sub-Coordinator prompt
+│   ├── merge-recovery-prompt.md           # Merge Recovery Coordinator prompt
+│   ├── review-prompt.md                   # Review worker prompt
+│   ├── modifier-prompt.md                 # Modify worker prompt
+│   ├── complexity-prompt.md               # Complexity scoring prompt
+│   ├── coordinator-rules.md               # Compact Sub-Coordinator rules
+│   └── main-orchestrator-rules.md         # Compact Main Orchestrator rules
+│
+├── tests/                                 # Contract test suite (22 files)
+│   ├── run-agent.test.sh                  # Runner behavior, dry-run, telemetry
+│   ├── run-with-it-dispatch.test.sh       # Dispatcher smoke tests, artifact recovery
+│   ├── run-with-it-pool.test.sh           # Pool scheduling, dependency awareness
+│   ├── run-with-it-routing.test.sh        # Router behavior, score-to-level mapping
+│   ├── install-assets-contract.test.sh    # Installer output verification
+│   └── ... (18 more)
+│
+├── docs/                                  # Design plans and specs
+│   └── superpowers/
+│       ├── plans/                         # Architecture decision documents
+│       └── specs/                         # Design specifications
+│
+├── apps/                                  # Optional companion applications
+│   └── control/                           # Agent control panel (Next.js)
+│
+├── .claude/                               # Claude Code plugin config
+├── .claude-plugin/                        # Claude Code marketplace entry
+└── .agents/skills/                        # Duplicate skills for multi-agent discovery
 ```
 
-## Skills
+## License
 
-| Skill | Purpose |
-|-------|---------|
-| [`break-req`](skills/break-req/SKILL.md) | Requirements discovery, dependency mapping, and technical constraint capture before planning. |
-| [`create-git-issue`](skills/create-git-issue/SKILL.md) | Creates a PRD and dependency-aware tracer-bullet implementation issues. |
-| [`help-me-debug`](skills/help-me-debug/SKILL.md) | Deep diagnosis workflow that produces human-readable and LLM-ready root-cause reports. |
-| [`run-with-it`](skills/run-with-it/SKILL.md) | Final runtime authority for issue scheduling, routing, execution coordination, merge recovery, and closure. |
-| [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | Test-first implementation workflow using red-green-refactor and behavior-focused tests. |
-| [`save-tokens`](skills/save-tokens/SKILL.md) | Ultra-compressed assistant narration mode for lower token usage. |
-
-## Runtime Architecture
-
-The repo has four main surfaces:
-
-- `skills/`: agent-facing instructions. Each skill is a standalone `SKILL.md` with YAML front matter.
-- `assets/`: shared prompts, registry data, runner scripts, dispatcher scripts, pool runner, and worker watcher.
-- `install.sh` / `install.ps1`: smart installers that detect supported local agents and install both skills and shared assets.
-- `tests/`: shell contract tests for skill boundaries, installer behavior, routing documentation, runner behavior, status bus, pool scheduling, and merge recovery flow.
-
-`run-with-it` uses a two-layer runtime:
-
-- Main Orchestrator: fetches ready issues, builds dependency order, creates a shared feature branch, manages a rolling pool, reads compact reports, updates GitHub/local state, and opens the final PR.
-- Sub-Coordinator: handles one issue in an isolated issue branch/worktree, runs implementation/review/modify workers, verifies, then attempts to merge back into the shared feature branch.
-- Merge Recovery Coordinator: runs only when an issue branch cannot merge cleanly into the shared feature branch.
-
-Main Orchestrator does not implement code or perform issue-branch merges directly.
-
-Durable state and logs live under `.run-with-it/` during orchestration. Worker completion requires done sentinels and compact report artifacts; PID liveness alone is diagnostic.
-
-## Runtime Assets
-
-| File | Purpose |
-|------|---------|
-| [`assets/agent-registry.json`](assets/agent-registry.json) | Agent aliases, detection commands, invocation templates, model catalog, and routing metadata. |
-| [`assets/run-agent.sh`](assets/run-agent.sh) | Unix runner for macOS, Linux, Git Bash, and GUI-launched Unix-like workflows. |
-| [`assets/run-agent.ps1`](assets/run-agent.ps1) | PowerShell runner for Windows workflows. |
-| [`assets/run-with-it-dispatch.sh`](assets/run-with-it-dispatch.sh) | Shared dispatcher that validates inputs, spawns `run-agent.sh`, writes status events, and monitors done/result files. |
-| [`assets/run-with-it-dispatch.ps1`](assets/run-with-it-dispatch.ps1) | PowerShell dispatcher for native Windows `run-with-it` orchestration. |
-| [`assets/run-with-it-pool.sh`](assets/run-with-it-pool.sh) | Rolling-pool scheduler helper for ready issues and merge recovery handling. |
-| [`assets/run-with-it-pool.ps1`](assets/run-with-it-pool.ps1) | PowerShell rolling-pool scheduler for native Windows orchestration. |
-| [`assets/run-with-it-state.py`](assets/run-with-it-state.py) | Shared state transition helper used by both pool runners. |
-| [`assets/run-with-it-github-update.py`](assets/run-with-it-github-update.py) | Shared terminal issue comment/close helper used by both pool runners. |
-| [assets/run-with-it-pr-body.py](assets/run-with-it-pr-body.py) | Shared final PR body renderer for closed issue links and task-level model summaries. |
-| [`assets/run-with-it-router.py`](assets/run-with-it-router.py) | Deterministic subscription-aware worker agent/model router and usage ledger writer. |
-| [`assets/run-with-it-artifacts.py`](assets/run-with-it-artifacts.py) | Shared role artifact validator and safe synthesis helper used by both dispatchers. |
-| [`assets/worker-watch.sh`](assets/worker-watch.sh) | Liveness/log-tail watcher for background workers. |
-| [`assets/worker-watch.ps1`](assets/worker-watch.ps1) | PowerShell liveness/log-tail watcher for background workers. |
-| [`assets/prompt.md`](assets/prompt.md) | Implementation worker prompt. |
-| [`assets/sub-coordinator-prompt.md`](assets/sub-coordinator-prompt.md) | One-issue Sub-Coordinator prompt. |
-| [`assets/merge-recovery-prompt.md`](assets/merge-recovery-prompt.md) | Merge Recovery Coordinator prompt. |
-| [`assets/review-prompt.md`](assets/review-prompt.md) | Review worker prompt. |
-| [`assets/modifier-prompt.md`](assets/modifier-prompt.md) | Modify worker prompt for addressing review feedback. |
-| [`assets/complexity-prompt.md`](assets/complexity-prompt.md) | Complexity scoring and routing prompt. |
-| [`assets/coordinator-rules.md`](assets/coordinator-rules.md) | Shared coordinator rules. |
-| [`assets/main-orchestrator-rules.md`](assets/main-orchestrator-rules.md) | Main Orchestrator rule material. |
-
-Runner contract:
-
-```bash
-run-agent.sh --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>
-```
-
-Windows:
-
-```powershell
-run-agent.ps1 --agent <agent> --context-file <context-payload-file> --prompt-file <prompt-file>
-```
-
-The runner executes a prepared payload. It does not fetch GitHub issues, synthesize requirements, or infer project history on its own.
-
-## Installation
-
-macOS / Linux / Git Bash:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
-```
-
-Default shared asset locations:
-
-```text
-macOS/Linux:  ~/.ai-skill-collections/assets
-Windows:      %USERPROFILE%\.ai-skill-collections\assets
-```
-
-Override asset destination or installer source ref:
-
-```bash
-ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main bash install.sh
-```
-
-```powershell
-$env:ASSETS_DEST="$env:USERPROFILE\.my-ai-assets"; $env:ASSETS_REF="main"; .\install.ps1
-```
-
-## Per-Agent Install
-
-Prefer the smart installer above when possible because it also installs shared assets.
-
-Claude Code:
-
-```bash
-claude plugin install github:chanakya-net/AI-Skills
-```
-
-Gemini CLI:
-
-```bash
-gemini extensions install github.com/chanakya-net/AI-Skills
-```
-
-Codex, GitHub Copilot, and Antigravity via `npx`:
-
-```bash
-npx -y skills add chanakya-net/AI-Skills -a <agent>
-```
-
-| Agent | `--agent` slug |
-|-------|----------------|
-| OpenAI Codex CLI/GUI | `codex` |
-| GitHub Copilot CLI / VS Code | `github-copilot` |
-| Gemini GUI / Antigravity | `antigravity` |
-
-OpenCode users should configure model defaults in their own OpenCode setup.
-
-## Routing Controls
-
-`run-with-it` uses `agent-registry.json`, complexity scoring, and `run-with-it-router.py` to select agent/model combinations. The default subscription distribution target is Codex 50%, Agy 20%, GitHub Copilot 20%, and Claude 10%, with role-specific protections for complexity scoring, review, and merge recovery.
-
-Supported overrides:
-
-- `AGENT_REGISTRY_FILE`: registry path override.
-- `AGENT_ALLOWLIST`: comma-separated agent slugs to permit.
-- `AGENT_DENYLIST`: comma-separated agent slugs to block; denylist wins conflicts.
-- `AGENT`: force agent selection.
-- `MODEL`: force model selection for selected agent.
-- `COMPLEXITY_LEVEL`: force complexity band.
-- `COMPLEXITY_SCORE`: force numeric score.
-
-`create-git-issue` may publish routing hints, but `run-with-it` remains final runtime routing authority.
-
-## Tests
-
-Run all shell tests:
-
-```bash
-for test_file in tests/*.test.sh; do
-  bash "$test_file"
-done
-```
-
-Focused tests:
-
-```bash
-bash tests/install-assets-contract.test.sh
-bash tests/install-assets-powershell-contract.test.sh
-bash tests/uninstall-contract.test.sh
-bash tests/run-agent.test.sh
-bash tests/run-agent-status-bus.test.sh
-bash tests/run-agent-ps1-status-bus.test.sh
-bash tests/run-with-it-dispatch.test.sh
-bash tests/run-with-it-dispatch-ps1.test.sh
-bash tests/run-with-it-helpers.test.sh
-bash tests/run-with-it-pool.test.sh
-bash tests/run-with-it-pool-ps1.test.sh
-bash tests/run-with-it-pool-actual-flow.test.sh
-bash tests/run-with-it-routing-windows.test.sh
-bash tests/worker-watch-ps1.test.sh
-bash tests/worker-watch.test.sh
-```
-
-The suite is contract-heavy. It checks skill boundaries, exact prompt/routing language, installed asset lists, status-event propagation, done sentinels, dispatcher validation, and orchestration state transitions.
-
-## Troubleshooting
-
-### Missing Shared Assets
-
-If `run-with-it` cannot find shared assets, re-run the installer:
-
-```bash
-bash install.sh
-```
-
-```powershell
-.\install.ps1
-```
-
-`install.sh` installs the Bash/macOS/Linux/Git Bash helper family only. `install.ps1` installs the native PowerShell helper family only. Both install the shared prompt, rule, and registry assets.
-
-Manual Unix repair from repo root:
-
-```bash
-mkdir -p "$HOME/.ai-skill-collections/assets"
-cp -f \
-  ./assets/prompt.md \
-  ./assets/sub-coordinator-prompt.md \
-  ./assets/merge-recovery-prompt.md \
-  ./assets/modifier-prompt.md \
-  ./assets/review-prompt.md \
-  ./assets/complexity-prompt.md \
-  ./assets/coordinator-rules.md \
-  ./assets/main-orchestrator-rules.md \
-  ./assets/run-with-it-state.py \
-  ./assets/run-with-it-github-update.py \
-  ./assets/run-with-it-pr-body.py \
-  ./assets/run-with-it-router.py \
-  ./assets/run-with-it-artifacts.py \
-  ./assets/run-agent.sh \
-  ./assets/run-with-it-dispatch.sh \
-  ./assets/run-with-it-pool.sh \
-  ./assets/worker-watch.sh \
-  ./assets/agent-registry.json \
-  "$HOME/.ai-skill-collections/assets/"
-chmod +x \
-  "$HOME/.ai-skill-collections/assets/run-agent.sh" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-state.py" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-router.py" \
-  "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py" \
-  "$HOME/.ai-skill-collections/assets/worker-watch.sh"
-```
-
-Manual PowerShell repair from repo root:
-
-```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"
-Copy-Item -Force .\assets\prompt.md, .\assets\sub-coordinator-prompt.md, .\assets\merge-recovery-prompt.md, .\assets\modifier-prompt.md, .\assets\review-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\main-orchestrator-rules.md, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\agent-registry.json "$env:USERPROFILE\.ai-skill-collections\assets\"
-```
-
-### No Git Repo
-
-`run-with-it` can still run without git initialization. It skips commit-history context and continues with issue/local context.
-
-## Uninstall
-
-macOS / Linux / Git Bash:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
-```
-
-Preview removals:
-
-```bash
-bash uninstall.sh --dry-run
-```
-
-```powershell
-.\uninstall.ps1 -DryRun
-```
-
-Fresh local reinstall:
-
-```bash
-bash uninstall.sh && bash install.sh
-```
-
-```powershell
-.\uninstall.ps1; .\install.ps1
-```
-
-The uninstaller removes shared assets by default:
-
-```text
-macOS/Linux:  ~/.ai-skill-collections
-Windows:      %USERPROFILE%\.ai-skill-collections
-```
-
-It also removes this collection's installed skill directories from standard skill roots such as `~/.agents/skills`, `~/.codex/skills`, and `~/.Codex/skills`.
-
-Manual per-agent cleanup:
-
-```bash
-claude plugin uninstall ai-skill-collections
-gemini extensions uninstall https://github.com/chanakya-net/AI-Skills
-npx -y skills remove chanakya-net/AI-Skills --global
-```
-
-## Adding a Skill
-
-1. Create `skills/<name>/SKILL.md` with YAML front matter:
-
-```markdown
----
-name: skill-name
-description: What this skill does and when to use it.
----
-
-## Purpose
-
-Describe the workflow, boundaries, inputs, and outputs.
-```
-
-2. Add any supporting assets under `assets/` if the skill needs runtime files.
-3. Add or update contract tests under `tests/`.
-4. Re-run the relevant tests before publishing.
+Released under the [MIT License](LICENSE).
