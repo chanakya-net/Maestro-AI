@@ -165,7 +165,7 @@ check("routing_cost_overrides" not in codex_model, "codex model metadata omits c
 
 claude_model = agents["claude"]["model"]
 expected_claude_models = [
-    "claude-opus-4-7",
+    "claude-opus-4-8",
     "claude-sonnet-4-6",
 ]
 check(claude_model.get("default") == "claude-sonnet-4-6", "claude defaults to selected balanced model")

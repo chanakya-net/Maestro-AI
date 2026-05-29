@@ -84,7 +84,7 @@
         "extended-thinking"
       ]
     },
-    "claude-opus-4-7": {
+    "claude-opus-4-8": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 9,
@@ -109,32 +109,9 @@
         "adaptive-thinking",
         "frontier"
       ],
-      "_note": "GitHub Copilot CLI model ID for Opus 4.7 (dot format). Same model as claude-opus-4-7. min_band=holy-fuck — do not route below that band."
+      "_note": "GitHub Copilot CLI model ID for Opus 4.7 (dot format). min_band=holy-fuck — do not route below that band."
     },
-    "claude-opus-4-7[1m]": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": [
-        "best-coding",
-        "1M-context",
-        "agentic",
-        "adaptive-thinking"
-      ]
-    },
-    "claude-opus-4-7[1m]-internal": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": [
-        "internal-variant",
-        "1M-context",
-        "frontier"
-      ]
-    },
-    "claude-opus-4-7-high": {
+    "claude-opus-4-8-high": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 10,
@@ -145,7 +122,7 @@
         "complex-problems"
       ]
     },
-    "claude-opus-4-7-xhigh": {
+    "claude-opus-4-8-xhigh": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 10,
@@ -641,7 +618,7 @@
         "fallback_agents": [
           "claude"
         ],
-        "_note": "Anthropic models route through any available agent (github-copilot or direct claude). claude-opus-4-7 and claude-opus-4.7 are min_band=holy-fuck and should not appear below that band."
+        "_note": "Anthropic models route through any available agent (github-copilot or direct claude). claude-opus-4-8 and claude-opus-4.7 are min_band=holy-fuck and should not appear below that band."
       }
     },
     "hard_minimum_overrides": [
@@ -657,7 +634,7 @@
       "holy-fuck": [
         "gpt-5.5",
         "claude-opus-4.7",
-        "claude-opus-4-7"
+        "claude-opus-4-8"
       ],
       "_note": "These models are pinned into the pool regardless of subscription-neutral ranking. Ensures frontier options (GPT + Claude Opus) are always available at high complexity. Claude Opus is pinned only at holy-fuck; min_band=holy-fuck on catalog entries prevents it from routing into lower bands."
     },
@@ -675,13 +652,13 @@
       {
         "models": [
           "claude-opus-4.7",
-          "claude-opus-4-7"
+          "claude-opus-4-8"
         ],
         "preferred_agents": [
           "claude",
           "github-copilot"
         ],
-        "_note": "When Opus 4.7 is selected, prefer direct Claude agent first, then fall back to GitHub Copilot. Direct Claude runs the native Anthropic model without any intermediary."
+        "_note": "When Opus is selected, prefer direct Claude agent first, then fall back to GitHub Copilot. Direct Claude runs the native Anthropic model without any intermediary."
       },
       {
         "models": [
@@ -702,7 +679,7 @@
           "github-copilot",
           "claude"
         ],
-        "_note": "Direct Claude agent is an equal peer in automatic routing. claude-opus-4-7/4.7 are min_band=holy-fuck and excluded from lower bands automatically."
+        "_note": "Direct Claude agent is an equal peer in automatic routing. claude-opus-4-8/4.7 are min_band=holy-fuck and excluded from lower bands automatically."
       }
     ]
   },
@@ -791,7 +768,7 @@
         "default": "claude-sonnet-4-6",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-opus-4-7",
+          "claude-opus-4-8",
           "claude-sonnet-4-6"
         ],
         "pricing_basis": "subscription",
