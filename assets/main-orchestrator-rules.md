@@ -19,7 +19,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Shell watchers must not tail raw logs into AI context. Use status lines and compact JSON reports for all AI-visible progress.
 - Never load live status logs (`.run-with-it/status/current.txt` or `.run-with-it/status/events.log`) into your AI context. A shell watcher may print the latest changed status line to the terminal, then forget it.
 - Never read implementation diffs, reviewer JSONs, or code from sub-coordinators into your context.
-- Only read the compact report JSON (`.run-with-it/issues/<n>/report.json`) from each sub-coordinator — nothing else.
+- Only read the compact report JSON (`.run-with-it/issues/<n>/report.json`) from each successful sub-coordinator. If a sub-coordinator exits before writing a valid report, the platform pool runner may machine-inspect `.run-with-it/issues/<n>/sub-state.json` plus the referenced worker state/done/result artifacts to decide whether to wait, recover, or block. Do not load those raw files into AI context; use only the compact recovery status lines emitted by the pool runner.
 - If compressed mid-run: re-read `main-state.json`, identify pending issues, re-enter Main Loop. Do not ask the user "what have we done so far?".
 
 ## Spawning Rules
@@ -34,7 +34,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
 - When `PARALLEL_JOBS > 1`: the pool runner keeps up to that many dispatch processes active and fills freed slots immediately. Each issue has its own context file, log file, done file, and report file.
 - When `PARALLEL_JOBS = 1`: the same pool runner operates sequentially with at most one active issue.
-- Never kill or restart an individual sub-coordinator mid-batch. A stall in one batch member does not affect others.
+- Never kill an individual sub-coordinator mid-batch. A stall in one batch member does not affect others. If a sub-coordinator process exits before a valid report, the platform pool runner may spawn a replacement sub-coordinator in recovery mode after structured analysis confirms no live worker will be orphaned.
 
 ## Live Status Rules
 
@@ -76,4 +76,4 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - When Merge Recovery Coordinator succeeds, set the issue status to `completed`, append its compact recovery summary, recalculate dependency readiness, and continue the rolling pool.
 - When Merge Recovery Coordinator fails, set the issue status to `failed-merge` or `blocked`; dependent issues remain blocked with a reason pointing to that issue.
 - After the pool is empty: re-read `main-state.json` (Step A) before selecting any remaining work. GitHub updates are immediate per terminal issue and always sequential even when sub-coordinators ran in parallel.
-- On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_pool_issues` to `[]`. Interrupted pool members must be re-run fresh.
+- On resume or context compression: reset all `in_progress` issues to `pending` and clear `active_pool_issues` to `[]` only when no issue-scoped `sub-state.json` can support recovery. Interrupted pool members with valid `.run-with-it/issues/<n>/sub-state.json` should be recovered from structured state by the pool runner; do not force a fresh rerun of phases that already have valid worker artifacts.

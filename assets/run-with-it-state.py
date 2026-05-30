@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import Any
 
 
+TERMINAL_OUTCOMES = {"completed", "failed-review", "blocked", "merge_failed", "failed-merge"}
+LIVE_WORKER_STATES = {"ready", "starting", "running", "quiet", "stalled"}
+FINISHED_WORKER_STATES = {"completed", "failed"}
+
+
 def load_json(path: str) -> dict[str, Any]:
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
@@ -39,6 +44,32 @@ def load_report(path: str) -> dict[str, Any]:
         return value if isinstance(value, dict) else {}
     except Exception:
         return {}
+
+
+def load_optional_json(path: str | None) -> dict[str, Any]:
+    if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def file_has_json(path: str | None) -> bool:
+    if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
+        return False
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            json.load(handle)
+        return True
+    except Exception:
+        return False
+
+
+def file_nonempty(path: str | None) -> bool:
+    return bool(path and os.path.exists(path) and os.path.getsize(path) > 0)
 
 
 def report_file_metrics(report: dict[str, Any]) -> dict[str, int]:
@@ -105,6 +136,62 @@ def unique(values: list[Any]) -> list[Any]:
 def issue_entry(state: dict[str, Any], issue: str) -> dict[str, Any]:
     registry = state.setdefault("issue_registry", {})
     return registry.setdefault(str(issue), {})
+
+
+def issue_dir_for_report(state: dict[str, Any], issue: str, report_file: str) -> str:
+    entry = state.get("issue_registry", {}).get(str(issue), {})
+    if isinstance(entry, dict) and entry.get("issue_dir"):
+        return str(entry["issue_dir"])
+    if report_file:
+        return str(Path(report_file).parent)
+    return ""
+
+
+def recovery_attempt(entry: dict[str, Any]) -> int:
+    value = entry.get("sub_coord_recovery_attempts", 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(value, 0)
+
+
+def recovery_max_attempts(args: argparse.Namespace) -> int:
+    value = getattr(args, "max_attempts", 2)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 2
+    return max(value, 0)
+
+
+def compact_worker_decision(
+    *,
+    action: str,
+    reason: str,
+    issue: str,
+    issue_dir: str,
+    sub_state_file: str,
+    phase: str | None = None,
+    worker: dict[str, Any] | None = None,
+    worker_state: dict[str, Any] | None = None,
+    attempt: int = 0,
+    max_attempts: int = 2,
+) -> dict[str, Any]:
+    worker = worker if isinstance(worker, dict) else {}
+    worker_state = worker_state if isinstance(worker_state, dict) else {}
+    return {
+        "action": action,
+        "reason": reason,
+        "issue": str(issue),
+        "issue_dir": issue_dir,
+        "sub_state_file": sub_state_file,
+        "phase": phase,
+        "worker_role": worker.get("role"),
+        "worker_cycle": worker.get("cycle"),
+        "worker_state": worker_state.get("state"),
+        "worker_state_file": worker.get("state_file") or worker_state.get("state_file"),
+        "worker_done_file": worker.get("done_file") or worker_state.get("done_file"),
+        "worker_result_file": worker.get("result_file") or worker_state.get("result_file"),
+        "recovery_attempt": attempt,
+        "max_recovery_attempts": max_attempts,
+    }
 
 
 def completed_issue_numbers(state: dict[str, Any]) -> set[int]:
@@ -246,6 +333,190 @@ def finalize_issue(args: argparse.Namespace) -> int:
     return 0
 
 
+def analyze_sub_coord_failure(args: argparse.Namespace) -> int:
+    state = load_json(args.state_file)
+    report = load_report(args.report_file)
+    outcome = report.get("outcome")
+    if isinstance(outcome, str) and outcome in TERMINAL_OUTCOMES:
+        issue_dir = issue_dir_for_report(state, args.issue, args.report_file)
+        decision = compact_worker_decision(
+            action="finalize",
+            reason="terminal-report-present",
+            issue=args.issue,
+            issue_dir=issue_dir,
+            sub_state_file=str(Path(issue_dir) / "sub-state.json") if issue_dir else "",
+            phase=None,
+            attempt=recovery_attempt(issue_entry(state, args.issue)) + 1,
+            max_attempts=recovery_max_attempts(args),
+        )
+        print(json.dumps(decision, sort_keys=True))
+        return 0
+
+    entry = issue_entry(state, args.issue)
+    issue_dir = issue_dir_for_report(state, args.issue, args.report_file)
+    sub_state_file = str(Path(issue_dir) / "sub-state.json") if issue_dir else ""
+    attempt = recovery_attempt(entry) + 1
+    max_attempts = recovery_max_attempts(args)
+
+    if attempt > max_attempts:
+        decision = compact_worker_decision(
+            action="block",
+            reason="sub-coordinator-recovery-attempts-exhausted",
+            issue=args.issue,
+            issue_dir=issue_dir,
+            sub_state_file=sub_state_file,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
+        print(json.dumps(decision, sort_keys=True))
+        return 0
+
+    sub_state = load_optional_json(sub_state_file)
+    if not sub_state:
+        decision = compact_worker_decision(
+            action="block",
+            reason="missing-sub-state",
+            issue=args.issue,
+            issue_dir=issue_dir,
+            sub_state_file=sub_state_file,
+            attempt=attempt,
+            max_attempts=max_attempts,
+        )
+        print(json.dumps(decision, sort_keys=True))
+        return 0
+
+    phase = sub_state.get("phase") if isinstance(sub_state.get("phase"), str) else None
+    workers = sub_state.get("in_flight_agents")
+    workers = workers if isinstance(workers, list) else []
+    worker_decisions: list[tuple[dict[str, Any], dict[str, Any], bool, bool]] = []
+    for item in workers:
+        if not isinstance(item, dict):
+            continue
+        state_file = item.get("state_file") if isinstance(item.get("state_file"), str) else ""
+        worker_state = load_optional_json(state_file)
+        done_file = item.get("done_file") if isinstance(item.get("done_file"), str) else ""
+        result_file = item.get("result_file") if isinstance(item.get("result_file"), str) else ""
+        done_present = file_nonempty(done_file) or bool(worker_state.get("done") is True)
+        result_present = file_has_json(result_file) or bool(worker_state.get("result_present") is True)
+        worker_decisions.append((item, worker_state, done_present, result_present))
+
+    for worker, worker_state, done_present, result_present in worker_decisions:
+        state_name = worker_state.get("state")
+        if state_name in LIVE_WORKER_STATES and not (done_present and result_present):
+            decision = compact_worker_decision(
+                action="wait_worker",
+                reason="in-flight-worker-running",
+                issue=args.issue,
+                issue_dir=issue_dir,
+                sub_state_file=sub_state_file,
+                phase=phase,
+                worker=worker,
+                worker_state=worker_state,
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+            print(json.dumps(decision, sort_keys=True))
+            return 0
+
+    for worker, worker_state, done_present, result_present in worker_decisions:
+        state_name = worker_state.get("state")
+        if state_name in FINISHED_WORKER_STATES or done_present or result_present:
+            reason = "in-flight-worker-finished" if state_name == "completed" or result_present else "in-flight-worker-failed"
+            decision = compact_worker_decision(
+                action="spawn_recovery",
+                reason=reason,
+                issue=args.issue,
+                issue_dir=issue_dir,
+                sub_state_file=sub_state_file,
+                phase=phase,
+                worker=worker,
+                worker_state=worker_state,
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+            print(json.dumps(decision, sort_keys=True))
+            return 0
+
+    decision = compact_worker_decision(
+        action="spawn_recovery",
+        reason="sub-state-present-no-in-flight-worker",
+        issue=args.issue,
+        issue_dir=issue_dir,
+        sub_state_file=sub_state_file,
+        phase=phase,
+        attempt=attempt,
+        max_attempts=max_attempts,
+    )
+    print(json.dumps(decision, sort_keys=True))
+    return 0
+
+
+def write_sub_coord_recovery_context(args: argparse.Namespace) -> int:
+    state = load_json(args.state_file)
+    entry = state.get("issue_registry", {}).get(str(args.issue), {})
+    if not isinstance(entry, dict):
+        entry = {}
+    original_context = (
+        entry.get("sub_coord_original_context_file")
+        or entry.get("context_file")
+        or entry.get("sub_coord_context_file")
+        or ""
+    )
+    issue_dir = entry.get("issue_dir") or issue_dir_for_report(state, args.issue, entry.get("report_file", ""))
+    sub_state_file = str(Path(str(issue_dir)) / "sub-state.json") if issue_dir else ""
+
+    original_text = ""
+    if original_context and os.path.exists(str(original_context)):
+        with open(str(original_context), "r", encoding="utf-8") as handle:
+            original_text = handle.read()
+
+    Path(args.context_file).parent.mkdir(parents=True, exist_ok=True)
+    with open(args.context_file, "w", encoding="utf-8") as handle:
+        handle.write("SUB_COORD_RECOVERY_MODE=1\n")
+        handle.write(f"SUB_COORD_RECOVERY_ATTEMPT={args.attempt}\n")
+        handle.write(f"SUB_COORD_RECOVERY_REASON={args.reason}\n")
+        handle.write(f"SUB_COORD_STATE_FILE={sub_state_file}\n")
+        handle.write(f"SUB_COORD_ORIGINAL_CONTEXT_FILE={original_context}\n\n")
+        handle.write("Recovery instructions:\n")
+        handle.write("Do not restart from scratch.\n")
+        handle.write("Read SUB_COORD_STATE_FILE before doing any phase work.\n")
+        handle.write("Analyze in_flight_agents and their state_file, done_file, and result_file paths.\n")
+        handle.write("If a worker result is valid, process it and continue from the next phase.\n")
+        handle.write("Never rerun a phase that already has a valid result artifact.\n")
+        handle.write("If a worker failed without a valid result, apply the existing worker artifact recovery contract.\n\n")
+        handle.write("Original sub-coordinator context follows:\n")
+        handle.write(original_text)
+        if original_text and not original_text.endswith("\n"):
+            handle.write("\n")
+    return 0
+
+
+def mark_sub_coord_recovery_started(args: argparse.Namespace) -> int:
+    state = load_json(args.state_file)
+    entry = issue_entry(state, args.issue)
+    if not entry.get("sub_coord_original_context_file"):
+        original_context = entry.get("context_file") or entry.get("sub_coord_context_file") or ""
+        if original_context:
+            entry["sub_coord_original_context_file"] = original_context
+    entry["sub_coord_recovery_attempts"] = int(args.attempt)
+    entry["sub_coord_recovery_last_reason"] = args.reason
+    entry["sub_coord_recovery_context_file"] = args.context_file
+    save_json(args.state_file, state)
+    return 0
+
+
+def mark_sub_coord_recovery_dispatch_failed(args: argparse.Namespace) -> int:
+    state = load_json(args.state_file)
+    entry = issue_entry(state, args.issue)
+    entry["sub_coord_recovery_dispatch_failed"] = True
+    entry["sub_coord_recovery_last_report_file"] = args.report_file
+    entry["blocking_reasons"] = unique(
+        entry.get("blocking_reasons", []) + ["sub-coordinator recovery dispatcher failed"]
+    )
+    save_json(args.state_file, state)
+    return 0
+
+
 def write_merge_recovery_context(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     entry = state.get("issue_registry", {}).get(str(args.issue), {})
@@ -379,6 +650,35 @@ def build_parser() -> argparse.ArgumentParser:
     final.add_argument("--issue", required=True)
     final.add_argument("--report-file", required=True)
     final.set_defaults(func=finalize_issue)
+
+    sub_analysis = subparsers.add_parser("analyze-sub-coord-failure")
+    add_state_file(sub_analysis)
+    sub_analysis.add_argument("--issue", required=True)
+    sub_analysis.add_argument("--report-file", required=True)
+    sub_analysis.add_argument("--max-attempts", type=int, default=2)
+    sub_analysis.set_defaults(func=analyze_sub_coord_failure)
+
+    sub_recovery_context = subparsers.add_parser("write-sub-coord-recovery-context")
+    add_state_file(sub_recovery_context)
+    sub_recovery_context.add_argument("--issue", required=True)
+    sub_recovery_context.add_argument("--context-file", required=True)
+    sub_recovery_context.add_argument("--attempt", type=int, required=True)
+    sub_recovery_context.add_argument("--reason", required=True)
+    sub_recovery_context.set_defaults(func=write_sub_coord_recovery_context)
+
+    sub_recovery_started = subparsers.add_parser("mark-sub-coord-recovery-started")
+    add_state_file(sub_recovery_started)
+    sub_recovery_started.add_argument("--issue", required=True)
+    sub_recovery_started.add_argument("--attempt", type=int, required=True)
+    sub_recovery_started.add_argument("--reason", required=True)
+    sub_recovery_started.add_argument("--context-file", required=True)
+    sub_recovery_started.set_defaults(func=mark_sub_coord_recovery_started)
+
+    sub_recovery_failed = subparsers.add_parser("mark-sub-coord-recovery-dispatch-failed")
+    add_state_file(sub_recovery_failed)
+    sub_recovery_failed.add_argument("--issue", required=True)
+    sub_recovery_failed.add_argument("--report-file", required=True)
+    sub_recovery_failed.set_defaults(func=mark_sub_coord_recovery_dispatch_failed)
 
     recovery_context = subparsers.add_parser("write-merge-recovery-context")
     add_state_file(recovery_context)

@@ -64,6 +64,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Start every worker-agent through the detached dispatcher mode, capture the dispatcher PID from `RUN_WITH_IT_STATE_FILE`, and persist that dispatcher PID plus role, cycle, agent, model, log file, done file, result file, and state file to `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` before monitoring begins.
 - Bash `--detach` must start the dispatcher in a new process session/process group, not just with plain `nohup`, so short-lived shell/tool cleanup cannot kill the background dispatcher between `dispatch-start` and `dispatch-pid`.
 - If a detached dispatcher exits or records `STATUS|type=dispatch-bootstrap-failed` before `runner_pid` appears in `RUN_WITH_IT_STATE_FILE`, treat it as launch bootstrap loss, not a worker/model result. Retry the same worker once in foreground monitor mode with the same log, done, result, and state paths so the dispatcher can capture `dispatch-pid` or a concrete artifact failure.
+- If the Sub-Coordinator process exits before writing `$SUB_COORD_REPORT_FILE`, the Main Orchestrator pool runner may inspect `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` and referenced worker state/done/result files. If any worker is still running, it must wait for that worker to finish. Once no worker is running, it may launch a replacement Sub-Coordinator in recovery mode for the same issue directory and worktree.
 - Poll worker liveness every `WORKER_POLL_SECONDS` seconds, default `20`.
 - Summarize worker progress from the dispatcher-maintained `RUN_WITH_IT_STATE_FILE` and result artifacts. Do not load raw worker logs into coordinator context.
 - Worker heartbeats are legacy advisory signals only. The watchdog state file is the source of truth for liveness because it is updated by the dispatcher without requiring worker heartbeat output.
@@ -101,3 +102,4 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - If an in-flight worker-agent has no result file, re-spawn it from the beginning of that phase.
 - Never re-run a phase that already has a valid result file.
 - If the report file `$SUB_COORD_REPORT_FILE` already exists and is valid, you are done — do not re-run any phase.
+- In recovery mode (`SUB_COORD_RECOVERY_MODE=1`), read `$SUB_COORD_STATE_FILE` before creating or modifying any worker artifacts. Process completed worker artifacts first, then continue from the saved phase. Do not create a new issue worktree or overwrite the saved issue branch/worktree paths when they are present and valid.

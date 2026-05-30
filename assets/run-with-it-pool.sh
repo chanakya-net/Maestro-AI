@@ -15,6 +15,7 @@ EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
 MAIN_LOG="$(pwd -P)/.run-with-it/main/main.log"
 POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
 TIMEOUT_SECONDS="${SUB_COORD_TIMEOUT_SECONDS:-3600}"
+MAX_SUB_COORD_RECOVERY_ATTEMPTS="${MAX_SUB_COORD_RECOVERY_ATTEMPTS:-2}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DRY_RUN=0
 VALIDATE_ONLY=0
@@ -124,6 +125,55 @@ mark_in_progress() {
 
 finalize_issue() {
   "$PYTHON_BIN" "$STATE_HELPER" finalize-issue \
+    --state-file "$STATE_FILE" \
+    --issue "$1" \
+    --report-file "$2"
+}
+
+analyze_sub_coord_failure() {
+  "$PYTHON_BIN" "$STATE_HELPER" analyze-sub-coord-failure \
+    --state-file "$STATE_FILE" \
+    --issue "$1" \
+    --report-file "$2" \
+    --max-attempts "$MAX_SUB_COORD_RECOVERY_ATTEMPTS"
+}
+
+decision_field() {
+  local decision_json="$1"
+  local key="$2"
+  printf '%s' "$decision_json" | "$PYTHON_BIN" -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+value = payload.get(sys.argv[1])
+if value is None:
+    print("")
+else:
+    print(value)
+' "$key"
+}
+
+write_sub_coord_recovery_context() {
+  "$PYTHON_BIN" "$STATE_HELPER" write-sub-coord-recovery-context \
+    --state-file "$STATE_FILE" \
+    --issue "$1" \
+    --context-file "$2" \
+    --attempt "$3" \
+    --reason "$4"
+}
+
+mark_sub_coord_recovery_started() {
+  "$PYTHON_BIN" "$STATE_HELPER" mark-sub-coord-recovery-started \
+    --state-file "$STATE_FILE" \
+    --issue "$1" \
+    --attempt "$2" \
+    --reason "$3" \
+    --context-file "$4"
+}
+
+mark_sub_coord_recovery_dispatch_failed() {
+  "$PYTHON_BIN" "$STATE_HELPER" mark-sub-coord-recovery-dispatch-failed \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --report-file "$2"
@@ -270,6 +320,93 @@ spawn_issue() {
   write_status "STATUS|type=sub-coord-spawn|issue=${issue}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|pool_size=$(set -- $POOL_ISSUES; echo $#)|parallel_jobs=${PARALLEL_JOBS}"
 }
 
+spawn_recovery_issue() {
+  local issue="$1"
+  local decision_json="$2"
+  local issue_dir context_file log_file done_file report_file pid attempt reason
+  issue_dir="$(issue_dir_for "$issue")"
+  report_file="${issue_dir}/report.json"
+  attempt="$(decision_field "$decision_json" recovery_attempt)"
+  reason="$(decision_field "$decision_json" reason)"
+  context_file="${issue_dir}/sub-coordinator-recovery-${attempt}-context.md"
+  log_file="${issue_dir}/sub-coordinator-recovery-${attempt}.log"
+  done_file="${issue_dir}/sub-coordinator-recovery-${attempt}.done"
+  mkdir -p "$issue_dir"
+  write_sub_coord_recovery_context "$issue" "$context_file" "$attempt" "$reason"
+  mark_sub_coord_recovery_started "$issue" "$attempt" "$reason" "$context_file"
+  nohup "$DISPATCHER" \
+    --asset-root "$ASSET_ROOT" \
+    --role sub-coord \
+    --issue "$issue" \
+    --agent "$SUB_COORD_AGENT" \
+    --model "$SUB_COORD_MODEL" \
+    --context-file "$context_file" \
+    --prompt-file "$PROMPT_FILE" \
+    --log-file "$log_file" \
+    --done-file "$done_file" \
+    --result-file "$report_file" \
+    --issue-dir "$issue_dir" \
+    --status-file "$STATUS_FILE" \
+    --events-log "$EVENTS_LOG" \
+    --poll-seconds "$POLL_SECONDS" \
+    --timeout-seconds "$TIMEOUT_SECONDS" \
+    >/dev/null 2>&1 < /dev/null &
+  pid="$!"
+  pool_set PID "$issue" "$pid"
+  pool_set REPORT "$issue" "$report_file"
+  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir"
+  write_status "STATUS|type=sub-coord-recovery-spawn|issue=${issue}|attempt=${attempt}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|reason=${reason}"
+}
+
+finalize_pool_issue() {
+  local issue="$1"
+  local report_file="$2"
+  local outcome
+  outcome="$(finalize_issue "$issue" "$report_file")"
+  pool_remove "$issue"
+  write_status "STATUS|type=sub-coord-complete|issue=${issue}|outcome=${outcome}|report_file=${report_file}"
+  if [ "$outcome" = "merge_recovery" ]; then
+    run_merge_recovery "$issue"
+  else
+    update_github_issue "$issue" "$outcome" "$report_file"
+  fi
+  fill_free_slots "$issue"
+}
+
+handle_sub_coord_exit() {
+  local issue="$1"
+  local report_file="$2"
+  local decision_json action reason worker_role worker_state worker_state_file
+  decision_json="$(analyze_sub_coord_failure "$issue" "$report_file")"
+  action="$(decision_field "$decision_json" action)"
+  reason="$(decision_field "$decision_json" reason)"
+  case "$action" in
+    wait_worker)
+      worker_role="$(decision_field "$decision_json" worker_role)"
+      worker_state="$(decision_field "$decision_json" worker_state)"
+      worker_state_file="$(decision_field "$decision_json" worker_state_file)"
+      write_status "STATUS|type=sub-coord-recovery-wait|issue=${issue}|role=${worker_role}|worker_state=${worker_state}|state_file=${worker_state_file}|reason=${reason}"
+      return 0
+      ;;
+    spawn_recovery)
+      spawn_recovery_issue "$issue" "$decision_json"
+      return 0
+      ;;
+    finalize)
+      finalize_pool_issue "$issue" "$report_file"
+      return 0
+      ;;
+    block|*)
+      if [ "$action" != "block" ]; then
+        write_status "STATUS|type=sub-coord-recovery-analysis-failed|issue=${issue}|action=${action:-unknown}|reason=${reason:-unknown}"
+      fi
+      mark_sub_coord_recovery_dispatch_failed "$issue" "$report_file"
+      finalize_pool_issue "$issue" "$report_file"
+      return 0
+      ;;
+  esac
+}
+
 run_merge_recovery() {
   local issue="$1"
   local issue_dir context_file log_file done_file report_file recovery_status
@@ -347,15 +484,7 @@ while [ -n "$POOL_ISSUES" ]; do
     fi
     wait "$pid" 2>/dev/null || true
     report_file="$(pool_get REPORT "$issue")"
-    outcome="$(finalize_issue "$issue" "$report_file")"
-    pool_remove "$issue"
-    write_status "STATUS|type=sub-coord-complete|issue=${issue}|outcome=${outcome}|report_file=${report_file}"
-    if [ "$outcome" = "merge_recovery" ]; then
-      run_merge_recovery "$issue"
-    else
-      update_github_issue "$issue" "$outcome" "$report_file"
-    fi
-    fill_free_slots "$issue"
+    handle_sub_coord_exit "$issue" "$report_file"
   done
   fill_free_slots "tick"
   emit_waiting_context_status

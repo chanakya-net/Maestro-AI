@@ -32,6 +32,10 @@ assert_json_file() {
   python3 -m json.tool "$file" >/dev/null || fail "$message (invalid JSON: $file)"
 }
 
+assert_file_contains "$POOL" "Analyze-SubCoordFailure" "PowerShell pool includes sub-coordinator failure analysis"
+assert_file_contains "$POOL" "sub-coord-recovery-wait" "PowerShell pool can wait for in-flight workers before recovery"
+assert_file_contains "$POOL" "sub-coord-recovery-spawn" "PowerShell pool can spawn recovery sub-coordinators"
+
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"
 mkdir -p "$WORK_DIR"

@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL_RUNNER="${ROOT_DIR}/assets/run-with-it-pool.sh"
+MAIN_RULES="${ROOT_DIR}/assets/main-orchestrator-rules.md"
+SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -68,6 +70,11 @@ JSON
 [[ -x "${POOL_RUNNER}" ]] || fail "run-with-it-pool.sh is executable"
 assert_file_contains "${POOL_RUNNER}" "merge_recovery" "pool runner documents merge recovery as non-terminal"
 assert_file_contains "${POOL_RUNNER}" "merge_failed" "pool runner maps merge failed reports to merge recovery"
+assert_file_contains "${POOL_RUNNER}" "analyze-sub-coord-failure" "pool runner analyzes failed sub-coordinators before finalizing"
+assert_file_contains "${POOL_RUNNER}" "sub-coord-recovery-wait" "pool runner waits for in-flight worker recovery"
+assert_file_contains "${POOL_RUNNER}" "sub-coord-recovery-spawn" "pool runner spawns replacement sub-coordinator"
+assert_file_contains "${MAIN_RULES}" "sub-state.json" "main rules permit structured sub-coordinator recovery state"
+assert_file_contains "${SUB_PROMPT}" "SUB_COORD_RECOVERY_MODE=1" "sub-coordinator prompt documents recovery mode"
 
 validate_output="$("${POOL_RUNNER}" \
   --validate-only \

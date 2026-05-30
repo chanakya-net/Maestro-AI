@@ -125,13 +125,39 @@ repo_root="$1"
 prompt_payload="$2"
 report_file="$(printf '%s' "$prompt_payload" | sed -n 's/^REPORT_FILE=//p; s/^MERGE_RECOVERY_REPORT_FILE=//p' | head -n 1)"
 outcome="$(printf '%s' "$prompt_payload" | sed -n 's/^OUTCOME=//p' | head -n 1)"
+recovery_mode="$(printf '%s' "$prompt_payload" | sed -n 's/^SUB_COORD_RECOVERY_MODE=//p' | head -n 1)"
 issue="${RUN_WITH_IT_ISSUE:-unknown}"
 role="${RUN_WITH_IT_ROLE:-unknown}"
 printf 'STATUS|type=heartbeat|issue=%s|role=%s|phase=starting|progress=fake sub start\n' "$issue" "$role"
 printf 'STATUS|type=merge-start|issue=%s|branch=run-with-it/smoke/issue-%s|target=run-with-it/smoke\n' "$issue" "$issue"
 mkdir -p "$repo_root" "$(dirname "$report_file")"
 printf 'issue=%s repo=%s\n' "$issue" "$repo_root" > "$repo_root/issue-$issue.marker"
-if [[ "$role" == "merge-recovery" ]]; then
+if [[ "$recovery_mode" == "1" ]]; then
+  printf 'STATUS|type=sub-resume|state_file=%s/sub-state.json|cycles_used=1|non_approval_count=1\n' "$(dirname "$report_file")"
+  printf '{"schema_version":1,"issue_number":%s,"outcome":"completed","summary":"fake sub recovery completed","files_modified_count":1,"lines_added":1,"lines_deleted":0,"review_cycles":1,"commit_sha":"fake-recovered-%s","verification":{"passed":true,"commands_run":["fake verify"],"evidence":"fake recovery passed"}}\n' "$issue" "$issue" > "$report_file"
+elif [[ "$outcome" == "sub_coord_fail" ]]; then
+  issue_dir="$(dirname "$report_file")"
+  worker_dir="$issue_dir/workers/modify"
+  mkdir -p "$worker_dir"
+  worker_state="$worker_dir/cycle-1.state.json"
+  worker_done="$worker_dir/cycle-1.done"
+  worker_result="$worker_dir/cycle-1-result.json"
+  cat > "$issue_dir/sub-state.json" <<JSON
+{"schema_version":1,"issue_number":$issue,"phase":"modify","in_flight_agents":[{"role":"modify","cycle":1,"pid":999,"agent":"fake-sub","model":"fake-model","selection_reason":"test","log_file":"$worker_dir/cycle-1.log","done_file":"$worker_done","result_file":"$worker_result","state_file":"$worker_state","started_at":"2026-05-30T00:00:00Z"}],"review_history":[],"updated_at":"2026-05-30T00:00:00Z"}
+JSON
+  cat > "$worker_state" <<JSON
+{"schema_version":1,"issue":"$issue","role":"modify","cycle":"1","state":"running","alive":true,"done":false,"result_present":false,"state_file":"$worker_state","done_file":"$worker_done","result_file":"$worker_result"}
+JSON
+  (sleep 5
+   printf '{"schema_version":1,"issue":%s,"role":"modify","status":"success","commit_sha":"fake-worker-%s","files_committed":["src/example"],"verification":{"passed":true,"commands_run":["fake verify"],"evidence":"fake worker passed"}}\n' "$issue" "$issue" > "$worker_result"
+   printf 'DONE|issue=%s|role=modify|status=success|source=agent\n' "$issue" > "$worker_done"
+   cat > "$worker_state" <<JSON
+{"schema_version":1,"issue":"$issue","role":"modify","cycle":"1","state":"completed","alive":false,"done":true,"result_present":true,"state_file":"$worker_state","done_file":"$worker_done","result_file":"$worker_result"}
+JSON
+  ) >/dev/null 2>&1 &
+  printf 'STATUS|type=heartbeat|issue=%s|role=sub-coord|phase=modify|progress=fake failure after worker spawn\n' "$issue"
+  exit 1
+elif [[ "$role" == "merge-recovery" ]]; then
   printf 'STATUS|type=heartbeat|issue=%s|role=merge-recovery|phase=resolving|progress=fake recovery\n' "$issue"
   printf '{"schema_version":1,"issue_number":%s,"outcome":"completed","summary":"fake recovery completed","feature_branch":"run-with-it/smoke","issue_branch":"run-with-it/smoke/issue-%s","merge_sha":"fake-recovery-%s","files_modified":[{"path":"shared.txt","lines_added":1,"lines_deleted":1}],"verification":{"passed":true,"commands_run":["fake verify"],"evidence":"fake recovery passed"},"blocking_reasons":[]}\n' "$issue" "$issue" "$issue" > "$report_file"
 elif [[ "$outcome" == "merge_failed" ]]; then
@@ -289,6 +315,30 @@ assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|typ
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=3|outcome=completed" "events log records unrelated issue 3 completion"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=4|outcome=completed" "events log records unrelated issue 4 completion"
 assert_file_contains "$MIXED_PROJECT/.run-with-it/main/main.log" "STATUS|type=pool-slot-filled" "main log records rolling pool slot refill"
+
+RECOVERY_ROOT="$WORK_DIR/recovery"
+make_fixture "$RECOVERY_ROOT"
+RECOVERY_PROJECT="$RECOVERY_ROOT/project"
+write_context "$RECOVERY_PROJECT" 21 sub_coord_fail
+cat > "$RECOVERY_PROJECT/.run-with-it/main-state.json" <<JSON
+{
+  "schema_version": 4,
+  "execution_plan": { "parallel_jobs": 1, "topo_order": [21] },
+  "issue_registry": {
+    "21": { "status": "pending", "deps": [], "context_file": "$RECOVERY_PROJECT/.run-with-it/contexts/sub-21.md" }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [],
+  "ledger_rows": []
+}
+JSON
+run_pool "$RECOVERY_ROOT" 1
+assert_json_status "$RECOVERY_PROJECT/.run-with-it/main-state.json" 21 completed
+assert_file "$RECOVERY_PROJECT/.run-with-it/issues/21/sub-coordinator-recovery-1.log" "recovery sub-coordinator log exists for issue 21"
+assert_file_contains "$RECOVERY_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-recovery-wait|issue=21|role=modify" "events log records wait for in-flight worker"
+assert_file_contains "$RECOVERY_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-recovery-spawn|issue=21|attempt=1" "events log records recovery sub-coordinator spawn"
+assert_file_contains "$RECOVERY_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=21|outcome=completed" "events log records recovered issue completion"
+assert_file_contains "$RECOVERY_PROJECT/.run-with-it/issues/21/sub-coordinator-recovery-1.log" "STATUS|type=sub-resume" "recovery sub-coordinator resumes from saved state"
 
 python3 - "$SUCCESS_PROJECT/.run-with-it/main-state.json" "$MIXED_PROJECT/.run-with-it/main-state.json" <<'PY'
 import json, sys

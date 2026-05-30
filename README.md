@@ -107,9 +107,9 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 | File | What it does |
 |------|-------------|
-| `run-agent.sh` / `.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Copilot, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading. |
-| `run-with-it-dispatch.sh` / `.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
-| `run-with-it-pool.sh` / `.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
+| `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Copilot, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading. |
+| `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
+| `run-with-it-pool.sh` / `run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
 
 ### Prompts (agent instructions)
 
@@ -134,7 +134,7 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 | `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
 | `run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |
 | `run-with-it-pr-body.py` | Final PR body renderer — generates markdown with closed issue links, per-issue model usage tables, and verification summaries. |
-| `worker-watch.sh` / `.ps1` | Liveness watcher — checks PID existence, done sentinel presence, and log tail changes for background workers. |
+| `worker-watch.sh` / `worker-watch.ps1` | Liveness watcher — checks PID existence, done sentinel presence, and log tail changes for background workers. |
 
 ## Runtime Architecture
 
@@ -276,8 +276,8 @@ AI-Skills/
 ├── assets/                                # Shared prompts, scripts, and configs
 │   ├── agent-registry.json                # Agent detection, invocation, model catalog
 │   ├── run-agent.sh / run-agent.ps1       # Cross-agent CLI runner
-│   ├── run-with-it-dispatch.sh / .ps1     # Worker dispatcher with stall detection
-│   ├── run-with-it-pool.sh / .ps1         # Rolling-pool supervisor
+│   ├── run-with-it-dispatch.sh / run-with-it-dispatch.ps1 # Worker dispatcher with stall detection
+│   ├── run-with-it-pool.sh / run-with-it-pool.ps1         # Rolling-pool supervisor
 │   ├── run-with-it-router.py              # Deterministic usage-debt model router
 │   ├── run-with-it-state.py               # Atomic JSON state mutations
 │   ├── run-with-it-artifacts.py           # Artifact validation and synthesis

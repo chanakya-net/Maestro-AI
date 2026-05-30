@@ -9,6 +9,7 @@ param(
     [string]$MainLog = (Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main") "main.log"),
     [int]$PollSeconds = $(if ($env:STATUS_POLL_SECONDS) { [int]$env:STATUS_POLL_SECONDS } else { 10 }),
     [int]$TimeoutSeconds = $(if ($env:SUB_COORD_TIMEOUT_SECONDS) { [int]$env:SUB_COORD_TIMEOUT_SECONDS } else { 3600 }),
+    [int]$MaxSubCoordRecoveryAttempts = $(if ($env:MAX_SUB_COORD_RECOVERY_ATTEMPTS) { [int]$env:MAX_SUB_COORD_RECOVERY_ATTEMPTS } else { 2 }),
     [switch]$DryRun,
     [switch]$ValidateOnly
 )
@@ -157,6 +158,48 @@ function Finalize-Issue([string]$issue, [string]$reportFile) {
     return [string](Invoke-StateHelper @("finalize-issue", "--state-file", $StateFile, "--issue", $issue, "--report-file", $reportFile))
 }
 
+function Analyze-SubCoordFailure([string]$issue, [string]$reportFile) {
+    $json = Invoke-StateHelper @(
+        "analyze-sub-coord-failure",
+        "--state-file", $StateFile,
+        "--issue", $issue,
+        "--report-file", $reportFile,
+        "--max-attempts", "$MaxSubCoordRecoveryAttempts"
+    )
+    return (($json -join "`n") | ConvertFrom-Json)
+}
+
+function Write-SubCoordRecoveryContext([string]$issue, [string]$contextFile, [int]$attempt, [string]$reason) {
+    Invoke-StateHelper @(
+        "write-sub-coord-recovery-context",
+        "--state-file", $StateFile,
+        "--issue", $issue,
+        "--context-file", $contextFile,
+        "--attempt", "$attempt",
+        "--reason", $reason
+    ) | Out-Null
+}
+
+function Mark-SubCoordRecoveryStarted([string]$issue, [int]$attempt, [string]$reason, [string]$contextFile) {
+    Invoke-StateHelper @(
+        "mark-sub-coord-recovery-started",
+        "--state-file", $StateFile,
+        "--issue", $issue,
+        "--attempt", "$attempt",
+        "--reason", $reason,
+        "--context-file", $contextFile
+    ) | Out-Null
+}
+
+function Mark-SubCoordRecoveryDispatchFailed([string]$issue, [string]$reportFile) {
+    Invoke-StateHelper @(
+        "mark-sub-coord-recovery-dispatch-failed",
+        "--state-file", $StateFile,
+        "--issue", $issue,
+        "--report-file", $reportFile
+    ) | Out-Null
+}
+
 function Write-MergeRecoveryContext([string]$issue, [string]$contextFile, [string]$recoveryReportFile) {
     Invoke-StateHelper @(
         "write-merge-recovery-context",
@@ -247,6 +290,64 @@ function Spawn-Issue([string]$issue) {
     Write-Status "STATUS|type=sub-coord-spawn|issue=$issue|pid=$($process.Id)|agent=$Agent|model=$Model|pool_size=$($pool.Count)|parallel_jobs=$ParallelJobs"
 }
 
+function Spawn-RecoveryIssue([string]$issue, $decision, $oldEntry) {
+    $issueDir = Get-IssueDirFor $issue
+    $attempt = [int]$decision.recovery_attempt
+    $reason = [string]$decision.reason
+    $contextFile = Join-Path $issueDir "sub-coordinator-recovery-$attempt-context.md"
+    $logFile = Join-Path $issueDir "sub-coordinator-recovery-$attempt.log"
+    $doneFile = Join-Path $issueDir "sub-coordinator-recovery-$attempt.done"
+    $reportFile = Join-Path $issueDir "report.json"
+    New-Item -ItemType Directory -Force -Path $issueDir | Out-Null
+    Write-SubCoordRecoveryContext $issue $contextFile $attempt $reason
+    Mark-SubCoordRecoveryStarted $issue $attempt $reason $contextFile
+    if ($oldEntry) { Remove-ProcessCapture $oldEntry }
+    $args = Get-DispatchArgs $issue $contextFile $issueDir $logFile $doneFile $reportFile $PromptFile
+    $stdoutFile = Join-Path $issueDir "sub-coordinator-recovery-$attempt.dispatch.stdout.tmp"
+    $stderrFile = Join-Path $issueDir "sub-coordinator-recovery-$attempt.dispatch.stderr.tmp"
+    $process = Start-Process -FilePath $PowerShellExe -ArgumentList (Join-ProcessArguments $args) -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile -PassThru
+    $pool[$issue] = [pscustomobject]@{ process = $process; report_file = $reportFile; stdout_file = $stdoutFile; stderr_file = $stderrFile }
+    Mark-InProgress $issue $process.Id $contextFile $logFile $doneFile $reportFile $issueDir
+    Write-Status "STATUS|type=sub-coord-recovery-spawn|issue=$issue|attempt=$attempt|pid=$($process.Id)|agent=$Agent|model=$Model|reason=$reason"
+}
+
+function Finalize-PoolIssue([string]$issue, [string]$reportFile, $entry) {
+    $outcome = Finalize-Issue $issue $reportFile
+    if ($entry) { Remove-ProcessCapture $entry }
+    $pool.Remove($issue)
+    Write-Status "STATUS|type=sub-coord-complete|issue=$issue|outcome=$outcome|report_file=$reportFile"
+    if ($outcome -eq "merge_recovery") {
+        Run-MergeRecovery $issue
+    } else {
+        Update-GitHubIssue $issue $outcome $reportFile
+    }
+    Fill-FreeSlots $issue
+}
+
+function Handle-SubCoordExit([string]$issue, $entry) {
+    $reportFile = $entry.report_file
+    $decision = Analyze-SubCoordFailure $issue $reportFile
+    $action = [string]$decision.action
+    $reason = [string]$decision.reason
+    if ($action -eq "wait_worker") {
+        Write-Status "STATUS|type=sub-coord-recovery-wait|issue=$issue|role=$($decision.worker_role)|worker_state=$($decision.worker_state)|state_file=$($decision.worker_state_file)|reason=$reason"
+        return
+    }
+    if ($action -eq "spawn_recovery") {
+        Spawn-RecoveryIssue $issue $decision $entry
+        return
+    }
+    if ($action -eq "finalize") {
+        Finalize-PoolIssue $issue $reportFile $entry
+        return
+    }
+    if ($action -ne "block") {
+        Write-Status "STATUS|type=sub-coord-recovery-analysis-failed|issue=$issue|action=$action|reason=$reason"
+    }
+    Mark-SubCoordRecoveryDispatchFailed $issue $reportFile
+    Finalize-PoolIssue $issue $reportFile $entry
+}
+
 function Fill-FreeSlots([string]$reason) {
     $freeSlots = $ParallelJobs - $pool.Count
     if ($freeSlots -le 0) { return }
@@ -311,17 +412,7 @@ while ($pool.Count -gt 0) {
         $process = $pool[$issue].process
         $process.Refresh()
         if (-not $process.HasExited) { continue }
-        $reportFile = $pool[$issue].report_file
-        $outcome = Finalize-Issue $issue $reportFile
-        Remove-ProcessCapture $pool[$issue]
-        $pool.Remove($issue)
-        Write-Status "STATUS|type=sub-coord-complete|issue=$issue|outcome=$outcome|report_file=$reportFile"
-        if ($outcome -eq "merge_recovery") {
-            Run-MergeRecovery $issue
-        } else {
-            Update-GitHubIssue $issue $outcome $reportFile
-        }
-        Fill-FreeSlots $issue
+        Handle-SubCoordExit $issue $pool[$issue]
     }
     Fill-FreeSlots "tick"
     $waitingCount = Get-ReadyMissingContextCount

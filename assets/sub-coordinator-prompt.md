@@ -50,6 +50,9 @@ Your context file contains, in order:
    - `RUN_WITH_IT_STATE_FILE` — optional dispatcher-maintained watchdog JSON file for the currently spawned worker under `$RUN_WITH_IT_ISSUE_DIR/workers/<role>/`
    - `MAX_AGENT_DEPTH=1` — always 1; your child agents must not spawn further sub-agents
    - `DELEGATED_REVIEW`, `MAX_ITERATIONS`, `COMMITS_LIMIT`, and all other standard run params
+   - `SUB_COORD_RECOVERY_MODE=1` — optional; present only when the Main Orchestrator pool runner is replacing a failed Sub-Coordinator
+   - `SUB_COORD_RECOVERY_ATTEMPT` and `SUB_COORD_RECOVERY_REASON` — optional recovery metadata for status/report evidence
+   - `SUB_COORD_STATE_FILE` — optional absolute path to the saved issue `sub-state.json` that must be read before doing any phase work in recovery mode
 
 ## OS Detection
 
@@ -145,6 +148,22 @@ Initial schema:
 Write this file before every major phase transition and immediately after every worker PID is captured. On context compression/resume, read this file first. If a listed worker still has no valid result artifact, use its stored `pid`, `done_file`, `log_file`, and `result_file` to decide whether to continue waiting, process completed artifacts, or re-spawn the phase.
 
 State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_agents`, `review_history`, and `updated_at`. Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `selection_reason`, `log_file`, `done_file`, `result_file`, and `started_at`. Populate `selection_reason` from the selected route decision, never from raw logs.
+
+## Recovery Mode
+
+If `SUB_COORD_RECOVERY_MODE=1` is present, this is a replacement Sub-Coordinator for an issue whose previous Sub-Coordinator process failed before writing the compact report.
+
+Before any worktree bootstrap, routing, worker spawn, merge attempt, or report write:
+
+1. Read `SUB_COORD_STATE_FILE` if provided; otherwise read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`.
+2. Emit `STATUS|type=sub-resume|state_file=<path>|cycles_used=<n>|non_approval_count=<n>` to `$SUB_COORD_LOG_FILE`, `$RUN_WITH_IT_STATUS_FILE`, and `$RUN_WITH_IT_EVENTS_LOG` when set.
+3. Reuse `feature_branch`, `issue_branch`, `worktree_path`, `issue_base_sha`, `impl_commit_sha`, `modify_commit_sha`, `review_head_sha`, `review_history`, and `model_usage` from state when present.
+4. Inspect only structured worker artifacts referenced by `in_flight_agents`: `state_file`, `done_file`, and `result_file`. Do not read raw worker logs into context.
+5. If a worker is still `running`, `quiet`, or `stalled` and lacks a valid result artifact, continue monitoring that worker instead of spawning another worker for the same role/cycle.
+6. If a worker has a valid result artifact, process that artifact and continue from the next phase. For example, a completed `modify` worker should update `modify_commit_sha` / `review_head_sha`, then continue into the next review cycle.
+7. If a worker failed without a valid artifact, apply the existing Worker Artifact Recovery Contract for that role/cycle.
+8. Never rerun complexity, implementation, review, or modification phases that already have valid artifacts in the saved issue directory.
+9. Do not create a fresh issue worktree when saved `issue_branch` and `worktree_path` are present and valid. Reuse the saved worktree.
 
 ## Background Worker Monitoring Contract
 

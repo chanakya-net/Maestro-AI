@@ -44,6 +44,8 @@ REPORT_FILE="$WORK_DIR/report.json"
 DERIVED_REPORT_FILE="$WORK_DIR/report-derived.json"
 RECOVERY_CONTEXT="$WORK_DIR/merge-recovery-context.md"
 RECOVERY_REPORT="$WORK_DIR/merge-recovery-report.json"
+SUB_RECOVERY_CONTEXT="$WORK_DIR/sub-coord-recovery-context.md"
+SUB_RECOVERY_STATE_FILE="$WORK_DIR/sub-coord-recovery-main-state.json"
 MERGE_FINAL_REPORT="$WORK_DIR/merge-final-report.json"
 FALLBACK_STATE_FILE="$WORK_DIR/fallback-main-state.json"
 MISSING_STATE_FILE="$WORK_DIR/missing-main-state.json"
@@ -188,6 +190,140 @@ assert summary["lines_added"] == 7
 assert summary["lines_deleted"] == 1
 assert summary["commit_sha"] == "def456"
 PY
+
+mkdir -p "$WORK_DIR/issues/5/workers/modify"
+cat > "$WORK_DIR/sub-5.md" <<'EOF'
+# issue 5 context
+SUB_COORD_ISSUE_NUMBER=5
+EOF
+cat > "$SUB_RECOVERY_STATE_FILE" <<JSON
+{
+  "schema_version": 4,
+  "execution_plan": { "parallel_jobs": 1, "topo_order": [5] },
+  "issue_registry": {
+    "5": {
+      "status": "in_progress",
+      "deps": [],
+      "context_file": "$WORK_DIR/sub-5.md",
+      "issue_dir": "$WORK_DIR/issues/5",
+      "report_file": "$WORK_DIR/issues/5/report.json"
+    }
+  },
+  "active_pool_issues": ["5"],
+  "completed_summaries": [],
+  "ledger_rows": []
+}
+JSON
+cat > "$WORK_DIR/issues/5/sub-state.json" <<JSON
+{
+  "schema_version": 1,
+  "issue_number": 5,
+  "phase": "modify",
+  "in_flight_agents": [
+    {
+      "role": "modify",
+      "cycle": 1,
+      "pid": 4242,
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "selection_reason": "test",
+      "log_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.log",
+      "done_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.done",
+      "result_file": "$WORK_DIR/issues/5/workers/modify/cycle-1-result.json",
+      "state_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json",
+      "started_at": "2026-05-30T00:00:00Z"
+    }
+  ],
+  "review_history": [],
+  "updated_at": "2026-05-30T00:00:00Z"
+}
+JSON
+cat > "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json" <<JSON
+{
+  "schema_version": 1,
+  "issue": "5",
+  "role": "modify",
+  "cycle": "1",
+  "state": "running",
+  "alive": true,
+  "done": false,
+  "result_present": false,
+  "state_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json",
+  "done_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.done",
+  "result_file": "$WORK_DIR/issues/5/workers/modify/cycle-1-result.json"
+}
+JSON
+
+analysis_running="$(python3 "$STATE_HELPER" analyze-sub-coord-failure --state-file "$SUB_RECOVERY_STATE_FILE" --issue 5 --report-file "$WORK_DIR/issues/5/report.json")"
+python3 - "$analysis_running" "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+assert payload["action"] == "wait_worker", payload
+assert payload["reason"] == "in-flight-worker-running", payload
+assert payload["phase"] == "modify", payload
+assert payload["worker_role"] == "modify", payload
+assert payload["worker_state"] == "running", payload
+assert payload["worker_state_file"] == sys.argv[2], payload
+PY
+
+cat > "$WORK_DIR/issues/5/workers/modify/cycle-1.result.tmp" <<'JSON'
+{
+  "schema_version": 1,
+  "issue": 5,
+  "role": "modify",
+  "status": "success",
+  "commit_sha": "abc555",
+  "files_committed": ["src/example.cs"],
+  "verification": {
+    "passed": true,
+    "commands_run": ["fake verify"],
+    "evidence": "fake verify passed"
+  }
+}
+JSON
+mv "$WORK_DIR/issues/5/workers/modify/cycle-1.result.tmp" "$WORK_DIR/issues/5/workers/modify/cycle-1-result.json"
+printf 'DONE|issue=5|role=modify|status=success|source=agent\n' > "$WORK_DIR/issues/5/workers/modify/cycle-1.done"
+cat > "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json" <<JSON
+{
+  "schema_version": 1,
+  "issue": "5",
+  "role": "modify",
+  "cycle": "1",
+  "state": "completed",
+  "alive": false,
+  "done": true,
+  "result_present": true,
+  "state_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json",
+  "done_file": "$WORK_DIR/issues/5/workers/modify/cycle-1.done",
+  "result_file": "$WORK_DIR/issues/5/workers/modify/cycle-1-result.json"
+}
+JSON
+
+analysis_completed="$(python3 "$STATE_HELPER" analyze-sub-coord-failure --state-file "$SUB_RECOVERY_STATE_FILE" --issue 5 --report-file "$WORK_DIR/issues/5/report.json")"
+python3 - "$analysis_completed" "$WORK_DIR/issues/5/workers/modify/cycle-1-result.json" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+assert payload["action"] == "spawn_recovery", payload
+assert payload["reason"] == "in-flight-worker-finished", payload
+assert payload["worker_role"] == "modify", payload
+assert payload["worker_state"] == "completed", payload
+assert payload["worker_result_file"] == sys.argv[2], payload
+PY
+
+python3 "$STATE_HELPER" write-sub-coord-recovery-context \
+  --state-file "$SUB_RECOVERY_STATE_FILE" \
+  --issue 5 \
+  --context-file "$SUB_RECOVERY_CONTEXT" \
+  --attempt 1 \
+  --reason "in-flight-worker-finished"
+grep -Fq "SUB_COORD_RECOVERY_MODE=1" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context enables recovery mode"
+grep -Fq "SUB_COORD_RECOVERY_ATTEMPT=1" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context records attempt"
+grep -Fq "SUB_COORD_RECOVERY_REASON=in-flight-worker-finished" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context records reason"
+grep -Fq "SUB_COORD_STATE_FILE=$WORK_DIR/issues/5/sub-state.json" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context records sub-state path"
+grep -Fq "Do not restart from scratch." "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context forbids restart from scratch"
+grep -Fq "# issue 5 context" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context includes original context"
 
 comment="$(python3 "$GITHUB_HELPER" render-comment --outcome completed --report-file "$REPORT_FILE")"
 assert_contains "$comment" "## Status" "GitHub helper renders status section"
