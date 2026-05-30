@@ -2,7 +2,7 @@
 
 > **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, cost-optimized model routing, and automatic merge recovery across 4 providers and 27 models.
 
-📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram &nbsp;·&nbsp; License: [MIT](LICENSE)
+📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram &nbsp;·&nbsp;
 
 ## Overview
 
