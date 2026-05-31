@@ -49,7 +49,7 @@ Preferred upstream flow:
 
 **Main Orchestrator** (this skill, runs in the primary session):
 - Fetches all `ready-for-agent` issues once at startup
-- Creates one shared run feature branch (`run-with-it/<run-id>`) from the original base branch, pushes it when a GitHub remote exists, and uses it as the final PR head branch
+- Creates one shared run feature branch (`Maestro/<funny-action-animal>`) from the original base branch, pushes it when a GitHub remote exists, and uses it as the final PR head branch
 - Determines execution order with a dependency graph and topological sort based primarily on each issue's `## Blocked by` section; cycles or unresolved external blockers are marked blocked before execution
 - Maintains a rolling pool of up to `PARALLEL_JOBS` active **Sub-Coordinators** via the platform dispatcher — freed slots fill immediately when any job completes rather than waiting for whole batches
 - As each Sub-Coordinator completes, reads its compact report, immediately posts the terminal GitHub comment and closes/updates that issue when it has a terminal outcome, then spawns the next ready issue into the freed slot
@@ -265,9 +265,14 @@ Fallback policy:
 Before fetching work begins, create the shared run feature branch:
 
 1. Capture original base branch and SHA.
-2. Create `run-with-it/<run-id>` from that base.
-3. Push the branch when a GitHub remote exists.
-4. Record `run_branch.base_branch`, `run_branch.base_sha`, `run_branch.feature_branch`, `run_branch.feature_branch_start_sha`, `run_branch.remote`, and `run_branch.pushed`.
+2. Generate a human-readable branch name as `Maestro/<funny-action-animal>` instead of a UUID branch.
+   - Use a lowercase, hyphenated slug with exactly two words after the prefix: `<action-or-trait>-<animal>`.
+   - Prefer funny but work-safe names such as `cunning-fox`, `unfaithful-lion`, `scheming-otter`, `dramatic-llama`, `sneaky-raven`, `tapdancing-badger`, `plotting-penguin`, or `chaotic-hamster`.
+   - Do not use raw UUIDs in the branch name.
+   - If the generated branch already exists locally or on the remote, generate a different slug; only append a short numeric suffix when several reasonable retries collide.
+3. Create `Maestro/<funny-action-animal>` from that base.
+4. Push the branch when a GitHub remote exists.
+5. Record `run_branch.base_branch`, `run_branch.base_sha`, `run_branch.feature_branch`, `run_branch.feature_branch_start_sha`, `run_branch.remote`, and `run_branch.pushed`.
 
 After fetching all issues:
 
@@ -584,12 +589,12 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
 ```json
 {
   "schema_version": 4,
-  "run_id": "<uuid generated at run start>",
+  "run_id": "<funny-action-animal slug generated at run start>",
   "started_at": "<iso8601>",
   "run_branch": {
     "base_branch": "main",
     "base_sha": "abc123",
-    "feature_branch": "run-with-it/<run-id>",
+    "feature_branch": "Maestro/cunning-fox",
     "feature_branch_start_sha": "abc123",
     "remote": "origin",
     "pushed": true,
@@ -615,7 +620,7 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
       "report_file": ".run-with-it/issues/36/report.json",
       "merge_recovery_report_file": ".run-with-it/issues/36/merge-recovery-report.json",
       "log_file": ".run-with-it/issues/36/sub-coordinator.log",
-      "issue_branch": "run-with-it/<run-id>/issue-36",
+      "issue_branch": "Maestro/cunning-fox/issue-36",
       "worktree_path": ".run-with-it/worktrees/issue-36",
       "commit_sha": "abc1234"
     }

@@ -39,7 +39,7 @@ Your context file contains, in order:
    - `RUN_WITH_IT_ISSUE_DIR` — absolute path to this issue's artifact folder under `.run-with-it/issues/<issue-number>`
    - `SUB_COORD_REPORT_FILE` — absolute path where you must write your compact report JSON, normally `$RUN_WITH_IT_ISSUE_DIR/report.json`
    - `SUB_COORD_LOG_FILE` — absolute path for your log file, normally `$RUN_WITH_IT_ISSUE_DIR/sub-coordinator.log` (append all STATUS lines here)
-   - `RUN_FEATURE_BRANCH` — shared run branch created by the Main Orchestrator, for example `run-with-it/<run-id>`
+   - `RUN_FEATURE_BRANCH` — shared run branch created by the Main Orchestrator, for example `Maestro/cunning-fox`
    - `RUN_BASE_BRANCH` and `RUN_BASE_SHA` — original base branch and SHA captured at run start
    - `ISSUE_BRANCH` — issue branch created from the shared feature branch
    - `ISSUE_WORKTREE_PATH` — absolute path to this issue's git worktree under `.run-with-it/worktrees/issue-<n>`
@@ -1019,8 +1019,8 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
   "impl_commit_sha": "<SHA captured after implementer's mandatory commit — null until set>",
   "modify_commit_sha": "<SHA captured after latest modifier's mandatory commit — null until set>",
   "review_head_sha": "<current REVIEW_HEAD_SHA for next reviewer — equals impl_commit_sha or modify_commit_sha>",
-  "feature_branch": "run-with-it/<run-id>",
-  "issue_branch": "run-with-it/<run-id>/issue-36",
+  "feature_branch": "Maestro/cunning-fox",
+  "issue_branch": "Maestro/cunning-fox/issue-36",
   "worktree_path": ".run-with-it/worktrees/issue-36",
   "queue": {
     "ready": [
@@ -1238,8 +1238,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     }
   ],
   "commit_sha": "abc1234",
-  "issue_branch": "run-with-it/<run-id>/issue-36",
-  "feature_branch": "run-with-it/<run-id>",
+  "issue_branch": "Maestro/cunning-fox/issue-36",
+  "feature_branch": "Maestro/cunning-fox",
   "worktree_path": ".run-with-it/worktrees/issue-36",
   "merge": {
     "status": "completed | failed | skipped",

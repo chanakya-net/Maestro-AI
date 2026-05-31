@@ -87,8 +87,8 @@ Write compact JSON to `MERGE_RECOVERY_REPORT_FILE` when set, otherwise to the re
   "issue_number": 101,
   "outcome": "completed | failed-merge | blocked",
   "summary": "Resolved conflict between issue branch and shared feature branch.",
-  "feature_branch": "run-with-it/<run-id>",
-  "issue_branch": "run-with-it/<run-id>/issue-101",
+  "feature_branch": "Maestro/cunning-fox",
+  "issue_branch": "Maestro/cunning-fox/issue-101",
   "merge_sha": "abc123",
   "files_modified": [
     { "path": "src/example.ts", "lines_added": 3, "lines_deleted": 1 }

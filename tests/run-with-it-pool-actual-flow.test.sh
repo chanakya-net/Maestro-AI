@@ -129,7 +129,7 @@ recovery_mode="$(printf '%s' "$prompt_payload" | sed -n 's/^SUB_COORD_RECOVERY_M
 issue="${RUN_WITH_IT_ISSUE:-unknown}"
 role="${RUN_WITH_IT_ROLE:-unknown}"
 printf 'STATUS|type=heartbeat|issue=%s|role=%s|phase=starting|progress=fake sub start\n' "$issue" "$role"
-printf 'STATUS|type=merge-start|issue=%s|branch=run-with-it/smoke/issue-%s|target=run-with-it/smoke\n' "$issue" "$issue"
+printf 'STATUS|type=merge-start|issue=%s|branch=Maestro/smoke-fox/issue-%s|target=Maestro/smoke-fox\n' "$issue" "$issue"
 mkdir -p "$repo_root" "$(dirname "$report_file")"
 printf 'issue=%s repo=%s\n' "$issue" "$repo_root" > "$repo_root/issue-$issue.marker"
 if [[ "$recovery_mode" == "1" ]]; then
@@ -159,7 +159,7 @@ JSON
   exit 1
 elif [[ "$role" == "merge-recovery" ]]; then
   printf 'STATUS|type=heartbeat|issue=%s|role=merge-recovery|phase=resolving|progress=fake recovery\n' "$issue"
-  printf '{"schema_version":1,"issue_number":%s,"outcome":"completed","summary":"fake recovery completed","feature_branch":"run-with-it/smoke","issue_branch":"run-with-it/smoke/issue-%s","merge_sha":"fake-recovery-%s","files_modified":[{"path":"shared.txt","lines_added":1,"lines_deleted":1}],"verification":{"passed":true,"commands_run":["fake verify"],"evidence":"fake recovery passed"},"blocking_reasons":[]}\n' "$issue" "$issue" "$issue" > "$report_file"
+  printf '{"schema_version":1,"issue_number":%s,"outcome":"completed","summary":"fake recovery completed","feature_branch":"Maestro/smoke-fox","issue_branch":"Maestro/smoke-fox/issue-%s","merge_sha":"fake-recovery-%s","files_modified":[{"path":"shared.txt","lines_added":1,"lines_deleted":1}],"verification":{"passed":true,"commands_run":["fake verify"],"evidence":"fake recovery passed"},"blocking_reasons":[]}\n' "$issue" "$issue" "$issue" > "$report_file"
 elif [[ "$outcome" == "merge_failed" ]]; then
   printf 'STATUS|type=merge-failed|issue=%s|reason=conflict\n' "$issue"
   printf '{"schema_version":1,"issue_number":%s,"outcome":"merge_failed","summary":"fake merge conflict","files_modified_count":1,"lines_added":2,"lines_deleted":0,"review_cycles":1,"commit_sha":"fake-%s","merge":{"status":"failed","failure_reason":"conflict","conflict_files":["shared.txt"]}}\n' "$issue" "$issue" > "$report_file"
