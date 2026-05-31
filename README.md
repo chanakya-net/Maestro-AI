@@ -142,7 +142,7 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 ### Stage 1: Planning
 
-The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It creates a shared feature branch (`run-with-it/<run-id>`) that will eventually hold all merged work. The execution plan and initial state are written to `.run-with-it/main-state.json`.
+The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It creates a shared feature branch (`Maestro/<funny-action-animal>`, for example `Maestro/cunning-fox`) that will eventually hold all merged work. The execution plan and initial state are written to `.run-with-it/main-state.json`.
 
 ### Stage 2: Execution (Rolling Pool)
 
