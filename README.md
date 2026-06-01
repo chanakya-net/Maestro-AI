@@ -316,4 +316,4 @@ AI-Skills/
 
 ## License
 
-Released under the [ALGP License](LICENSE).
+Released under the [GNU General Public License v3.0](LICENSE).
