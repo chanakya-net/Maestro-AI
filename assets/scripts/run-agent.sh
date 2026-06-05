@@ -22,16 +22,17 @@ fi
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
+ASSET_ROOT="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
   (cd "${REPO_ROOT}" && codegraph unlock 2>/dev/null) || true
 fi
-AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${SCRIPT_DIR}/agent-registry.json}"
+AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${ASSET_ROOT}/agent-registry.json}"
 
 AGENT="${AGENT:-}"
 MODEL="${MODEL:-}"
 CONTEXT_PAYLOAD_FILE="${CONTEXT_PAYLOAD_FILE:-}"
-PROMPT_FILE="${PROMPT_FILE:-${SCRIPT_DIR}/prompt.md}"
+PROMPT_FILE="${PROMPT_FILE:-${ASSET_ROOT}/prompts/prompt.md}"
 PRINT_PROMPT="${PRINT_PROMPT:-0}"
 AGENT_PERMISSION_MODE="${AGENT_PERMISSION_MODE:-}"
 AGENT_EXTRA_ARGS="${AGENT_EXTRA_ARGS:-}"

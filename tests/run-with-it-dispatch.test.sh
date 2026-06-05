@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DISPATCHER="${ROOT_DIR}/assets/run-with-it-dispatch.sh"
+DISPATCHER="${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -56,7 +56,7 @@ cleanup() {
 trap cleanup EXIT
 
 CONTEXT_FILE="${WORK_DIR}/context.md"
-PROMPT_FILE="${ROOT_DIR}/assets/prompt.md"
+PROMPT_FILE="${ROOT_DIR}/assets/prompts/prompt.md"
 ISSUE_DIR="${WORK_DIR}/.run-with-it/issues/42"
 LOG_FILE="${ISSUE_DIR}/workers/impl/cycle-1.log"
 DONE_FILE="${ISSUE_DIR}/workers/impl/cycle-1.done"
@@ -138,7 +138,7 @@ SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
 SMOKE_BIN="${WORK_DIR}/bin"
 mkdir -p "${SMOKE_ASSET_ROOT}" "${SMOKE_PROJECT}" "${SMOKE_REPO_ROOT}" "${SMOKE_BIN}"
-cp "${ROOT_DIR}/assets/run-agent.sh" "${ROOT_DIR}/assets/worker-watch.sh" "${ROOT_DIR}/assets/run-with-it-dispatch.sh" "${ROOT_DIR}/assets/run-with-it-artifacts.py" "${SMOKE_ASSET_ROOT}/"
+cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${SMOKE_ASSET_ROOT}/"
 chmod +x "${SMOKE_ASSET_ROOT}/run-agent.sh" "${SMOKE_ASSET_ROOT}/worker-watch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py"
 
 cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'JSON'
@@ -265,7 +265,7 @@ cat > "${RECOVERY_RESULT}" <<JSON
 JSON
 printf 'DONE|issue=42|role=modify|status=success\n' > "${RECOVERY_DONE}"
 
-recovery_reason="$(python3 "${ROOT_DIR}/assets/run-with-it-artifacts.py" failure-reason \
+recovery_reason="$(python3 "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" failure-reason \
   --role modify \
   --issue 42 \
   --result-file "${RECOVERY_RESULT}" \

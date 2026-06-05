@@ -259,14 +259,14 @@ if (-not $AssetRoot) {
     if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-agent.ps1")) {
         $AssetRoot = $homeAssetRoot
     } else {
-        $AssetRoot = $PSScriptRoot
+        $AssetRoot = Split-Path $PSScriptRoot -Parent
     }
 }
 
 $RunAgent = Join-Path $AssetRoot "powershell" "run-agent.ps1"
-$WorkerWatch = Join-Path $AssetRoot "worker-watch.ps1"
+$WorkerWatch = Join-Path $AssetRoot "powershell" "worker-watch.ps1"
 $RegistryFile = Join-Path $AssetRoot "agent-registry.json"
-$script:ArtifactHelper = Join-Path $AssetRoot "run-with-it-artifacts.py"
+$script:ArtifactHelper = Join-Path $AssetRoot "python" "run-with-it-artifacts.py"
 $script:PythonExe = Get-PythonExe
 
 if (-not (Test-Path $RunAgent)) { Fail "runner not found: $RunAgent" }

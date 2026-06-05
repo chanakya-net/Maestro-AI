@@ -57,18 +57,18 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$ASSET_ROOT" ]; then
-  if [ -f "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" ]; then
+  if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-with-it-dispatch.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
-    ASSET_ROOT="$SCRIPT_DIR"
+    ASSET_ROOT="$(dirname "$SCRIPT_DIR")"
   fi
 fi
 
-DISPATCHER="${ASSET_ROOT}/run-with-it-dispatch.sh"
-PROMPT_FILE="${ASSET_ROOT}/sub-coordinator-prompt.md"
-MERGE_RECOVERY_PROMPT_FILE="${ASSET_ROOT}/merge-recovery-prompt.md"
+DISPATCHER="${ASSET_ROOT}/scripts/run-with-it-dispatch.sh"
+PROMPT_FILE="${ASSET_ROOT}/prompts/sub-coordinator-prompt.md"
+MERGE_RECOVERY_PROMPT_FILE="${ASSET_ROOT}/prompts/merge-recovery-prompt.md"
 STATE_HELPER="${ASSET_ROOT}/python/run-with-it-state.py"
-GITHUB_UPDATE_HELPER="${ASSET_ROOT}/run-with-it-github-update.py"
+GITHUB_UPDATE_HELPER="${ASSET_ROOT}/python/run-with-it-github-update.py"
 
 # State helper maps merge_failed reports to merge_recovery before terminal
 # GitHub updates are attempted.

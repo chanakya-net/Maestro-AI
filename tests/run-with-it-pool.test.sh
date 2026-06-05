@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POOL_RUNNER="${ROOT_DIR}/assets/run-with-it-pool.sh"
-MAIN_RULES="${ROOT_DIR}/assets/main-orchestrator-rules.md"
-SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
+POOL_RUNNER="${ROOT_DIR}/assets/scripts/run-with-it-pool.sh"
+MAIN_RULES="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
+SUB_PROMPT="${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md"
 
 fail() {
   echo "FAIL: $1" >&2

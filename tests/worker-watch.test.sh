@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WATCHER="${ROOT_DIR}/assets/worker-watch.sh"
+WATCHER="${ROOT_DIR}/assets/scripts/worker-watch.sh"
 
 fail() {
   echo "FAIL: $1" >&2

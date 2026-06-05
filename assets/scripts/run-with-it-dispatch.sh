@@ -90,14 +90,14 @@ if [ -z "$ASSET_ROOT" ]; then
   if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-agent.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
-    ASSET_ROOT="$SCRIPT_DIR"
+    ASSET_ROOT="$(dirname "$SCRIPT_DIR")"
   fi
 fi
 
 RUN_AGENT="${ASSET_ROOT}/scripts/run-agent.sh"
-WORKER_WATCH="${ASSET_ROOT}/worker-watch.sh"
+WORKER_WATCH="${ASSET_ROOT}/scripts/worker-watch.sh"
 REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
-ARTIFACT_HELPER="${ASSET_ROOT}/run-with-it-artifacts.py"
+ARTIFACT_HELPER="${ASSET_ROOT}/python/run-with-it-artifacts.py"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 [ -n "$ROLE" ] || fail "--role is required"

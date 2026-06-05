@@ -4,9 +4,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
-SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
-COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/coordinator-rules.md"
-ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/main-orchestrator-rules.md"
+SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md"
+COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/prompts/coordinator-rules.md"
+ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
 README_FILE="${ROOT_DIR}/README.md"
 INSTALL_SH="${ROOT_DIR}/install.sh"
 INSTALL_PS1="${ROOT_DIR}/install.ps1"
@@ -38,9 +38,9 @@ assert_not_contains_file() {
   fi
 }
 
-assert_file "${ROOT_DIR}/assets/worker-watch.ps1" "PowerShell worker watcher asset exists"
-assert_file "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" "PowerShell dispatcher asset exists"
-assert_file "${ROOT_DIR}/assets/run-with-it-pool.ps1" "PowerShell pool asset exists"
+assert_file "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "PowerShell worker watcher asset exists"
+assert_file "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "PowerShell dispatcher asset exists"
+assert_file "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "PowerShell pool asset exists"
 
 assert_contains_file "$SKILL_FILE" "run-with-it-dispatch.ps1" "skill documents PowerShell dispatcher"
 assert_contains_file "$SKILL_FILE" "run-with-it-pool.ps1" "skill documents PowerShell pool"

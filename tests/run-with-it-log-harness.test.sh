@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNNER_PATH="${ROOT_DIR}/assets/run-agent.sh"
+RUNNER_PATH="${ROOT_DIR}/assets/scripts/run-agent.sh"
 ASSET_ROOT="${ROOT_DIR}/assets"
 
 fail() {
