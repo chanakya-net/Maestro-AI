@@ -25,6 +25,18 @@ fail() {
   exit 2
 }
 
+path_dirname() {
+  local path="${1:-}"
+
+  if [[ -z "${path}" || "${path}" != *"/"* ]]; then
+    printf '.\n'
+  elif [[ "${path}" == "/"* && "${path%/*}" == "" ]]; then
+    printf '/\n'
+  else
+    printf '%s\n' "${path%/*}"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -60,7 +72,7 @@ if [ -z "$ASSET_ROOT" ]; then
   if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-with-it-dispatch.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
-    ASSET_ROOT="$(dirname "$SCRIPT_DIR")"
+    ASSET_ROOT="${SCRIPT_DIR%/*}"
   fi
 fi
 
@@ -80,12 +92,12 @@ GITHUB_UPDATE_HELPER="${ASSET_ROOT}/python/run-with-it-github-update.py"
 [ -f "$STATE_FILE" ] || fail "state file not found: $STATE_FILE"
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
 
-RUN_ROOT="$(cd "$(dirname "$STATE_FILE")/.." && pwd -P)"
+RUN_ROOT="$(cd "$(path_dirname "$STATE_FILE")/.." && pwd -P)"
 if [ -z "$PARALLEL_JOBS" ]; then
   PARALLEL_JOBS="$("$PYTHON_BIN" "$STATE_HELPER" parallel-jobs --state-file "$STATE_FILE")"
 fi
 
-mkdir -p "$(dirname "$MAIN_LOG")" "$(dirname "$STATUS_FILE")" "$(dirname "$EVENTS_LOG")"
+mkdir -p "$(path_dirname "$MAIN_LOG")" "$(path_dirname "$STATUS_FILE")" "$(path_dirname "$EVENTS_LOG")"
 
 write_status() {
   local line="$1"

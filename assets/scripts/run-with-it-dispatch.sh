@@ -40,6 +40,18 @@ fail() {
   exit 2
 }
 
+path_dirname() {
+  local path="${1:-}"
+
+  if [[ -z "${path}" || "${path}" != *"/"* ]]; then
+    printf '.\n'
+  elif [[ "${path}" == "/"* && "${path%/*}" == "" ]]; then
+    printf '/\n'
+  else
+    printf '%s\n' "${path%/*}"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -90,7 +102,7 @@ if [ -z "$ASSET_ROOT" ]; then
   if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-agent.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
-    ASSET_ROOT="$(dirname "$SCRIPT_DIR")"
+    ASSET_ROOT="${SCRIPT_DIR%/*}"
   fi
 fi
 
@@ -124,15 +136,15 @@ command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not foun
 if [ -z "$STATE_FILE" ]; then
   log_name="$(basename "$LOG_FILE")"
   if [[ "$log_name" == *.log ]]; then
-    STATE_FILE="$(dirname "$LOG_FILE")/${log_name%.log}.state.json"
+    STATE_FILE="$(path_dirname "$LOG_FILE")/${log_name%.log}.state.json"
   else
     STATE_FILE="${LOG_FILE}.state.json"
   fi
 fi
 
-mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$DONE_FILE")" "$(dirname "$RESULT_FILE")" "$(dirname "$STATE_FILE")"
-if [ -n "$STATUS_FILE" ]; then mkdir -p "$(dirname "$STATUS_FILE")"; fi
-if [ -n "$EVENTS_LOG" ]; then mkdir -p "$(dirname "$EVENTS_LOG")"; fi
+mkdir -p "$(path_dirname "$LOG_FILE")" "$(path_dirname "$DONE_FILE")" "$(path_dirname "$RESULT_FILE")" "$(path_dirname "$STATE_FILE")"
+if [ -n "$STATUS_FILE" ]; then mkdir -p "$(path_dirname "$STATUS_FILE")"; fi
+if [ -n "$EVENTS_LOG" ]; then mkdir -p "$(path_dirname "$EVENTS_LOG")"; fi
 
 if [ -z "$TAIL_STATE_FILE" ]; then
   cycle_part="${CYCLE:-0}"
@@ -429,7 +441,7 @@ if [ "$DETACH" = 1 ] && [ "$DETACHED_CHILD" != "1" ] && [ "$VALIDATE_ONLY" != "1
       DISPATCH_OUT_FILE="${LOG_FILE}.dispatch.out"
     fi
   fi
-  mkdir -p "$(dirname "$DISPATCH_OUT_FILE")"
+  mkdir -p "$(path_dirname "$DISPATCH_OUT_FILE")"
   # nohup alone can remain in the caller's process group; create a new session
   # so short-lived tool-call cleanup cannot kill the dispatcher before runner PID.
   detached_pid="$("$PYTHON_BIN" - "$DISPATCH_OUT_FILE" "$0" "${ORIGINAL_ARGS[@]}" <<'PY'
