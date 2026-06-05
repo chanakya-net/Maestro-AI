@@ -87,14 +87,14 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$ASSET_ROOT" ]; then
-  if [ -f "$HOME/.ai-skill-collections/assets/run-agent.sh" ]; then
+  if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-agent.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
     ASSET_ROOT="$SCRIPT_DIR"
   fi
 fi
 
-RUN_AGENT="${ASSET_ROOT}/run-agent.sh"
+RUN_AGENT="${ASSET_ROOT}/scripts/run-agent.sh"
 WORKER_WATCH="${ASSET_ROOT}/worker-watch.sh"
 REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
 ARTIFACT_HELPER="${ASSET_ROOT}/run-with-it-artifacts.py"

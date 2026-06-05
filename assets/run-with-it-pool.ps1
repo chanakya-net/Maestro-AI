@@ -101,7 +101,7 @@ if (-not $AssetRoot) {
 $Dispatcher = Join-Path $AssetRoot "run-with-it-dispatch.ps1"
 $PromptFile = Join-Path $AssetRoot "sub-coordinator-prompt.md"
 $MergeRecoveryPromptFile = Join-Path $AssetRoot "merge-recovery-prompt.md"
-$StateHelper = Join-Path $AssetRoot "run-with-it-state.py"
+$StateHelper = Join-Path $AssetRoot "python" "run-with-it-state.py"
 $GitHubUpdateHelper = Join-Path $AssetRoot "run-with-it-github-update.py"
 
 if (-not (Test-Path $Dispatcher)) { Fail "dispatcher not found: $Dispatcher" }

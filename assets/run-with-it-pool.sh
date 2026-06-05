@@ -67,7 +67,7 @@ fi
 DISPATCHER="${ASSET_ROOT}/run-with-it-dispatch.sh"
 PROMPT_FILE="${ASSET_ROOT}/sub-coordinator-prompt.md"
 MERGE_RECOVERY_PROMPT_FILE="${ASSET_ROOT}/merge-recovery-prompt.md"
-STATE_HELPER="${ASSET_ROOT}/run-with-it-state.py"
+STATE_HELPER="${ASSET_ROOT}/python/run-with-it-state.py"
 GITHUB_UPDATE_HELPER="${ASSET_ROOT}/run-with-it-github-update.py"
 
 # State helper maps merge_failed reports to merge_recovery before terminal

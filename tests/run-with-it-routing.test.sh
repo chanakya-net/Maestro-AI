@@ -7,7 +7,7 @@ SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
 ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/main-orchestrator-rules.md"
 COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/coordinator-rules.md"
 SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
-IMPLEMENTER_PROMPT_FILE="${ROOT_DIR}/assets/prompt.md"
+IMPLEMENTER_PROMPT_FILE="${ROOT_DIR}/assets/prompts/prompt.md"
 REVIEW_PROMPT_FILE="${ROOT_DIR}/assets/review-prompt.md"
 MODIFIER_PROMPT_FILE="${ROOT_DIR}/assets/modifier-prompt.md"
 COMPLEXITY_PROMPT_FILE="${ROOT_DIR}/assets/complexity-prompt.md"
@@ -95,6 +95,13 @@ assert_not_present_in_active_files() {
 [[ -f "$MODIFIER_PROMPT_FILE" ]] || fail "modifier prompt file exists"
 [[ -f "$COMPLEXITY_PROMPT_FILE" ]] || fail "complexity prompt file exists"
 [[ -f "$MERGE_RECOVERY_PROMPT_FILE" ]] || fail "merge recovery prompt file exists"
+
+# Smoke assertions for moved assets
+[[ -f "${ROOT_DIR}/assets/prompts/prompt.md" ]] || fail "assets/prompts/prompt.md exists"
+[[ -f "${ROOT_DIR}/assets/scripts/run-agent.sh" ]] || fail "assets/scripts/run-agent.sh exists"
+[[ -f "${ROOT_DIR}/assets/powershell/run-agent.ps1" ]] || fail "assets/powershell/run-agent.ps1 exists"
+[[ -f "${ROOT_DIR}/assets/python/run-with-it-state.py" ]] || fail "assets/python/run-with-it-state.py exists"
+[[ -f "${ROOT_DIR}/assets/agent-registry.json" ]] || fail "assets/agent-registry.json exists at root"
 
 assert_not_contains 'run-codex.sh' "legacy codex runner references removed"
 assert_not_contains 'run-copilot.sh' "legacy copilot runner references removed"

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNNER_PATH="${ROOT_DIR}/assets/run-agent.ps1"
+RUNNER_PATH="${ROOT_DIR}/assets/powershell/run-agent.ps1"
 PS_CMD="${PWSH:-}"
 if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
