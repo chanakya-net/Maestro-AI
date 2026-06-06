@@ -236,19 +236,49 @@ class Program
 
         var separator = Path.PathSeparator;
         var paths = pathEnv.Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var extensions = ExecutableExtensions();
         foreach (var p in paths)
         {
-            try
+            foreach (var extension in extensions)
             {
-                var fullPath = Path.Combine(p, "gh");
-                if (File.Exists(fullPath))
+                try
                 {
-                    return true;
+                    var fullPath = Path.Combine(p, $"gh{extension}");
+                    if (File.Exists(fullPath))
+                    {
+                        return true;
+                    }
                 }
+                catch {}
             }
-            catch {}
         }
         return false;
+    }
+
+    static List<string> ExecutableExtensions()
+    {
+        var extensions = new List<string> { string.Empty };
+        var pathExt = Environment.GetEnvironmentVariable("PATHEXT");
+        if (string.IsNullOrWhiteSpace(pathExt))
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return extensions;
+            }
+
+            pathExt = ".COM;.EXE;.BAT;.CMD";
+        }
+
+        foreach (var raw in pathExt.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var extension = raw.StartsWith(".", StringComparison.Ordinal) ? raw : $".{raw}";
+            if (!extensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+            {
+                extensions.Add(extension);
+            }
+        }
+
+        return extensions;
     }
 
     static bool HasGithubRemote(string runRoot)

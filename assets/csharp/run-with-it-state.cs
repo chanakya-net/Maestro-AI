@@ -277,7 +277,7 @@ static int MarkInProgress(Dictionary<string, string> options)
     var next = new JsonArray();
     foreach (var value in active)
     {
-        next.Add(value);
+        next.Add(JsonValue.Create(value));
     }
 
     state["active_pool_issues"] = next;
@@ -313,7 +313,7 @@ static int FinalizeIssue(Dictionary<string, string> options)
             var value = AsString(item) ?? AsIntText(item);
             if (!string.IsNullOrWhiteSpace(value) && value != issue)
             {
-                next.Add(value);
+                next.Add(JsonValue.Create(value));
             }
         }
 
@@ -722,15 +722,15 @@ static JsonObject MakeSummary(string issue, string status, string reportFile, Js
     {
         ["issue"] = issueInt,
         ["outcome"] = status,
-        ["summary"] = report["summary"],
-        ["verification"] = report["verification"] is JsonObject verification ? verification : new JsonObject(),
+        ["summary"] = CloneNode(report["summary"]),
+        ["verification"] = report["verification"] is JsonObject verification ? verification.DeepClone() : new JsonObject(),
         ["report_file"] = reportFile,
         ["model_usage"] = CompactModelUsage(report),
         ["files_modified_count"] = metrics["files_modified_count"],
         ["lines_added"] = metrics["lines_added"],
         ["lines_deleted"] = metrics["lines_deleted"],
-        ["review_cycles"] = report["review_cycles"] ?? 0,
-        ["commit_sha"] = report["commit_sha"],
+        ["review_cycles"] = CloneNode(report["review_cycles"]) ?? JsonValue.Create(0),
+        ["commit_sha"] = CloneNode(report["commit_sha"]),
     };
 }
 
@@ -825,7 +825,13 @@ static bool FileHasJson(string path)
 
 static JsonObject IssueEntry(JsonObject state, string issue)
 {
-    var registry = GetObject(state, "issue_registry");
+    var registry = state["issue_registry"] as JsonObject;
+    if (registry is null)
+    {
+        registry = new JsonObject();
+        state["issue_registry"] = registry;
+    }
+
     if (!registry.ContainsKey(issue) || registry[issue] is not JsonObject existing)
     {
         var created = new JsonObject();
@@ -1192,6 +1198,11 @@ static int? IntFromNode(JsonNode? node)
     return null;
 }
 
+static JsonNode? CloneNode(JsonNode? node)
+{
+    return node?.DeepClone();
+}
+
 
 static string? AsString(JsonNode? node)
 {
@@ -1244,7 +1255,7 @@ static class JsonArrayExtensions
             obj[key] = array;
         }
 
-        array.Add(value);
+        array.Add(JsonValue.Create(value));
     }
 
     public static JsonArray ToJsonArray(this IEnumerable<string> items)
@@ -1252,7 +1263,7 @@ static class JsonArrayExtensions
         var array = new JsonArray();
         foreach (var item in items)
         {
-            array.Add(item);
+            array.Add(JsonValue.Create(item));
         }
         return array;
     }

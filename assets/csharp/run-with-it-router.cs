@@ -362,32 +362,76 @@ static JsonObject NormalizeLedger(JsonObject ledger)
         ledger["schema_version"] = 1;
     }
 
-    if (!ledger.ContainsKey("decisions"))
+    if (ledger["decisions"] is not JsonArray decisions)
     {
-        ledger["decisions"] = new JsonArray();
+        decisions = new JsonArray();
+        ledger["decisions"] = decisions;
     }
 
-    var totals = GetObject(ledger, "totals");
-    if (!totals.ContainsKey("agents"))
+    var totals = ledger["totals"] as JsonObject;
+    if (totals is null)
     {
-        totals["agents"] = new JsonObject();
+        totals = new JsonObject();
+        ledger["totals"] = totals;
     }
 
-    if (!totals["agents"]!.AsObject().Count.Equals(0) && totals["decisions"] is JsonArray decisions)
+    var agents = totals["agents"] as JsonObject;
+    if (agents is null)
     {
-        var agents = totals["agents"]!.AsObject();
-        if (agents.Count == 0)
+        agents = new JsonObject();
+        totals["agents"] = agents;
+    }
+
+    var roles = totals["roles"] as JsonObject;
+    if (roles is null)
+    {
+        roles = new JsonObject();
+        totals["roles"] = roles;
+    }
+
+    var rebuildAgentTotals = agents.Count == 0;
+    var rebuildRoleTotals = roles.Count == 0;
+    if ((rebuildAgentTotals || rebuildRoleTotals) && decisions.Count > 0)
+    {
+        foreach (var item in decisions.OfType<JsonObject>())
         {
-            foreach (var item in decisions.OfType<JsonObject>())
+            var agent = AsString(item["agent"]);
+            if (string.IsNullOrWhiteSpace(agent))
             {
-                var agent = AsString(item["agent"]);
-                if (string.IsNullOrWhiteSpace(agent))
-                {
-                    continue;
-                }
+                continue;
+            }
 
+            if (rebuildAgentTotals)
+            {
                 agents[agent] = AsIntOrDefault(agents[agent]) + 1;
             }
+
+            if (!rebuildRoleTotals)
+            {
+                continue;
+            }
+
+            var role = AsString(item["role"]);
+            if (string.IsNullOrWhiteSpace(role))
+            {
+                continue;
+            }
+
+            var roleTotals = roles[role] as JsonObject;
+            if (roleTotals is null)
+            {
+                roleTotals = new JsonObject();
+                roles[role] = roleTotals;
+            }
+
+            var roleAgents = roleTotals["agents"] as JsonObject;
+            if (roleAgents is null)
+            {
+                roleAgents = new JsonObject();
+                roleTotals["agents"] = roleAgents;
+            }
+
+            roleAgents[agent] = AsIntOrDefault(roleAgents[agent]) + 1;
         }
     }
 
@@ -439,7 +483,7 @@ static JsonObject SelectPair(
     var roleCounts = RoleAgentCounts(ledger, role);
     var total = counts.Values.Sum();
     var roleTotal = roleCounts.Values.Sum();
-    var (minWeight, maxWeight) = role == "complexity" ? (1, 6) : WeightRangeForLevel(registry, baseLevel);
+    var (minWeight, maxWeight) = role == "complexity" ? (1, 6) : WeightRangeForLevel(registry, routingLevel);
     var weightCenter = (minWeight + maxWeight) / 2.0;
 
     var catalog = GetObject(registry, "model_catalog");
@@ -578,17 +622,46 @@ static void AppendDecision(JsonObject ledger, JsonObject selection)
         ["selection_reason"] = AsString(selection["selection_reason"]),
     });
 
-    var totals = GetObject(ledger, "totals");
-    var agents = GetObject(totals, "agents");
-    var roles = GetObject(totals, "roles");
+    var totals = ledger["totals"] as JsonObject;
+    if (totals is null)
+    {
+        totals = new JsonObject();
+        ledger["totals"] = totals;
+    }
+
+    var agents = totals["agents"] as JsonObject;
+    if (agents is null)
+    {
+        agents = new JsonObject();
+        totals["agents"] = agents;
+    }
+
+    var roles = totals["roles"] as JsonObject;
+    if (roles is null)
+    {
+        roles = new JsonObject();
+        totals["roles"] = roles;
+    }
+
     var role = AsString(selection["role"]) ?? string.Empty;
     var agent = AsString(selection["agent"]) ?? string.Empty;
 
     agents[agent] = AsIntOrDefault(agents[agent]) + 1;
 
-    var roleTotals = GetObject(roles, role);
-    roles[role] = roleTotals;
-    var roleAgents = GetObject(roleTotals, "agents");
+    var roleTotals = roles[role] as JsonObject;
+    if (roleTotals is null)
+    {
+        roleTotals = new JsonObject();
+        roles[role] = roleTotals;
+    }
+
+    var roleAgents = roleTotals["agents"] as JsonObject;
+    if (roleAgents is null)
+    {
+        roleAgents = new JsonObject();
+        roleTotals["agents"] = roleAgents;
+    }
+
     roleAgents[agent] = AsIntOrDefault(roleAgents[agent]) + 1;
 }
 
