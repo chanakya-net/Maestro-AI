@@ -12,7 +12,7 @@ if [[ "${RUN_AGENT_BOOTSTRAP_PATH}" != "0" ]]; then
     "${HOME:-}/.cargo/bin" \
     "${HOME:-}/.bun/bin" \
     "${HOME:-}/.dotnet/tools"; do
-    if [[ -d "${_path_dir}" && ":${PATH}:" != *":${_path_dir}:"* ]]; then
+    if [[ -d "${_path_dir}" && ":${PATH}:" != *":${_path_dir}:"* ]] 2>/dev/null; then
       PATH="${_path_dir}:${PATH}"
     fi
   done
@@ -26,7 +26,7 @@ ASSET_ROOT="${SCRIPT_DIR%/*}"
 DEFAULT_PROMPT_FILE="${ASSET_ROOT}/prompts/prompt.md"
 REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
-  (cd "${REPO_ROOT}" && codegraph unlock 2>/dev/null) || true
+  (cd "${REPO_ROOT}" && codegraph unlock >/dev/null 2>&1) || true
 fi
 AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${ASSET_ROOT}/agent-registry.json}"
 
