@@ -1,0 +1,26 @@
+{
+  "total": 18,
+  "level": "medium",
+  "scores": {
+    "dependency_complexity": 2,
+    "ownership_overlap_risk": 2,
+    "architecture_risk": 2,
+    "orchestration_burden": 2,
+    "verification_risk": 2,
+    "ambiguity_of_requirements": 2,
+    "integration_surface_breadth": 2,
+    "rollback_recovery_risk": 2,
+    "blast_radius": 2
+  },
+  "rationale": {
+    "dependency_complexity": "small",
+    "ownership_overlap_risk": "small",
+    "architecture_risk": "small",
+    "orchestration_burden": "small",
+    "verification_risk": "small",
+    "ambiguity_of_requirements": "small",
+    "integration_surface_breadth": "small",
+    "rollback_recovery_risk": "small",
+    "blast_radius": "small"
+  }
+}

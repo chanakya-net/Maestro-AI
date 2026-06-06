@@ -82,7 +82,7 @@ class Program
     catch (Exception error)
     {
         Console.Error.WriteLine($"run-with-it-router: {error.Message}");
-        return 2;
+        return 1;
     }
 }
 
@@ -307,7 +307,12 @@ static JsonObject ReadJsonFile(string path, JsonObject? defaultValue)
 
 static void WriteJsonAtomic(string path, JsonObject value)
 {
-    Directory.CreateDirectory(Path.GetDirectoryName(path) ?? ".");
+    var parent = Path.GetDirectoryName(path);
+    if (!string.IsNullOrWhiteSpace(parent))
+    {
+        Directory.CreateDirectory(parent);
+    }
+
     var temp = $"{path}.{Environment.ProcessId}.tmp";
     File.WriteAllText(temp, value.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
     File.Move(temp, path, overwrite: true);

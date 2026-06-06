@@ -1,0 +1,40 @@
+{
+  "outcome": "completed",
+  "summary": "helper completed",
+  "files_modified_count": 1,
+  "lines_added": 3,
+  "lines_deleted": 1,
+  "review_cycles": 1,
+  "commit_sha": "abc123",
+  "verification": {
+    "passed": true,
+    "commands_run": ["fake test"],
+    "evidence": "fake test passed"
+  },
+  "review_summary": {
+    "cycles_used": 1,
+    "final_verdict": "approve",
+    "reviewer_model": "fake-reviewer"
+  },
+  "model_usage": [
+    {
+      "role": "complexity",
+      "cycle": 1,
+      "agent": "agy",
+      "model": "gemini-3.5-flash-medium",
+      "selection_reason": "complexity-scorer"
+    },
+    {
+      "role": "impl",
+      "cycle": 1,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "under-target"
+    }
+  ],
+  "token_usage": {
+    "impl_input": 10,
+    "impl_output": 5,
+    "cache_hit_tokens": 2
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "outcome": "merge_failed",
+  "summary": "merge recovery required",
+  "files_modified_count": 1,
+  "lines_added": 4,
+  "lines_deleted": 2,
+  "review_cycles": 0,
+  "commit_sha": "def456",
+  "verification": {
+    "passed": false,
+    "commands_run": ["merge check"],
+    "evidence": "merge conflict remained"
+  },
+  "model_usage": [
+    {
+      "role": "merge-recovery",
+      "cycle": 1,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "merge-conflict"
+    }
+  ]
+}

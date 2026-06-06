@@ -1,0 +1,72 @@
+{
+  "issue_registry": {
+    "1": {
+      "status": "completed",
+      "report_file": "reports/issue-1-report.json"
+    },
+    "2": {
+      "status": "blocked",
+      "report_file": "reports/issue-2-report.json"
+    },
+    "3": {
+      "status": "failed-review",
+      "report_file": "reports/issue-3-report.json"
+    },
+    "4": {
+      "status": "completed",
+      "report_file": "reports/issue-4-merge-recovery-report.json"
+    }
+  },
+  "completed_summaries": [
+    {
+      "issue": 1,
+      "outcome": "completed",
+      "summary": "helper completed",
+      "verification": {
+        "passed": true,
+        "evidence": "all good"
+      },
+      "report_file": "reports/issue-1-report.json",
+      "model_usage": [
+        {
+          "role": "impl",
+          "cycle": 2,
+          "agent": "codex",
+          "model": "gpt-5.3-codex",
+          "selection_reason": "under-target"
+        }
+      ],
+      "files_modified_count": 1,
+      "lines_added": 3,
+      "lines_deleted": 1,
+      "review_cycles": 1,
+      "commit_sha": "abc123"
+    },
+    {
+      "issue": 4,
+      "outcome": "completed",
+      "summary": "merge recovery completed",
+      "verification": {
+        "passed": true,
+        "evidence": "merge recovery verified"
+      },
+      "report_file": "reports/issue-4-merge-recovery-report.json",
+      "model_usage": [
+        {
+          "role": "merge-recovery",
+          "cycle": 1,
+          "agent": "codex",
+          "model": "gpt-5.3-codex",
+          "selection_reason": "merge-conflict"
+        }
+      ],
+      "files_modified_count": 1,
+      "lines_added": 4,
+      "lines_deleted": 2,
+      "review_cycles": 0,
+      "commit_sha": "999aaa"
+    }
+  ],
+  "merge_recovery_summaries": [],
+  "ledger_rows": []
+}
