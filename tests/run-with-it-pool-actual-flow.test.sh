@@ -67,23 +67,30 @@ make_fixture() {
   local asset_root="${root}/assets"
   local project="${root}/project"
   local fake_bin="${root}/bin"
-  mkdir -p "$asset_root" "$project" "$fake_bin"
-  cp "${ROOT_DIR}/assets/run-agent.sh" \
-    "${ROOT_DIR}/assets/worker-watch.sh" \
-    "${ROOT_DIR}/assets/run-with-it-dispatch.sh" \
-    "${ROOT_DIR}/assets/run-with-it-pool.sh" \
-    "${ROOT_DIR}/assets/run-with-it-state.py" \
-    "${ROOT_DIR}/assets/run-with-it-github-update.py" \
-    "${ROOT_DIR}/assets/run-with-it-artifacts.py" \
-    "${ROOT_DIR}/assets/merge-recovery-prompt.md" \
-    "$asset_root/"
-  chmod +x "$asset_root/run-agent.sh" \
-    "$asset_root/worker-watch.sh" \
-    "$asset_root/run-with-it-dispatch.sh" \
-    "$asset_root/run-with-it-pool.sh" \
-    "$asset_root/run-with-it-state.py" \
-    "$asset_root/run-with-it-github-update.py" \
-    "$asset_root/run-with-it-artifacts.py"
+  mkdir -p \
+    "$asset_root/scripts" \
+    "$asset_root/python" \
+    "$asset_root/prompts" \
+    "$project" \
+    "$fake_bin"
+  cp "${ROOT_DIR}/assets/scripts/run-agent.sh" \
+    "${ROOT_DIR}/assets/scripts/worker-watch.sh" \
+    "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" \
+    "${ROOT_DIR}/assets/scripts/run-with-it-pool.sh" \
+    "$asset_root/scripts/"
+  cp "${ROOT_DIR}/assets/python/run-with-it-state.py" \
+    "${ROOT_DIR}/assets/python/run-with-it-github-update.py" \
+    "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" \
+    "$asset_root/python/"
+  cp "$ROOT_DIR"/assets/prompts/*.md \
+    "$asset_root/prompts/"
+  chmod +x "$asset_root/scripts/run-agent.sh" \
+    "$asset_root/scripts/worker-watch.sh" \
+    "$asset_root/scripts/run-with-it-dispatch.sh" \
+    "$asset_root/scripts/run-with-it-pool.sh" \
+    "$asset_root/python/run-with-it-state.py" \
+    "$asset_root/python/run-with-it-github-update.py" \
+    "$asset_root/python/run-with-it-artifacts.py"
 
   cat > "$asset_root/agent-registry.json" <<'JSON'
 {
@@ -112,7 +119,7 @@ make_fixture() {
   }
 }
 JSON
-  printf '# Fake Sub-Coordinator Prompt\n' > "$asset_root/sub-coordinator-prompt.md"
+  printf '# Fake Sub-Coordinator Prompt\n' > "$asset_root/prompts/sub-coordinator-prompt.md"
 
   cat > "$fake_bin/fake-sub-agent" <<'SH'
 #!/usr/bin/env bash
@@ -196,7 +203,7 @@ run_pool() {
   local fake_bin="${root}/bin"
   (
     cd "$project"
-    RUN_WITH_IT_GITHUB_UPDATES=0 PATH="$fake_bin:$PATH" "$asset_root/run-with-it-pool.sh" \
+    RUN_WITH_IT_GITHUB_UPDATES=0 PATH="$fake_bin:$PATH" "$asset_root/scripts/run-with-it-pool.sh" \
       --asset-root "$asset_root" \
       --state-file "$project/.run-with-it/main-state.json" \
       --parallel-jobs "$parallel_jobs" \

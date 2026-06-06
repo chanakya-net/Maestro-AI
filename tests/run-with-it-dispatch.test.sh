@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DISPATCHER="${ROOT_DIR}/assets/run-with-it-dispatch.sh"
+DISPATCHER="${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -56,7 +56,7 @@ cleanup() {
 trap cleanup EXIT
 
 CONTEXT_FILE="${WORK_DIR}/context.md"
-PROMPT_FILE="${ROOT_DIR}/assets/prompt.md"
+PROMPT_FILE="${ROOT_DIR}/assets/prompts/prompt.md"
 ISSUE_DIR="${WORK_DIR}/.run-with-it/issues/42"
 LOG_FILE="${ISSUE_DIR}/workers/impl/cycle-1.log"
 DONE_FILE="${ISSUE_DIR}/workers/impl/cycle-1.done"
@@ -137,9 +137,10 @@ SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
 SMOKE_BIN="${WORK_DIR}/bin"
-mkdir -p "${SMOKE_ASSET_ROOT}" "${SMOKE_PROJECT}" "${SMOKE_REPO_ROOT}" "${SMOKE_BIN}"
-cp "${ROOT_DIR}/assets/run-agent.sh" "${ROOT_DIR}/assets/worker-watch.sh" "${ROOT_DIR}/assets/run-with-it-dispatch.sh" "${ROOT_DIR}/assets/run-with-it-artifacts.py" "${SMOKE_ASSET_ROOT}/"
-chmod +x "${SMOKE_ASSET_ROOT}/run-agent.sh" "${SMOKE_ASSET_ROOT}/worker-watch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" "${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py"
+mkdir -p "${SMOKE_ASSET_ROOT}/scripts" "${SMOKE_ASSET_ROOT}/python" "${SMOKE_PROJECT}" "${SMOKE_REPO_ROOT}" "${SMOKE_BIN}"
+cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${SMOKE_ASSET_ROOT}/scripts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${SMOKE_ASSET_ROOT}/python/"
+chmod +x "${SMOKE_ASSET_ROOT}/scripts/run-agent.sh" "${SMOKE_ASSET_ROOT}/scripts/worker-watch.sh" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" "${SMOKE_ASSET_ROOT}/python/run-with-it-artifacts.py"
 
 cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'JSON'
 {
@@ -199,7 +200,7 @@ mkdir -p "$(dirname "${SMOKE_RESULT}")"
 printf 'RESULT_FILE=%s\n' "${SMOKE_RESULT}" > "${SMOKE_CONTEXT}"
 printf '# Prompt\n' > "${SMOKE_PROMPT}"
 
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role merge-recovery \
   --issue 42 \
@@ -265,7 +266,7 @@ cat > "${RECOVERY_RESULT}" <<JSON
 JSON
 printf 'DONE|issue=42|role=modify|status=success\n' > "${RECOVERY_DONE}"
 
-recovery_reason="$(python3 "${ROOT_DIR}/assets/run-with-it-artifacts.py" failure-reason \
+recovery_reason="$(python3 "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" failure-reason \
   --role modify \
   --issue 42 \
   --result-file "${RECOVERY_RESULT}" \
@@ -293,7 +294,7 @@ printf 'detached prompt\n' > "${DETACH_PROMPT}"
 
 (
   cd "${DETACH_PROJECT}"
-  PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
     --asset-root "${SMOKE_ASSET_ROOT}" \
     --role impl \
     --issue 46 \
@@ -337,7 +338,7 @@ printf 'context\n' > "${PRESTART_CONTEXT}"
 printf 'prompt\n' > "${PRESTART_PROMPT}"
 
 set +e
-RUN_WITH_IT_TEST_FAIL_READY_STATE=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+RUN_WITH_IT_TEST_FAIL_READY_STATE=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role complexity \
   --issue 47 \
@@ -373,7 +374,7 @@ printf 'context\n' > "${START_FAIL_CONTEXT}"
 printf 'prompt\n' > "${START_FAIL_PROMPT}"
 
 set +e
-RUN_WITH_IT_TEST_FAIL_STARTING_STATE=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+RUN_WITH_IT_TEST_FAIL_STARTING_STATE=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role complexity \
   --issue 52 \
@@ -459,7 +460,7 @@ printf 'baseline\n' > "${SMOKE_REPO_ROOT}/README.md"
 git -C "${SMOKE_REPO_ROOT}" add README.md
 git -C "${SMOKE_REPO_ROOT}" commit -m "baseline" >/dev/null
 
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
   --issue 43 \
@@ -558,7 +559,7 @@ git -C "${NOARG_REPO}" add README.md
 git -C "${NOARG_REPO}" commit -m "baseline" >/dev/null
 printf '# no repo arg\n' > "${NOARG_CONTEXT}"
 
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
   --issue 48 \
@@ -632,7 +633,7 @@ DONE_ONLY_OUTPUT="${WORK_DIR}/done-only-dispatch.out"
 printf '# done only\n' > "${DONE_ONLY_CONTEXT}"
 
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
   --issue 44 \
@@ -709,7 +710,7 @@ RECOVER_DONE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.done"
 RECOVER_STATE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 printf '# recover missing result\n' > "${RECOVER_CONTEXT}"
 
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
   --issue 45 \
@@ -804,7 +805,7 @@ git -C "${WRONG_PATH_REPO}" commit -m "baseline" >/dev/null
 printf '# wrong path\n' > "${WRONG_PATH_CONTEXT}"
 
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role modify \
   --issue 50 \
@@ -1045,7 +1046,7 @@ REVIEW_SYNTH_STATUS_RESULT="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2-st
 REVIEW_SYNTH_STATUS_LOG="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2.log"
 REVIEW_SYNTH_STATUS_DONE="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2.done"
 REVIEW_SYNTH_STATUS_STATE="${REVIEW_SYNTH_STATUS_DIR}/workers/review/cycle-2.state.json"
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role review \
   --issue 46 \
@@ -1073,7 +1074,7 @@ REVIEW_SYNTH_INSTRUCTIONS_FILE="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/
 REVIEW_SYNTH_INSTRUCTIONS_LOG="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2.log"
 REVIEW_SYNTH_INSTRUCTIONS_DONE="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2.done"
 REVIEW_SYNTH_INSTRUCTIONS_STATE="${REVIEW_SYNTH_INSTRUCTIONS_DIR}/workers/review/cycle-2.state.json"
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role review \
   --issue 47 \
@@ -1102,7 +1103,7 @@ REVIEW_MISSING_INSTRUCTIONS_DONE="${REVIEW_MISSING_INSTRUCTIONS_DIR}/workers/rev
 REVIEW_MISSING_INSTRUCTIONS_STATE="${REVIEW_MISSING_INSTRUCTIONS_DIR}/workers/review/cycle-2.state.json"
 REVIEW_MISSING_INSTRUCTIONS_OUTPUT="${WORK_DIR}/review-missing-instructions.out"
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role review \
   --issue 48 \
@@ -1132,7 +1133,7 @@ REVIEW_CANONICAL_RETRY_INSTRUCTIONS="${REVIEW_CANONICAL_RETRY_DIR}/workers/revie
 REVIEW_CANONICAL_RETRY_LOG="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2.log"
 REVIEW_CANONICAL_RETRY_DONE="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2.done"
 REVIEW_CANONICAL_RETRY_STATE="${REVIEW_CANONICAL_RETRY_DIR}/workers/review/cycle-1-attempt-2.state.json"
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role review \
   --issue 51 \
@@ -1160,7 +1161,7 @@ COMPLEXITY_CANONICAL_RETRY_RESULT="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/com
 COMPLEXITY_CANONICAL_RETRY_LOG="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2.log"
 COMPLEXITY_CANONICAL_RETRY_DONE="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2.done"
 COMPLEXITY_CANONICAL_RETRY_STATE="${COMPLEXITY_CANONICAL_RETRY_DIR}/workers/complexity/cycle-1-attempt-2.state.json"
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role complexity \
   --issue 52 \
@@ -1187,7 +1188,7 @@ COMPLEXITY_STDOUT_RESULT="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1-re
 COMPLEXITY_STDOUT_LOG="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.log"
 COMPLEXITY_STDOUT_DONE="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.done"
 COMPLEXITY_STDOUT_STATE="${COMPLEXITY_STDOUT_DIR}/workers/complexity/cycle-1.state.json"
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role complexity \
   --issue 50 \
@@ -1217,7 +1218,7 @@ COMPLEXITY_HANG_DONE="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1.done"
 COMPLEXITY_HANG_STATE="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1.state.json"
 COMPLEXITY_HANG_OUTPUT="${WORK_DIR}/complexity-hang.out"
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role complexity \
   --issue 53 \
@@ -1252,7 +1253,7 @@ COMPLEXITY_INVALID_DONE="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1.do
 COMPLEXITY_INVALID_STATE="${COMPLEXITY_INVALID_DIR}/workers/complexity/cycle-1.state.json"
 COMPLEXITY_INVALID_OUTPUT="${WORK_DIR}/complexity-invalid.out"
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role complexity \
   --issue 49 \

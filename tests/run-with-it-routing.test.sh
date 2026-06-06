@@ -4,14 +4,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
-ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/main-orchestrator-rules.md"
-COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/coordinator-rules.md"
-SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
-IMPLEMENTER_PROMPT_FILE="${ROOT_DIR}/assets/prompt.md"
-REVIEW_PROMPT_FILE="${ROOT_DIR}/assets/review-prompt.md"
-MODIFIER_PROMPT_FILE="${ROOT_DIR}/assets/modifier-prompt.md"
-COMPLEXITY_PROMPT_FILE="${ROOT_DIR}/assets/complexity-prompt.md"
-MERGE_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/merge-recovery-prompt.md"
+ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
+COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/prompts/coordinator-rules.md"
+SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md"
+IMPLEMENTER_PROMPT_FILE="${ROOT_DIR}/assets/prompts/prompt.md"
+REVIEW_PROMPT_FILE="${ROOT_DIR}/assets/prompts/review-prompt.md"
+MODIFIER_PROMPT_FILE="${ROOT_DIR}/assets/prompts/modifier-prompt.md"
+COMPLEXITY_PROMPT_FILE="${ROOT_DIR}/assets/prompts/complexity-prompt.md"
+MERGE_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -96,6 +96,13 @@ assert_not_present_in_active_files() {
 [[ -f "$COMPLEXITY_PROMPT_FILE" ]] || fail "complexity prompt file exists"
 [[ -f "$MERGE_RECOVERY_PROMPT_FILE" ]] || fail "merge recovery prompt file exists"
 
+# Smoke assertions for moved assets
+[[ -f "${ROOT_DIR}/assets/prompts/prompt.md" ]] || fail "assets/prompts/prompt.md exists"
+[[ -f "${ROOT_DIR}/assets/scripts/run-agent.sh" ]] || fail "assets/scripts/run-agent.sh exists"
+[[ -f "${ROOT_DIR}/assets/powershell/run-agent.ps1" ]] || fail "assets/powershell/run-agent.ps1 exists"
+[[ -f "${ROOT_DIR}/assets/python/run-with-it-state.py" ]] || fail "assets/python/run-with-it-state.py exists"
+[[ -f "${ROOT_DIR}/assets/agent-registry.json" ]] || fail "assets/agent-registry.json exists at root"
+
 assert_not_contains 'run-codex.sh' "legacy codex runner references removed"
 assert_not_contains 'run-copilot.sh' "legacy copilot runner references removed"
 assert_not_present_in_active_files 'run-codex\.sh' "legacy codex runner references removed from active docs/scripts"
@@ -118,8 +125,8 @@ assert_contains 'run-with-it-state.py' "asset discovery includes shared state he
 assert_contains 'run-with-it-github-update.py' "asset discovery includes shared GitHub update helper"
 assert_contains 'run-with-it-pr-body.py' "asset discovery includes shared PR body renderer"
 assert_file_section_contains "$SKILL_FILE" 'Shared required files:' 'Bash required helper files:' '- `run-with-it-pr-body.py`' "shared required file list includes PR body renderer"
-assert_file_line_contains "$SKILL_FILE" '$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force' '.\assets\run-with-it-pr-body.py' "PowerShell asset copy example includes PR body renderer"
-assert_file_line_contains "$SKILL_FILE" 'mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f' './assets/run-with-it-pr-body.py' "Bash asset copy example includes PR body renderer"
+assert_file_line_contains "$SKILL_FILE" '$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force' '.\assets\python\run-with-it-pr-body.py' "PowerShell asset copy example includes PR body renderer"
+assert_file_line_contains "$SKILL_FILE" 'mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f' './assets/python/run-with-it-pr-body.py' "Bash asset copy example includes PR body renderer"
 assert_contains 'run-with-it-router.py' "asset discovery includes shared router helper"
 assert_contains 'run-with-it-artifacts.py' "asset discovery includes shared artifact helper"
 assert_contains 'agent-registry.json' "asset discovery includes agent-registry.json"

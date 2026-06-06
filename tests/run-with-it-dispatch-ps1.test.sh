@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DISPATCHER="${ROOT_DIR}/assets/run-with-it-dispatch.ps1"
+DISPATCHER="${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1"
 PS_CMD="${PWSH:-}"
 if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
@@ -53,9 +53,10 @@ trap cleanup EXIT
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
-mkdir -p "$SMOKE_ASSET_ROOT" "$SMOKE_PROJECT" "$SMOKE_REPO_ROOT"
-cp "${ROOT_DIR}/assets/run-agent.ps1" "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" "${ROOT_DIR}/assets/worker-watch.ps1" "${ROOT_DIR}/assets/run-with-it-artifacts.py" "$SMOKE_ASSET_ROOT/"
-cp "${ROOT_DIR}/assets/prompt.md" "$SMOKE_ASSET_ROOT/"
+mkdir -p "$SMOKE_ASSET_ROOT"/{powershell,python,prompts} "$SMOKE_PROJECT" "$SMOKE_REPO_ROOT"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "$SMOKE_ASSET_ROOT/powershell/"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "$SMOKE_ASSET_ROOT/python/"
+cp "${ROOT_DIR}/assets/prompts/prompt.md" "$SMOKE_ASSET_ROOT/prompts/"
 git -C "$SMOKE_REPO_ROOT" init -q
 git -C "$SMOKE_REPO_ROOT" config user.email "test@example.com"
 git -C "$SMOKE_REPO_ROOT" config user.name "Test User"

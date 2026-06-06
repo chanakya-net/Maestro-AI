@@ -22,16 +22,17 @@ fi
 
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
+ASSET_ROOT="${SCRIPT_DIR%/*}"
 REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
   (cd "${REPO_ROOT}" && codegraph unlock 2>/dev/null) || true
 fi
-AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${SCRIPT_DIR}/agent-registry.json}"
+AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${ASSET_ROOT}/agent-registry.json}"
 
 AGENT="${AGENT:-}"
 MODEL="${MODEL:-}"
 CONTEXT_PAYLOAD_FILE="${CONTEXT_PAYLOAD_FILE:-}"
-PROMPT_FILE="${PROMPT_FILE:-${SCRIPT_DIR}/prompt.md}"
+PROMPT_FILE="${PROMPT_FILE:-${ASSET_ROOT}/prompts/prompt.md}"
 PRINT_PROMPT="${PRINT_PROMPT:-0}"
 AGENT_PERMISSION_MODE="${AGENT_PERMISSION_MODE:-}"
 AGENT_EXTRA_ARGS="${AGENT_EXTRA_ARGS:-}"
@@ -65,6 +66,18 @@ LIST_MODELS_AGENT=""
 fail() {
   echo "error: $1" >&2
   exit 1
+}
+
+path_dirname() {
+  local path="${1:-}"
+
+  if [[ -z "${path}" || "${path}" != *"/"* ]]; then
+    printf '.\n'
+  elif [[ "${path}" == "/"* && "${path%/*}" == "" ]]; then
+    printf '/\n'
+  else
+    printf '%s\n' "${path%/*}"
+  fi
 }
 
 normalize_telemetry_value() {
@@ -105,7 +118,7 @@ write_log_line() {
     return 0
   fi
 
-  log_dir="$(dirname -- "${RUN_WITH_IT_LOG_FILE}")"
+  log_dir="$(path_dirname "${RUN_WITH_IT_LOG_FILE}")"
   mkdir -p "${log_dir}"
   printf '%s\n' "${line}" >> "${RUN_WITH_IT_LOG_FILE}"
 }
@@ -115,13 +128,13 @@ write_status_line() {
   local status_dir events_dir
 
   if [[ -n "${RUN_WITH_IT_STATUS_FILE}" ]]; then
-    status_dir="$(dirname -- "${RUN_WITH_IT_STATUS_FILE}")"
+    status_dir="$(path_dirname "${RUN_WITH_IT_STATUS_FILE}")"
     mkdir -p "${status_dir}"
     printf '%s\n' "${line}" > "${RUN_WITH_IT_STATUS_FILE}"
   fi
 
   if [[ -n "${RUN_WITH_IT_EVENTS_LOG}" ]]; then
-    events_dir="$(dirname -- "${RUN_WITH_IT_EVENTS_LOG}")"
+    events_dir="$(path_dirname "${RUN_WITH_IT_EVENTS_LOG}")"
     mkdir -p "${events_dir}"
     printf '%s\n' "${line}" >> "${RUN_WITH_IT_EVENTS_LOG}"
   fi
@@ -134,7 +147,7 @@ prepare_done_file() {
     return 0
   fi
 
-  done_dir="$(dirname -- "${RUN_WITH_IT_DONE_FILE}")"
+  done_dir="$(path_dirname "${RUN_WITH_IT_DONE_FILE}")"
   mkdir -p "${done_dir}"
   rm -f "${RUN_WITH_IT_DONE_FILE}"
 }
@@ -148,7 +161,7 @@ write_done_file() {
     return 0
   fi
 
-  done_dir="$(dirname -- "${RUN_WITH_IT_DONE_FILE}")"
+  done_dir="$(path_dirname "${RUN_WITH_IT_DONE_FILE}")"
   mkdir -p "${done_dir}"
   line="$(printf 'DONE|issue=%s|role=%s|agent=%s|model=%s|status=%s|source=%s|completed_at=%s' \
     "$(normalize_telemetry_value "${RUN_WITH_IT_ISSUE}")" \
@@ -350,7 +363,7 @@ while [[ $# -gt 0 ]]; do
     *)
       if [[ -z "${CONTEXT_PAYLOAD_FILE}" ]]; then
         CONTEXT_PAYLOAD_FILE="$1"
-      elif [[ -z "${PROMPT_FILE}" || "${PROMPT_FILE}" == "${SCRIPT_DIR}/prompt.md" ]]; then
+      elif [[ -z "${PROMPT_FILE}" || "${PROMPT_FILE}" == "${ASSET_ROOT}/prompts/prompt.md" ]]; then
         PROMPT_FILE="$1"
       else
         fail "unexpected positional argument: $1"

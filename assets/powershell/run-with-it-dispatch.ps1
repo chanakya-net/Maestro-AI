@@ -256,17 +256,17 @@ function Test-CompletionReady {
 
 if (-not $AssetRoot) {
     $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
-    if (Test-Path (Join-Path $homeAssetRoot "run-agent.ps1")) {
+    if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-agent.ps1")) {
         $AssetRoot = $homeAssetRoot
     } else {
-        $AssetRoot = $PSScriptRoot
+        $AssetRoot = Split-Path $PSScriptRoot -Parent
     }
 }
 
-$RunAgent = Join-Path $AssetRoot "run-agent.ps1"
-$WorkerWatch = Join-Path $AssetRoot "worker-watch.ps1"
+$RunAgent = Join-Path $AssetRoot "powershell" "run-agent.ps1"
+$WorkerWatch = Join-Path $AssetRoot "powershell" "worker-watch.ps1"
 $RegistryFile = Join-Path $AssetRoot "agent-registry.json"
-$script:ArtifactHelper = Join-Path $AssetRoot "run-with-it-artifacts.py"
+$script:ArtifactHelper = Join-Path $AssetRoot "python" "run-with-it-artifacts.py"
 $script:PythonExe = Get-PythonExe
 
 if (-not (Test-Path $RunAgent)) { Fail "runner not found: $RunAgent" }

@@ -91,18 +91,18 @@ function Remove-ProcessCapture($entry) {
 
 if (-not $AssetRoot) {
     $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
-    if (Test-Path (Join-Path $homeAssetRoot "run-with-it-dispatch.ps1")) {
+    if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-with-it-dispatch.ps1")) {
         $AssetRoot = $homeAssetRoot
     } else {
-        $AssetRoot = $PSScriptRoot
+        $AssetRoot = Split-Path $PSScriptRoot -Parent
     }
 }
 
-$Dispatcher = Join-Path $AssetRoot "run-with-it-dispatch.ps1"
-$PromptFile = Join-Path $AssetRoot "sub-coordinator-prompt.md"
-$MergeRecoveryPromptFile = Join-Path $AssetRoot "merge-recovery-prompt.md"
-$StateHelper = Join-Path $AssetRoot "run-with-it-state.py"
-$GitHubUpdateHelper = Join-Path $AssetRoot "run-with-it-github-update.py"
+$Dispatcher = Join-Path $AssetRoot "powershell" "run-with-it-dispatch.ps1"
+$PromptFile = Join-Path $AssetRoot "prompts" "sub-coordinator-prompt.md"
+$MergeRecoveryPromptFile = Join-Path $AssetRoot "prompts" "merge-recovery-prompt.md"
+$StateHelper = Join-Path $AssetRoot "python" "run-with-it-state.py"
+$GitHubUpdateHelper = Join-Path $AssetRoot "python" "run-with-it-github-update.py"
 
 if (-not (Test-Path $Dispatcher)) { Fail "dispatcher not found: $Dispatcher" }
 if (-not (Test-Path $PromptFile)) { Fail "sub-coordinator prompt not found: $PromptFile" }

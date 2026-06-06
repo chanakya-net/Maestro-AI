@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POOL="${ROOT_DIR}/assets/run-with-it-pool.ps1"
+POOL="${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1"
 PS_CMD="${PWSH:-}"
 if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
@@ -51,18 +51,22 @@ trap cleanup EXIT
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
-mkdir -p "$SMOKE_ASSET_ROOT" "$SMOKE_PROJECT/.run-with-it/contexts" "$SMOKE_REPO_ROOT"
+mkdir -p "$SMOKE_ASSET_ROOT"/{powershell,python,prompts} "$SMOKE_PROJECT/.run-with-it/contexts" "$SMOKE_REPO_ROOT"
 cp \
-  "${ROOT_DIR}/assets/run-agent.ps1" \
-  "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" \
-  "${ROOT_DIR}/assets/run-with-it-pool.ps1" \
-  "${ROOT_DIR}/assets/run-with-it-state.py" \
-  "${ROOT_DIR}/assets/run-with-it-github-update.py" \
-  "${ROOT_DIR}/assets/run-with-it-artifacts.py" \
-  "${ROOT_DIR}/assets/worker-watch.ps1" \
-  "${ROOT_DIR}/assets/sub-coordinator-prompt.md" \
-  "${ROOT_DIR}/assets/merge-recovery-prompt.md" \
-  "$SMOKE_ASSET_ROOT/"
+  "${ROOT_DIR}/assets/powershell/run-agent.ps1" \
+  "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" \
+  "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" \
+  "${ROOT_DIR}/assets/powershell/worker-watch.ps1" \
+  "$SMOKE_ASSET_ROOT/powershell/"
+cp \
+  "${ROOT_DIR}/assets/python/run-with-it-state.py" \
+  "${ROOT_DIR}/assets/python/run-with-it-github-update.py" \
+  "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" \
+  "$SMOKE_ASSET_ROOT/python/"
+cp \
+  "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" \
+  "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" \
+  "$SMOKE_ASSET_ROOT/prompts/"
 
 FAKE_AGENT="${WORK_DIR}/fake-sub-coordinator.ps1"
 cat > "$FAKE_AGENT" <<'PS1'
