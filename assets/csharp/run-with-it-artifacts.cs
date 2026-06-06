@@ -418,7 +418,7 @@ static bool SynthesizeReview(ParsedArgs args)
     var instructionsFilePath = ReviewInstructionsFile(args.ResultFile);
     var (instructionsPayload, instructionsError) = LoadJson(instructionsFilePath);
 
-    if ((statusError is not null && (statusPayload is not JsonObject)) && instructionsError is null && instructionsPayload is JsonObject instructions && ValidReviewInstructions(instructions))
+    if ((statusError is not null || statusPayload is not JsonObject statusObj || !ValidReviewStatus(statusObj)) && instructionsError is null && instructionsPayload is JsonObject instructions && ValidReviewInstructions(instructions))
     {
         var comments = instructions["comments"] as JsonArray ?? new JsonArray();
         WriteJsonAtomic(args.ResultFile, new JsonObject

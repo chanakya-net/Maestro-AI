@@ -284,16 +284,8 @@ class Program
 
     static JsonObject LoadJson(string path)
     {
-        if (!File.Exists(path) || new FileInfo(path).Length == 0) return new JsonObject();
-        try
-        {
-            var text = File.ReadAllText(path);
-            return JsonNode.Parse(text) as JsonObject ?? new JsonObject();
-        }
-        catch
-        {
-            return new JsonObject();
-        }
+        var text = File.ReadAllText(path);
+        return JsonNode.Parse(text) as JsonObject ?? new JsonObject();
     }
 
     static void SaveJson(string path, JsonObject content)

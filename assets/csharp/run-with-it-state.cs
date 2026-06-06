@@ -422,7 +422,7 @@ static int AnalyzeSubCoordFailure(Dictionary<string, string> options)
             var resultFile = AsString(worker["result_file"]) ?? string.Empty;
             var workerState = LoadOptionalJson(stateFilePath) ?? new JsonObject();
 
-            var donePresent = !string.IsNullOrWhiteSpace(doneFile) && FileHasJson(doneFile) || AsBool(workerState["done"]);
+            var donePresent = !string.IsNullOrWhiteSpace(doneFile) && File.Exists(doneFile) && new FileInfo(doneFile).Length > 0 || AsBool(workerState["done"]);
             var resultPresent = !string.IsNullOrWhiteSpace(resultFile) && FileHasJson(resultFile) || AsBool(workerState["result_present"]);
 
             workerDecisions.Add((worker, workerState, donePresent, resultPresent));

@@ -437,8 +437,8 @@ static JsonObject SelectPair(
 
     var counts = CurrentAgentCounts(ledger);
     var roleCounts = RoleAgentCounts(ledger, role);
-    var total = Math.Max(1, counts.Values.Sum());
-    var roleTotal = Math.Max(1, roleCounts.Values.Sum());
+    var total = counts.Values.Sum();
+    var roleTotal = roleCounts.Values.Sum();
     var (minWeight, maxWeight) = role == "complexity" ? (1, 6) : WeightRangeForLevel(registry, baseLevel);
     var weightCenter = (minWeight + maxWeight) / 2.0;
 
@@ -448,8 +448,8 @@ static JsonObject SelectPair(
     {
         var policyTarget = rolePolicy.GetValueOrDefault(item.Agent, 0);
         var globalTarget = defaultPolicy.GetValueOrDefault(item.Agent, policyTarget);
-        var current = counts.GetValueOrDefault(item.Agent, 0) * 100.0 / total;
-        var roleCurrent = roleCounts.GetValueOrDefault(item.Agent, 0) * 100.0 / roleTotal;
+        var current = total > 0 ? counts.GetValueOrDefault(item.Agent, 0) * 100.0 / total : 0.0;
+        var roleCurrent = roleTotal > 0 ? roleCounts.GetValueOrDefault(item.Agent, 0) * 100.0 / roleTotal : 0.0;
         var projected = (counts.GetValueOrDefault(item.Agent, 0) + 1) * 100.0 / (total + 1);
         var roleProjected = (roleCounts.GetValueOrDefault(item.Agent, 0) + 1) * 100.0 / (roleTotal + 1);
         var combinedDebt = (globalTarget - current) * GLOBAL_DEBT_WEIGHT + (policyTarget - roleCurrent);
