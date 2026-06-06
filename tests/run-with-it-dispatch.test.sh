@@ -456,6 +456,45 @@ for runtime in cs csharp c#; do
   assert_contains "$(cat "${RUNTIME_DISPATCH_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
 done
 
+mv "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/agent-registry.json" "${RUNTIME_DISPATCH_ASSET_ROOT}/agent-registry.json"
+root_registry_dispatch_output="$(RUN_WITH_IT_HELPER_RUNTIME=cs "${DISPATCHER}" \
+  --dry-run \
+  --asset-root "${RUNTIME_DISPATCH_ASSET_ROOT}" \
+  --role merge-recovery \
+  --issue 914 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${WORK_DIR}/runtime-dispatch-context-902.md" \
+  --prompt-file "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md" \
+  --log-file "${WORK_DIR}/runtime-dispatch-root-registry.log" \
+  --done-file "${WORK_DIR}/runtime-dispatch-root-registry.done" \
+  --result-file "${WORK_DIR}/runtime-dispatch-root-registry-result.json" \
+  --state-file "${WORK_DIR}/runtime-dispatch-root-registry.state.json" \
+  --status-file "${WORK_DIR}/runtime-dispatch-root-registry-status.txt" \
+  --events-log "${WORK_DIR}/runtime-dispatch-root-registry-events.txt" \
+  --poll-seconds 1)"
+assert_contains "${root_registry_dispatch_output}" "AGENT_REGISTRY_FILE=${RUNTIME_DISPATCH_ASSET_ROOT}/agent-registry.json" "C# dispatch falls back to root registry file when nested registry is absent"
+
+>"${RUNTIME_DISPATCH_DOTNET_CALLS}"
+DOTNET_BIN="${RUNTIME_DISPATCH_BIN}/fake-dotnet.sh" \
+RUN_WITH_IT_HELPER_RUNTIME=cs \
+"${DISPATCHER}" \
+  --asset-root "${RUNTIME_DISPATCH_ASSET_ROOT}" \
+  --role merge-recovery \
+  --issue 915 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${WORK_DIR}/runtime-dispatch-context-902.md" \
+  --prompt-file "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md" \
+  --log-file "${WORK_DIR}/runtime-dispatch-root-registry-run.log" \
+  --done-file "${WORK_DIR}/runtime-dispatch-root-registry-run.done" \
+  --result-file "${WORK_DIR}/runtime-dispatch-root-registry-run-result.json" \
+  --state-file "${WORK_DIR}/runtime-dispatch-root-registry-run.state.json" \
+  --status-file "${WORK_DIR}/runtime-dispatch-root-registry-run-status.txt" \
+  --events-log "${WORK_DIR}/runtime-dispatch-root-registry-run-events.txt" \
+  --poll-seconds 1
+assert_contains "$(cat "${RUNTIME_DISPATCH_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "C# dispatch keeps helper lookup in nested csharp dir when registry falls back to root"
+
 set +e
 invalid_dispatch_runtime_output="$(mktemp -d)/dispatch-runtime-invalid.log"
   RUN_WITH_IT_HELPER_RUNTIME=invalid-runtime \

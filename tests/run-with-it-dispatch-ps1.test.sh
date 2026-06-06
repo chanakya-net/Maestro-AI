@@ -495,6 +495,49 @@ for runtime in cs csharp c#; do
   assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
 done
 
+mv "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/agent-registry.json" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/agent-registry.json"
+root_registry_dispatch_ps1_output="$("${PS_CMD}" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+  -DryRun \
+  -AssetRoot "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}" \
+  -Role impl \
+  -Issue 989 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "${WORK_DIR}/runtime-dispatch-ps1-context-983.md" \
+  -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+  -LogFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry.log" \
+  -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry.done" \
+  -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-result.json" \
+  -StateFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry.state.json" \
+  -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-root-registry-issue" \
+  -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-status.txt" \
+  -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-root-registry-events.txt" \
+  -PollSeconds 1)"
+assert_contains "${root_registry_dispatch_ps1_output}" "AGENT_REGISTRY_FILE=${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/agent-registry.json" "PowerShell C# dispatch falls back to root registry file when nested registry is absent"
+
+>"${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}"
+DOTNET_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-dotnet.sh" \
+RUN_WITH_IT_HELPER_RUNTIME=cs \
+"$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+  -AssetRoot "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}" \
+  -Role impl \
+  -Issue 990 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "${WORK_DIR}/runtime-dispatch-ps1-context-983.md" \
+  -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+  -LogFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run.log" \
+  -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run.done" \
+  -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-result.json" \
+  -StateFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run.state.json" \
+  -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-issue" \
+  -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-status.txt" \
+  -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-events.txt" \
+  -PollSeconds 1
+assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "PowerShell C# dispatch keeps helper lookup in nested csharp dir when registry falls back to root"
+
 set +e
 invalid_dispatch_runtime_output_file="$(mktemp -d)/ps1-runtime-dispatch-invalid.log"
 RUN_WITH_IT_HELPER_RUNTIME=invalid-runtime \

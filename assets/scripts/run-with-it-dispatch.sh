@@ -92,8 +92,9 @@ resolve_asset_layout() {
     else
       CSHARP_HELPERS_DIR="$root"
     fi
-    if [ -f "${root}/agent-registry.json" ] && [ ! -f "${CSHARP_HELPERS_DIR}/agent-registry.json" ]; then
-      CSHARP_HELPERS_DIR="$root"
+    REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
+    if [ -f "${root}/agent-registry.json" ] && [ ! -f "$REGISTRY_FILE" ]; then
+      REGISTRY_FILE="${root}/agent-registry.json"
     fi
     return 0
   fi
@@ -101,11 +102,9 @@ resolve_asset_layout() {
   if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ] || [ ! -d "$CSHARP_HELPERS_DIR" ]; then
     fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
   fi
-  if [ -f "${root}/agent-registry.json" ] && [ ! -f "${CSHARP_HELPERS_DIR}/agent-registry.json" ]; then
-    CSHARP_HELPERS_DIR="${root}/powershell"
-  fi
-  if [ -f "${root}/agent-registry.json" ] && [ ! -f "${CSHARP_HELPERS_DIR}/agent-registry.json" ]; then
-    CSHARP_HELPERS_DIR="$root"
+  REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
+  if [ -f "${root}/agent-registry.json" ] && [ ! -f "$REGISTRY_FILE" ]; then
+    REGISTRY_FILE="${root}/agent-registry.json"
   fi
 }
 
@@ -199,7 +198,6 @@ resolve_asset_layout "$HELPER_RUNTIME" "$ASSET_ROOT"
 
 RUN_AGENT="${SCRIPTS_DIR}/run-agent.sh"
 WORKER_WATCH="${SCRIPTS_DIR}/worker-watch.sh"
-REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
 ARTIFACT_HELPER="$(helper_path "run-with-it-artifacts")"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DOTNET_BIN="${DOTNET_BIN:-dotnet}"
