@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset RUN_WITH_IT_DETACHED_CHILD
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL="${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1"
 PS_CMD="${PWSH:-}"
@@ -24,6 +26,13 @@ assert_file_contains() {
   local needle="$2"
   local message="$3"
   grep -Fq -- "$needle" "$file" || fail "$message (missing: $needle in $file)"
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "${haystack}" == *"${needle}"* ]] || fail "${message} (missing: ${needle})"
 }
 
 assert_json_file() {
@@ -188,5 +197,52 @@ assert len(state["completed_summaries"]) == 2
 assert any("task=101|outcome=completed" in row for row in state["ledger_rows"])
 assert any("task=102|outcome=completed" in row for row in state["ledger_rows"])
 PY
+
+FLAT_ASSET_ROOT="${WORK_DIR}/flat-assets"
+mkdir -p "${FLAT_ASSET_ROOT}/prompts" "${FLAT_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1"
+cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${FLAT_ASSET_ROOT}/worker-watch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1"
+cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${FLAT_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${FLAT_ASSET_ROOT}/python/"
+chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1" "${FLAT_ASSET_ROOT}/worker-watch.ps1"
+
+flat_pool_output="$("$PS_CMD" -NoProfile -File "$POOL" \
+  -AssetRoot "$FLAT_ASSET_ROOT" \
+  -StateFile "$STATE_FILE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -MainLog "$MAIN_LOG" \
+  -PollSeconds 1 \
+  -ValidateOnly \
+  2>&1)"
+flat_pool_status="$?"
+assert_contains "${flat_pool_output}" "STATUS|type=pool-ready" "flat python layout still runs with legacy helper root"
+
+set +e
+cs_pool_output="$("$PS_CMD" -NoProfile -File "$POOL" \
+  -AssetRoot "$FLAT_ASSET_ROOT" \
+  -StateFile "$STATE_FILE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -MainLog "$MAIN_LOG" \
+  -PollSeconds 1 \
+  -ValidateOnly \
+  -HelperRuntime cs \
+  2>&1)"
+cs_pool_status="$?"
+set -e
+
+[[ "$cs_pool_status" != "0" ]] || fail "flat C# layout must fail when cs helper runtime is requested"
+assert_contains "${cs_pool_output}" "missing nested asset layout for helper runtime 'cs'" "flat C# layout emits nested layout failure"
 
 echo "PASS: run-with-it-pool.ps1 contract"

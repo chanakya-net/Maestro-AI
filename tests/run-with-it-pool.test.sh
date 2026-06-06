@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset RUN_WITH_IT_DETACHED_CHILD
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL_RUNNER="${ROOT_DIR}/assets/scripts/run-with-it-pool.sh"
 MAIN_RULES="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
@@ -168,3 +170,45 @@ if [[ "${dependency_output}" == *"--issue 203"* ]]; then
 fi
 
 echo "PASS: run-with-it pool contract"
+
+FLAT_ASSET_ROOT="${WORK_DIR}/flat-assets"
+mkdir -p "${FLAT_ASSET_ROOT}/prompts" "${FLAT_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${FLAT_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${FLAT_ASSET_ROOT}/python/"
+chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh"
+
+flat_dry_output="$("${POOL_RUNNER}" \
+  --dry-run \
+  --asset-root "${FLAT_ASSET_ROOT}" \
+  --state-file "${STATE_FILE}" \
+  --parallel-jobs 1 \
+  --agent codex \
+  --model gpt-5.5 \
+  --status-file "${STATUS_FILE}" \
+  --events-log "${EVENTS_LOG}" \
+  --main-log "${MAIN_LOG}")"
+
+assert_contains "${flat_dry_output}" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh --asset-root ${FLAT_ASSET_ROOT}" "flat Python layout resolves root-level helper scripts"
+
+set +e
+cs_reject_output="$(
+  RUN_WITH_IT_HELPER_RUNTIME=cs "${POOL_RUNNER}" \
+    --dry-run \
+    --asset-root "${FLAT_ASSET_ROOT}" \
+    --state-file "${STATE_FILE}" \
+    --parallel-jobs 1 \
+    --agent codex \
+    --model gpt-5.5 \
+    --status-file "${STATUS_FILE}" \
+    --events-log "${EVENTS_LOG}" \
+    --main-log "${MAIN_LOG}" \
+    2>&1
+)"
+cs_reject_status="$?"
+set -e
+
+[[ "${cs_reject_status}" != "0" ]] || fail "flat C# layout must fail for legacy asset root"
+assert_contains "${cs_reject_output}" "missing nested asset layout for helper runtime 'cs'" "flat C# layout fails with nested asset error"

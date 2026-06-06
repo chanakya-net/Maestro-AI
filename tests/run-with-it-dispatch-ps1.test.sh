@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset RUN_WITH_IT_DETACHED_CHILD
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DISPATCHER="${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1"
 PS_CMD="${PWSH:-}"
@@ -207,6 +209,65 @@ dry_output="$("$PS_CMD" -NoProfile -File "$DISPATCHER" \
 assert_contains "$dry_output" "RUN_WITH_IT_STATE_FILE=${STATE_FILE}" "dry-run sets state file"
 assert_contains "$dry_output" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run sets result file"
 assert_contains "$dry_output" "run-agent.ps1" "dry-run wraps run-agent.ps1"
+
+FLAT_ASSET_ROOT="${WORK_DIR}/flat-assets"
+mkdir -p "${FLAT_ASSET_ROOT}/prompts" "${FLAT_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1"
+cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${FLAT_ASSET_ROOT}/worker-watch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${FLAT_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/agent-registry.json" "${FLAT_ASSET_ROOT}/agent-registry.json"
+cp "${ROOT_DIR}/assets/prompts/prompt.md" "${FLAT_ASSET_ROOT}/prompts/prompt.md"
+chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1" \
+  "${FLAT_ASSET_ROOT}/worker-watch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1"
+
+flat_output="$("${PS_CMD}" -NoProfile -File "$DISPATCHER" \
+  -DryRun \
+  -AssetRoot "$FLAT_ASSET_ROOT" \
+  -Role impl \
+  -Issue 88 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "${FLAT_ASSET_ROOT}/prompts/prompt.md" \
+  -LogFile "$LOG_FILE" \
+  -DoneFile "$DONE_FILE" \
+  -ResultFile "$RESULT_FILE" \
+  -StateFile "$STATE_FILE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -HelperRuntime py)"
+assert_contains "$flat_output" "${FLAT_ASSET_ROOT}/run-agent.ps1 --agent fake" "flat Python layout resolves root-level run-agent helper"
+
+set +e
+cs_output="$("${PS_CMD}" -NoProfile -File "$DISPATCHER" \
+  -DryRun \
+  -AssetRoot "$FLAT_ASSET_ROOT" \
+  -Role impl \
+  -Issue 89 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "${FLAT_ASSET_ROOT}/prompts/prompt.md" \
+  -LogFile "$LOG_FILE" \
+  -DoneFile "$DONE_FILE" \
+  -ResultFile "$RESULT_FILE" \
+  -StateFile "$STATE_FILE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -HelperRuntime cs 2>&1)"
+cs_status="$?"
+set -e
+
+[[ "$cs_status" != "0" ]] || fail "flat C# layout must fail when helper runtime is cs"
+assert_contains "$cs_output" "missing nested asset layout for helper runtime 'cs' at" "flat C# layout emits nested layout failure"
 
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
