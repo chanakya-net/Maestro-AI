@@ -85,13 +85,17 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Shared required files: `prompts/prompt.md`, `agent-registry.json`, `python/run-with-it-router.py`, `python/run-with-it-artifacts.py`, `prompts/review-prompt.md`, `prompts/modifier-prompt.md`, `prompts/complexity-prompt.md`, `prompts/coordinator-rules.md`.
+Shared required files: `prompts/prompt.md`, `agent-registry.json`, `prompts/review-prompt.md`, `prompts/modifier-prompt.md`, `prompts/complexity-prompt.md`, `prompts/coordinator-rules.md`.
+
+Python helper runtime required files: `python/run-with-it-router.py`, `python/run-with-it-artifacts.py`.
+
+C# helper runtime required files: `csharp/run-with-it-router.cs`, `csharp/run-with-it-artifacts.cs`.
 
 Bash required helper files: `scripts/run-agent.sh`, `scripts/run-with-it-dispatch.sh`, `scripts/worker-watch.sh`.
 
 PowerShell required helper files: `powershell/run-agent.ps1`, `powershell/run-with-it-dispatch.ps1`, `powershell/worker-watch.ps1`.
 
-Use the first asset root that contains the shared files plus the helper files for the detected platform. Do not require `.ps1` files for Bash/macOS/Linux/Git Bash/WSL runs, and do not require `.sh` files for native PowerShell runs.
+Use the first asset root that contains the shared files, the helper files for the detected platform, and the helper runtime files selected by `RUN_WITH_IT_HELPER_RUNTIME`. Use `python/run-with-it-router.py` + `python/run-with-it-artifacts.py` via `PYTHON_BIN` for `python`, or `csharp/run-with-it-router.cs` + `csharp/run-with-it-artifacts.cs` via `DOTNET_BIN` for `csharp`. Do not require `.ps1` files for Bash/macOS/Linux/Git Bash/WSL runs, and do not require `.sh` files for native PowerShell runs.
 
 ## Issue Worktree Bootstrap
 
@@ -357,7 +361,7 @@ This recovery contract covers `impl`, `review`, and `modify` together with the s
 
 ### Deterministic Router Helper (Mandatory)
 
-Use `$ASSET_ROOT/python/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST` and `AGENT_DENYLIST`, and records the decision in `.run-with-it/usage-ledger.json`.
+Use the runtime-selected router helper for every worker route decision: `python/run-with-it-router.py` via `PYTHON_BIN` for `RUN_WITH_IT_HELPER_RUNTIME=python`, or `csharp/run-with-it-router.cs` via `DOTNET_BIN` for `RUN_WITH_IT_HELPER_RUNTIME=csharp`. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST` and `AGENT_DENYLIST`, and records the decision in `.run-with-it/usage-ledger.json`.
 
 Usage target summary from `agent-registry.json`:
 - overall default: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%
@@ -368,11 +372,24 @@ Usage target summary from `agent-registry.json`:
 
 Bash helper shape:
 ```bash
-ROUTER_FILE="$ASSET_ROOT/python/run-with-it-router.py"
+HELPER_RUNTIME="${RUN_WITH_IT_HELPER_RUNTIME:-python}"
+case "$HELPER_RUNTIME" in
+  python|py)
+    ROUTER_FILE="$ASSET_ROOT/python/run-with-it-router.py"
+    ROUTER_BIN="${PYTHON_BIN:-python3}"
+    ;;
+  csharp|cs)
+    ROUTER_FILE="$ASSET_ROOT/csharp/run-with-it-router.cs"
+    ROUTER_BIN="${DOTNET_BIN:-dotnet}"
+    ;;
+  *)
+    printf 'Unsupported RUN_WITH_IT_HELPER_RUNTIME=%s\n' "$HELPER_RUNTIME" >&2
+    exit 2
+    ;;
+esac
 ROUTER_LEDGER_FILE="${RUN_WITH_IT_USAGE_LEDGER_FILE:-.run-with-it/usage-ledger.json}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
 DETECTED_AGENTS="$("$ASSET_ROOT/scripts/run-agent.sh" --list-agents --detected-only | cut -f1 | paste -sd, -)"
-ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
+ROUTE_JSON="$("$ROUTER_BIN" "$ROUTER_FILE" \
   --registry-file "$ASSET_ROOT/agent-registry.json" \
   --ledger-file "$ROUTER_LEDGER_FILE" \
   --role "$ROUTE_ROLE" \
@@ -384,9 +401,12 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --forced-model "${FORCED_MODEL:-}" \
   --exclude-model "${EXCLUDE_MODEL:-}" \
   --record)"
-AGENT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["agent"])')"
-MODEL="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
-SELECTION_REASON="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
+json_field() {
+  printf '%s\n' "$ROUTE_JSON" | sed -n "s/^[[:space:]]*\"$1\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+}
+AGENT="$(json_field agent)"
+MODEL="$(json_field model)"
+SELECTION_REASON="$(json_field selection_reason)"
 printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\n' \
   "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" "$SELECTION_REASON" \
   >> "$SUB_COORD_LOG_FILE"
@@ -394,11 +414,25 @@ printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\
 
 PowerShell helper shape:
 ```powershell
-$routerFile = Join-Path $ASSET_ROOT "python/run-with-it-router.py"
+$helperRuntime = if ($env:RUN_WITH_IT_HELPER_RUNTIME) { $env:RUN_WITH_IT_HELPER_RUNTIME } else { "python" }
+switch ($helperRuntime) {
+  { $_ -in @("python", "py") } {
+    $routerFile = Join-Path $ASSET_ROOT "python/run-with-it-router.py"
+    $routerBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python3" }
+    break
+  }
+  { $_ -in @("csharp", "cs") } {
+    $routerFile = Join-Path $ASSET_ROOT "csharp/run-with-it-router.cs"
+    $routerBin = if ($env:DOTNET_BIN) { $env:DOTNET_BIN } else { "dotnet" }
+    break
+  }
+  default {
+    throw "Unsupported RUN_WITH_IT_HELPER_RUNTIME=$helperRuntime"
+  }
+}
 $routerLedgerFile = if ($env:RUN_WITH_IT_USAGE_LEDGER_FILE) { $env:RUN_WITH_IT_USAGE_LEDGER_FILE } else { ".run-with-it/usage-ledger.json" }
-$pythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python3" }
 $detectedAgents = (& (Join-Path $ASSET_ROOT "powershell/run-agent.ps1") --list-agents --detected-only | ForEach-Object { ($_ -split "`t")[0] }) -join ","
-$routeJson = & $pythonBin $routerFile `
+$routeJson = & $routerBin $routerFile `
   --registry-file (Join-Path $ASSET_ROOT "agent-registry.json") `
   --ledger-file $routerLedgerFile `
   --role $env:ROUTE_ROLE `
@@ -423,7 +457,7 @@ Route helper inputs by phase:
 - reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity level and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed
 - modifier worker: `ROUTE_ROLE=modify`, use the current implementation band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
-If `python/run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
+If the runtime-selected router helper (`python/run-with-it-router.py` for `python`, `csharp/run-with-it-router.cs` for `csharp`) is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
 
 ### Complexity Sub-Agent Delegation
 
@@ -436,7 +470,7 @@ Override handling:
   `STATUS|type=complexity-skipped|reason=override`
 
 Sub-agent selection for complexity:
-1. Use `python/run-with-it-router.py` with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
+1. Use the runtime-selected router helper (`python/run-with-it-router.py` via `PYTHON_BIN`, or `csharp/run-with-it-router.cs` via `DOTNET_BIN`) with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
 2. The helper restricts the candidate pool to easy-medium band models, excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
 3. Pass both selected `AGENT` and selected `MODEL` explicitly to the sub-agent runner.
 
@@ -550,7 +584,7 @@ If the fallback is used, set `complexity_source=fallback`. If the override path 
 
 ### Prompt Fallback Router
 
-Use this section only when `python/run-with-it-router.py` is unavailable or exits non-zero. The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above. The fallback is intentionally bounded to one phase so a helper failure is visible instead of silently changing routing behavior for the whole run.
+Use this section only when the runtime-selected router helper (`python/run-with-it-router.py` for `python`, `csharp/run-with-it-router.cs` for `csharp`) is unavailable or exits non-zero. The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above. The fallback is intentionally bounded to one phase so a helper failure is visible instead of silently changing routing behavior for the whole run.
 
 #### Step 1 — Map Score to Target Weight Range
 

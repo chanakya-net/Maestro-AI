@@ -44,7 +44,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 - Assemble the context payload file before spawning each worker-agent. Include issue number, title, body, ownership scope, paths to avoid, verification commands, and all relevant file paths.
 - Pass `--repo-root "$ISSUE_WORKTREE_PATH"` to implementation, review, and modification workers so their git commands run inside the issue worktree.
-- Select worker agent/model pairs through `$ASSET_ROOT/python/run-with-it-router.py` when available. It must record every route in `.run-with-it/usage-ledger.json` so subscription usage stays near the configured overall target: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%.
+- Select worker agent/model pairs through the runtime-selected router helper when available: `python/run-with-it-router.py` via `PYTHON_BIN` for `RUN_WITH_IT_HELPER_RUNTIME=python`, or `csharp/run-with-it-router.cs` via `DOTNET_BIN` for `RUN_WITH_IT_HELPER_RUNTIME=csharp`. It must record every route in `.run-with-it/usage-ledger.json` so subscription usage stays near the configured overall target: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%.
 - If the router helper fails, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the prompt fallback router once for that phase.
 - Spawn exactly one implementer worker-agent per implementation pass.
 - Do not spawn multiple worker-agents for the same role and cycle.

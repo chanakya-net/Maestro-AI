@@ -166,11 +166,22 @@ Shared required files:
 - `prompts/sub-coordinator-prompt.md`
 - `prompts/main-orchestrator-rules.md`
 - `prompts/merge-recovery-prompt.md`
+
+Python helper runtime required files:
+
 - `python/run-with-it-state.py`
 - `python/run-with-it-github-update.py`
 - `python/run-with-it-pr-body.py`
 - `python/run-with-it-router.py`
 - `python/run-with-it-artifacts.py`
+
+C# helper runtime required files:
+
+- `csharp/run-with-it-state.cs`
+- `csharp/run-with-it-github-update.cs`
+- `csharp/run-with-it-pr-body.cs`
+- `csharp/run-with-it-router.cs`
+- `csharp/run-with-it-artifacts.cs`
 
 Bash required helper files:
 
@@ -188,7 +199,7 @@ PowerShell required helper files:
 
 Selection rules:
 
-- Use first path that contains all shared files plus the helper files for the detected platform.
+- Use first path that contains all shared files, the helper files for the detected platform, and the helper runtime files selected by `RUN_WITH_IT_HELPER_RUNTIME`.
 - Bash/macOS/Linux/Git Bash/WSL runs must not require `.ps1` helper files.
 - Native PowerShell runs must not require `.sh` helper files.
 - If `RUN_WITH_IT_HELPER_RUNTIME=csharp`, require `DOTNET_BIN` (requires `.NET SDK 10+`) for shared helper scripts. If `RUN_WITH_IT_HELPER_RUNTIME=python`, require `python3` or `PYTHON_BIN` for shared helper scripts.
@@ -204,7 +215,7 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets\prompts", "$env:USERPROFILE\.ai-skill-collections\assets\powershell", "$env:USERPROFILE\.ai-skill-collections\assets\python", "$env:USERPROFILE\.ai-skill-collections\assets\csharp" | Out-Null; $dest = "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\python\run-with-it-state.py, .\assets\python\run-with-it-github-update.py, .\assets\python\run-with-it-pr-body.py, .\assets\python\run-with-it-router.py, .\assets\python\run-with-it-artifacts.py "$dest\python\" -ErrorAction SilentlyContinue; Copy-Item -Force .\assets\prompts\prompt.md, .\assets\prompts\sub-coordinator-prompt.md, .\assets\prompts\main-orchestrator-rules.md, .\assets\prompts\merge-recovery-prompt.md, .\assets\prompts\complexity-prompt.md, .\assets\prompts\review-prompt.md, .\assets\prompts\modifier-prompt.md, .\assets\prompts\coordinator-rules.md "$dest\prompts\"; Copy-Item -Force .\assets\powershell\run-agent.ps1, .\assets\powershell\run-with-it-dispatch.ps1, .\assets\powershell\run-with-it-pool.ps1, .\assets\powershell\worker-watch.ps1 "$dest\powershell\"; Copy-Item -Force .\assets\csharp\run-with-it-state.cs, .\assets\csharp\run-with-it-router.cs, .\assets\csharp\run-with-it-artifacts.cs, .\assets\csharp\run-with-it-github-update.cs, .\assets\csharp\run-with-it-pr-body.cs "$dest\csharp\" -ErrorAction SilentlyContinue; Copy-Item -Force .\assets\agent-registry.json "$dest\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets\prompts", "$env:USERPROFILE\.ai-skill-collections\assets\powershell", "$env:USERPROFILE\.ai-skill-collections\assets\scripts", "$env:USERPROFILE\.ai-skill-collections\assets\python", "$env:USERPROFILE\.ai-skill-collections\assets\csharp" | Out-Null; $dest = "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\python\run-with-it-state.py, .\assets\python\run-with-it-github-update.py, .\assets\python\run-with-it-pr-body.py, .\assets\python\run-with-it-router.py, .\assets\python\run-with-it-artifacts.py "$dest\python\" -ErrorAction SilentlyContinue; Copy-Item -Force .\assets\prompts\prompt.md, .\assets\prompts\sub-coordinator-prompt.md, .\assets\prompts\main-orchestrator-rules.md, .\assets\prompts\merge-recovery-prompt.md, .\assets\prompts\complexity-prompt.md, .\assets\prompts\review-prompt.md, .\assets\prompts\modifier-prompt.md, .\assets\prompts\coordinator-rules.md "$dest\prompts\"; Copy-Item -Force .\assets\powershell\run-agent.ps1, .\assets\powershell\run-with-it-dispatch.ps1, .\assets\powershell\run-with-it-pool.ps1, .\assets\powershell\worker-watch.ps1 "$dest\powershell\"; Copy-Item -Force .\assets\scripts\run-agent.sh, .\assets\scripts\run-with-it-dispatch.sh, .\assets\scripts\run-with-it-pool.sh, .\assets\scripts\worker-watch.sh "$dest\scripts\"; Copy-Item -Force .\assets\csharp\run-with-it-state.cs, .\assets\csharp\run-with-it-router.cs, .\assets\csharp\run-with-it-artifacts.cs, .\assets\csharp\run-with-it-github-update.cs, .\assets\csharp\run-with-it-pr-body.cs "$dest\csharp\" -ErrorAction SilentlyContinue; Copy-Item -Force .\assets\agent-registry.json "$dest\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
@@ -501,7 +512,7 @@ run-agent.sh --list-models <agent>
 | `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `agy`) |
 | `--model <model>` | `MODEL` | Yes (always pass explicitly) | Model id to use |
 | `--context-file <file>` | `CONTEXT_PAYLOAD_FILE` | Yes | Path to the assembled context payload file |
-| `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `<script-dir>/prompt.md`) | Path to the prompt file |
+| `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `$ASSET_ROOT/prompts/prompt.md`) | Path to the prompt file |
 | `--repo-root <path>` | `REPO_ROOT` | No | Working directory passed to the agent; Sub-Coordinators use issue worktrees |
 | `--permission-mode <mode>` | `AGENT_PERMISSION_MODE` | No | Override agent permission mode |
 | `--extra-arg <arg>` | `AGENT_EXTRA_ARGS` | No | Repeatable; appended to agent invocation |
@@ -514,7 +525,7 @@ Additional env vars (no flag equivalents):
 
 | Env var | Default | Description |
 |---------|---------|-------------|
-| `AGENT_REGISTRY_FILE` | `<script-dir>/agent-registry.json` | Path to agent registry |
+| `AGENT_REGISTRY_FILE` | `$ASSET_ROOT/agent-registry.json` | Path to agent registry |
 | `GUI_MODE` | `auto` | `auto` detects GUI env vars; `1` forces GUI-safe noninteractive mode; `0` forces CLI/CI mode |
 | `REPO_ROOT` | `$(pwd)` | Working directory passed to agent |
 | `PRINT_PROMPT` | `0` | Set to `1` to print assembled prompt without running |
