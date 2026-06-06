@@ -91,9 +91,22 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
         if (-not (Test-Path $powershellDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
             $powershellDir = $assetRoot
         }
-    if (-not (Test-Path $pythonHelpersDir)) {
-        $pythonHelpersDir = $assetRoot
+        if (-not (Test-Path $pythonHelpersDir)) {
+            $pythonHelpersDir = $assetRoot
+        }
+        return [PSCustomObject]@{
+            PromptsDir = $promptsDir
+            ScriptsDir = $scriptsDir
+            PowerShellDir = $powershellDir
+            PythonHelpersDir = $pythonHelpersDir
+            CSharpHelpersDir = $csharpHelpersDir
+        }
     }
+
+    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir)) {
+        Fail "missing nested asset layout for helper runtime 'cs' at $assetRoot; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
+    }
+
     if (-not (Test-Path $csharpHelpersDir)) {
         $csharpHelpersDir = $assetRoot
     }
@@ -107,25 +120,6 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
         PythonHelpersDir = $pythonHelpersDir
         CSharpHelpersDir = $csharpHelpersDir
     }
-  }
-
-  if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir)) {
-    Fail "missing nested asset layout for helper runtime 'cs' at $assetRoot; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
-  }
-
-  if (-not (Test-Path $csharpHelpersDir)) {
-    $csharpHelpersDir = $assetRoot
-  }
-  if (-not (Test-Path (Join-Path $csharpHelpersDir "agent-registry.json")) -and (Test-Path (Join-Path $assetRoot "agent-registry.json"))) {
-    $csharpHelpersDir = $assetRoot
-  }
-  return [PSCustomObject]@{
-    PromptsDir = $promptsDir
-    ScriptsDir = $scriptsDir
-    PowerShellDir = $powershellDir
-    PythonHelpersDir = $pythonHelpersDir
-    CSharpHelpersDir = $csharpHelpersDir
-  }
 }
 
 function Quote-ProcessArgument([string]$arg) {
@@ -335,6 +329,9 @@ $AssetLayout = Resolve-AssetLayout -assetRoot $AssetRoot -helperRuntime $HelperR
 $RunAgent = Join-Path $AssetLayout.PowerShellDir "run-agent.ps1"
 $WorkerWatch = Join-Path $AssetLayout.PowerShellDir "worker-watch.ps1"
 $RegistryFile = Join-Path $AssetLayout.CSharpHelpersDir "agent-registry.json"
+if ($HelperRuntime -eq "py" -and -not (Test-Path $RegistryFile)) {
+    $RegistryFile = Join-Path $AssetRoot "agent-registry.json"
+}
 $script:ArtifactHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-artifacts.py"
 $script:PythonExe = Get-PythonExe
 

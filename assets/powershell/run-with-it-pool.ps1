@@ -67,7 +67,7 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
     $scriptsDir = Join-Path $assetRoot "scripts"
     $powershellDir = Join-Path $assetRoot "powershell"
     $pythonHelpersDir = Join-Path $assetRoot "python"
-    $csharpHelpersDir = $powershellDir
+    $csharpHelpersDir = Join-Path $assetRoot "powershell"
 
     if ($helperRuntime -eq "py") {
         if (-not (Test-Path $scriptsDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {

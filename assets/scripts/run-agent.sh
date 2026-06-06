@@ -23,7 +23,7 @@ fi
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
 ASSET_ROOT="${SCRIPT_DIR%/*}"
-DEFAULT_PROMPT_FILE="${ASSET_ROOT}/../prompts/prompt.md"
+DEFAULT_PROMPT_FILE="${ASSET_ROOT}/prompts/prompt.md"
 REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
   (cd "${REPO_ROOT}" && codegraph unlock 2>/dev/null) || true

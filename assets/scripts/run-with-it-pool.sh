@@ -78,6 +78,7 @@ resolve_asset_layout() {
   if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ]; then
     fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
   fi
+  return 0
 }
 
 usage() {

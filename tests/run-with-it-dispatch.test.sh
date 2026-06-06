@@ -231,6 +231,37 @@ set -e
 [[ "${cs_fail_status}" != "0" ]] || fail "flat C# layout fails when helper runtime is cs"
 assert_contains "${cs_fail_output}" "missing nested asset layout for helper runtime 'cs'" "flat C# layout is rejected with nested asset error"
 
+NESTED_DISPATCH_ASSET_ROOT="${WORK_DIR}/nested-dispatch-assets"
+mkdir -p "${NESTED_DISPATCH_ASSET_ROOT}/prompts" "${NESTED_DISPATCH_ASSET_ROOT}/scripts" "${NESTED_DISPATCH_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${NESTED_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh"
+cp "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${NESTED_DISPATCH_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/agent-registry.json" "${NESTED_DISPATCH_ASSET_ROOT}/agent-registry.json"
+printf 'nested prompt\n' > "${NESTED_DISPATCH_ASSET_ROOT}/prompts/prompt.md"
+printf 'explicit prompt for dispatch\n' > "${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md"
+chmod +x "${NESTED_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh"
+
+nested_dispatch_prompt_output="$("${DISPATCHER}" \
+  --dry-run \
+  --asset-root "${NESTED_DISPATCH_ASSET_ROOT}" \
+  --role impl \
+  --issue 101 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" \
+  --log-file "${LOG_FILE}" \
+  --done-file "${DONE_FILE}" \
+  --result-file "${RESULT_FILE}" \
+  --state-file "${STATE_FILE}" \
+  --repo-root "${WORKTREE_ROOT}" \
+  --issue-dir "${ISSUE_DIR}" \
+  --status-file "${STATUS_FILE}" \
+  --events-log "${EVENTS_LOG}" \
+  --poll-seconds 1)"
+assert_contains "${nested_dispatch_prompt_output}" "--prompt-file ${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" "dispatch preserves explicit prompt-file in nested script layout"
+
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"

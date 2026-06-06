@@ -58,7 +58,7 @@ $LIST_AGENTS       = $false
 $DETECTED_ONLY     = $false
 $LIST_MODELS_AGENT = ""
 
-$DEFAULT_PROMPT_FILE = Join-Path $AssetRoot ".." "prompts" "prompt.md"
+$DEFAULT_PROMPT_FILE = Join-Path $AssetRoot "prompts" "prompt.md"
 if (-not $PROMPT_FILE_VAL) { $PROMPT_FILE_VAL = $DEFAULT_PROMPT_FILE }
 
 # ── Arg parsing ───────────────────────────────────────────────────────────────

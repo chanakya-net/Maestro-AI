@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset AGENT MODEL
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY_PATH="${ROOT_DIR}/assets/agent-registry.json"
 RUNNER_PATH="${ROOT_DIR}/assets/scripts/run-agent.sh"
@@ -657,3 +659,24 @@ assert_equals "1" "${parser_status}" "runner fails when no JSON parser is availa
 assert_contains "${parser_output}" "install jq or python3" "missing parser failure is clear"
 
 echo "PASS: run-agent fails clearly without a JSON parser"
+
+# ── AC#5: run-agent default prompt lookup from nested script directory ──────────
+NESTED_TEST_DIR="${WORK_DIR}/nested-prompt-lookup-test"
+mkdir -p "${NESTED_TEST_DIR}/scripts" "${NESTED_TEST_DIR}/prompts"
+cp "${RUNNER_PATH}" "${NESTED_TEST_DIR}/scripts/run-agent.sh"
+cp "${CUSTOM_REGISTRY}" "${NESTED_TEST_DIR}/agent-registry.json"
+printf 'nested-default-prompt-content' > "${NESTED_TEST_DIR}/prompts/prompt.md"
+
+nested_dry_output="$(
+  cd "${NESTED_TEST_DIR}/scripts"
+  PATH="${FAKE_BIN}:${PATH}" \
+    AGENT_REGISTRY_FILE="${NESTED_TEST_DIR}/agent-registry.json" \
+    AGENT=fake \
+    CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" \
+    UNATTENDED=1 \
+    ./run-agent.sh --dry-run
+)"
+assert_contains "${nested_dry_output}" "nested-default-prompt-content" "run-agent.sh default prompt lookup works from nested script directory"
+
+echo "PASS: run-agent.sh default prompt lookup works from nested script directory"
+

@@ -269,6 +269,40 @@ set -e
 [[ "$cs_status" != "0" ]] || fail "flat C# layout must fail when helper runtime is cs"
 assert_contains "$cs_output" "missing nested asset layout for helper runtime 'cs' at" "flat C# layout emits nested layout failure"
 
+NESTED_DISPATCH_ASSET_ROOT="${WORK_DIR}/nested-dispatch-assets-ps1"
+mkdir -p "${NESTED_DISPATCH_ASSET_ROOT}/prompts" "${NESTED_DISPATCH_ASSET_ROOT}/powershell" "${NESTED_DISPATCH_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${NESTED_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${NESTED_DISPATCH_ASSET_ROOT}/powershell/run-agent.ps1"
+cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${NESTED_DISPATCH_ASSET_ROOT}/powershell/worker-watch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "${NESTED_DISPATCH_ASSET_ROOT}/powershell/run-with-it-pool.ps1"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${NESTED_DISPATCH_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/agent-registry.json" "${NESTED_DISPATCH_ASSET_ROOT}/agent-registry.json"
+cp "${ROOT_DIR}/assets/prompts/prompt.md" "${NESTED_DISPATCH_ASSET_ROOT}/prompts/prompt.md"
+printf 'explicit powershell dispatch prompt\n' > "${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md"
+chmod +x "${NESTED_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.ps1" "${NESTED_DISPATCH_ASSET_ROOT}/powershell/run-agent.ps1" \
+  "${NESTED_DISPATCH_ASSET_ROOT}/powershell/worker-watch.ps1" "${NESTED_DISPATCH_ASSET_ROOT}/powershell/run-with-it-pool.ps1"
+
+nested_dispatch_prompt_output="$("${PS_CMD}" -NoProfile -File "$DISPATCHER" \
+  -DryRun \
+  -AssetRoot "$NESTED_DISPATCH_ASSET_ROOT" \
+  -Role impl \
+  -Issue 101 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" \
+  -LogFile "$LOG_FILE" \
+  -DoneFile "$DONE_FILE" \
+  -ResultFile "$RESULT_FILE" \
+  -StateFile "$STATE_FILE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1)"
+assert_contains "$nested_dispatch_prompt_output" "--prompt-file ${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" "dispatch preserves explicit prompt-file in nested PowerShell layout"
+
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
