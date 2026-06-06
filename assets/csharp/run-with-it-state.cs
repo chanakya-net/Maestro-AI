@@ -100,7 +100,7 @@ static Dictionary<string, string> ParseNamedOptions(string[] args, out int exitC
 static int ReadyIssues(Dictionary<string, string> options)
 {
     var stateFile = Require(options, "--state-file");
-    var limit = ParseInt(Require(options, "--limit"));
+    var limit = StrictParseInt(Require(options, "--limit"), "--limit");
 
     var state = LoadJson(stateFile);
     var completed = CompletedIssueNumbers(state);
@@ -251,7 +251,7 @@ static int MarkInProgress(Dictionary<string, string> options)
     entry["status"] = "in_progress";
     entry["context_file"] = Require(options, "--context-file");
     entry["issue_dir"] = Require(options, "--issue-dir");
-    entry["pid"] = ParseInt(Require(options, "--pid"));
+    entry["pid"] = StrictParseInt(Require(options, "--pid"), "--pid");
     entry["started_at"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     entry["log_file"] = Require(options, "--log-file");
     entry["done_file"] = Require(options, "--done-file");
@@ -498,7 +498,7 @@ static int WriteSubCoordRecoveryContext(Dictionary<string, string> options)
     var stateFile = Require(options, "--state-file");
     var issue = Require(options, "--issue");
     var contextFile = Require(options, "--context-file");
-    var attempt = Require(options, "--attempt");
+    var attempt = StrictParseInt(Require(options, "--attempt"), "--attempt");
     var reason = Require(options, "--reason");
 
     var state = LoadJson(stateFile);
@@ -562,7 +562,7 @@ static int MarkSubCoordRecoveryStarted(Dictionary<string, string> options)
 {
     var stateFile = Require(options, "--state-file");
     var issue = Require(options, "--issue");
-    var attempt = ParseInt(Require(options, "--attempt"));
+    var attempt = StrictParseInt(Require(options, "--attempt"), "--attempt");
     var reason = Require(options, "--reason");
     var contextFile = Require(options, "--context-file");
 
@@ -1044,7 +1044,7 @@ static int OptionInt(Dictionary<string, string> options, string key, int default
         return defaultValue;
     }
 
-    return ParseInt(value, defaultValue);
+    return StrictParseInt(value, key);
 }
 
 static JsonObject GetObject(JsonObject source, string key)
@@ -1178,6 +1178,15 @@ static string Require(Dictionary<string, string> values, string key)
 static int ParseInt(string value, int fallback = 0)
 {
     return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+}
+
+static int StrictParseInt(string value, string argName)
+{
+    if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+    {
+        throw new FormatException($"run-with-it-state: invalid integer value for {argName}: {value}");
+    }
+    return parsed;
 }
 
 static int AsInt(JsonNode? node, int fallback)

@@ -605,4 +605,165 @@ wait "${BG_PID}"
 
 echo "PASS: run-with-it-router.cs exclusive lock blocking and release"
 
+# Test Comment 1: Numeric issue value in artifacts result file
+NUMERIC_ISSUE_RESULT="${TMP_ROOT}/numeric-issue-result.json"
+cat > "${NUMERIC_ISSUE_RESULT}" <<'JSON'
+{
+  "schema_version": 1,
+  "issue": 136,
+  "role": "modify",
+  "status": "success",
+  "commit_sha": "2cf26f9fbf395effbcd59337eba12a986c223c80",
+  "files_committed": ["assets/csharp/run-with-it-artifacts.cs"],
+  "verification": {
+    "passed": true,
+    "commands": ["dotnet run"]
+  }
+}
+JSON
+
+NUMERIC_ISSUE_PY_OUT="${TMP_ROOT}/numeric-issue-py.txt"
+NUMERIC_ISSUE_CS_OUT="${TMP_ROOT}/numeric-issue-cs.txt"
+
+# Run both python and C#
+python3 "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" failure-reason \
+  --role modify \
+  --issue 136 \
+  --repo-root "${ROOT_DIR}" \
+  --result-file "${NUMERIC_ISSUE_RESULT}" > "${NUMERIC_ISSUE_PY_OUT}"
+
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-artifacts.cs" -- failure-reason \
+  --role modify \
+  --issue 136 \
+  --repo-root "${ROOT_DIR}" \
+  --result-file "${NUMERIC_ISSUE_RESULT}" > "${NUMERIC_ISSUE_CS_OUT}"
+
+compare_text_files "${NUMERIC_ISSUE_PY_OUT}" "${NUMERIC_ISSUE_CS_OUT}" "artifacts failure-reason numeric issue parity mismatch"
+echo "PASS: run-with-it-artifacts.cs numeric issue parity"
+
+# Test Comment 2: --detected-agents ""
+ROUTER_EMPTY_DETECTED_PY="${TMP_ROOT}/router-empty-detected-py.json"
+ROUTER_EMPTY_DETECTED_CS="${TMP_ROOT}/router-empty-detected-cs.json"
+
+# In Python:
+python3 "${ROOT_DIR}/assets/python/run-with-it-router.py" \
+  --registry-file "${ROOT_DIR}/assets/agent-registry.json" \
+  --ledger-file "${TMP_ROOT}/router-review-ledger.json" \
+  --role review \
+  --complexity-level medium-hard \
+  --exclude-model gpt-5.3-codex \
+  --detected-agents "" > "${ROUTER_EMPTY_DETECTED_PY}" 2>&1 || true
+
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-router.cs" -- \
+  --registry-file "${ROOT_DIR}/assets/agent-registry.json" \
+  --ledger-file "${TMP_ROOT}/router-review-ledger.json" \
+  --role review \
+  --complexity-level medium-hard \
+  --exclude-model gpt-5.3-codex \
+  --detected-agents "" > "${ROUTER_EMPTY_DETECTED_CS}" 2>&1 || true
+
+compare_text_files "${ROUTER_EMPTY_DETECTED_PY}" "${ROUTER_EMPTY_DETECTED_CS}" "router --detected-agents empty string parity mismatch"
+echo "PASS: run-with-it-router.cs --detected-agents empty string parity"
+
+# Test Comment 3: strict integer parsing --pid abc
+STATE_ABC_PY_OUT="${TMP_ROOT}/state-abc-py.txt"
+STATE_ABC_CS_OUT="${TMP_ROOT}/state-abc-cs.txt"
+
+STATE_ABC_PY_JSON="${TMP_ROOT}/state-abc-py.json"
+STATE_ABC_CS_JSON="${TMP_ROOT}/state-abc-cs.json"
+
+cat > "${STATE_ABC_PY_JSON}" <<'JSON'
+{"issue_registry":{"136":{"status":"ready"}},"active_pool_issues":[]}
+JSON
+cp "${STATE_ABC_PY_JSON}" "${STATE_ABC_CS_JSON}"
+
+# Run Python and expect error
+python3 "${ROOT_DIR}/assets/python/run-with-it-state.py" mark-in-progress \
+  --state-file "${STATE_ABC_PY_JSON}" \
+  --issue 136 \
+  --context-file "${COMMON_CONTEXT}" \
+  --issue-dir "${COMMON_ISSUE_DIR}" \
+  --pid abc \
+  --log-file "${COMMON_LOG}" \
+  --done-file "${COMMON_DONE}" \
+  --report-file "${STATE_REPORT}" > "${STATE_ABC_PY_OUT}" 2>&1 || true
+
+# Run C# and expect error
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- mark-in-progress \
+  --state-file "${STATE_ABC_CS_JSON}" \
+  --issue 136 \
+  --context-file "${COMMON_CONTEXT}" \
+  --issue-dir "${COMMON_ISSUE_DIR}" \
+  --pid abc \
+  --log-file "${COMMON_LOG}" \
+  --done-file "${COMMON_DONE}" \
+  --report-file "${STATE_REPORT}" > "${STATE_ABC_CS_OUT}" 2>&1 || true
+
+# Both state JSON files should be unchanged (and identical to each other)
+compare_text_files "${STATE_ABC_PY_JSON}" "${STATE_ABC_CS_JSON}" "state files diverged on invalid --pid abc"
+
+# Both commands should exit nonzero and print an error message (let's verify they failed)
+if ! grep -q -i "invalid" "${STATE_ABC_CS_OUT}" && ! grep -q -i "format" "${STATE_ABC_CS_OUT}"; then
+  fail "C# helper did not fail/complain on invalid --pid abc"
+fi
+
+echo "PASS: run-with-it-state.cs --pid abc strict validation"
+
+# Test Comment 4: NitpickOnly with non-object items in comments list
+NITPICK_NON_OBJ_RESULT="${TMP_ROOT}/nitpick-non-obj-result.json"
+cat > "${NITPICK_NON_OBJ_RESULT}" <<'JSON'
+{
+  "outcome": "revise",
+  "summary": "Some review summary",
+  "verification": {
+    "passed": true,
+    "commands_run": ["run"]
+  },
+  "review_summary": {
+    "cycles_used": 1,
+    "final_verdict": "revise"
+  },
+  "token_usage": {
+    "input_tokens": 12,
+    "output_tokens": 10
+  },
+  "comments": [
+    "not-an-object-comment-item",
+    {
+      "severity": "info",
+      "fix": "[nitpick] minor typo"
+    }
+  ]
+}
+JSON
+
+NITPICK_NON_OBJ_PY_OUT="${TMP_ROOT}/nitpick-non-obj-py.txt"
+NITPICK_NON_OBJ_CS_OUT="${TMP_ROOT}/nitpick-non-obj-cs.txt"
+
+cat > "${GITHUB_STATE_PY}" <<'JSON'
+{"issue_registry":{"136":{"status":"in_progress"}}}
+JSON
+cp "${GITHUB_STATE_PY}" "${GITHUB_STATE_CS}"
+
+# Run Python and C# update with outcome "revise" to trigger review-nitpick synthesis
+RUN_WITH_IT_GITHUB_UPDATES=0 \
+python3 "${ROOT_DIR}/assets/python/run-with-it-github-update.py" update \
+  --state-file "${GITHUB_STATE_PY}" \
+  --run-root "${TMP_ROOT}" \
+  --issue 136 \
+  --outcome revise \
+  --report-file "${NITPICK_NON_OBJ_RESULT}" > "${NITPICK_NON_OBJ_PY_OUT}"
+
+RUN_WITH_IT_GITHUB_UPDATES=0 \
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-github-update.cs" -- update \
+  --state-file "${GITHUB_STATE_CS}" \
+  --run-root "${TMP_ROOT}" \
+  --issue 136 \
+  --outcome revise \
+  --report-file "${NITPICK_NON_OBJ_RESULT}" > "${NITPICK_NON_OBJ_CS_OUT}"
+
+# Compare outputs
+compare_text_files "${NITPICK_NON_OBJ_PY_OUT}" "${NITPICK_NON_OBJ_CS_OUT}" "github update review-nitpick synthesis parity mismatch on non-object comments"
+echo "PASS: run-with-it-github-update.cs review-nitpick synthesis non-object comments parity"
+
 echo "ALL C# SMOKE TESTS PASSED"

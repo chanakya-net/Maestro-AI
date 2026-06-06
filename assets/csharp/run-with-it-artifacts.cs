@@ -225,7 +225,7 @@ static string ResultFailureReason(ParsedArgs args)
 
 static string ImplementationResultReason(ParsedArgs args, JsonObject payload)
 {
-    if (AsString(payload["issue"]) != args.Issue || AsString(payload["role"]) != args.Role || AsString(payload["status"]) != "success")
+    if (AsScalarString(payload["issue"]) != args.Issue || AsString(payload["role"]) != args.Role || AsString(payload["status"]) != "success")
     {
         return "invalid-result-artifact";
     }
@@ -568,7 +568,7 @@ static bool WorkerPayloadWrittenToIssueReport(ParsedArgs args)
         return false;
     }
 
-    return AsString(report["issue"]) == args.Issue && AsString(report["role"]) == args.Role;
+    return AsScalarString(report["issue"]) == args.Issue && AsString(report["role"]) == args.Role;
 }
 
 static string IssueReportPath(ParsedArgs args)
@@ -727,9 +727,14 @@ static bool NitpickOnly(JsonArray comments)
         return false;
     }
 
-    foreach (var item in comments.OfType<JsonObject>())
+    foreach (var node in comments)
     {
-        if (!AsString(item["severity"]).Equals("info", StringComparison.Ordinal))
+        if (node is not JsonObject item)
+        {
+            return false;
+        }
+
+        if (!"info".Equals(AsString(item["severity"]), StringComparison.Ordinal))
         {
             return false;
         }
@@ -917,6 +922,20 @@ static string? AsString(JsonNode? node)
     return node is JsonValue value && value.GetValueKind() == JsonValueKind.String
         ? value.GetValue<string>()
         : null;
+}
+
+static string? AsScalarString(JsonNode? node)
+{
+    if (node is JsonValue value)
+    {
+        var kind = value.GetValueKind();
+        if (kind == JsonValueKind.String)
+        {
+            return value.GetValue<string>();
+        }
+        return value.ToString();
+    }
+    return null;
 }
 
 static void PrintUsage()

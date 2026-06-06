@@ -113,6 +113,8 @@ static ParsedArguments? ParseArguments(string[] args)
         return parsed;
     }
 
+    bool detectedAgentsSpecified = false;
+
     for (int i = 0; i < args.Length; i++)
     {
         var arg = args[i];
@@ -159,6 +161,7 @@ static ParsedArguments? ParseArguments(string[] args)
                 break;
             case "--detected-agents":
                 parsed.DetectedAgents = SplitCsv(value);
+                detectedAgentsSpecified = true;
                 break;
             case "--allowlist":
                 parsed.Allowlist = SplitCsv(value);
@@ -193,7 +196,7 @@ static ParsedArguments? ParseArguments(string[] args)
         throw new CommandError($"invalid role: {parsed.Role}");
     }
 
-    if (parsed.DetectedAgents.Count == 0)
+    if (!detectedAgentsSpecified)
     {
         parsed.DetectedAgents = new HashSet<string>(DefaultAgents, StringComparer.Ordinal);
     }
@@ -235,6 +238,11 @@ static HashSet<string> SplitCsv(string value)
     }
 
     return values;
+}
+
+static string FormatList(IEnumerable<string> items)
+{
+    return "[" + string.Join(", ", items.Select(x => $"'{x}'")) + "]";
 }
 
 static readonly string[] DefaultAgents = { "codex", "agy", "github-copilot", "claude" };
@@ -487,8 +495,8 @@ static JsonObject SelectPair(
     {
         throw new CommandError(
             "no compatible routing candidates " +
-            $"role={role} level={routingLevel} detected={string.Join(",", detectedAgents.OrderBy(x => x))} " +
-            $"allowlist={string.Join(",", allowlist.OrderBy(x => x))} denylist={string.Join(",", denylist.OrderBy(x => x))}"
+            $"role={role} level={routingLevel} detected={FormatList(detectedAgents.OrderBy(x => x))} " +
+            $"allowlist={FormatList(allowlist.OrderBy(x => x))} denylist={FormatList(denylist.OrderBy(x => x))}"
         );
     }
 
