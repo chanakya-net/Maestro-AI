@@ -104,10 +104,11 @@ function Install-Assets {
     $prompts = @("prompt.md", "sub-coordinator-prompt.md", "main-orchestrator-rules.md", "merge-recovery-prompt.md", "complexity-prompt.md", "review-prompt.md", "modifier-prompt.md", "coordinator-rules.md")
     $scripts = @("run-agent.ps1", "run-with-it-dispatch.ps1", "run-with-it-pool.ps1", "worker-watch.ps1")
     $python  = @("run-with-it-state.py", "run-with-it-github-update.py", "run-with-it-pr-body.py", "run-with-it-router.py", "run-with-it-artifacts.py")
+    $csharp  = @("run-with-it-artifacts.cs", "run-with-it-github-update.cs", "run-with-it-pr-body.cs", "run-with-it-router.cs", "run-with-it-state.cs")
     $baseUrl = "https://raw.githubusercontent.com/$REPO/$ASSETS_REF/assets"
 
     if ($DryRun) {
-        Note "  [dry-run] New-Item -ItemType Directory -Force '$ASSETS_DEST\prompts' '$ASSETS_DEST\scripts' '$ASSETS_DEST\python'"
+        Note "  [dry-run] New-Item -ItemType Directory -Force '$ASSETS_DEST\prompts' '$ASSETS_DEST\powershell' '$ASSETS_DEST\python' '$ASSETS_DEST\csharp'"
         foreach ($f in $prompts) {
             Note "  [dry-run] Invoke-WebRequest $baseUrl/prompts/$f -OutFile $ASSETS_DEST\prompts\$f"
         }
@@ -117,13 +118,16 @@ function Install-Assets {
         foreach ($f in $python) {
             Note "  [dry-run] Invoke-WebRequest $baseUrl/python/$f -OutFile $ASSETS_DEST\python\$f"
         }
+        foreach ($f in $csharp) {
+            Note "  [dry-run] Invoke-WebRequest $baseUrl/csharp/$f -OutFile $ASSETS_DEST\csharp\$f"
+        }
         Note "  [dry-run] Invoke-WebRequest $baseUrl/agent-registry.json -OutFile $ASSETS_DEST\agent-registry.json"
         $WOULD_INSTALL.Add("assets")
         Write-Host ""
         return
     }
 
-    New-Item -ItemType Directory -Force -Path "$ASSETS_DEST\prompts", "$ASSETS_DEST\powershell", "$ASSETS_DEST\python" | Out-Null
+    New-Item -ItemType Directory -Force -Path "$ASSETS_DEST\prompts", "$ASSETS_DEST\powershell", "$ASSETS_DEST\python", "$ASSETS_DEST\csharp" | Out-Null
 
     foreach ($f in $prompts) {
         $url  = "$baseUrl/prompts/$f"
@@ -163,6 +167,23 @@ function Install-Assets {
         $url  = "$baseUrl/python/$f"
         $tmp  = "$ASSETS_DEST\python\$f.tmp"
         $dest = "$ASSETS_DEST\python\$f"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $tmp -ErrorAction Stop
+            Move-Item -Force $tmp $dest
+        }
+        catch {
+            Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+            $FAILED.Add("assets")
+            Err "  failed to download $url"
+            Write-Host ""
+            return
+        }
+    }
+
+    foreach ($f in $csharp) {
+        $url  = "$baseUrl/csharp/$f"
+        $tmp  = "$ASSETS_DEST\csharp\$f.tmp"
+        $dest = "$ASSETS_DEST\csharp\$f"
         try {
             Invoke-WebRequest -Uri $url -OutFile $tmp -ErrorAction Stop
             Move-Item -Force $tmp $dest
