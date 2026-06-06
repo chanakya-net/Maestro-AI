@@ -167,7 +167,7 @@ function Remove-ProcessCapture($entry) {
 }
 
 if (-not $AssetRoot) {
-    $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\\assets"
+    $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
     if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-agent.ps1")) {
         $AssetRoot = $homeAssetRoot
     } else {
