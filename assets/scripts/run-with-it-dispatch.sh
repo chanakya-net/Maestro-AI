@@ -29,6 +29,7 @@ QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
 STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-300}"
 TIMEOUT_SECONDS="${RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS:-0}"
 DETACH_BOOTSTRAP_SECONDS="${RUN_WITH_IT_DETACH_BOOTSTRAP_SECONDS:-3}"
+DONE_RESULT_GRACE_SECONDS="${RUN_WITH_IT_DONE_RESULT_GRACE_SECONDS:-10}"
 AUTO_FAIL_STALLED_ROLES="${RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity}"
 DRY_RUN=0
 VALIDATE_ONLY=0
@@ -645,6 +646,7 @@ last_heartbeat_at=""
 last_heartbeat_line=""
 last_log_signature="$(log_signature)"
 last_state="ready"
+done_without_result_epoch=0
 
 write_status "STATUS|type=dispatch-ready|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}|result_file=${RESULT_FILE}"
 last_log_signature="$(log_signature)"
@@ -707,6 +709,37 @@ while true; do
     write_worker_state "completed" "$alive"
     write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
     exit 0
+  fi
+
+  if [ -s "$DONE_FILE" ]; then
+    if [ "$done_without_result_epoch" = "0" ]; then
+      done_without_result_epoch="$now"
+    fi
+    if synthesize_result_artifact_if_possible; then
+      write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+      last_log_signature="$(log_signature)"
+    fi
+    if completion_ready; then
+      alive=false
+      if kill -0 "$pid" 2>/dev/null; then alive=true; fi
+      write_worker_state "completed" "$alive"
+      write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+      exit 0
+    fi
+    if [ $((now - done_without_result_epoch)) -ge "$DONE_RESULT_GRACE_SECONDS" ]; then
+      failure_reason="$(completion_failure_reason)"
+      if [ -z "$failure_reason" ]; then
+        failure_reason="done-sentinel-without-result"
+      fi
+      write_worker_state "failed" "false" "" "$failure_reason"
+      write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${failure_reason}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+      set +e
+      terminate_runner_tree "$pid" >/dev/null 2>&1
+      set -e
+      exit 1
+    fi
+  else
+    done_without_result_epoch=0
   fi
 
   if ! kill -0 "$pid" 2>/dev/null; then

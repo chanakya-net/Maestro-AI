@@ -898,6 +898,85 @@ assert_json_file "${SILENT_STATE}" "silent worker final watchdog state JSON is v
 assert_file_contains "${SILENT_STATE}" '"state": "completed"' "silent worker eventually completes"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled status"
 
+cat > "${SMOKE_BIN}/done-without-result-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'done-without-result-agent 1.0\n'
+  exit 0
+fi
+mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
+printf 'DONE|issue=%s|role=%s|status=failed|source=runner-exit\n' "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+sleep 30
+SH
+chmod +x "${SMOKE_BIN}/done-without-result-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+registry["agents"]["done-without-result"] = {
+    "display_name": "Done Without Result",
+    "detection": {"command": "done-without-result-agent", "args": ["--version"]},
+    "invocation": {
+        "command": "done-without-result-agent",
+        "args_template": ["{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}",
+    },
+    "permission_modes": {"default": "", "available": [""]},
+    "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+    "capability_band": "balanced",
+    "fallback_order": [],
+    "user_model_configuration": {
+        "requires_user_model_config": False,
+        "config_paths": [],
+        "skip_when_unconfigured": False,
+        "skip_message": "",
+    },
+}
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+DONE_MISSING_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/49"
+DONE_MISSING_CONTEXT="${SMOKE_PROJECT}/done-without-result-context.md"
+DONE_MISSING_RESULT="${DONE_MISSING_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+DONE_MISSING_LOG="${DONE_MISSING_ISSUE_DIR}/workers/impl/cycle-1.log"
+DONE_MISSING_DONE="${DONE_MISSING_ISSUE_DIR}/workers/impl/cycle-1.done"
+DONE_MISSING_STATE="${DONE_MISSING_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+DONE_MISSING_OUTPUT="${WORK_DIR}/done-without-result-dispatch.out"
+mkdir -p "$(dirname "${DONE_MISSING_RESULT}")"
+printf '# done without result context\n' > "${DONE_MISSING_CONTEXT}"
+
+set +e
+RUN_WITH_IT_DONE_RESULT_GRACE_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/scripts/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl \
+  --issue 49 \
+  --cycle 1 \
+  --agent done-without-result \
+  --model fake-model \
+  --context-file "${DONE_MISSING_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${DONE_MISSING_LOG}" \
+  --done-file "${DONE_MISSING_DONE}" \
+  --result-file "${DONE_MISSING_RESULT}" \
+  --state-file "${DONE_MISSING_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${DONE_MISSING_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >"${DONE_MISSING_OUTPUT}" 2>&1
+done_missing_status="$?"
+set -e
+
+assert_eq "${done_missing_status}" "1" "done-without-result dispatcher exits failed"
+assert_json_file "${DONE_MISSING_STATE}" "done-without-result state JSON is valid"
+assert_file_contains "${DONE_MISSING_STATE}" '"state": "failed"' "done-without-result final state is failed"
+assert_file_contains "${DONE_MISSING_OUTPUT}" "STATUS|type=dispatch-failed|issue=49|role=impl|cycle=1" "done-without-result emits dispatch failed"
+assert_file_contains "${DONE_MISSING_OUTPUT}" "reason=" "done-without-result dispatch failure includes reason"
+
 cat > "${SMOKE_BIN}/noarg-commit-agent" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail

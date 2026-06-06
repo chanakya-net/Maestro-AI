@@ -21,6 +21,7 @@ param(
     [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
     [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
     [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
+    [int]$DoneResultGraceSeconds = $(if ($env:RUN_WITH_IT_DONE_RESULT_GRACE_SECONDS) { [int]$env:RUN_WITH_IT_DONE_RESULT_GRACE_SECONDS } else { 10 }),
     [string]$DispatchOutFile = "",
     [switch]$Detach,
     [switch]$DetachedChild,
@@ -565,6 +566,7 @@ finally {
 $script:runnerPid = $process.Id
 Write-Status "STATUS|type=dispatch-pid|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|done_file=$DoneFile|result_file=$ResultFile"
 $script:lastState = "running"
+$doneWithoutResultEpoch = 0
 Write-WorkerState "running" $true
 
 while ($true) {
@@ -581,6 +583,33 @@ while ($true) {
         Write-WorkerState "completed" (-not $process.HasExited)
         Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
         exit 0
+    }
+
+    if ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0)) {
+        if ($doneWithoutResultEpoch -eq 0) {
+            $doneWithoutResultEpoch = $now
+        }
+        if (Try-SynthesizeResultArtifact) {
+            Write-Status "STATUS|type=result-artifact-synthesized|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+        }
+        if (Test-CompletionReady) {
+            $process.Refresh()
+            Write-WorkerState "completed" (-not $process.HasExited)
+            Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+            exit 0
+        }
+        if (($now - $doneWithoutResultEpoch) -ge $DoneResultGraceSeconds) {
+            $failureReason = Get-CompletionFailureReason
+            if (-not $failureReason) { $failureReason = "done-sentinel-without-result" }
+            Write-WorkerState "failed" $false $null $failureReason
+            Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$failureReason|done_file=$DoneFile|result_file=$ResultFile"
+            try {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            } catch {}
+            exit 1
+        }
+    } else {
+        $doneWithoutResultEpoch = 0
     }
 
     $process.Refresh()
