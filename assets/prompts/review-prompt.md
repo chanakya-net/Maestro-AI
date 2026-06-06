@@ -30,7 +30,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 
 ## Runtime Assumptions
 
-- Use the same OS and path-handling assumptions as `prompt.md` when interpreting platform-specific paths.
+- Use the same OS and path-handling assumptions as `prompts/prompt.md` when interpreting platform-specific paths.
 - Treat the repository as read-only input regardless of platform.
 
 ## Hard Restrictions
@@ -78,7 +78,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 Write exactly **two** JSON files.
 
 Path contract:
-- `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `run-with-it-dispatch.sh`.
+- `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `scripts/run-with-it-dispatch.sh`.
 - Write the full actionable review JSON exactly to `REVIEWER_INSTRUCTIONS_FILE`.
 - Write `RUN_WITH_IT_DONE_FILE` only after both JSON files exist and parse as valid JSON.
 - Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.

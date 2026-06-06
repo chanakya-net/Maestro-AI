@@ -107,34 +107,34 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 | File | What it does |
 |------|-------------|
-| `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Copilot, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading. |
-| `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
-| `run-with-it-pool.sh` / `run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
+| `assets/scripts/run-agent.sh` / `assets/powershell/run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Copilot, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading. |
+| `assets/scripts/run-with-it-dispatch.sh` / `assets/powershell/run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
+| `assets/scripts/run-with-it-pool.sh` / `assets/powershell/run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
 
 ### Prompts (agent instructions)
 
 | File | Role |
 |------|------|
-| `sub-coordinator-prompt.md` | Full Sub-Coordinator instructions — worktree bootstrap, complexity scoring, routing, implementation, review, modify loop, and merge back to shared branch. |
-| `prompt.md` | Implementation worker — writes code, commits to issue worktree, produces result artifact JSON with verification evidence. |
-| `review-prompt.md` | Review worker — read-only diff analysis producing JSON verdict with file/line/severity/fix comments. |
-| `modifier-prompt.md` | Modify worker — addresses reviewer comments, re-verifies, commits fixes on the issue branch. |
-| `complexity-prompt.md` | Complexity scoring agent — scores issues on 9 dimensions (dependency risk, architecture risk, blast radius, etc.) for routing decisions. |
-| `merge-recovery-prompt.md` | Merge Recovery Coordinator — resolves conflicts when an issue branch can't merge into the shared feature branch. |
-| `coordinator-rules.md` | Compact Sub-Coordinator rules re-read before every major phase for compaction survival. |
-| `main-orchestrator-rules.md` | Compact Main Orchestrator rules re-read every loop iteration after context compression. |
+| `assets/prompts/sub-coordinator-prompt.md` | Full Sub-Coordinator instructions — worktree bootstrap, complexity scoring, routing, implementation, review, modify loop, and merge back to shared branch. |
+| `assets/prompts/prompt.md` | Implementation worker — writes code, commits to issue worktree, produces result artifact JSON with verification evidence. |
+| `assets/prompts/review-prompt.md` | Review worker — read-only diff analysis producing JSON verdict with file/line/severity/fix comments. |
+| `assets/prompts/modifier-prompt.md` | Modify worker — addresses reviewer comments, re-verifies, commits fixes on the issue branch. |
+| `assets/prompts/complexity-prompt.md` | Complexity scoring agent — scores issues on 9 dimensions (dependency risk, architecture risk, blast radius, etc.) for routing decisions. |
+| `assets/prompts/merge-recovery-prompt.md` | Merge Recovery Coordinator — resolves conflicts when an issue branch can't merge into the shared feature branch. |
+| `assets/prompts/coordinator-rules.md` | Compact Sub-Coordinator rules re-read before every major phase for compaction survival. |
+| `assets/prompts/main-orchestrator-rules.md` | Compact Main Orchestrator rules re-read every loop iteration after context compression. |
 
 ### Routing & State
 
 | File | What it does |
 |------|-------------|
-| `agent-registry.json` | Agent catalog — detection commands, invocation templates, 27-model catalog with complexity weights, routing rules, and subscription distribution targets. |
-| `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across 4 providers with role-specific and complexity-band-specific targets (default: Codex 50%, Agy 20%, Copilot 20%, Claude 10%). |
-| `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, and merge recovery state transitions. |
-| `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
-| `run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |
-| `run-with-it-pr-body.py` | Final PR body renderer — generates markdown with closed issue links, per-issue model usage tables, and verification summaries. |
-| `worker-watch.sh` / `worker-watch.ps1` | Liveness watcher — checks PID existence, done sentinel presence, and log tail changes for background workers. |
+| `assets/agent-registry.json` | Agent catalog — detection commands, invocation templates, 27-model catalog with complexity weights, routing rules, and subscription distribution targets. |
+| `assets/python/run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across 4 providers with role-specific and complexity-band-specific targets (default: Codex 50%, Agy 20%, Copilot 20%, Claude 10%). |
+| `assets/python/run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, and merge recovery state transitions. |
+| `assets/python/run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
+| `assets/python/run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |
+| `assets/python/run-with-it-pr-body.py` | Final PR body renderer — generates markdown with closed issue links, per-issue model usage tables, and verification summaries. |
+| `assets/scripts/worker-watch.sh` / `assets/powershell/worker-watch.ps1` | Liveness watcher — checks PID existence, done sentinel presence, and log tail changes for background workers. |
 
 ## Runtime Architecture
 
@@ -150,7 +150,7 @@ The pool runner maintains up to `PARALLEL_JOBS` (default 4) concurrent Sub-Coord
 
 1. **Worktree bootstrap** — Creates an isolated issue branch and `git worktree` from the shared feature branch
 2. **Complexity scoring** — Spawns a complexity agent to score the issue on 9 dimensions
-3. **Model routing** — `run-with-it-router.py` selects the best agent/model pair based on complexity band, role-specific usage targets, and current subscription debt
+3. **Model routing** — `assets/python/run-with-it-router.py` selects the best agent/model pair based on complexity band, role-specific usage targets, and current subscription debt
 4. **Implementation** — Worker agent writes code in the issue worktree, commits, and produces a result JSON with verification evidence
 5. **Review** — Review worker analyzes the diff and produces a verdict (approve/request-changes)
 6. **Modify** (if needed) — Modify worker addresses reviewer comments and re-verifies. Up to 8 review/modify cycles.
@@ -198,9 +198,19 @@ Override routing behavior with environment variables:
 | `MODEL` | Force a specific model |
 | `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
 | `AGENT_DENYLIST` | Comma-separated agent slugs to block |
+| `RUN_WITH_IT_HELPER_RUNTIME` | `python` (default, transitional flat fallback) or `csharp` helper runtime selector |
 | `COMPLEXITY_LEVEL` | Force complexity band (quite-easy through holy-fuck) |
 | `COMPLEXITY_SCORE` | Force a numeric complexity score |
 | `AGENT_REGISTRY_FILE` | Override the path to `agent-registry.json` |
+
+### Orchestration runtime controls
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PYTHON_BIN` | `python3` | Python executable for Python helper mode |
+| `DOTNET_BIN` | `dotnet` | .NET executable for C# helper mode (`RUN_WITH_IT_HELPER_RUNTIME=csharp`; requires .NET SDK 10+) |
+
+Python is the compatibility fallback mode for the transitional flat helper path. C# mode requires a local `.NET SDK 10+` and uses `assets/csharp` helpers instead of the Python helper set.
 
 ### Orchestration knobs
 
@@ -237,8 +247,14 @@ Re-run the installer: `bash install.sh` or `.\install.ps1`
 
 ```bash
 mkdir -p "$HOME/.ai-skill-collections/assets"
-for f in assets/*; do cp "$f" "$HOME/.ai-skill-collections/assets/"; done
-chmod +x "$HOME/.ai-skill-collections/assets/"*.sh "$HOME/.ai-skill-collections/assets/"*.py
+mkdir -p "$HOME/.ai-skill-collections/assets"/{prompts,scripts,powershell,python,csharp}
+cp -f ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/"
+cp -f ./assets/prompts/* "$HOME/.ai-skill-collections/assets/prompts/"
+cp -f ./assets/scripts/* "$HOME/.ai-skill-collections/assets/scripts/"
+cp -f ./assets/powershell/* "$HOME/.ai-skill-collections/assets/powershell/"
+cp -f ./assets/python/* "$HOME/.ai-skill-collections/assets/python/"
+cp -f ./assets/csharp/* "$HOME/.ai-skill-collections/assets/csharp/"
+chmod +x "$HOME/.ai-skill-collections/assets/scripts/"*.sh "$HOME/.ai-skill-collections/assets/python/"*.py "$HOME/.ai-skill-collections/assets/csharp/"*.cs 2>/dev/null || true
 ```
 
 ### No git repo
@@ -275,23 +291,37 @@ AI-Skills/
 │
 ├── assets/                                # Shared prompts, scripts, and configs
 │   ├── agent-registry.json                # Agent detection, invocation, model catalog
-│   ├── run-agent.sh / run-agent.ps1       # Cross-agent CLI runner
-│   ├── run-with-it-dispatch.sh / run-with-it-dispatch.ps1 # Worker dispatcher with stall detection
-│   ├── run-with-it-pool.sh / run-with-it-pool.ps1         # Rolling-pool supervisor
-│   ├── run-with-it-router.py              # Deterministic usage-debt model router
-│   ├── run-with-it-state.py               # Atomic JSON state mutations
-│   ├── run-with-it-artifacts.py           # Artifact validation and synthesis
-│   ├── run-with-it-github-update.py       # GitHub issue comment/close helper
-│   ├── run-with-it-pr-body.py             # Final PR body renderer
-│   ├── worker-watch.sh / worker-watch.ps1 # Worker liveness watcher
-│   ├── prompt.md                          # Implementation worker prompt
-│   ├── sub-coordinator-prompt.md          # Sub-Coordinator prompt
-│   ├── merge-recovery-prompt.md           # Merge Recovery Coordinator prompt
-│   ├── review-prompt.md                   # Review worker prompt
-│   ├── modifier-prompt.md                 # Modify worker prompt
-│   ├── complexity-prompt.md               # Complexity scoring prompt
-│   ├── coordinator-rules.md               # Compact Sub-Coordinator rules
-│   └── main-orchestrator-rules.md         # Compact Main Orchestrator rules
+│   ├── scripts/                           # Bash runner and helper scripts
+│   │   ├── run-agent.sh                   # Cross-agent CLI runner
+│   │   ├── run-with-it-dispatch.sh        # Worker dispatcher with stall detection
+│   │   ├── run-with-it-pool.sh            # Rolling-pool supervisor
+│   │   └── worker-watch.sh                # Worker liveness watcher
+│   ├── powershell/                        # Windows runner/helper scripts
+│   │   ├── run-agent.ps1                  # Cross-agent CLI runner
+│   │   ├── run-with-it-dispatch.ps1       # Worker dispatcher with stall detection
+│   │   ├── run-with-it-pool.ps1           # Rolling-pool supervisor
+│   │   └── worker-watch.ps1               # Worker liveness watcher
+│   ├── python/                            # Shared Python helpers
+│   │   ├── run-with-it-router.py          # Deterministic usage-debt model router
+│   │   ├── run-with-it-state.py           # Atomic JSON state mutations
+│   │   ├── run-with-it-artifacts.py       # Artifact validation and synthesis
+│   │   ├── run-with-it-github-update.py   # GitHub issue comment/close helper
+│   │   └── run-with-it-pr-body.py         # Final PR body renderer
+│   ├── csharp/                            # Shared C# helpers
+│   │   ├── run-with-it-router.cs
+│   │   ├── run-with-it-state.cs
+│   │   ├── run-with-it-artifacts.cs
+│   │   ├── run-with-it-github-update.cs
+│   │   └── run-with-it-pr-body.cs
+│   ├── prompts/                           # Prompts and agent instructions
+│   │   ├── prompt.md                      # Implementation worker prompt
+│   │   ├── sub-coordinator-prompt.md      # Sub-Coordinator prompt
+│   │   ├── merge-recovery-prompt.md       # Merge Recovery Coordinator prompt
+│   │   ├── review-prompt.md               # Review worker prompt
+│   │   ├── modifier-prompt.md             # Modify worker prompt
+│   │   ├── complexity-prompt.md           # Complexity scoring prompt
+│   │   ├── coordinator-rules.md           # Compact Sub-Coordinator rules
+│   │   └── main-orchestrator-rules.md     # Compact Main Orchestrator rules
 │
 ├── tests/                                 # Contract test suite (22 files)
 │   ├── run-agent.test.sh                  # Runner behavior, dry-run, telemetry

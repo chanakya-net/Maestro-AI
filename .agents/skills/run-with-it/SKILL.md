@@ -12,7 +12,7 @@ Sole active authority once invoked — no other skill may activate unless called
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
 
 - **Re-read `.run-with-it/main-state.json` before every loop iteration.** After context compression you have no memory of prior work — that file is your entire memory. Never derive issue state from conversation history.
-- **Never implement work directly in this session.** All implementation belongs to Sub-Coordinators spawned via the platform dispatcher (`run-with-it-dispatch.sh` on Bash, `run-with-it-dispatch.ps1` on native PowerShell) with `role=sub-coord`, which wraps `run-agent.sh` / `run-agent.ps1` with `sub-coordinator-prompt.md`. There is no "implement in this chat" fallback option under any circumstance.
+- **Never implement work directly in this session.** All implementation belongs to Sub-Coordinators spawned via the platform dispatcher (`scripts/run-with-it-dispatch.sh` on Bash, `powershell/run-with-it-dispatch.ps1` on native PowerShell) with `role=sub-coord`, which wraps `scripts/run-agent.sh` / `powershell/run-agent.ps1` with `prompts/sub-coordinator-prompt.md`. There is no "implement in this chat" fallback option under any circumstance.
 - **Never run tests, build commands, or compile the project** in this session. Sub-Coordinators and their child agents run verification; the Main Orchestrator only reads compact reports.
 - **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately after the execution plan is written.
 - **Never present execution option menus** (Option A / B / C style choices).
@@ -23,9 +23,9 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
-- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
-- **Run the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
-- **Use the platform worker watcher (`worker-watch.sh` / `worker-watch.ps1`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
+- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `scripts/run-agent.sh` / `powershell/run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
+- **Run the platform pool runner (`scripts/run-with-it-pool.sh` / `powershell/run-with-it-pool.ps1`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
+- **Use the platform worker watcher (`scripts/worker-watch.sh` / `powershell/worker-watch.ps1`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **Worker artifact failures are Sub-Coordinator recovery work, not Main Orchestrator work.** If an implementation, review, or modification worker exits without valid artifacts, the dispatcher records failure facts in the worker state file and the Sub-Coordinator must retry/salvage according to its role-specific recovery contract or write a blocked compact report with a concrete recovery handoff. The Main Orchestrator must not inspect logs or restart workers itself.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
 - **GitHub operations on completion are immediate and sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as soon as that issue reaches a terminal outcome to avoid race conditions.
@@ -62,7 +62,7 @@ Preferred upstream flow:
 - Creates one final PR from the shared run feature branch after all issues are terminal
 - Re-reads `main-state.json` at the top of every loop iteration to survive context compression
 
-**Sub-Coordinator** (spawned via `sub-coordinator-prompt.md`, runs in a child agent session):
+**Sub-Coordinator** (spawned via `prompts/sub-coordinator-prompt.md`, runs in a child agent session):
 - Handles exactly ONE issue end-to-end
 - Creates an issue branch and issue worktree from the shared run feature branch
 - Runs complexity analysis, deterministic routing, implementation, review, and modification loops
@@ -72,7 +72,7 @@ Preferred upstream flow:
 - Spawns worker agents whose logs/results/done sentinels are written under `.run-with-it/issues/<n>/workers/<role>/`
 - Never touches GitHub; never updates `main-state.json`
 
-**Merge Recovery Coordinator** (spawned via `merge-recovery-prompt.md`, runs only after `merge_failed`):
+**Merge Recovery Coordinator** (spawned via `prompts/merge-recovery-prompt.md`, runs only after `merge_failed`):
 - Handles one failed issue-branch merge
 - Reads the shared feature branch holistically because it contains prior Sub-Coordinator work
 - Resolves conflicts or merge-induced verification failures under the same merge lock
@@ -85,7 +85,7 @@ This isolation means each issue's implementation complexity is contained to its 
 
 - Do not synthesize PRDs.
 - Do not author initial issue templates.
-- Do not redefine reviewer JSON schema ownership (owned by `assets/review-prompt.md`).
+- Do not redefine reviewer JSON schema ownership (owned by `assets/prompts/review-prompt.md`).
 - Do not modify runner script implementation details.
 - Do not mutate registry data definitions in `assets/agent-registry.json`.
 
@@ -93,7 +93,7 @@ This isolation means each issue's implementation complexity is contained to its 
 
 Detect the current OS before asset discovery and runner selection, and capture it in the `OS_FAMILY` environment variable:
 
-- **Windows (native PowerShell) (`OS_FAMILY=windows`):** use `.ps1` runners (`run-with-it-pool.ps1`, `run-with-it-dispatch.ps1`, `worker-watch.ps1`, `run-agent.ps1`) and `$env:USERPROFILE` for home dir.
+- **Windows (native PowerShell) (`OS_FAMILY=windows`):** use `.ps1` runners (`powershell/run-with-it-pool.ps1`, `powershell/run-with-it-dispatch.ps1`, `powershell/worker-watch.ps1`, `powershell/run-agent.ps1`) and `$env:USERPROFILE` for home dir.
 - **macOS / Linux / Git Bash / WSL (`OS_FAMILY=unix`):** `uname -s` returns `Darwin`, `Linux`, `MINGW*`, `MSYS*`, or `CYGWIN*`. Use `.sh` runners and `$HOME` for home dir.
 
 Adapt all shell commands in this skill to the detected runtime:
@@ -143,6 +143,9 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `DELEGATED_REVIEW` | `true` | Enable Sub-Coordinator delegated review; passed through |
 | `MAX_AGENT_DEPTH` | `1` | Always injected; prevents Sub-Coordinator children from spawning sub-agents |
 | `PARALLEL_JOBS` | `4` | Rolling pool size. Freed slots fill immediately. Set to `1` for sequential. |
+| `RUN_WITH_IT_HELPER_RUNTIME` | `python` | Helper runtime selector: `python` or `csharp` |
+| `PYTHON_BIN` | `python3` | Python executable for helper scripts |
+| `DOTNET_BIN` | `dotnet` | .NET executable for C# helper scripts (`RUN_WITH_IT_HELPER_RUNTIME=csharp`; requires .NET SDK 10+) |
 
 ## Asset Discovery (Required)
 
@@ -154,40 +157,41 @@ Resolve assets in this order:
 
 Shared required files:
 
-- `prompt.md`
+- `prompts/prompt.md`
 - `agent-registry.json`
-- `review-prompt.md`
-- `modifier-prompt.md`
-- `complexity-prompt.md`
-- `coordinator-rules.md`
-- `sub-coordinator-prompt.md`
-- `main-orchestrator-rules.md`
-- `merge-recovery-prompt.md`
-- `run-with-it-state.py`
-- `run-with-it-github-update.py`
-- `run-with-it-router.py`
-- `run-with-it-artifacts.py`
+- `prompts/review-prompt.md`
+- `prompts/modifier-prompt.md`
+- `prompts/complexity-prompt.md`
+- `prompts/coordinator-rules.md`
+- `prompts/sub-coordinator-prompt.md`
+- `prompts/main-orchestrator-rules.md`
+- `prompts/merge-recovery-prompt.md`
+- `python/run-with-it-state.py`
+- `python/run-with-it-github-update.py`
+- `python/run-with-it-pr-body.py`
+- `python/run-with-it-router.py`
+- `python/run-with-it-artifacts.py`
 
 Bash required helper files:
 
-- `run-agent.sh`
-- `run-with-it-dispatch.sh`
-- `run-with-it-pool.sh`
-- `worker-watch.sh`
+- `scripts/run-agent.sh`
+- `scripts/run-with-it-dispatch.sh`
+- `scripts/run-with-it-pool.sh`
+- `scripts/worker-watch.sh`
 
 PowerShell required helper files:
 
-- `run-agent.ps1`
-- `run-with-it-dispatch.ps1`
-- `run-with-it-pool.ps1`
-- `worker-watch.ps1`
+- `powershell/run-agent.ps1`
+- `powershell/run-with-it-dispatch.ps1`
+- `powershell/run-with-it-pool.ps1`
+- `powershell/worker-watch.ps1`
 
 Selection rules:
 
 - Use first path that contains all shared files plus the helper files for the detected platform.
 - Bash/macOS/Linux/Git Bash/WSL runs must not require `.ps1` helper files.
 - Native PowerShell runs must not require `.sh` helper files.
-- Both platform pool runners require `python3` (or `PYTHON_BIN` pointing to a Python 3 interpreter) for shared state, GitHub update, and routing helper scripts.
+- If `RUN_WITH_IT_HELPER_RUNTIME=csharp`, require `DOTNET_BIN` (requires `.NET SDK 10+`) for shared helper scripts. If `RUN_WITH_IT_HELPER_RUNTIME=python`, require `python3` or `PYTHON_BIN` for shared helper scripts.
 - If none are complete, stop and report missing files.
 - Do not require git to resolve assets.
 - Resolved asset root is the single source for that run.
@@ -200,12 +204,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets\prompts", "$env:USERPROFILE\.ai-skill-collections\assets\powershell", "$env:USERPROFILE\.ai-skill-collections\assets\python" | Out-Null; $dest = "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\python\run-with-it-state.py, .\assets\python\run-with-it-github-update.py, .\assets\python\run-with-it-pr-body.py, .\assets\python\run-with-it-router.py, .\assets\python\run-with-it-artifacts.py "$dest\python\" -ErrorAction SilentlyContinue; Copy-Item -Force .\assets\prompts\prompt.md, .\assets\prompts\sub-coordinator-prompt.md, .\assets\prompts\main-orchestrator-rules.md, .\assets\prompts\merge-recovery-prompt.md, .\assets\prompts\complexity-prompt.md, .\assets\prompts\review-prompt.md, .\assets\prompts\modifier-prompt.md, .\assets\prompts\coordinator-rules.md "$dest\prompts\"; Copy-Item -Force .\assets\powershell\run-agent.ps1, .\assets\powershell\run-with-it-dispatch.ps1, .\assets\powershell\run-with-it-pool.ps1, .\assets\powershell\worker-watch.ps1 "$dest\powershell\"; Copy-Item -Force .\assets\agent-registry.json "$dest\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets"/{prompts,scripts,python}; mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/python/run-with-it-state.py ./assets/python/run-with-it-github-update.py ./assets/python/run-with-it-pr-body.py ./assets/python/run-with-it-router.py ./assets/python/run-with-it-artifacts.py "$HOME/.ai-skill-collections/assets/python/" && cp -f ./assets/prompts/prompt.md ./assets/prompts/sub-coordinator-prompt.md ./assets/prompts/main-orchestrator-rules.md ./assets/prompts/merge-recovery-prompt.md ./assets/prompts/complexity-prompt.md ./assets/prompts/review-prompt.md ./assets/prompts/modifier-prompt.md ./assets/prompts/coordinator-rules.md "$HOME/.ai-skill-collections/assets/prompts/" && cp -f ./assets/scripts/run-agent.sh ./assets/scripts/run-with-it-dispatch.sh ./assets/scripts/run-with-it-pool.sh ./assets/scripts/worker-watch.sh "$HOME/.ai-skill-collections/assets/scripts/" && cp -f ./assets/agent-registry.json "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/scripts/run-agent.sh" "$HOME/.ai-skill-collections/assets/scripts/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/scripts/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/scripts/worker-watch.sh" "$HOME/.ai-skill-collections/assets/python/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/python/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/python/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/python/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/python/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -225,10 +229,10 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 
 Before execution verify:
 
-1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
-2. `python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter, for the shared pool helper scripts.
+1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`scripts/run-agent.sh`, `scripts/run-with-it-dispatch.sh`, `scripts/run-with-it-pool.sh`, `scripts/worker-watch.sh`) and helper executables are present according to `RUN_WITH_IT_HELPER_RUNTIME`. For `python`, required files are `python/run-with-it-state.py`, `python/run-with-it-github-update.py`, `python/run-with-it-pr-body.py`, `python/run-with-it-router.py`, `python/run-with-it-artifacts.py`. For `csharp`, require `csharp` helper executables and `DOTNET_BIN` (`.NET SDK 10+`). On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
+2. `RUN_WITH_IT_HELPER_RUNTIME` is `python` (default) or `csharp`. For `python`, require `python3` or `PYTHON_BIN` for helper scripts. For `csharp`, require `DOTNET_BIN` and a local `.NET SDK 10+`.
 3. `gh` auth when GitHub intake is required.
-4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
+4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/scripts/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "powershell/run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
 5. `SUB_COORD_MODEL` is in `SUB_COORD_AGENT`'s `known_models` in `agent-registry.json`.
 6. **Existing-state detection** (resume vs. discard prompt): before any issue intake or fresh task selection, check whether `.run-with-it/main-state.json` exists in the current working directory.
 
@@ -413,7 +417,7 @@ Execution-mode requirement (critical):
 
   Bash (macOS / Linux / Git Bash):
 
-    nohup "$ASSET_ROOT/run-with-it-pool.sh" \
+    nohup "$ASSET_ROOT/scripts/run-with-it-pool.sh" \
       --asset-root "$ASSET_ROOT" \
       --state-file "$(pwd -P)/.run-with-it/main-state.json" \
       --parallel-jobs "$PARALLEL_JOBS" \
@@ -455,7 +459,7 @@ Execution-mode requirement (critical):
 
 ## Platform Dispatchers — Shared Role Launcher
 
-`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
+`scripts/run-with-it-dispatch.sh` and `powershell/run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `scripts/run-agent.sh` / `powershell/run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `scripts/worker-watch.sh` / `powershell/worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -483,7 +487,7 @@ Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--valid
 
 Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` means the runner is alive but the captured role log has been silent beyond the quiet threshold. `state="stalled"` with `stall_reason="alive-but-silent"` means the worker is alive, incomplete, and silent beyond the stall threshold. Completion still requires the done sentinel and valid role-specific result artifacts.
 
-## `run-agent.sh` — Full Syntax Reference
+## `scripts/run-agent.sh` — Full Syntax Reference
 
 ```
 run-agent.sh --agent <agent> [--model <model>] --context-file <file> [--prompt-file <file>]

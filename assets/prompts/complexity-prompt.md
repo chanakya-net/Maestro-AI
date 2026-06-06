@@ -215,7 +215,7 @@ Mandatory constraints
 
 Acceptance checks (for human or automated verifier)
 
-- File path: `assets/complexity-prompt.md` exists.
+- File path: `prompts/complexity-prompt.md` exists.
 - Contains all 9 dimension rubrics and 1–5 level descriptions.
 - Contains the `COMPLEXITY|` line format spec with d1..d9.
 - Contains the JSON blob format spec with `total`, `level`, `scores` (9 keys), and `rationale` (9 keys).

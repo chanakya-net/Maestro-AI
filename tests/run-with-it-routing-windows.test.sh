@@ -45,6 +45,9 @@ assert_file "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "PowerShell poo
 assert_contains_file "$SKILL_FILE" "run-with-it-dispatch.ps1" "skill documents PowerShell dispatcher"
 assert_contains_file "$SKILL_FILE" "run-with-it-pool.ps1" "skill documents PowerShell pool"
 assert_contains_file "$SKILL_FILE" "worker-watch.ps1" "skill documents PowerShell watcher"
+assert_contains_file "$SKILL_FILE" "RUN_WITH_IT_HELPER_RUNTIME" "skill documents helper runtime selector"
+assert_contains_file "$SKILL_FILE" "DOTNET_BIN" "skill documents C# helper executable"
+assert_contains_file "$SKILL_FILE" "PYTHON_BIN" "skill documents Python helper executable"
 assert_contains_file "$SKILL_FILE" "run-agent.ps1\") --list-agents --detected-only" "skill uses PowerShell runner for native Windows preflight"
 assert_not_contains_file "$SKILL_FILE" "native PowerShell can install assets and run \`run-agent.ps1\`, but \`run-with-it\` orchestration requires Bash-only" "skill no longer blocks native PowerShell orchestration"
 
