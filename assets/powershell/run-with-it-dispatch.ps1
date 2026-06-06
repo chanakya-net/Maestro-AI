@@ -63,6 +63,13 @@ function Get-PythonExe {
     Fail "python helper runtime not found"
 }
 
+function Get-DotNetExe {
+    if ($env:DOTNET_BIN) { return $env:DOTNET_BIN }
+    $candidate = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($candidate) { return $candidate.Source }
+    return "dotnet"
+}
+
 function Normalize-HelperRuntime([string]$runtime) {
     if ([string]::IsNullOrWhiteSpace($runtime)) { return "py" }
     switch ($runtime.ToLowerInvariant()) {
@@ -71,6 +78,7 @@ function Normalize-HelperRuntime([string]$runtime) {
         "python3" { return "py" }
         "cs" { return "cs" }
         "csharp" { return "cs" }
+        "c#" { return "cs" }
         default {
             Fail "unsupported helper runtime: $runtime"
         }
@@ -120,6 +128,21 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
         PythonHelpersDir = $pythonHelpersDir
         CSharpHelpersDir = $csharpHelpersDir
     }
+}
+
+function Get-HelperPath([string]$baseName) {
+    if ($HelperRuntime -eq "py") {
+        return Join-Path $AssetLayout.PythonHelpersDir "$baseName.py"
+    }
+    return Join-Path $AssetLayout.CSharpHelpersDir "$baseName.cs"
+}
+
+function Invoke-RunWithItHelper([string]$baseName, [object[]]$helperArgs) {
+    $helperPath = Get-HelperPath $baseName
+    if ($HelperRuntime -eq "py") {
+        return & $script:PythonExe $helperPath @helperArgs
+    }
+    return & $script:DotNetExe $helperPath @helperArgs
 }
 
 function Quote-ProcessArgument([string]$arg) {
@@ -276,15 +299,26 @@ function Get-RepoRootForWorker {
 function Invoke-ArtifactHelper([string]$command) {
     $repoRootValue = Get-RepoRootForWorker
     $preSpawnHead = if ($script:preSpawnHead) { $script:preSpawnHead } else { "" }
-    & $script:PythonExe $script:ArtifactHelper $command `
-        --role $Role `
-        --issue $Issue `
-        --result-file $ResultFile `
-        --done-file $DoneFile `
-        --log-file $LogFile `
-        --issue-dir $IssueDir `
-        --repo-root $repoRootValue `
-        --pre-spawn-head $preSpawnHead
+    $output = Invoke-RunWithItHelper "run-with-it-artifacts" @(
+        $command,
+        "--role",
+        $Role,
+        "--issue",
+        $Issue,
+        "--result-file",
+        $ResultFile,
+        "--done-file",
+        $DoneFile,
+        "--log-file",
+        $LogFile,
+        "--issue-dir",
+        $IssueDir,
+        "--repo-root",
+        $repoRootValue,
+        "--pre-spawn-head",
+        $preSpawnHead
+    )
+    return $output
 }
 
 function Get-ResultArtifactFailureReason {
@@ -332,8 +366,19 @@ $RegistryFile = Join-Path $AssetLayout.CSharpHelpersDir "agent-registry.json"
 if ($HelperRuntime -eq "py" -and -not (Test-Path $RegistryFile)) {
     $RegistryFile = Join-Path $AssetRoot "agent-registry.json"
 }
-$script:ArtifactHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-artifacts.py"
+$script:ArtifactHelper = Get-HelperPath "run-with-it-artifacts"
 $script:PythonExe = Get-PythonExe
+$script:DotNetExe = Get-DotNetExe
+
+if ($HelperRuntime -eq "py") {
+    if (-not (Get-Command $script:PythonExe -ErrorAction SilentlyContinue)) {
+        Fail "helper runtime preflight failed: PYTHON_BIN not found or not executable: $script:PythonExe"
+    }
+} else {
+    if (-not (Get-Command $script:DotNetExe -ErrorAction SilentlyContinue)) {
+        Fail "helper runtime preflight failed: DOTNET_BIN not found; install .NET SDK 10+"
+    }
+}
 
 if (-not (Test-Path $RunAgent)) { Fail "runner not found: $RunAgent" }
 if (-not (Test-Path $WorkerWatch)) { Fail "worker watcher not found: $WorkerWatch" }

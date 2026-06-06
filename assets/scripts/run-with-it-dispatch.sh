@@ -60,7 +60,7 @@ normalize_helper_runtime() {
   normalized_runtime="$(printf '%s' "$runtime" | tr '[:upper:]' '[:lower:]')"
   case "${normalized_runtime}" in
     py|python|python3) echo "py" ;;
-    cs|csharp) echo "cs" ;;
+    cs|csharp|c#) echo "cs" ;;
     *) fail "unsupported helper runtime: ${runtime}" ;;
   esac
 }
@@ -108,6 +108,35 @@ resolve_asset_layout() {
   fi
   if [ -f "${root}/agent-registry.json" ] && [ ! -f "${CSHARP_HELPERS_DIR}/agent-registry.json" ]; then
     CSHARP_HELPERS_DIR="$root"
+  fi
+}
+
+helper_path() {
+  local base_name="$1"
+
+  if [ "$HELPER_RUNTIME" = "py" ]; then
+    printf '%s/%s.py\n' "$PYTHON_HELPERS_DIR" "$base_name"
+    return 0
+  fi
+  if [ "$HELPER_RUNTIME" = "cs" ]; then
+    printf '%s/%s.cs\n' "$CSHARP_HELPERS_DIR" "$base_name"
+    return 0
+  fi
+
+  fail "unsupported helper runtime: $HELPER_RUNTIME"
+}
+
+invoke_helper() {
+  local helper_base_name="$1"
+  shift
+
+  local helper_script
+  helper_script="$(helper_path "$helper_base_name")"
+
+  if [ "$HELPER_RUNTIME" = "py" ]; then
+    "$PYTHON_BIN" "$helper_script" "$@"
+  else
+    "$DOTNET_BIN" "$helper_script" "$@"
   fi
 }
 
@@ -173,8 +202,9 @@ resolve_asset_layout "$HELPER_RUNTIME" "$ASSET_ROOT"
 RUN_AGENT="${SCRIPTS_DIR}/run-agent.sh"
 WORKER_WATCH="${SCRIPTS_DIR}/worker-watch.sh"
 REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
-ARTIFACT_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-artifacts.py"
+ARTIFACT_HELPER="$(helper_path "run-with-it-artifacts")"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DOTNET_BIN="${DOTNET_BIN:-dotnet}"
 
 [ -n "$ROLE" ] || fail "--role is required"
 [ -n "$ISSUE" ] || fail "--issue is required"
@@ -195,7 +225,11 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 if [ -n "$REPO_ROOT_OVERRIDE" ]; then
   [ -d "$REPO_ROOT_OVERRIDE" ] || fail "repo root not found: $REPO_ROOT_OVERRIDE"
 fi
-command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
+if [ "$HELPER_RUNTIME" = "py" ]; then
+  command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "helper runtime preflight failed: PYTHON_BIN not found or not executable: $PYTHON_BIN"
+else
+  command -v "$DOTNET_BIN" >/dev/null 2>&1 || fail "helper runtime preflight failed: DOTNET_BIN not found; install .NET SDK 10+"
+fi
 
 if [ -z "$STATE_FILE" ]; then
   log_name="$(basename "$LOG_FILE")"
@@ -289,7 +323,7 @@ repo_root_for_worker() {
 }
 
 result_artifact_failure_reason() {
-  "$PYTHON_BIN" "$ARTIFACT_HELPER" failure-reason \
+  invoke_helper run-with-it-artifacts failure-reason \
     --role "$ROLE" \
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \
@@ -300,7 +334,7 @@ result_artifact_failure_reason() {
 }
 
 synthesize_result_artifact_if_possible() {
-  "$PYTHON_BIN" "$ARTIFACT_HELPER" synthesize \
+  invoke_helper run-with-it-artifacts synthesize \
     --role "$ROLE" \
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \

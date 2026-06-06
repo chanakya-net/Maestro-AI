@@ -73,7 +73,10 @@ if ($Prompt -eq "--version") {
   Write-Output "fake-agent 1.0"
   exit 0
 }
-$resultFile = (($Prompt -split "`n") | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", ""
+$resultFile = (($Prompt -split "`r`n|`n|`r| " | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", "")
+if (-not $resultFile) {
+  $resultFile = $env:RUN_WITH_IT_RESULT_FILE
+}
 if (-not $RepoRoot) {
   $RepoRoot = $env:REPO_ROOT
 }
@@ -96,7 +99,10 @@ if ($Prompt -eq "--version") {
   Write-Output "silent-agent 1.0"
   exit 0
 }
-$resultFile = (($Prompt -split "`n") | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", ""
+$resultFile = (($Prompt -split "`r`n|`n|`r| " | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", "")
+if (-not $resultFile) {
+  $resultFile = $env:RUN_WITH_IT_RESULT_FILE
+}
 if (-not $RepoRoot) {
   $RepoRoot = $env:REPO_ROOT
 }
@@ -302,6 +308,193 @@ nested_dispatch_prompt_output="$("${PS_CMD}" -NoProfile -File "$DISPATCHER" \
   -EventsLog "$EVENTS_LOG" \
   -PollSeconds 1)"
 assert_contains "$nested_dispatch_prompt_output" "--prompt-file ${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" "dispatch preserves explicit prompt-file in nested PowerShell layout"
+
+RUNTIME_DISPATCH_PS1_BIN="${WORK_DIR}/dispatch-ps1-runtime-bins"
+mkdir -p "${RUNTIME_DISPATCH_PS1_BIN}"
+RUNTIME_DISPATCH_PS1_PY_CALLS="${RUNTIME_DISPATCH_PS1_BIN}/python.calls.log"
+RUNTIME_DISPATCH_PS1_DOTNET_CALLS="${RUNTIME_DISPATCH_PS1_BIN}/dotnet.calls.log"
+export RUNTIME_DISPATCH_PS1_PY_CALLS
+export RUNTIME_DISPATCH_PS1_DOTNET_CALLS
+
+cat > "${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${RUNTIME_DISPATCH_PS1_PY_CALLS}"
+helper="${1:-}"
+command="${2:-}"
+if [[ "$helper" == *"run-with-it-artifacts.py" ]]; then
+  if [[ "$command" == "failure-reason" ]] || [[ "$command" == "synthesize" ]]; then
+    printf '\n'
+    exit 0
+  fi
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$@"
+elif command -v python >/dev/null 2>&1; then
+  python "$@"
+else
+  printf '%s\n' "python not found" >&2
+  exit 1
+fi
+SH
+cat > "${RUNTIME_DISPATCH_PS1_BIN}/fake-dotnet.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}"
+helper="${1:-}"
+command="${2:-}"
+if [[ "$helper" == *"run-with-it-artifacts.cs" ]]; then
+  if [[ "$command" == "failure-reason" ]] || [[ "$command" == "synthesize" ]]; then
+    printf '\n'
+    exit 0
+  fi
+fi
+echo ""
+exit 0
+SH
+chmod +x "${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" "${RUNTIME_DISPATCH_PS1_BIN}/fake-dotnet.sh"
+
+RUNTIME_DISPATCH_PS1_ASSET_ROOT="${WORK_DIR}/runtime-dispatch-ps1-assets"
+mkdir -p "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/scripts" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/scripts/run-agent.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-agent.ps1"
+cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/worker-watch.ps1"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/prompts/prompt.md" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md"
+cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-with-it-artifacts.cs" <<'CS'
+namespace Dummy;
+CS
+cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-with-it-github-update.cs" <<'CS'
+namespace Dummy;
+CS
+cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/agent-registry.json" <<JSON
+{
+  "schema_version": 1,
+  "aliases": {},
+  "agents": {
+    "fake": {
+      "display_name": "Fake",
+      "detection": { "command": "${PS_CMD}", "args": ["-NoProfile", "-File", "${FAKE_AGENT}", "unused", "--version"] },
+      "invocation": {
+        "command": "${PS_CMD}",
+        "args_template": ["-NoProfile", "-File", "${FAKE_AGENT}", "{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": { "default": "", "available": [""] },
+      "model": { "default": "fake-model", "flag_template": "", "known_models": ["fake-model"] },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": { "requires_user_model_config": false, "config_paths": [], "skip_when_unconfigured": false, "skip_message": "" }
+    }
+  }
+}
+JSON
+
+chmod +x "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+  "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/scripts/run-agent.ps1" \
+  "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-agent.ps1" \
+  "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/worker-watch.ps1"
+
+printf 'runtime dispatch helper path context\n' > "${WORK_DIR}/runtime-dispatch-ps1-context-981.md"
+printf 'runtime dispatch helper path context\n' > "${WORK_DIR}/runtime-dispatch-ps1-context-982.md"
+printf 'runtime dispatch helper path context\n' > "${WORK_DIR}/runtime-dispatch-ps1-context-983.md"
+
+RUNTIME_DISPATCH_PS1_ISSUE=980
+for runtime in py python; do
+  RUNTIME_DISPATCH_PS1_ISSUE=$((RUNTIME_DISPATCH_PS1_ISSUE + 1))
+  >"${RUNTIME_DISPATCH_PS1_PY_CALLS}"
+  PYTHON_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" \
+  RUN_WITH_IT_HELPER_RUNTIME="$runtime" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+    -AssetRoot "$RUNTIME_DISPATCH_PS1_ASSET_ROOT" \
+    -Role impl \
+    -Issue "$RUNTIME_DISPATCH_PS1_ISSUE" \
+    -Cycle 1 \
+    -Agent fake \
+    -Model fake-model \
+    -ContextFile "${WORK_DIR}/runtime-dispatch-ps1-context-981.md" \
+    -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+    -LogFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}.log" \
+    -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}.done" \
+    -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-result.json" \
+    -StateFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}.state.json" \
+    -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-issue" \
+    -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-status.txt" \
+    -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-events.txt" \
+    -PollSeconds 1
+  assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_PY_CALLS}")" "run-with-it-artifacts.py" "helper runtime ${runtime} routes artifact helper via Python binary"
+done
+
+> "${RUNTIME_DISPATCH_PS1_PY_CALLS}"
+PYTHON_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+    -Role impl \
+    -Issue 985 \
+    -Cycle 1 \
+    -Agent fake \
+    -Model fake-model \
+    -ContextFile "${WORK_DIR}/runtime-dispatch-ps1-context-982.md" \
+    -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+    -LogFile "${WORK_DIR}/runtime-dispatch-ps1-default-py.log" \
+    -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-default-py.done" \
+    -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-default-py-result.json" \
+    -StateFile "${WORK_DIR}/runtime-dispatch-ps1-default-py.state.json" \
+    -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-default-py-issue" \
+    -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-default-py-status.txt" \
+    -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-default-py-events.txt" \
+    -PollSeconds 1
+assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_PY_CALLS}")" "run-with-it-artifacts.py" "default runtime resolves helper path via Python binary"
+
+RUNTIME_DISPATCH_PS1_ISSUE=986
+for runtime in cs csharp c#; do
+  RUNTIME_DISPATCH_PS1_ISSUE=$((RUNTIME_DISPATCH_PS1_ISSUE + 1))
+  >"${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}"
+  DOTNET_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-dotnet.sh" \
+  RUN_WITH_IT_HELPER_RUNTIME="$runtime" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+    -AssetRoot "$RUNTIME_DISPATCH_PS1_ASSET_ROOT" \
+    -Role impl \
+    -Issue "$RUNTIME_DISPATCH_PS1_ISSUE" \
+    -Cycle 1 \
+    -Agent fake \
+    -Model fake-model \
+    -ContextFile "${WORK_DIR}/runtime-dispatch-ps1-context-983.md" \
+    -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+    -LogFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}.log" \
+    -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}.done" \
+    -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-result.json" \
+    -StateFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}.state.json" \
+    -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-issue" \
+    -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-status.txt" \
+    -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-events.txt" \
+    -PollSeconds 1
+  assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}")" "run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
+done
+
+set +e
+invalid_dispatch_runtime_output_file="$(mktemp -d)/ps1-runtime-dispatch-invalid.log"
+RUN_WITH_IT_HELPER_RUNTIME=invalid-runtime \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+  -ValidateOnly \
+  -AssetRoot "${ROOT_DIR}/assets" \
+  -Role impl \
+  -Issue 990 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "${WORK_DIR}/runtime-dispatch-ps1-context-983.md" \
+  -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+  -LogFile "${WORK_DIR}/runtime-dispatch-ps1-invalid.log" \
+  -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-invalid.done" \
+  -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-invalid-result.json" \
+  -StateFile "${WORK_DIR}/runtime-dispatch-ps1-invalid.state.json" \
+  -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-invalid-status.txt" \
+  -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-invalid-events.txt" >"${invalid_dispatch_runtime_output_file}" 2>&1
+invalid_dispatch_runtime_status=$?
+set -e
+[[ "${invalid_dispatch_runtime_status}" != "0" ]] || fail "invalid helper runtime fails immediately in PowerShell dispatch"
+assert_contains "$(cat "${invalid_dispatch_runtime_output_file}")" "unsupported helper runtime: invalid-runtime" "invalid dispatch helper runtime is rejected"
 
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \

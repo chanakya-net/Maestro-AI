@@ -18,6 +18,7 @@ POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
 TIMEOUT_SECONDS="${SUB_COORD_TIMEOUT_SECONDS:-3600}"
 MAX_SUB_COORD_RECOVERY_ATTEMPTS="${MAX_SUB_COORD_RECOVERY_ATTEMPTS:-2}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DOTNET_BIN="${DOTNET_BIN:-dotnet}"
 DRY_RUN=0
 VALIDATE_ONLY=0
 
@@ -45,7 +46,7 @@ normalize_helper_runtime() {
   normalized_runtime="$(printf '%s' "$runtime" | tr '[:upper:]' '[:lower:]')"
   case "${normalized_runtime}" in
     py|python|python3) echo "py" ;;
-    cs|csharp) echo "cs" ;;
+    cs|csharp|c#) echo "cs" ;;
     *) fail "unsupported helper runtime: ${runtime}" ;;
   esac
 }
@@ -79,6 +80,35 @@ resolve_asset_layout() {
     fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
   fi
   return 0
+}
+
+helper_path() {
+  local base_name="$1"
+
+  if [ "$HELPER_RUNTIME" = "py" ]; then
+    printf '%s/%s.py\n' "$PYTHON_HELPERS_DIR" "$base_name"
+    return 0
+  fi
+  if [ "$HELPER_RUNTIME" = "cs" ]; then
+    printf '%s/%s.cs\n' "$CSHARP_HELPERS_DIR" "$base_name"
+    return 0
+  fi
+
+  fail "unsupported helper runtime: $HELPER_RUNTIME"
+}
+
+invoke_helper() {
+  local helper_base_name="$1"
+  shift
+
+  local helper_script
+  helper_script="$(helper_path "$helper_base_name")"
+
+  if [ "$HELPER_RUNTIME" = "py" ]; then
+    "$PYTHON_BIN" "$helper_script" "$@"
+  else
+    "$DOTNET_BIN" "$helper_script" "$@"
+  fi
 }
 
 usage() {
@@ -128,8 +158,8 @@ resolve_asset_layout "$HELPER_RUNTIME" "$ASSET_ROOT"
 DISPATCHER="${SCRIPTS_DIR}/run-with-it-dispatch.sh"
 PROMPT_FILE="${PROMPTS_DIR}/sub-coordinator-prompt.md"
 MERGE_RECOVERY_PROMPT_FILE="${PROMPTS_DIR}/merge-recovery-prompt.md"
-STATE_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-state.py"
-GITHUB_UPDATE_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-github-update.py"
+STATE_HELPER="$(helper_path "run-with-it-state")"
+GITHUB_UPDATE_HELPER="$(helper_path "run-with-it-github-update")"
 
 # State helper maps merge_failed reports to merge_recovery before terminal
 # GitHub updates are attempted.
@@ -139,11 +169,15 @@ GITHUB_UPDATE_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-github-update.py"
 [ -f "$STATE_HELPER" ] || fail "state helper not found: $STATE_HELPER"
 [ -f "$GITHUB_UPDATE_HELPER" ] || fail "GitHub update helper not found: $GITHUB_UPDATE_HELPER"
 [ -f "$STATE_FILE" ] || fail "state file not found: $STATE_FILE"
-command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
+if [ "$HELPER_RUNTIME" = "py" ]; then
+  command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "helper runtime preflight failed: PYTHON_BIN not found or not executable: $PYTHON_BIN"
+else
+  command -v "$DOTNET_BIN" >/dev/null 2>&1 || fail "helper runtime preflight failed: DOTNET_BIN not found; install .NET SDK 10+"
+fi
 
 RUN_ROOT="$(cd "$(path_dirname "$STATE_FILE")/.." && pwd -P)"
 if [ -z "$PARALLEL_JOBS" ]; then
-  PARALLEL_JOBS="$("$PYTHON_BIN" "$STATE_HELPER" parallel-jobs --state-file "$STATE_FILE")"
+  PARALLEL_JOBS="$(invoke_helper run-with-it-state parallel-jobs --state-file "$STATE_FILE")"
 fi
 
 mkdir -p "$(path_dirname "$MAIN_LOG")" "$(path_dirname "$STATUS_FILE")" "$(path_dirname "$EVENTS_LOG")"
@@ -157,15 +191,15 @@ write_status() {
 }
 
 ready_issues() {
-  "$PYTHON_BIN" "$STATE_HELPER" ready-issues --state-file "$STATE_FILE" --limit "$1"
+  invoke_helper run-with-it-state ready-issues --state-file "$STATE_FILE" --limit "$1"
 }
 
 ready_missing_context_count() {
-  "$PYTHON_BIN" "$STATE_HELPER" ready-missing-context-count --state-file "$STATE_FILE"
+  invoke_helper run-with-it-state ready-missing-context-count --state-file "$STATE_FILE"
 }
 
 context_file_for() {
-  "$PYTHON_BIN" "$STATE_HELPER" context-file-for --state-file "$STATE_FILE" --issue "$1"
+  invoke_helper run-with-it-state context-file-for --state-file "$STATE_FILE" --issue "$1"
 }
 
 issue_dir_for() {
@@ -173,7 +207,7 @@ issue_dir_for() {
 }
 
 mark_in_progress() {
-  "$PYTHON_BIN" "$STATE_HELPER" mark-in-progress \
+  invoke_helper run-with-it-state mark-in-progress \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --pid "$2" \
@@ -185,14 +219,14 @@ mark_in_progress() {
 }
 
 finalize_issue() {
-  "$PYTHON_BIN" "$STATE_HELPER" finalize-issue \
+  invoke_helper run-with-it-state finalize-issue \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --report-file "$2"
 }
 
 analyze_sub_coord_failure() {
-  "$PYTHON_BIN" "$STATE_HELPER" analyze-sub-coord-failure \
+  invoke_helper run-with-it-state analyze-sub-coord-failure \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --report-file "$2" \
@@ -216,7 +250,7 @@ else:
 }
 
 write_sub_coord_recovery_context() {
-  "$PYTHON_BIN" "$STATE_HELPER" write-sub-coord-recovery-context \
+  invoke_helper run-with-it-state write-sub-coord-recovery-context \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --context-file "$2" \
@@ -225,7 +259,7 @@ write_sub_coord_recovery_context() {
 }
 
 mark_sub_coord_recovery_started() {
-  "$PYTHON_BIN" "$STATE_HELPER" mark-sub-coord-recovery-started \
+  invoke_helper run-with-it-state mark-sub-coord-recovery-started \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --attempt "$2" \
@@ -234,14 +268,14 @@ mark_sub_coord_recovery_started() {
 }
 
 mark_sub_coord_recovery_dispatch_failed() {
-  "$PYTHON_BIN" "$STATE_HELPER" mark-sub-coord-recovery-dispatch-failed \
+  invoke_helper run-with-it-state mark-sub-coord-recovery-dispatch-failed \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --report-file "$2"
 }
 
 write_merge_recovery_context() {
-  "$PYTHON_BIN" "$STATE_HELPER" write-merge-recovery-context \
+  invoke_helper run-with-it-state write-merge-recovery-context \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --context-file "$2" \
@@ -249,14 +283,14 @@ write_merge_recovery_context() {
 }
 
 finalize_merge_recovery() {
-  "$PYTHON_BIN" "$STATE_HELPER" finalize-merge-recovery \
+  invoke_helper run-with-it-state finalize-merge-recovery \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --report-file "$2"
 }
 
 mark_merge_recovery_dispatch_failed() {
-  "$PYTHON_BIN" "$STATE_HELPER" mark-merge-recovery-dispatch-failed \
+  invoke_helper run-with-it-state mark-merge-recovery-dispatch-failed \
     --state-file "$STATE_FILE" \
     --issue "$1" \
     --report-file "$2"
@@ -265,7 +299,7 @@ mark_merge_recovery_dispatch_failed() {
 update_github_issue() {
   local line output
   if ! output="$(
-    "$PYTHON_BIN" "$GITHUB_UPDATE_HELPER" update \
+    invoke_helper run-with-it-github-update update \
       --state-file "$STATE_FILE" \
       --run-root "$RUN_ROOT" \
       --issue "$1" \
