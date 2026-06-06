@@ -440,7 +440,7 @@ Execution-mode requirement (critical):
   PowerShell (Windows):
 
     $poolProcess = Start-Process -FilePath "powershell" -ArgumentList @(
-      "-NoProfile", "-File", (Join-Path $ASSET_ROOT "run-with-it-pool.ps1"),
+      "-NoProfile", "-File", (Join-Path $ASSET_ROOT "powershell/run-with-it-pool.ps1"),
       "-AssetRoot", $ASSET_ROOT,
       "-StateFile", (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main-state.json"),
       "-ParallelJobs", $env:PARALLEL_JOBS,

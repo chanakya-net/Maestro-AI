@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
+AGENT_SKILL_FILE="${ROOT_DIR}/.agents/skills/run-with-it/SKILL.md"
 ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
 COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/prompts/coordinator-rules.md"
 SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md"
@@ -254,6 +255,8 @@ assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '--prompt-file "$ASSET_ROOT/
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'cp "$ASSET_ROOT/prompts/coordinator-rules.md"' "sub-coordinator copies coordinator-rules from nested prompts path"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '-PromptFile (Join-Path $ASSET_ROOT "prompts/prompt.md")' "sub-coordinator PowerShell dispatch uses nested prompts/prompt.md"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '-PromptFile (Join-Path $ASSET_ROOT "prompts/complexity-prompt.md")' "sub-coordinator PowerShell dispatch uses nested prompts/complexity-prompt.md"
+assert_file_contains "$SKILL_FILE" '(Join-Path $ASSET_ROOT "powershell/run-with-it-pool.ps1")' "skill uses nested PowerShell pool runner path"
+assert_file_contains "$AGENT_SKILL_FILE" '(Join-Path $ASSET_ROOT "powershell/run-with-it-pool.ps1")' "agent skill mirror uses nested PowerShell pool runner path"
 assert_contains 'cp "$ASSET_ROOT/prompts/main-orchestrator-rules.md"' "skill copies main-orchestrator-rules from nested prompts path"
 assert_contains 'csharp' "skill repair snippet provisions csharp helper directory"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do not pass `SUB_COORD_REPORT_FILE` to worker payloads' "sub-coordinator keeps report path out of worker payloads"
