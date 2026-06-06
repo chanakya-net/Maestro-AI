@@ -262,6 +262,262 @@ nested_dispatch_prompt_output="$("${DISPATCHER}" \
   --poll-seconds 1)"
 assert_contains "${nested_dispatch_prompt_output}" "--prompt-file ${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" "dispatch preserves explicit prompt-file in nested script layout"
 
+RUNTIME_DISPATCH_BIN="${WORK_DIR}/dispatch-runtime-bins"
+mkdir -p "${RUNTIME_DISPATCH_BIN}"
+RUNTIME_DISPATCH_PY_CALLS="${RUNTIME_DISPATCH_BIN}/python.calls.log"
+RUNTIME_DISPATCH_DOTNET_CALLS="${RUNTIME_DISPATCH_BIN}/dotnet.calls.log"
+export RUNTIME_DISPATCH_PY_CALLS
+export RUNTIME_DISPATCH_DOTNET_CALLS
+cat > "${RUNTIME_DISPATCH_BIN}/fake-python.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+helper="${1:-}"
+command="${2:-}"
+printf '%s\n' "$*" >> "${RUNTIME_DISPATCH_PY_CALLS}"
+if [[ "$helper" == *"run-with-it-artifacts.py" ]]; then
+  case "$command" in
+    failure-reason|synthesize) ;;
+    *) ;;
+  esac
+fi
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$@"
+elif command -v python >/dev/null 2>&1; then
+  python "$@"
+else
+  printf '%s\n' "python not found" >&2
+  exit 1
+fi
+SH
+cat > "${RUNTIME_DISPATCH_BIN}/fake-dotnet.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${RUNTIME_DISPATCH_DOTNET_CALLS}"
+helper="${1:-}"
+command="${2:-}"
+if [[ "$helper" == *"run-with-it-artifacts.cs" ]]; then
+  if [[ "$command" == "failure-reason" ]] || [[ "$command" == "synthesize" ]]; then
+    exit 0
+  fi
+fi
+echo ""
+exit 0
+SH
+chmod +x "${RUNTIME_DISPATCH_BIN}/fake-python.sh" "${RUNTIME_DISPATCH_BIN}/fake-dotnet.sh"
+
+RUNTIME_DISPATCH_ASSET_ROOT="${WORK_DIR}/runtime-dispatch-assets"
+mkdir -p "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts" "${RUNTIME_DISPATCH_ASSET_ROOT}/python" "${RUNTIME_DISPATCH_ASSET_ROOT}/powershell" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${RUNTIME_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh"
+cp "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${RUNTIME_DISPATCH_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/prompts/prompt.md" "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md"
+cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+done_file="${RUN_WITH_IT_DONE_FILE:-}"
+result_file="${RUN_WITH_IT_RESULT_FILE:-}"
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --done-file)
+      done_file="${2:-}"
+      shift 2
+      ;;
+    --result-file)
+      result_file="${2:-}"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+if [[ -n "$done_file" ]]; then
+  mkdir -p "$(dirname "$done_file")"
+  printf 'DONE|issue=%s|role=%s\n' "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}" > "$done_file"
+fi
+if [[ -n "$result_file" ]]; then
+  mkdir -p "$(dirname "$result_file")"
+  printf '{"schema_version":1,"issue":"%s","role":"%s","status":"success","commit_sha":"none","files_committed":[],"verification":{"passed":true,"commands":["fake-agent"]}}' \
+    "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}" > "$result_file"
+fi
+SH
+chmod +x "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh" \
+  "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh" \
+  "${RUNTIME_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh"
+cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" <<'CS'
+namespace Dummy;
+CS
+cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/agent-registry.json" <<'JSON'
+{
+  "schema_version": 1,
+  "aliases": {},
+  "agents": {
+    "fake": {
+      "display_name": "Fake",
+      "detection": { "command": "fake-agent", "args": ["--version"] },
+      "invocation": {
+        "command": "fake-agent",
+        "args_template": ["{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": { "default": "", "available": [""] },
+      "model": { "default": "fake-model", "flag_template": "", "known_models": ["fake-model"] },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    }
+  }
+}
+JSON
+
+RUNTIME_DISPATCH_STATE="${WORK_DIR}/runtime-dispatch-state.json"
+cat > "$RUNTIME_DISPATCH_STATE" <<JSON
+{
+  "schema_version": 1,
+  "execution_plan": {
+    "parallel_jobs": 2,
+    "topo_order": [901, 902]
+  },
+  "issue_registry": {
+    "901": {
+      "status": "pending",
+      "deps": [],
+      "context_file": "${WORK_DIR}/runtime-dispatch-context-901.md"
+    },
+    "902": {
+      "status": "pending",
+      "deps": [],
+      "context_file": "${WORK_DIR}/runtime-dispatch-context-902.md"
+    }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [],
+  "ledger_rows": []
+}
+JSON
+
+printf 'dispatch runtime context\\n' > "${WORK_DIR}/runtime-dispatch-context-901.md"
+printf 'dispatch runtime context\\n' > "${WORK_DIR}/runtime-dispatch-context-902.md"
+
+runtime_issue=900
+for runtime in py python; do
+  runtime_issue=$((runtime_issue + 1))
+  >"${RUNTIME_DISPATCH_PY_CALLS}"
+  PYTHON_BIN="${RUNTIME_DISPATCH_BIN}/fake-python.sh" \
+  RUN_WITH_IT_HELPER_RUNTIME="$runtime" \
+  "${DISPATCHER}" \
+    --asset-root "${RUNTIME_DISPATCH_ASSET_ROOT}" \
+    --role merge-recovery \
+    --issue "${runtime_issue}" \
+    --agent fake \
+    --model fake-model \
+    --context-file "${WORK_DIR}/runtime-dispatch-context-901.md" \
+    --prompt-file "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md" \
+    --log-file "${WORK_DIR}/runtime-dispatch-py-${runtime}-run.log" \
+    --done-file "${WORK_DIR}/runtime-dispatch-py-${runtime}.done" \
+    --result-file "${WORK_DIR}/runtime-dispatch-py-${runtime}-result.json" \
+    --state-file "${WORK_DIR}/runtime-dispatch-py-${runtime}.state.json" \
+    --status-file "${WORK_DIR}/runtime-dispatch-py-${runtime}-status.txt" \
+    --events-log "${WORK_DIR}/runtime-dispatch-py-${runtime}-events.txt" \
+    --poll-seconds 1
+  assert_contains "$(cat "${RUNTIME_DISPATCH_PY_CALLS}")" "run-with-it-artifacts.py" "helper runtime ${runtime} routes artifact helper via Python binary"
+done
+
+runtime_issue=910
+for runtime in cs csharp c#; do
+  runtime_issue=$((runtime_issue + 1))
+  >"${RUNTIME_DISPATCH_DOTNET_CALLS}"
+  DOTNET_BIN="${RUNTIME_DISPATCH_BIN}/fake-dotnet.sh" \
+  RUN_WITH_IT_HELPER_RUNTIME="$runtime" \
+  "${DISPATCHER}" \
+    --asset-root "${RUNTIME_DISPATCH_ASSET_ROOT}" \
+    --role merge-recovery \
+    --issue "${runtime_issue}" \
+    --agent fake \
+    --model fake-model \
+    --context-file "${WORK_DIR}/runtime-dispatch-context-902.md" \
+    --prompt-file "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md" \
+    --log-file "${WORK_DIR}/runtime-dispatch-${runtime}-run.log" \
+    --done-file "${WORK_DIR}/runtime-dispatch-cs-${runtime}.done" \
+    --result-file "${WORK_DIR}/runtime-dispatch-cs-${runtime}-result.json" \
+    --state-file "${WORK_DIR}/runtime-dispatch-cs-${runtime}.state.json" \
+    --status-file "${WORK_DIR}/runtime-dispatch-cs-${runtime}-status.txt" \
+    --events-log "${WORK_DIR}/runtime-dispatch-cs-${runtime}-events.txt" \
+    --poll-seconds 1
+  assert_contains "$(cat "${RUNTIME_DISPATCH_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
+done
+
+mv "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/agent-registry.json" "${RUNTIME_DISPATCH_ASSET_ROOT}/agent-registry.json"
+root_registry_dispatch_output="$(RUN_WITH_IT_HELPER_RUNTIME=cs "${DISPATCHER}" \
+  --dry-run \
+  --asset-root "${RUNTIME_DISPATCH_ASSET_ROOT}" \
+  --role merge-recovery \
+  --issue 914 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${WORK_DIR}/runtime-dispatch-context-902.md" \
+  --prompt-file "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md" \
+  --log-file "${WORK_DIR}/runtime-dispatch-root-registry.log" \
+  --done-file "${WORK_DIR}/runtime-dispatch-root-registry.done" \
+  --result-file "${WORK_DIR}/runtime-dispatch-root-registry-result.json" \
+  --state-file "${WORK_DIR}/runtime-dispatch-root-registry.state.json" \
+  --status-file "${WORK_DIR}/runtime-dispatch-root-registry-status.txt" \
+  --events-log "${WORK_DIR}/runtime-dispatch-root-registry-events.txt" \
+  --poll-seconds 1)"
+assert_contains "${root_registry_dispatch_output}" "AGENT_REGISTRY_FILE=${RUNTIME_DISPATCH_ASSET_ROOT}/agent-registry.json" "C# dispatch falls back to root registry file when nested registry is absent"
+
+>"${RUNTIME_DISPATCH_DOTNET_CALLS}"
+DOTNET_BIN="${RUNTIME_DISPATCH_BIN}/fake-dotnet.sh" \
+RUN_WITH_IT_HELPER_RUNTIME=cs \
+"${DISPATCHER}" \
+  --asset-root "${RUNTIME_DISPATCH_ASSET_ROOT}" \
+  --role merge-recovery \
+  --issue 915 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${WORK_DIR}/runtime-dispatch-context-902.md" \
+  --prompt-file "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts/prompt.md" \
+  --log-file "${WORK_DIR}/runtime-dispatch-root-registry-run.log" \
+  --done-file "${WORK_DIR}/runtime-dispatch-root-registry-run.done" \
+  --result-file "${WORK_DIR}/runtime-dispatch-root-registry-run-result.json" \
+  --state-file "${WORK_DIR}/runtime-dispatch-root-registry-run.state.json" \
+  --status-file "${WORK_DIR}/runtime-dispatch-root-registry-run-status.txt" \
+  --events-log "${WORK_DIR}/runtime-dispatch-root-registry-run-events.txt" \
+  --poll-seconds 1
+assert_contains "$(cat "${RUNTIME_DISPATCH_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "C# dispatch keeps helper lookup in nested csharp dir when registry falls back to root"
+
+set +e
+invalid_dispatch_runtime_output="$(mktemp -d)/dispatch-runtime-invalid.log"
+  RUN_WITH_IT_HELPER_RUNTIME=invalid-runtime \
+  "${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role merge-recovery \
+  --issue 903 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${WORK_DIR}/runtime-dispatch-invalid.log" \
+  --done-file "${WORK_DIR}/runtime-dispatch-invalid.done" \
+  --result-file "${WORK_DIR}/runtime-dispatch-invalid-result.json" \
+  --state-file "${WORK_DIR}/runtime-dispatch-invalid-state.json" \
+  --status-file "${WORK_DIR}/runtime-dispatch-invalid-status.txt" \
+  --events-log "${WORK_DIR}/runtime-dispatch-invalid-events.txt" >"${invalid_dispatch_runtime_output}" 2>&1
+invalid_dispatch_runtime_status=$?
+set -e
+[[ "${invalid_dispatch_runtime_status}" != "0" ]] || fail "invalid helper runtime fails immediately in dispatch"
+assert_contains "$(cat "${invalid_dispatch_runtime_output}")" "unsupported helper runtime: invalid-runtime" "invalid dispatch helper runtime is rejected"
+
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"

@@ -48,6 +48,13 @@ function Get-PythonExe {
     Fail "python helper runtime not found: python3"
 }
 
+function Get-DotNetExe {
+    if ($env:DOTNET_BIN) { return $env:DOTNET_BIN }
+    $dotnet = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($dotnet) { return $dotnet.Source }
+    return "dotnet"
+}
+
 function Normalize-HelperRuntime([string]$runtime) {
     if ([string]::IsNullOrWhiteSpace($runtime)) { return "py" }
     switch ($runtime.ToLowerInvariant()) {
@@ -56,6 +63,7 @@ function Normalize-HelperRuntime([string]$runtime) {
         "python3" { return "py" }
         "cs" { return "cs" }
         "csharp" { return "cs" }
+        "c#" { return "cs" }
         default {
             Fail "unsupported helper runtime: $runtime"
         }
@@ -67,7 +75,7 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
     $scriptsDir = Join-Path $assetRoot "scripts"
     $powershellDir = Join-Path $assetRoot "powershell"
     $pythonHelpersDir = Join-Path $assetRoot "python"
-    $csharpHelpersDir = Join-Path $assetRoot "powershell"
+    $csharpHelpersDir = Join-Path $assetRoot "csharp"
 
     if ($helperRuntime -eq "py") {
         if (-not (Test-Path $scriptsDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
@@ -88,7 +96,7 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
         }
     }
 
-    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir)) {
+    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir) -or -not (Test-Path $csharpHelpersDir)) {
         Fail "missing nested asset layout for helper runtime 'cs' at $assetRoot; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
     }
 
@@ -99,6 +107,21 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
         PythonHelpersDir = $pythonHelpersDir
         CSharpHelpersDir = $csharpHelpersDir
     }
+}
+
+function Get-HelperPath([string]$baseName) {
+    if ($HelperRuntime -eq "py") {
+        return Join-Path $AssetLayout.PythonHelpersDir "$baseName.py"
+    }
+    return Join-Path $AssetLayout.CSharpHelpersDir "$baseName.cs"
+}
+
+function Invoke-RunWithItHelper([string]$baseName, [object[]]$helperArgs) {
+    $helperPath = Get-HelperPath $baseName
+    if ($HelperRuntime -eq "py") {
+        return & $script:PythonExe $helperPath @helperArgs
+    }
+    return & $script:DotNetExe $helperPath @helperArgs
 }
 
 function Quote-ProcessArgument([string]$arg) {
@@ -145,7 +168,7 @@ function Remove-ProcessCapture($entry) {
 
 if (-not $AssetRoot) {
     $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
-    if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-with-it-dispatch.ps1")) {
+    if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-agent.ps1")) {
         $AssetRoot = $homeAssetRoot
     } else {
         $AssetRoot = Split-Path $PSScriptRoot -Parent
@@ -158,8 +181,8 @@ $AssetLayout = Resolve-AssetLayout -assetRoot $AssetRoot -helperRuntime $HelperR
 $Dispatcher = Join-Path $AssetLayout.PowerShellDir "run-with-it-dispatch.ps1"
 $PromptFile = Join-Path $AssetLayout.PromptsDir "sub-coordinator-prompt.md"
 $MergeRecoveryPromptFile = Join-Path $AssetLayout.PromptsDir "merge-recovery-prompt.md"
-$StateHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-state.py"
-$GitHubUpdateHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-github-update.py"
+$StateHelper = Get-HelperPath "run-with-it-state"
+$GitHubUpdateHelper = Get-HelperPath "run-with-it-github-update"
 
 if (-not (Test-Path $Dispatcher)) { Fail "dispatcher not found: $Dispatcher" }
 if (-not (Test-Path $PromptFile)) { Fail "sub-coordinator prompt not found: $PromptFile" }
@@ -170,10 +193,22 @@ if (-not (Test-Path $StateFile)) { Fail "state file not found: $StateFile" }
 
 $RunRoot = (Resolve-Path (Join-Path (Split-Path $StateFile) "..")).Path
 $PowerShellExe = Get-PowerShellExe
-$PythonExe = Get-PythonExe
+$script:DotNetExe = Get-DotNetExe
+
+if ($HelperRuntime -eq "py") {
+    $script:PythonExe = Get-PythonExe
+    if (-not (Get-Command $script:PythonExe -ErrorAction SilentlyContinue)) {
+        Fail "helper runtime preflight failed: PYTHON_BIN not found or not executable: $script:PythonExe"
+    }
+} else {
+    $script:PythonExe = $null
+    if (-not (Get-Command $script:DotNetExe -ErrorAction SilentlyContinue)) {
+        Fail "helper runtime preflight failed: DOTNET_BIN not found; install .NET SDK 10+"
+    }
+}
 
 function Invoke-StateHelper([object[]]$helperArgs) {
-    $output = & $PythonExe $StateHelper @helperArgs
+    $output = Invoke-RunWithItHelper "run-with-it-state" $helperArgs
     if ($LASTEXITCODE -ne 0) { Fail "state helper failed: $($helperArgs -join ' ')" }
     return $output
 }
@@ -276,7 +311,19 @@ function Mark-MergeRecoveryDispatchFailed([string]$issue, [string]$reportFile) {
 }
 
 function Update-GitHubIssue([string]$issue, [string]$outcome, [string]$reportFile) {
-    $lines = & $PythonExe $GitHubUpdateHelper update --state-file $StateFile --run-root $RunRoot --issue $issue --outcome $outcome --report-file $reportFile
+    $lines = Invoke-RunWithItHelper "run-with-it-github-update" @(
+        "update",
+        "--state-file",
+        $StateFile,
+        "--run-root",
+        $RunRoot,
+        "--issue",
+        $issue,
+        "--outcome",
+        $outcome,
+        "--report-file",
+        $reportFile
+    )
     if ($LASTEXITCODE -ne 0) { Fail "GitHub update helper failed for issue $issue" }
     foreach ($line in @($lines)) {
         if ($line) { Write-Status $line }
@@ -299,6 +346,7 @@ function Get-DispatchArgs([string]$issue, [string]$contextFile, [string]$issueDi
         "-NoProfile",
         "-File", $Dispatcher,
         "-AssetRoot", $AssetRoot,
+        "-HelperRuntime", $HelperRuntime,
         "-Role", "sub-coord",
         "-Issue", $issue,
         "-Agent", $Agent,
