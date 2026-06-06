@@ -1,5 +1,6 @@
 param(
     [string]$AssetRoot = $env:ASSETS_DEST,
+    [string]$HelperRuntime = $(if ($env:RUN_WITH_IT_HELPER_RUNTIME) { $env:RUN_WITH_IT_HELPER_RUNTIME } else { "py" }),
     [Parameter(Mandatory = $true)][string]$Role,
     [Parameter(Mandatory = $true)][string]$Issue,
     [string]$Cycle = "",
@@ -60,6 +61,65 @@ function Get-PythonExe {
     $candidate = Get-Command python -ErrorAction SilentlyContinue
     if ($candidate) { return $candidate.Source }
     Fail "python helper runtime not found"
+}
+
+function Normalize-HelperRuntime([string]$runtime) {
+    if ([string]::IsNullOrWhiteSpace($runtime)) { return "py" }
+    switch ($runtime.ToLowerInvariant()) {
+        "py" { return "py" }
+        "python" { return "py" }
+        "python3" { return "py" }
+        "cs" { return "cs" }
+        "csharp" { return "cs" }
+        default {
+            Fail "unsupported helper runtime: $runtime"
+        }
+    }
+}
+
+function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
+    $promptsDir = Join-Path $assetRoot "prompts"
+    $scriptsDir = Join-Path $assetRoot "scripts"
+    $powershellDir = Join-Path $assetRoot "powershell"
+    $pythonHelpersDir = Join-Path $assetRoot "python"
+    $csharpHelpersDir = Join-Path $assetRoot "powershell"
+
+    if ($helperRuntime -eq "py") {
+        if (-not (Test-Path $scriptsDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
+            $scriptsDir = $assetRoot
+        }
+        if (-not (Test-Path $powershellDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
+            $powershellDir = $assetRoot
+        }
+        if (-not (Test-Path $pythonHelpersDir)) {
+            $pythonHelpersDir = $assetRoot
+        }
+        return [PSCustomObject]@{
+            PromptsDir = $promptsDir
+            ScriptsDir = $scriptsDir
+            PowerShellDir = $powershellDir
+            PythonHelpersDir = $pythonHelpersDir
+            CSharpHelpersDir = $csharpHelpersDir
+        }
+    }
+
+    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir)) {
+        Fail "missing nested asset layout for helper runtime 'cs' at $assetRoot; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
+    }
+
+    if (-not (Test-Path $csharpHelpersDir)) {
+        $csharpHelpersDir = $assetRoot
+    }
+    if (-not (Test-Path (Join-Path $csharpHelpersDir "agent-registry.json")) -and (Test-Path (Join-Path $assetRoot "agent-registry.json"))) {
+        $csharpHelpersDir = $assetRoot
+    }
+    return [PSCustomObject]@{
+        PromptsDir = $promptsDir
+        ScriptsDir = $scriptsDir
+        PowerShellDir = $powershellDir
+        PythonHelpersDir = $pythonHelpersDir
+        CSharpHelpersDir = $csharpHelpersDir
+    }
 }
 
 function Quote-ProcessArgument([string]$arg) {
@@ -263,10 +323,16 @@ if (-not $AssetRoot) {
     }
 }
 
-$RunAgent = Join-Path $AssetRoot "powershell" "run-agent.ps1"
-$WorkerWatch = Join-Path $AssetRoot "powershell" "worker-watch.ps1"
-$RegistryFile = Join-Path $AssetRoot "agent-registry.json"
-$script:ArtifactHelper = Join-Path $AssetRoot "python" "run-with-it-artifacts.py"
+$HelperRuntime = Normalize-HelperRuntime $HelperRuntime
+$AssetLayout = Resolve-AssetLayout -assetRoot $AssetRoot -helperRuntime $HelperRuntime
+
+$RunAgent = Join-Path $AssetLayout.PowerShellDir "run-agent.ps1"
+$WorkerWatch = Join-Path $AssetLayout.PowerShellDir "worker-watch.ps1"
+$RegistryFile = Join-Path $AssetLayout.CSharpHelpersDir "agent-registry.json"
+if ($HelperRuntime -eq "py" -and -not (Test-Path $RegistryFile)) {
+    $RegistryFile = Join-Path $AssetRoot "agent-registry.json"
+}
+$script:ArtifactHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-artifacts.py"
 $script:PythonExe = Get-PythonExe
 
 if (-not (Test-Path $RunAgent)) { Fail "runner not found: $RunAgent" }

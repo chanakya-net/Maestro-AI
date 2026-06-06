@@ -23,6 +23,7 @@ fi
 SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
 ASSET_ROOT="${SCRIPT_DIR%/*}"
+DEFAULT_PROMPT_FILE="${ASSET_ROOT}/prompts/prompt.md"
 REPO_ROOT="${REPO_ROOT:-$(pwd -P)}"
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
   (cd "${REPO_ROOT}" && codegraph unlock 2>/dev/null) || true
@@ -32,7 +33,7 @@ AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${ASSET_ROOT}/agent-registry.json}"
 AGENT="${AGENT:-}"
 MODEL="${MODEL:-}"
 CONTEXT_PAYLOAD_FILE="${CONTEXT_PAYLOAD_FILE:-}"
-PROMPT_FILE="${PROMPT_FILE:-${ASSET_ROOT}/prompts/prompt.md}"
+PROMPT_FILE="${PROMPT_FILE:-$DEFAULT_PROMPT_FILE}"
 PRINT_PROMPT="${PRINT_PROMPT:-0}"
 AGENT_PERMISSION_MODE="${AGENT_PERMISSION_MODE:-}"
 AGENT_EXTRA_ARGS="${AGENT_EXTRA_ARGS:-}"
@@ -363,7 +364,7 @@ while [[ $# -gt 0 ]]; do
     *)
       if [[ -z "${CONTEXT_PAYLOAD_FILE}" ]]; then
         CONTEXT_PAYLOAD_FILE="$1"
-      elif [[ -z "${PROMPT_FILE}" || "${PROMPT_FILE}" == "${ASSET_ROOT}/prompts/prompt.md" ]]; then
+      elif [[ -z "${PROMPT_FILE}" || "${PROMPT_FILE}" == "${DEFAULT_PROMPT_FILE}" ]]; then
         PROMPT_FILE="$1"
       else
         fail "unexpected positional argument: $1"

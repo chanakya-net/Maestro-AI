@@ -23,6 +23,7 @@ ISSUE_DIR=""
 STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}"
 EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}"
 TAIL_STATE_FILE=""
+HELPER_RUNTIME="${RUN_WITH_IT_HELPER_RUNTIME:-py}"
 POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
 QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
 STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-300}"
@@ -49,6 +50,64 @@ path_dirname() {
     printf '/\n'
   else
     printf '%s\n' "${path%/*}"
+  fi
+}
+
+normalize_helper_runtime() {
+  local runtime="${1:-py}"
+  local normalized_runtime
+
+  normalized_runtime="$(printf '%s' "$runtime" | tr '[:upper:]' '[:lower:]')"
+  case "${normalized_runtime}" in
+    py|python|python3) echo "py" ;;
+    cs|csharp) echo "cs" ;;
+    *) fail "unsupported helper runtime: ${runtime}" ;;
+  esac
+}
+
+resolve_asset_layout() {
+  local runtime="$1"
+  local root="$2"
+
+  PROMPTS_DIR="${root}/prompts"
+  SCRIPTS_DIR="${root}/scripts"
+  POWERSHELL_DIR="${root}/powershell"
+  PYTHON_HELPERS_DIR="${root}/python"
+  CSHARP_HELPERS_DIR="${root}/powershell"
+
+  if [ "$runtime" = "py" ]; then
+    if [ ! -d "$SCRIPTS_DIR" ] && [ -f "${root}/run-with-it-dispatch.sh" ]; then
+      SCRIPTS_DIR="$root"
+    fi
+    if [ ! -d "$POWERSHELL_DIR" ] && [ -f "${root}/run-with-it-dispatch.ps1" ]; then
+      POWERSHELL_DIR="$root"
+    fi
+    if [ -d "${root}/python" ]; then
+      PYTHON_HELPERS_DIR="${root}/python"
+    else
+      PYTHON_HELPERS_DIR="$root"
+    fi
+    if [ -d "${root}/powershell" ]; then
+      CSHARP_HELPERS_DIR="${root}/powershell"
+    else
+      CSHARP_HELPERS_DIR="$root"
+    fi
+    if [ -f "${root}/agent-registry.json" ] && [ ! -f "${CSHARP_HELPERS_DIR}/agent-registry.json" ]; then
+      CSHARP_HELPERS_DIR="$root"
+    fi
+    return 0
+  fi
+
+  if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ]; then
+    fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
+  fi
+  if [ -d "${root}/powershell" ]; then
+    CSHARP_HELPERS_DIR="${root}/powershell"
+  else
+    CSHARP_HELPERS_DIR="$root"
+  fi
+  if [ -f "${root}/agent-registry.json" ] && [ ! -f "${CSHARP_HELPERS_DIR}/agent-registry.json" ]; then
+    CSHARP_HELPERS_DIR="$root"
   fi
 }
 
@@ -101,15 +160,20 @@ done
 if [ -z "$ASSET_ROOT" ]; then
   if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-agent.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
+  elif [ -f "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" ]; then
+    ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
     ASSET_ROOT="${SCRIPT_DIR%/*}"
   fi
 fi
 
-RUN_AGENT="${ASSET_ROOT}/scripts/run-agent.sh"
-WORKER_WATCH="${ASSET_ROOT}/scripts/worker-watch.sh"
-REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
-ARTIFACT_HELPER="${ASSET_ROOT}/python/run-with-it-artifacts.py"
+HELPER_RUNTIME="$(normalize_helper_runtime "${HELPER_RUNTIME}")"
+resolve_asset_layout "$HELPER_RUNTIME" "$ASSET_ROOT"
+
+RUN_AGENT="${SCRIPTS_DIR}/run-agent.sh"
+WORKER_WATCH="${SCRIPTS_DIR}/worker-watch.sh"
+REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
+ARTIFACT_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-artifacts.py"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 [ -n "$ROLE" ] || fail "--role is required"

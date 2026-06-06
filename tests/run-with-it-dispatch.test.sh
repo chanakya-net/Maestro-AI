@@ -49,6 +49,8 @@ assert_executable() {
   [[ -x "$file" ]] || fail "$file is executable"
 }
 
+unset RUN_WITH_IT_DETACHED_CHILD
+
 WORK_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "${WORK_DIR}"
@@ -133,6 +135,133 @@ assert_json_file "${STATE_FILE}" "validate-only writes watchdog state JSON"
 assert_file_contains "${STATE_FILE}" '"state": "ready"' "validate-only records ready state"
 assert_file_contains "${STATE_FILE}" '"log_file":' "watchdog state records role log path"
 
+FLAT_ASSET_ROOT="${WORK_DIR}/flat-assets"
+mkdir -p "${FLAT_ASSET_ROOT}/prompts" "${FLAT_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${FLAT_ASSET_ROOT}/run-agent.sh"
+cp "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${FLAT_ASSET_ROOT}/worker-watch.sh"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${FLAT_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/prompts/prompt.md" "${FLAT_ASSET_ROOT}/prompts/prompt.md"
+cat > "${FLAT_ASSET_ROOT}/agent-registry.json" <<'JSON'
+{
+  "schema_version": 1,
+  "aliases": {},
+  "agents": {
+    "fake": {
+      "display_name": "Fake",
+      "detection": { "command": "fake-agent", "args": ["--version"] },
+      "invocation": { "command": "fake-agent", "args_template": ["{{repo_root}}", "{{prompt}}"], "prompt_argument_template": "{{prompt}}" },
+      "permission_modes": { "default": "", "available": [""] },
+      "model": { "default": "fake-model", "flag_template": "", "known_models": ["fake-model"] },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    }
+  }
+}
+JSON
+chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh" "${FLAT_ASSET_ROOT}/run-agent.sh" "${FLAT_ASSET_ROOT}/worker-watch.sh"
+
+FLAT_PROJECT="${WORK_DIR}/flat-project"
+FLAT_CONTEXT="${FLAT_PROJECT}/context.md"
+FLAT_PROMPT="${FLAT_PROJECT}/prompts/prompt.md"
+FLAT_LOG="${FLAT_PROJECT}/flat.log"
+FLAT_DONE="${FLAT_PROJECT}/flat.done"
+FLAT_RESULT="${FLAT_PROJECT}/flat-result.json"
+FLAT_STATE="${FLAT_PROJECT}/flat-state.json"
+mkdir -p "${FLAT_PROJECT}/prompts"
+printf 'flat context\n' > "${FLAT_CONTEXT}"
+printf '# flat prompt\n' > "${FLAT_PROMPT}"
+mkdir -p "${WORK_DIR}/flat-worktree"
+
+flat_dry_output="$(RUN_WITH_IT_HELPER_RUNTIME=py "${DISPATCHER}" \
+  --dry-run \
+  --asset-root "${FLAT_ASSET_ROOT}" \
+  --role impl \
+  --issue 99 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${FLAT_CONTEXT}" \
+  --prompt-file "${FLAT_PROMPT}" \
+  --log-file "${FLAT_LOG}" \
+  --done-file "${FLAT_DONE}" \
+  --result-file "${FLAT_RESULT}" \
+  --state-file "${FLAT_STATE}" \
+  --repo-root "${WORK_DIR}/flat-worktree" \
+  --issue-dir "${FLAT_PROJECT}" \
+  --status-file "${FLAT_PROJECT}/status.txt" \
+  --events-log "${FLAT_PROJECT}/events.log" \
+  --poll-seconds 1)"
+assert_contains "${flat_dry_output}" "${FLAT_ASSET_ROOT}/run-agent.sh --agent fake" "flat python layout resolves root-level run-agent helper"
+
+set +e
+cs_fail_output_file="$(mktemp -d)/cs-fail-output.log"
+if RUN_WITH_IT_HELPER_RUNTIME=cs "${DISPATCHER}" \
+  --dry-run \
+  --asset-root "${FLAT_ASSET_ROOT}" \
+  --role impl \
+  --issue 100 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${FLAT_CONTEXT}" \
+  --prompt-file "${FLAT_PROMPT}" \
+  --log-file "${FLAT_LOG}" \
+  --done-file "${FLAT_DONE}" \
+  --result-file "${FLAT_RESULT}" \
+  --state-file "${FLAT_STATE}" \
+  --repo-root "${WORK_DIR}/flat-worktree" \
+  --issue-dir "${FLAT_PROJECT}" \
+  --status-file "${FLAT_PROJECT}/status.txt" \
+  --events-log "${FLAT_PROJECT}/events.log" \
+  --poll-seconds 1 \
+  >>"$cs_fail_output_file" 2>&1; then
+  cs_fail_status=0
+else
+  cs_fail_status=$?
+fi
+cs_fail_output="$(cat "$cs_fail_output_file")"
+rm -f "$cs_fail_output_file"
+set -e
+
+[[ "${cs_fail_status}" != "0" ]] || fail "flat C# layout fails when helper runtime is cs"
+assert_contains "${cs_fail_output}" "missing nested asset layout for helper runtime 'cs'" "flat C# layout is rejected with nested asset error"
+
+NESTED_DISPATCH_ASSET_ROOT="${WORK_DIR}/nested-dispatch-assets"
+mkdir -p "${NESTED_DISPATCH_ASSET_ROOT}/prompts" "${NESTED_DISPATCH_ASSET_ROOT}/scripts" "${NESTED_DISPATCH_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${NESTED_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh"
+cp "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh"
+cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${NESTED_DISPATCH_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/agent-registry.json" "${NESTED_DISPATCH_ASSET_ROOT}/agent-registry.json"
+printf 'nested prompt\n' > "${NESTED_DISPATCH_ASSET_ROOT}/prompts/prompt.md"
+printf 'explicit prompt for dispatch\n' > "${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md"
+chmod +x "${NESTED_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh" "${NESTED_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh"
+
+nested_dispatch_prompt_output="$("${DISPATCHER}" \
+  --dry-run \
+  --asset-root "${NESTED_DISPATCH_ASSET_ROOT}" \
+  --role impl \
+  --issue 101 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" \
+  --log-file "${LOG_FILE}" \
+  --done-file "${DONE_FILE}" \
+  --result-file "${RESULT_FILE}" \
+  --state-file "${STATE_FILE}" \
+  --repo-root "${WORKTREE_ROOT}" \
+  --issue-dir "${ISSUE_DIR}" \
+  --status-file "${STATUS_FILE}" \
+  --events-log "${EVENTS_LOG}" \
+  --poll-seconds 1)"
+assert_contains "${nested_dispatch_prompt_output}" "--prompt-file ${NESTED_DISPATCH_ASSET_ROOT}/prompts/explicit-prompt.md" "dispatch preserves explicit prompt-file in nested script layout"
+
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
@@ -178,12 +307,28 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 repo_root="$1"
+agent_role="${RUN_WITH_IT_ROLE:-unknown}"
+agent_issue="${RUN_WITH_IT_ISSUE:-unknown}"
+
 printf 'STATUS|type=heartbeat|issue=%s|role=%s|phase=testing|progress=repo-root\n' "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}"
 printf 'fake-agent stdout is captured\n'
 printf 'fake-agent stderr is captured\n' >&2
 mkdir -p "$repo_root" "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
 printf 'seen\n' > "$repo_root/marker.txt"
-printf '{"outcome":"completed","repo_root_seen":"%s"}\n' "$repo_root" > "$RUN_WITH_IT_RESULT_FILE"
+
+if [[ "$agent_role" == "impl" || "$agent_role" == "modify" ]]; then
+  git -C "$repo_root" init -q
+  git -C "$repo_root" config user.email "test@example.com"
+  git -C "$repo_root" config user.name "Test User"
+  printf 'marker-%s\n' "$(date -u +%s%N)" > "$repo_root/marker.txt"
+  git -C "$repo_root" add "$repo_root/marker.txt"
+  git -C "$repo_root" commit -m "impl fake marker" >/dev/null
+  commit_sha="$(git -C "$repo_root" rev-parse HEAD)"
+  printf '{"schema_version":1,"issue":"%s","role":"%s","status":"success","commit_sha":"%s","files_committed":["marker.txt"],"verification":{"passed":true,"commands":["fake"]},"repo_root_seen":"%s"}\n' \
+    "$agent_issue" "$agent_role" "$commit_sha" "$repo_root" > "$RUN_WITH_IT_RESULT_FILE"
+else
+  printf '{"outcome":"completed","repo_root_seen":"%s"}\n' "$repo_root" > "$RUN_WITH_IT_RESULT_FILE"
+fi
 SH
 chmod +x "${SMOKE_BIN}/fake-agent"
 
@@ -828,7 +973,7 @@ set -e
 [[ "${wrong_path_status}" != "0" ]] || fail "wrong-path worker result must not complete"
 assert_file_contains "${WRONG_PATH_OUTPUT}" "reason=missing-result-artifact" "wrong report path does not count as worker result"
 assert_not_contains "$(cat "${WRONG_PATH_RESULT}" 2>/dev/null || true)" '"commands":["fake pass"]' "dispatcher does not trust wrong-path report as worker result"
-report_path_reason="$(python3 "${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py" failure-reason \
+report_path_reason="$(python3 "${SMOKE_ASSET_ROOT}/python/run-with-it-artifacts.py" failure-reason \
   --role modify \
   --issue 50 \
   --result-file "${WRONG_PATH_ISSUE_DIR}/report.json" \

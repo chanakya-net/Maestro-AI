@@ -7,6 +7,7 @@ SCRIPT_DIR="$(cd -- "${SCRIPT_PATH%/*}" && pwd -P)"
 
 ASSET_ROOT="${ASSETS_DEST:-}"
 STATE_FILE="$(pwd -P)/.run-with-it/main-state.json"
+HELPER_RUNTIME="${RUN_WITH_IT_HELPER_RUNTIME:-py}"
 PARALLEL_JOBS=""
 SUB_COORD_AGENT="${SUB_COORD_AGENT:-codex}"
 SUB_COORD_MODEL="${SUB_COORD_MODEL:-gpt-5.5}"
@@ -35,6 +36,49 @@ path_dirname() {
   else
     printf '%s\n' "${path%/*}"
   fi
+}
+
+normalize_helper_runtime() {
+  local runtime="${1:-py}"
+  local normalized_runtime
+
+  normalized_runtime="$(printf '%s' "$runtime" | tr '[:upper:]' '[:lower:]')"
+  case "${normalized_runtime}" in
+    py|python|python3) echo "py" ;;
+    cs|csharp) echo "cs" ;;
+    *) fail "unsupported helper runtime: ${runtime}" ;;
+  esac
+}
+
+resolve_asset_layout() {
+  local runtime="$1"
+  local root="$2"
+
+  PROMPTS_DIR="${root}/prompts"
+  SCRIPTS_DIR="${root}/scripts"
+  POWERSHELL_DIR="${root}/powershell"
+  PYTHON_HELPERS_DIR="${root}/python"
+  CSHARP_HELPERS_DIR="${root}/powershell"
+
+  if [ "$runtime" = "py" ]; then
+    if [ ! -d "$SCRIPTS_DIR" ] && [ -f "${root}/run-with-it-dispatch.sh" ]; then
+      SCRIPTS_DIR="$root"
+    fi
+    if [ ! -d "$POWERSHELL_DIR" ] && [ -f "${root}/run-with-it-dispatch.ps1" ]; then
+      POWERSHELL_DIR="$root"
+    fi
+    if [ -d "${root}/python" ]; then
+      PYTHON_HELPERS_DIR="${root}/python"
+    else
+      PYTHON_HELPERS_DIR="$root"
+    fi
+    return 0
+  fi
+
+  if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ]; then
+    fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
+  fi
+  return 0
 }
 
 usage() {
@@ -71,16 +115,21 @@ done
 if [ -z "$ASSET_ROOT" ]; then
   if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-with-it-dispatch.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
+  elif [ -f "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" ]; then
+    ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
     ASSET_ROOT="${SCRIPT_DIR%/*}"
   fi
 fi
 
-DISPATCHER="${ASSET_ROOT}/scripts/run-with-it-dispatch.sh"
-PROMPT_FILE="${ASSET_ROOT}/prompts/sub-coordinator-prompt.md"
-MERGE_RECOVERY_PROMPT_FILE="${ASSET_ROOT}/prompts/merge-recovery-prompt.md"
-STATE_HELPER="${ASSET_ROOT}/python/run-with-it-state.py"
-GITHUB_UPDATE_HELPER="${ASSET_ROOT}/python/run-with-it-github-update.py"
+HELPER_RUNTIME="$(normalize_helper_runtime "${HELPER_RUNTIME}")"
+resolve_asset_layout "$HELPER_RUNTIME" "$ASSET_ROOT"
+
+DISPATCHER="${SCRIPTS_DIR}/run-with-it-dispatch.sh"
+PROMPT_FILE="${PROMPTS_DIR}/sub-coordinator-prompt.md"
+MERGE_RECOVERY_PROMPT_FILE="${PROMPTS_DIR}/merge-recovery-prompt.md"
+STATE_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-state.py"
+GITHUB_UPDATE_HELPER="${PYTHON_HELPERS_DIR}/run-with-it-github-update.py"
 
 # State helper maps merge_failed reports to merge_recovery before terminal
 # GitHub updates are attempted.

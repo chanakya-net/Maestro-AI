@@ -1,5 +1,6 @@
 param(
     [string]$AssetRoot = $env:ASSETS_DEST,
+    [string]$HelperRuntime = $(if ($env:RUN_WITH_IT_HELPER_RUNTIME) { $env:RUN_WITH_IT_HELPER_RUNTIME } else { "py" }),
     [string]$StateFile = (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main-state.json"),
     [int]$ParallelJobs = 0,
     [string]$Agent = $(if ($env:SUB_COORD_AGENT) { $env:SUB_COORD_AGENT } else { "codex" }),
@@ -45,6 +46,59 @@ function Get-PythonExe {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if ($python) { return $python.Source }
     Fail "python helper runtime not found: python3"
+}
+
+function Normalize-HelperRuntime([string]$runtime) {
+    if ([string]::IsNullOrWhiteSpace($runtime)) { return "py" }
+    switch ($runtime.ToLowerInvariant()) {
+        "py" { return "py" }
+        "python" { return "py" }
+        "python3" { return "py" }
+        "cs" { return "cs" }
+        "csharp" { return "cs" }
+        default {
+            Fail "unsupported helper runtime: $runtime"
+        }
+    }
+}
+
+function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
+    $promptsDir = Join-Path $assetRoot "prompts"
+    $scriptsDir = Join-Path $assetRoot "scripts"
+    $powershellDir = Join-Path $assetRoot "powershell"
+    $pythonHelpersDir = Join-Path $assetRoot "python"
+    $csharpHelpersDir = Join-Path $assetRoot "powershell"
+
+    if ($helperRuntime -eq "py") {
+        if (-not (Test-Path $scriptsDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
+            $scriptsDir = $assetRoot
+        }
+        if (-not (Test-Path $powershellDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
+            $powershellDir = $assetRoot
+        }
+        if (-not (Test-Path $pythonHelpersDir)) {
+            $pythonHelpersDir = $assetRoot
+        }
+        return [PSCustomObject]@{
+            PromptsDir = $promptsDir
+            ScriptsDir = $scriptsDir
+            PowerShellDir = $powershellDir
+            PythonHelpersDir = $pythonHelpersDir
+            CSharpHelpersDir = $csharpHelpersDir
+        }
+    }
+
+    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir)) {
+        Fail "missing nested asset layout for helper runtime 'cs' at $assetRoot; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
+    }
+
+    return [PSCustomObject]@{
+        PromptsDir = $promptsDir
+        ScriptsDir = $scriptsDir
+        PowerShellDir = $powershellDir
+        PythonHelpersDir = $pythonHelpersDir
+        CSharpHelpersDir = $csharpHelpersDir
+    }
 }
 
 function Quote-ProcessArgument([string]$arg) {
@@ -98,11 +152,14 @@ if (-not $AssetRoot) {
     }
 }
 
-$Dispatcher = Join-Path $AssetRoot "powershell" "run-with-it-dispatch.ps1"
-$PromptFile = Join-Path $AssetRoot "prompts" "sub-coordinator-prompt.md"
-$MergeRecoveryPromptFile = Join-Path $AssetRoot "prompts" "merge-recovery-prompt.md"
-$StateHelper = Join-Path $AssetRoot "python" "run-with-it-state.py"
-$GitHubUpdateHelper = Join-Path $AssetRoot "python" "run-with-it-github-update.py"
+$HelperRuntime = Normalize-HelperRuntime $HelperRuntime
+$AssetLayout = Resolve-AssetLayout -assetRoot $AssetRoot -helperRuntime $HelperRuntime
+
+$Dispatcher = Join-Path $AssetLayout.PowerShellDir "run-with-it-dispatch.ps1"
+$PromptFile = Join-Path $AssetLayout.PromptsDir "sub-coordinator-prompt.md"
+$MergeRecoveryPromptFile = Join-Path $AssetLayout.PromptsDir "merge-recovery-prompt.md"
+$StateHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-state.py"
+$GitHubUpdateHelper = Join-Path $AssetLayout.PythonHelpersDir "run-with-it-github-update.py"
 
 if (-not (Test-Path $Dispatcher)) { Fail "dispatcher not found: $Dispatcher" }
 if (-not (Test-Path $PromptFile)) { Fail "sub-coordinator prompt not found: $PromptFile" }

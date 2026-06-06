@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+unset AGENT MODEL
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNNER_PATH="${ROOT_DIR}/assets/powershell/run-agent.ps1"
 PS_CMD="${PWSH:-}"
@@ -148,3 +150,23 @@ if [[ "$done_signal" == *"stale done file"* ]]; then
 fi
 
 echo "PASS: run-agent.ps1 status bus contract"
+
+# ── AC#5: run-agent.ps1 default prompt lookup from nested script directory ──────────
+NESTED_TEST_DIR="${WORK_DIR}/nested-prompt-lookup-test-ps1"
+mkdir -p "${NESTED_TEST_DIR}/powershell" "${NESTED_TEST_DIR}/prompts"
+cp "${RUNNER_PATH}" "${NESTED_TEST_DIR}/powershell/run-agent.ps1"
+cp "${CUSTOM_REGISTRY}" "${NESTED_TEST_DIR}/agent-registry.json"
+printf 'nested-default-prompt-content-ps1' > "${NESTED_TEST_DIR}/prompts/prompt.md"
+
+nested_dry_output="$(
+  cd "${NESTED_TEST_DIR}/powershell"
+  AGENT_REGISTRY_FILE="${NESTED_TEST_DIR}/agent-registry.json" \
+    AGENT=fake \
+    CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" \
+    UNATTENDED=1 \
+    "$PS_CMD" -NoProfile -File ./run-agent.ps1 --dry-run
+)"
+assert_contains "${nested_dry_output}" "nested-default-prompt-content-ps1" "run-agent.ps1 default prompt lookup works from nested script directory"
+
+echo "PASS: run-agent.ps1 default prompt lookup works from nested script directory"
+
