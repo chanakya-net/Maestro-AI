@@ -844,7 +844,7 @@ static JsonArray GetCommittedFiles(string repoRoot, string commitSha)
             var name = line.Trim();
             if (!string.IsNullOrWhiteSpace(name))
             {
-                files.Add(name);
+                files.Add((JsonNode?)JsonValue.Create(name));
             }
         }
 

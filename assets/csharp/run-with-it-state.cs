@@ -278,7 +278,7 @@ static int MarkInProgress(Dictionary<string, string> options)
     var next = new JsonArray();
     foreach (var value in active)
     {
-        next.Add(JsonValue.Create(value));
+        next.Add((JsonNode?)JsonValue.Create(value));
     }
 
     state["active_pool_issues"] = next;
@@ -314,7 +314,7 @@ static int FinalizeIssue(Dictionary<string, string> options)
             var value = AsString(item) ?? AsIntText(item);
             if (!string.IsNullOrWhiteSpace(value) && value != issue)
             {
-                next.Add(JsonValue.Create(value));
+                next.Add((JsonNode?)JsonValue.Create(value));
             }
         }
 
@@ -963,7 +963,7 @@ static JsonArray CompactModelUsage(JsonObject report)
         }
 
         var cycleVal = AsIntOrNullNode(usageRow["cycle"]);
-        rows.Add(new JsonObject
+        rows.Add((JsonNode)new JsonObject
         {
             ["role"] = AsString(usageRow["role"]) ?? "unknown",
             ["cycle"] = cycleVal.HasValue ? JsonValue.Create(cycleVal.Value) : null,
@@ -989,7 +989,7 @@ static void AppendSummary(JsonObject state, string status, JsonObject summary)
         list = GetArray(state, "completed_summaries");
     }
 
-    list.Add(summary);
+    list.Add((JsonNode)summary);
     if (!state.ContainsKey(status == "merge_recovery" ? "merge_recovery_summaries" : "completed_summaries"))
     {
         if (status == "merge_recovery")
@@ -1027,7 +1027,7 @@ static JsonObject CompactWorkerDecision(
         ["sub_state_file"] = subStateFile,
         ["phase"] = phase,
         ["worker_role"] = AsString(worker["role"]),
-        ["worker_cycle"] = worker["cycle"],
+        ["worker_cycle"] = worker["cycle"]?.DeepClone(),
         ["worker_state"] = AsString(workerState["state"]),
         ["worker_state_file"] = AsString(worker["state_file"]) ?? AsString(workerState["state_file"]),
         ["worker_done_file"] = AsString(worker["done_file"]) ?? AsString(workerState["done_file"]),
@@ -1299,7 +1299,7 @@ static class JsonArrayExtensions
             obj[key] = array;
         }
 
-        array.Add(JsonValue.Create(value));
+        array.Add((JsonNode?)JsonValue.Create(value));
     }
 
     public static JsonArray ToJsonArray(this IEnumerable<string> items)
@@ -1307,7 +1307,7 @@ static class JsonArrayExtensions
         var array = new JsonArray();
         foreach (var item in items)
         {
-            array.Add(JsonValue.Create(item));
+            array.Add((JsonNode?)JsonValue.Create(item));
         }
         return array;
     }

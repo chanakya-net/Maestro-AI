@@ -590,7 +590,7 @@ static JsonObject SelectPair(
     var evaluated = new JsonArray();
     foreach (var item in prepared.Take(8))
     {
-        evaluated.Add(new JsonObject
+        evaluated.Add((JsonNode)new JsonObject
         {
             ["agent"] = item.Pair.Agent,
             ["model"] = item.Pair.Model,
@@ -647,7 +647,7 @@ static void AppendDecision(JsonObject ledger, JsonObject selection)
         ledger["decisions"] = decisions;
     }
 
-    decisions.Add(new JsonObject
+    decisions.Add((JsonNode)new JsonObject
     {
         ["selected_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
         ["role"] = AsString(selection["role"]),
