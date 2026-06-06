@@ -14,7 +14,8 @@ class Program
 {
     static int Main(string[] args)
     {
-    var options = ParseArgs(args);
+        args = PreprocessArgs(args);
+        var options = ParseArgs(args);
     if (options is null)
     {
         PrintUsage();
@@ -392,9 +393,9 @@ static bool SynthesizeReview(ParsedArgs args)
             && ValidReviewStatus(canonical)
             && canonicalInstructionsError == null
             && canonicalInstructionsPayload is JsonObject canonicalInstructions
-            && canonicalInstructions["verdict"] == canonical["verdict"])
+            && AsString(canonicalInstructions["verdict"]) == AsString(canonical["verdict"]))
         {
-            var statusCopy = new JsonObject(canonical);
+            var statusCopy = canonical.DeepClone() as JsonObject ?? new JsonObject();
             if (!statusCopy.ContainsKey("source"))
             {
                 statusCopy["source"] = "dispatcher-copied-from-canonical-retry";
@@ -402,7 +403,7 @@ static bool SynthesizeReview(ParsedArgs args)
 
             WriteJsonAtomic(args.ResultFile, statusCopy);
 
-            var instructionsCopy = new JsonObject(canonicalInstructions);
+            var instructionsCopy = canonicalInstructions.DeepClone() as JsonObject ?? new JsonObject();
             instructionsCopy["source"] = "dispatcher-copied-from-canonical-retry";
             var instructionsFile = ReviewInstructionsFile(args.ResultFile);
             if (!string.IsNullOrWhiteSpace(instructionsFile))
@@ -471,7 +472,7 @@ static bool SynthesizeComplexity(ParsedArgs args)
         var (payload, error) = LoadJson(canonicalResult);
         if (error is null && payload is JsonObject complexity && ValidComplexityPayload(complexity))
         {
-            var copied = new JsonObject(complexity);
+            var copied = complexity.DeepClone() as JsonObject ?? new JsonObject();
             copied["source"] = "dispatcher-copied-from-canonical-retry";
             WriteJsonAtomic(args.ResultFile, copied);
             return ResultFailureReason(args) == string.Empty;
@@ -947,6 +948,26 @@ sealed class CommandError : Exception
     {
     }
 }
+
+    static string[] PreprocessArgs(string[] args)
+    {
+        var list = new List<string>();
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("--", StringComparison.Ordinal) && arg.Contains('='))
+            {
+                var idx = arg.IndexOf('=');
+                list.Add(arg.Substring(0, idx));
+                list.Add(arg.Substring(idx + 1));
+            }
+            else
+            {
+                list.Add(arg);
+            }
+        }
+        return list.ToArray();
+    }
+
 }
 
 static class JsonExtensions

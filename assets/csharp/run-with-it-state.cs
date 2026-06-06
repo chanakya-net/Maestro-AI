@@ -11,7 +11,8 @@ class Program
 {
     static int Main(string[] args)
     {
-    if (args.Length == 0)
+        args = PreprocessArgs(args);
+        if (args.Length == 0)
     {
         PrintUsage();
         return 2;
@@ -504,15 +505,25 @@ static int WriteSubCoordRecoveryContext(Dictionary<string, string> options)
     var registry = GetObject(state, "issue_registry");
 
     string originalContext = string.Empty;
-    if (registry.TryGetPropertyValue(issue, out var entryNode) && entryNode is JsonObject entry)
+    JsonObject? entry = null;
+    if (registry.TryGetPropertyValue(issue, out var entryNode) && entryNode is JsonObject e)
     {
+        entry = e;
         originalContext = AsString(entry["sub_coord_original_context_file"]) ??
-                         AsString(entry["context_file"]) ??
-                         AsString(entry["sub_coord_context_file"]) ??
-                         string.Empty;
+                          AsString(entry["context_file"]) ??
+                          AsString(entry["sub_coord_context_file"]) ??
+                          string.Empty;
     }
 
     var issueDir = GetIssueDir(state, issue);
+    if (string.IsNullOrWhiteSpace(issueDir) && entry != null)
+    {
+        var reportFile = AsString(entry["report_file"]);
+        if (!string.IsNullOrWhiteSpace(reportFile))
+        {
+            issueDir = Path.GetDirectoryName(reportFile) ?? string.Empty;
+        }
+    }
     var subStateFile = string.IsNullOrWhiteSpace(issueDir) ? string.Empty : Path.Combine(issueDir, "sub-state.json");
 
     var originalText = string.Empty;
@@ -611,18 +622,18 @@ static int WriteMergeRecoveryContext(Dictionary<string, string> options)
         {
             ["number"] = ParseInt(issue),
             ["title"] = AsString(entry["title"]) ?? string.Empty,
-            ["deps"] = entry["deps"] as JsonArray ?? new JsonArray(),
-            ["issue_branch"] = entry["issue_branch"],
-            ["worktree_path"] = entry["worktree_path"],
+            ["deps"] = entry["deps"]?.DeepClone() ?? new JsonArray(),
+            ["issue_branch"] = entry["issue_branch"]?.DeepClone(),
+            ["worktree_path"] = entry["worktree_path"]?.DeepClone(),
         },
-        ["run_branch"] = state["run_branch"] as JsonObject ?? new JsonObject(),
+        ["run_branch"] = state["run_branch"]?.DeepClone() ?? new JsonObject(),
         ["failed_merge_report_file"] = AsString(entry["failed_merge_report_file"]) ?? AsString(entry["report_file"]) ?? string.Empty,
         ["failed_merge_summary"] = new JsonObject
         {
-            ["blocking_reasons"] = entry["blocking_reasons"] ?? new JsonArray(),
-            ["dependency_proof"] = entry["dependency_proof"],
+            ["blocking_reasons"] = entry["blocking_reasons"]?.DeepClone() ?? new JsonArray(),
+            ["dependency_proof"] = entry["dependency_proof"]?.DeepClone(),
         },
-        ["completed_summaries"] = state["completed_summaries"] as JsonArray ?? new JsonArray(),
+        ["completed_summaries"] = state["completed_summaries"]?.DeepClone() ?? new JsonArray(),
     };
 
     Directory.CreateDirectory(Path.GetDirectoryName(contextFile) ?? ".");
@@ -950,7 +961,7 @@ static JsonArray CompactModelUsage(JsonObject report)
         rows.Add(new JsonObject
         {
             ["role"] = AsString(usageRow["role"]) ?? "unknown",
-            ["cycle"] = cycleVal.HasValue ? JsonValue.Create(cycleVal.Value) : JsonValue.Create("-"),
+            ["cycle"] = cycleVal.HasValue ? JsonValue.Create(cycleVal.Value) : null,
             ["agent"] = AsString(usageRow["agent"]) ?? "unknown",
             ["model"] = AsString(usageRow["model"]) ?? "unknown",
             ["selection_reason"] = AsString(usageRow["selection_reason"]) ?? AsString(usageRow["reason"]) ?? "unknown",
@@ -1241,6 +1252,25 @@ static bool AsBool(JsonNode? node)
 {
     return node is JsonValue value && value.GetValueKind() == JsonValueKind.True;
 }
+
+    static string[] PreprocessArgs(string[] args)
+    {
+        var list = new List<string>();
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("--", StringComparison.Ordinal) && arg.Contains('='))
+            {
+                var idx = arg.IndexOf('=');
+                list.Add(arg.Substring(0, idx));
+                list.Add(arg.Substring(idx + 1));
+            }
+            else
+            {
+                list.Add(arg);
+            }
+        }
+        return list.ToArray();
+    }
 
 }
 

@@ -17,6 +17,7 @@ class Program
 
     static int Main(string[] args)
     {
+        args = PreprocessArgs(args);
         var parsed = ParseArgs(args);
         if (parsed == null)
         {
@@ -122,7 +123,7 @@ class Program
 
     static string RenderTerminalComment(string reportFile, string fallbackOutcome)
     {
-        var report = LoadJson(reportFile);
+        var report = LoadReport(reportFile);
         var outcome = AsString(report["outcome"]) ?? fallbackOutcome ?? "blocked";
         var summary = AsString(report["summary"]) ?? "No summary provided.";
 
@@ -497,6 +498,43 @@ class Program
             return new ProcessResult { ExitCode = -1, Stdout = "", Stderr = ex.Message };
         }
     }
+
+    static JsonObject LoadReport(string path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path) || new FileInfo(path).Length == 0)
+        {
+            return new JsonObject();
+        }
+        try
+        {
+            var text = File.ReadAllText(path);
+            return JsonNode.Parse(text) as JsonObject ?? new JsonObject();
+        }
+        catch
+        {
+            return new JsonObject();
+        }
+    }
+
+    static string[] PreprocessArgs(string[] args)
+    {
+        var list = new List<string>();
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("--", StringComparison.Ordinal) && arg.Contains('='))
+            {
+                var idx = arg.IndexOf('=');
+                list.Add(arg.Substring(0, idx));
+                list.Add(arg.Substring(idx + 1));
+            }
+            else
+            {
+                list.Add(arg);
+            }
+        }
+        return list.ToArray();
+    }
+
 }
 
 class ParsedArgs

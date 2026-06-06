@@ -17,6 +17,7 @@ class Program
 
     static int Main(string[] args)
     {
+        args = PreprocessArgs(args);
         if (args.Length == 0)
         {
             PrintUsage();
@@ -432,4 +433,24 @@ class Program
     {
         Console.WriteLine("Usage: run-with-it-pr-body render --state-file <file>");
     }
+
+    static string[] PreprocessArgs(string[] args)
+    {
+        var list = new List<string>();
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("--", StringComparison.Ordinal) && arg.Contains('='))
+            {
+                var idx = arg.IndexOf('=');
+                list.Add(arg.Substring(0, idx));
+                list.Add(arg.Substring(idx + 1));
+            }
+            else
+            {
+                list.Add(arg);
+            }
+        }
+        return list.ToArray();
+    }
+
 }

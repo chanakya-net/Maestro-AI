@@ -387,4 +387,46 @@ dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-pr-body.cs" -- render \
 compare_text_files "${PR_PY_OUTPUT}" "${PR_CS_OUTPUT}" "pr-body render parity mismatch"
 echo "PASS: run-with-it-pr-body.cs render parity"
 
+# Argparse-compatible options check (using = syntax)
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- mark-in-progress \
+  --state-file="${STATE_CS}" \
+  --issue=136 \
+  --context-file="${COMMON_CONTEXT}" \
+  --issue-dir="${COMMON_ISSUE_DIR}" \
+  --pid=123 \
+  --log-file="${COMMON_LOG}" \
+  --done-file="${COMMON_DONE}" \
+  --report-file="${STATE_REPORT}" >/dev/null
+
+echo "PASS: run-with-it-state.cs argparse-compatible options"
+
+# Concurrency/lock check: pre-create the lock file and verify the helper blocks
+LOCK_FILE="${ROUTER_RECORD_CS_LEDGER}.lock"
+touch "${LOCK_FILE}"
+
+# Run the C# helper in the background with a recorded change
+# It should block waiting for the lock
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-router.cs" -- \
+  --registry-file "${ROOT_DIR}/assets/agent-registry.json" \
+  --ledger-file "${ROUTER_RECORD_CS_LEDGER}" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex,agy,github-copilot,claude \
+  --record > "${TMP_ROOT}/router-blocked-output.json" 2>&1 &
+BG_PID=$!
+
+# Wait briefly and verify the process is still running (blocked)
+sleep 1
+if ! kill -0 "${BG_PID}" 2>/dev/null; then
+  fail "C# router exited early instead of blocking on the lock"
+fi
+
+# Release the lock by deleting the lock file
+rm -f "${LOCK_FILE}"
+
+# Wait for the background process to finish
+wait "${BG_PID}"
+
+echo "PASS: run-with-it-router.cs exclusive lock blocking and release"
+
 echo "ALL C# SMOKE TESTS PASSED"

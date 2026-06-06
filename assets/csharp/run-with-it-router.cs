@@ -12,7 +12,8 @@ class Program
 {
     static int Main(string[] args)
     {
-    var parsed = ParseArguments(args);
+        args = PreprocessArgs(args);
+        var parsed = ParseArguments(args);
     if (parsed == null)
     {
         PrintUsage();
@@ -312,10 +313,12 @@ static void PrintUsage()
 sealed class DirectoryLock : IDisposable
 {
     private readonly string _lockPath;
+    private readonly FileStream? _fs;
 
-    private DirectoryLock(string lockPath)
+    private DirectoryLock(string lockPath, FileStream? fs)
     {
         _lockPath = lockPath;
+        _fs = fs;
     }
 
     public static DirectoryLock Enter(string ledgerPath)
@@ -324,14 +327,20 @@ sealed class DirectoryLock : IDisposable
         var start = Stopwatch.GetTimestamp();
         var timeoutTicks = Stopwatch.Frequency * 10;
 
+        var dir = Path.GetDirectoryName(lockPath);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
         while (true)
         {
             try
             {
-                Directory.CreateDirectory(lockPath);
-                return new DirectoryLock(lockPath);
+                var fs = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+                return new DirectoryLock(lockPath, fs);
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
                 if (Stopwatch.GetTimestamp() - start > timeoutTicks)
                 {
@@ -347,7 +356,21 @@ sealed class DirectoryLock : IDisposable
     {
         try
         {
-            Directory.Delete(_lockPath);
+            _fs?.Dispose();
+        }
+        catch
+        {
+        }
+        try
+        {
+            if (File.Exists(_lockPath))
+            {
+                File.Delete(_lockPath);
+            }
+            else if (Directory.Exists(_lockPath))
+            {
+                Directory.Delete(_lockPath);
+            }
         }
         catch
         {
@@ -1093,6 +1116,25 @@ static bool AsBool(JsonNode? node)
 {
     return node is JsonValue value && value.GetValueKind() == JsonValueKind.True;
 }
+
+    static string[] PreprocessArgs(string[] args)
+    {
+        var list = new List<string>();
+        foreach (var arg in args)
+        {
+            if (arg.StartsWith("--", StringComparison.Ordinal) && arg.Contains('='))
+            {
+                var idx = arg.IndexOf('=');
+                list.Add(arg.Substring(0, idx));
+                list.Add(arg.Substring(idx + 1));
+            }
+            else
+            {
+                list.Add(arg);
+            }
+        }
+        return list.ToArray();
+    }
 
 }
 
