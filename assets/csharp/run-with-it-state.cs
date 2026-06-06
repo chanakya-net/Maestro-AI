@@ -66,7 +66,7 @@ class Program
 
 static bool HasHelp(string[] args)
 {
-    return args.Length > 0 && (args[0] == "--help" || args[0] == "-h");
+    return args.Contains("--help", StringComparer.Ordinal) || args.Contains("-h", StringComparer.Ordinal);
 }
 
 static Dictionary<string, string> ParseNamedOptions(string[] args, out int exitCode)

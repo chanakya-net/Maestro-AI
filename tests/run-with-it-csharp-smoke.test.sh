@@ -213,6 +213,17 @@ dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- mark-in-progress 
 compare_json_projection "${STATE_PY}" "${STATE_CS}" "state_mark" "state mark-in-progress parity mismatch"
 echo "PASS: run-with-it-state.cs mark-in-progress parity"
 
+set +e
+python3 "${ROOT_DIR}/assets/python/run-with-it-state.py" mark-in-progress --help >/dev/null 2>&1
+STATE_SUBCOMMAND_HELP_PY_STATUS=$?
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- mark-in-progress --help >/dev/null 2>&1
+STATE_SUBCOMMAND_HELP_CS_STATUS=$?
+set -e
+
+assert_equals "${STATE_SUBCOMMAND_HELP_PY_STATUS}" "${STATE_SUBCOMMAND_HELP_CS_STATUS}" "run-with-it-state.cs mark-in-progress --help exit code parity"
+assert_equals "0" "${STATE_SUBCOMMAND_HELP_CS_STATUS}" "run-with-it-state.cs mark-in-progress --help exit code"
+echo "PASS: run-with-it-state.cs subcommand help parity"
+
 cat > "${STATE_REPORT}" <<'JSON'
 {
   "outcome": "completed",
@@ -301,6 +312,52 @@ dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-artifacts.cs" -- failure-reaso
 
 compare_text_files "${ARTIFACTS_PY_OUTPUT}" "${ARTIFACTS_CS_OUTPUT}" "artifacts failure-reason parity mismatch"
 echo "PASS: run-with-it-artifacts.cs failure-reason parity"
+
+INVALID_COMPLEXITY_RESULT="${TMP_ROOT}/complexity-invalid-result.json"
+INVALID_COMPLEXITY_PY_OUTPUT="${TMP_ROOT}/complexity-invalid-py.txt"
+INVALID_COMPLEXITY_CS_OUTPUT="${TMP_ROOT}/complexity-invalid-cs.txt"
+
+cat > "${INVALID_COMPLEXITY_RESULT}" <<'JSON'
+{
+  "total": 30,
+  "level": "3",
+  "scores": {
+    "dependency_complexity": 3,
+    "ownership_overlap_risk": 3,
+    "architecture_risk": 3,
+    "orchestration_burden": 3,
+    "verification_risk": 3,
+    "ambiguity_of_requirements": 3,
+    "integration_surface_breadth": 3,
+    "rollback_recovery_risk": 3,
+    "blast_radius": 3
+  },
+  "rationale": {
+    "dependency_complexity": "a",
+    "ownership_overlap_risk": "b",
+    "architecture_risk": "c",
+    "orchestration_burden": "d",
+    "verification_risk": "e",
+    "ambiguity_of_requirements": "f",
+    "integration_surface_breadth": "g",
+    "rollback_recovery_risk": "h",
+    "blast_radius": "i"
+  }
+}
+JSON
+
+python3 "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" failure-reason \
+  --role complexity \
+  --issue 136 \
+  --result-file "${INVALID_COMPLEXITY_RESULT}" > "${INVALID_COMPLEXITY_PY_OUTPUT}"
+
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-artifacts.cs" -- failure-reason \
+  --role complexity \
+  --issue 136 \
+  --result-file "${INVALID_COMPLEXITY_RESULT}" > "${INVALID_COMPLEXITY_CS_OUTPUT}"
+
+compare_text_files "${INVALID_COMPLEXITY_PY_OUTPUT}" "${INVALID_COMPLEXITY_CS_OUTPUT}" "artifacts invalid complexity parity mismatch"
+echo "PASS: run-with-it-artifacts.cs invalid complexity parity"
 
 GITHUB_REPORT="${TMP_ROOT}/github-report.json"
 cat > "${GITHUB_REPORT}" <<'JSON'

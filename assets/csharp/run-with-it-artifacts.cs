@@ -641,12 +641,9 @@ static bool ValidComplexityPayload(JsonObject payload)
         return false;
     }
 
-    if (!int.TryParse(AsString(payload["level"]), out _))
+    if (AsString(payload["level"]) is not string level || !ComplexityLevels.Contains(level))
     {
-        if (AsString(payload["level"]) is not string level || !ComplexityLevels.Contains(level))
-        {
-            return false;
-        }
+        return false;
     }
 
     if (payload["scores"] is not JsonObject scores || payload["rationale"] is not JsonObject rationale)
