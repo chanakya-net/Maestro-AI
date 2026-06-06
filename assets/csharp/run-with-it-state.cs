@@ -483,7 +483,7 @@ static int AnalyzeSubCoordFailure(Dictionary<string, string> options)
         issue,
         issueDir,
         subStateFile,
-        null,
+        phase,
         null,
         null,
         attempt,
@@ -683,6 +683,11 @@ static int FinalizeMergeRecovery(Dictionary<string, string> options)
     }
 
     var summary = MakeSummary(issue, status, reportFile, report);
+    if (status == "completed")
+    {
+        summary["commit_sha"] = CloneNode(report["merge_sha"]) ?? CloneNode(report["commit_sha"]);
+    }
+
     if (status == "completed")
     {
         AppendSummary(state, "completed", summary);

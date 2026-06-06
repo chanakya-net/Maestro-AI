@@ -82,6 +82,35 @@ def project(kind: str, payload):
             "ledger_rows": payload["ledger_rows"],
         }
 
+    if kind == "state_finalize_merge_recovery":
+        issue = payload["issue_registry"]["136"]
+        return {
+            "status": issue["status"],
+            "blocking_reasons": issue.get("blocking_reasons", []),
+            "commit_sha": issue.get("commit_sha"),
+            "completed_summaries": payload.get("completed_summaries", []),
+            "merge_recovery_summaries": payload.get("merge_recovery_summaries", []),
+            "ledger_rows": payload.get("ledger_rows", []),
+        }
+
+    if kind == "sub_coord_failure_decision":
+        return {
+            "action": payload["action"],
+            "reason": payload["reason"],
+            "issue": payload["issue"],
+            "issue_dir": payload["issue_dir"],
+            "sub_state_file": payload["sub_state_file"],
+            "phase": payload["phase"],
+            "worker_role": payload["worker_role"],
+            "worker_cycle": payload["worker_cycle"],
+            "worker_state": payload["worker_state"],
+            "worker_state_file": payload["worker_state_file"],
+            "worker_done_file": payload["worker_done_file"],
+            "worker_result_file": payload["worker_result_file"],
+            "recovery_attempt": payload["recovery_attempt"],
+            "max_recovery_attempts": payload["max_recovery_attempts"],
+        }
+
     if kind == "router_record_output":
         return {
             "agent": payload["agent"],
@@ -249,6 +278,96 @@ dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- finalize-issue \
 
 compare_json_projection "${STATE_PY}" "${STATE_CS}" "state_finalize" "state finalize-issue parity mismatch"
 echo "PASS: run-with-it-state.cs finalize-issue parity"
+
+MERGE_RECOVERY_STATE_PY="${TMP_ROOT}/merge-recovery-state-py.json"
+MERGE_RECOVERY_STATE_CS="${TMP_ROOT}/merge-recovery-state-cs.json"
+MERGE_RECOVERY_REPORT="${TMP_ROOT}/merge-recovery-report.json"
+
+cat > "${MERGE_RECOVERY_STATE_PY}" <<'JSON'
+{
+  "issue_registry": {
+    "136": {
+      "status": "merge_recovery",
+      "blocking_reasons": [
+        "merge recovery required"
+      ]
+    }
+  }
+}
+JSON
+cp "${MERGE_RECOVERY_STATE_PY}" "${MERGE_RECOVERY_STATE_CS}"
+
+cat > "${MERGE_RECOVERY_REPORT}" <<'JSON'
+{
+  "outcome": "completed",
+  "summary": "merge recovered",
+  "verification": {
+    "passed": true
+  },
+  "review_cycles": 1,
+  "merge_sha": "feedface"
+}
+JSON
+
+python3 "${ROOT_DIR}/assets/python/run-with-it-state.py" finalize-merge-recovery \
+  --state-file "${MERGE_RECOVERY_STATE_PY}" \
+  --issue 136 \
+  --report-file "${MERGE_RECOVERY_REPORT}" >/dev/null
+
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- finalize-merge-recovery \
+  --state-file "${MERGE_RECOVERY_STATE_CS}" \
+  --issue 136 \
+  --report-file "${MERGE_RECOVERY_REPORT}" >/dev/null
+
+compare_json_projection "${MERGE_RECOVERY_STATE_PY}" "${MERGE_RECOVERY_STATE_CS}" "state_finalize_merge_recovery" "state finalize-merge-recovery parity mismatch"
+echo "PASS: run-with-it-state.cs finalize-merge-recovery parity"
+
+SUB_COORD_ISSUE_DIR="${TMP_ROOT}/sub-coord-issue"
+mkdir -p "${SUB_COORD_ISSUE_DIR}"
+SUB_COORD_STATE_PY="${TMP_ROOT}/sub-coord-state-py.json"
+SUB_COORD_STATE_CS="${TMP_ROOT}/sub-coord-state-cs.json"
+SUB_COORD_REPORT="${TMP_ROOT}/sub-coord-report.json"
+SUB_COORD_PY_OUTPUT="${TMP_ROOT}/sub-coord-py-output.json"
+SUB_COORD_CS_OUTPUT="${TMP_ROOT}/sub-coord-cs-output.json"
+
+cat > "${SUB_COORD_STATE_PY}" <<JSON
+{
+  "issue_registry": {
+    "136": {
+      "status": "in_progress",
+      "issue_dir": "${SUB_COORD_ISSUE_DIR}",
+      "sub_coord_recovery_attempts": 0
+    }
+  }
+}
+JSON
+cp "${SUB_COORD_STATE_PY}" "${SUB_COORD_STATE_CS}"
+
+cat > "${SUB_COORD_ISSUE_DIR}/sub-state.json" <<'JSON'
+{
+  "phase": "review",
+  "in_flight_agents": []
+}
+JSON
+
+cat > "${SUB_COORD_REPORT}" <<'JSON'
+{
+  "outcome": "needs-recovery"
+}
+JSON
+
+python3 "${ROOT_DIR}/assets/python/run-with-it-state.py" analyze-sub-coord-failure \
+  --state-file "${SUB_COORD_STATE_PY}" \
+  --issue 136 \
+  --report-file "${SUB_COORD_REPORT}" > "${SUB_COORD_PY_OUTPUT}"
+
+dotnet run "${ROOT_DIR}/assets/csharp/run-with-it-state.cs" -- analyze-sub-coord-failure \
+  --state-file "${SUB_COORD_STATE_CS}" \
+  --issue 136 \
+  --report-file "${SUB_COORD_REPORT}" > "${SUB_COORD_CS_OUTPUT}"
+
+compare_json_projection "${SUB_COORD_PY_OUTPUT}" "${SUB_COORD_CS_OUTPUT}" "sub_coord_failure_decision" "analyze-sub-coord-failure fallback parity mismatch"
+echo "PASS: run-with-it-state.cs analyze-sub-coord-failure parity"
 
 ROUTER_RECORD_PY_LEDGER="${TMP_ROOT}/router-record-py.json"
 ROUTER_RECORD_CS_LEDGER="${TMP_ROOT}/router-record-cs.json"
