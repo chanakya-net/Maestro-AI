@@ -1,0 +1,28 @@
+{
+  "schema_version": 4,
+  "execution_plan": {
+    "parallel_jobs": 2,
+    "topo_order": [1, 2, 3]
+  },
+  "issue_registry": {
+    "1": {
+      "status": "completed",
+      "deps": [],
+      "context_file": "contexts/sub-1.md"
+    },
+    "2": {
+      "status": "pending",
+      "deps": [1],
+      "context_file": "contexts/sub-2.md"
+    },
+    "3": {
+      "status": "pending",
+      "deps": [2],
+      "context_file": "contexts/sub-3.md"
+    }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [],
+  "merge_recovery_summaries": [],
+  "ledger_rows": []
+}

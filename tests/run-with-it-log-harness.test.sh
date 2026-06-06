@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNNER_PATH="${ROOT_DIR}/assets/run-agent.sh"
+RUNNER_PATH="${ROOT_DIR}/assets/scripts/run-agent.sh"
 ASSET_ROOT="${ROOT_DIR}/assets"
 
 fail() {
@@ -204,7 +204,7 @@ wait_for_done_and_artifact() {
   local started_at
   started_at="$(date +%s)"
   while kill -0 "${pid}" 2>/dev/null; do
-    watcher_output="$("${ASSET_ROOT}/worker-watch.sh" --pid "${pid}" --done-file "${done_file}" --log-file "${log_file}" --tail-state-file "${tail_state_file}" --tail-lines 5)"
+    watcher_output="$("${ASSET_ROOT}/scripts/worker-watch.sh" --pid "${pid}" --done-file "${done_file}" --log-file "${log_file}" --tail-state-file "${tail_state_file}" --tail-lines 5)"
     if [[ "${watcher_output}" == *"log_tail_changed=true"* ]]; then
       write_status "STATUS|type=worker-log-tail|issue=${issue}|role=${role}|phase=${phase}|summary=changed-log-tail"
     fi
@@ -267,26 +267,26 @@ spawn_worker() {
 write_state "starting" "[]"
 write_status "STATUS|type=sub-start|issue=${issue}"
 
-spawn_worker complexity fake-complexity "${ASSET_ROOT}/complexity-prompt.md" 1
+spawn_worker complexity fake-complexity "${ASSET_ROOT}/prompts/complexity-prompt.md" 1
 complexity_pid="${spawned_pid}"
 wait_for_done_and_artifact "${complexity_pid}" complexity scoring "${RUN_WITH_IT_ISSUE_DIR}/workers/complexity/cycle-1.done" "grep -Fq 'COMPLEXITY|score=12' '${RUN_WITH_IT_ISSUE_DIR}/workers/complexity/cycle-1.log'" "${RUN_WITH_IT_ISSUE_DIR}/workers/complexity/cycle-1.log"
 
-spawn_worker impl fake-impl "${ASSET_ROOT}/prompt.md" 1
+spawn_worker impl fake-impl "${ASSET_ROOT}/prompts/prompt.md" 1
 impl_pid="${spawned_pid}"
 wait_for_done_and_artifact "${impl_pid}" impl implementing "${RUN_WITH_IT_ISSUE_DIR}/workers/impl/cycle-1.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/impl/cycle-1-result.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/impl/cycle-1.log"
 if [[ ! -f "${IMPL_CLEANUP_MARKER}" ]]; then
   printf 'started_review_before_impl_cleanup=yes\n' > "${TRANSITION_PROOF}"
 fi
 
-spawn_worker review fake-review "${ASSET_ROOT}/review-prompt.md" 1
+spawn_worker review fake-review "${ASSET_ROOT}/prompts/review-prompt.md" 1
 review1_pid="${spawned_pid}"
 wait_for_done_and_artifact "${review1_pid}" review review "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1-status.json' && valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1-instructions.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-1.log"
 
-spawn_worker modify fake-modify "${ASSET_ROOT}/modifier-prompt.md" 1
+spawn_worker modify fake-modify "${ASSET_ROOT}/prompts/modifier-prompt.md" 1
 modify_pid="${spawned_pid}"
 wait_for_done_and_artifact "${modify_pid}" modify implementing "${RUN_WITH_IT_ISSUE_DIR}/workers/modify/cycle-1.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/modify/cycle-1-result.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/modify/cycle-1.log"
 
-spawn_worker review fake-review "${ASSET_ROOT}/review-prompt.md" 2
+spawn_worker review fake-review "${ASSET_ROOT}/prompts/review-prompt.md" 2
 review2_pid="${spawned_pid}"
 wait_for_done_and_artifact "${review2_pid}" review review "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2.done" "valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2-status.json' && valid_json '${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2-instructions.json'" "${RUN_WITH_IT_ISSUE_DIR}/workers/review/cycle-2.log"
 
@@ -399,7 +399,7 @@ PATH="${FAKE_BIN}:${PATH}" \
     --agent fake-sub \
     --model fake-model \
     --context-file "${SUB_CONTEXT_FILE}" \
-    --prompt-file "${ASSET_ROOT}/sub-coordinator-prompt.md" \
+    --prompt-file "${ASSET_ROOT}/prompts/sub-coordinator-prompt.md" \
     --unattended
 printf 'STATUS|type=sub-coord-complete|issue=101|outcome=completed|report_file=%s\n' "${SUB_REPORT_FILE}" >> "${MAIN_LOG}"
 

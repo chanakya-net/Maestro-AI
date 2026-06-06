@@ -2,8 +2,10 @@
 
 set -euo pipefail
 
+unset RUN_WITH_IT_DETACHED_CHILD
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POOL="${ROOT_DIR}/assets/run-with-it-pool.ps1"
+POOL="${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1"
 PS_CMD="${PWSH:-}"
 if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
@@ -24,6 +26,13 @@ assert_file_contains() {
   local needle="$2"
   local message="$3"
   grep -Fq -- "$needle" "$file" || fail "$message (missing: $needle in $file)"
+}
+
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "${haystack}" == *"${needle}"* ]] || fail "${message} (missing: ${needle})"
 }
 
 assert_json_file() {
@@ -51,18 +60,22 @@ trap cleanup EXIT
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
 SMOKE_PROJECT="${WORK_DIR}/project"
 SMOKE_REPO_ROOT="${WORK_DIR}/repo-root"
-mkdir -p "$SMOKE_ASSET_ROOT" "$SMOKE_PROJECT/.run-with-it/contexts" "$SMOKE_REPO_ROOT"
+mkdir -p "$SMOKE_ASSET_ROOT"/{powershell,python,prompts} "$SMOKE_PROJECT/.run-with-it/contexts" "$SMOKE_REPO_ROOT"
 cp \
-  "${ROOT_DIR}/assets/run-agent.ps1" \
-  "${ROOT_DIR}/assets/run-with-it-dispatch.ps1" \
-  "${ROOT_DIR}/assets/run-with-it-pool.ps1" \
-  "${ROOT_DIR}/assets/run-with-it-state.py" \
-  "${ROOT_DIR}/assets/run-with-it-github-update.py" \
-  "${ROOT_DIR}/assets/run-with-it-artifacts.py" \
-  "${ROOT_DIR}/assets/worker-watch.ps1" \
-  "${ROOT_DIR}/assets/sub-coordinator-prompt.md" \
-  "${ROOT_DIR}/assets/merge-recovery-prompt.md" \
-  "$SMOKE_ASSET_ROOT/"
+  "${ROOT_DIR}/assets/powershell/run-agent.ps1" \
+  "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" \
+  "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" \
+  "${ROOT_DIR}/assets/powershell/worker-watch.ps1" \
+  "$SMOKE_ASSET_ROOT/powershell/"
+cp \
+  "${ROOT_DIR}/assets/python/run-with-it-state.py" \
+  "${ROOT_DIR}/assets/python/run-with-it-github-update.py" \
+  "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" \
+  "$SMOKE_ASSET_ROOT/python/"
+cp \
+  "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" \
+  "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" \
+  "$SMOKE_ASSET_ROOT/prompts/"
 
 FAKE_AGENT="${WORK_DIR}/fake-sub-coordinator.ps1"
 cat > "$FAKE_AGENT" <<'PS1'
@@ -184,5 +197,223 @@ assert len(state["completed_summaries"]) == 2
 assert any("task=101|outcome=completed" in row for row in state["ledger_rows"])
 assert any("task=102|outcome=completed" in row for row in state["ledger_rows"])
 PY
+
+FLAT_ASSET_ROOT="${WORK_DIR}/flat-assets"
+mkdir -p "${FLAT_ASSET_ROOT}/prompts" "${FLAT_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1"
+cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${FLAT_ASSET_ROOT}/worker-watch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1"
+cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${FLAT_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${FLAT_ASSET_ROOT}/python/"
+chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1" "${FLAT_ASSET_ROOT}/worker-watch.ps1"
+
+flat_pool_output="$("$PS_CMD" -NoProfile -File "$POOL" \
+  -AssetRoot "$FLAT_ASSET_ROOT" \
+  -StateFile "$STATE_FILE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -MainLog "$MAIN_LOG" \
+  -PollSeconds 1 \
+  -ValidateOnly \
+  2>&1)"
+flat_pool_status="$?"
+assert_contains "${flat_pool_output}" "STATUS|type=pool-ready" "flat python layout still runs with legacy helper root"
+
+set +e
+cs_pool_output="$("$PS_CMD" -NoProfile -File "$POOL" \
+  -AssetRoot "$FLAT_ASSET_ROOT" \
+  -StateFile "$STATE_FILE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -MainLog "$MAIN_LOG" \
+  -PollSeconds 1 \
+  -ValidateOnly \
+  -HelperRuntime cs \
+  2>&1)"
+cs_pool_status="$?"
+set -e
+
+[[ "$cs_pool_status" != "0" ]] || fail "flat C# layout must fail when cs helper runtime is requested"
+assert_contains "${cs_pool_output}" "missing nested asset layout for helper runtime 'cs'" "flat C# layout emits nested layout failure"
+
+RUNTIME_POOL_PS1_BIN="${WORK_DIR}/pool-ps1-runtime-bins"
+mkdir -p "${RUNTIME_POOL_PS1_BIN}"
+RUNTIME_POOL_PS1_PY_CALLS="${RUNTIME_POOL_PS1_BIN}/python.calls.log"
+RUNTIME_POOL_PS1_DOTNET_CALLS="${RUNTIME_POOL_PS1_BIN}/dotnet.calls.log"
+export RUNTIME_POOL_PS1_PY_CALLS
+export RUNTIME_POOL_PS1_DOTNET_CALLS
+
+cat > "${RUNTIME_POOL_PS1_BIN}/fake-python.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$RUNTIME_POOL_PS1_PY_CALLS"
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$@"
+elif command -v python >/dev/null 2>&1; then
+  python "$@"
+else
+  printf '%s\n' "python not found" >&2
+  exit 1
+fi
+SH
+cat > "${RUNTIME_POOL_PS1_BIN}/fake-dotnet.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$RUNTIME_POOL_PS1_DOTNET_CALLS"
+helper="${1:-}"
+command="${2:-}"
+if [[ "$helper" == *"run-with-it-state.cs" ]]; then
+  if [[ "$command" == "ready-issues" ]]; then
+    echo "701 702"
+    exit 0
+  fi
+  if [[ "$command" == "parallel-jobs" ]]; then
+    echo "2"
+    exit 0
+  fi
+fi
+echo ""
+exit 0
+SH
+chmod +x "${RUNTIME_POOL_PS1_BIN}/fake-python.sh" "${RUNTIME_POOL_PS1_BIN}/fake-dotnet.sh"
+
+RUNTIME_POOL_PS1_ASSET_ROOT="${WORK_DIR}/runtime-pool-ps1-assets"
+mkdir -p "${RUNTIME_POOL_PS1_ASSET_ROOT}/prompts" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python" "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell" "${RUNTIME_POOL_PS1_ASSET_ROOT}/scripts" "${RUNTIME_POOL_PS1_ASSET_ROOT}/csharp"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/scripts/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell/run-with-it-dispatch.ps1"
+cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/worker-watch.ps1"
+cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-agent.ps1"
+cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${RUNTIME_POOL_PS1_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${RUNTIME_POOL_PS1_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python/"
+cat > "${RUNTIME_POOL_PS1_ASSET_ROOT}/csharp/run-with-it-state.cs" <<'CS'
+Write-Output "run-with-it-state.cs"
+CS
+cat > "${RUNTIME_POOL_PS1_ASSET_ROOT}/csharp/run-with-it-github-update.cs" <<'CS'
+Write-Output "run-with-it-github-update.cs"
+CS
+chmod +x "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+  "${RUNTIME_POOL_PS1_ASSET_ROOT}/scripts/run-with-it-dispatch.ps1" \
+  "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell/run-with-it-dispatch.ps1" \
+  "${RUNTIME_POOL_PS1_ASSET_ROOT}/worker-watch.ps1" \
+  "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-agent.ps1"
+
+RUNTIME_POOL_PS1_STATE="${WORK_DIR}/runtime-pool-ps1-state.json"
+cat > "$RUNTIME_POOL_PS1_STATE" <<JSON
+{
+  "schema_version": 1,
+  "execution_plan": {
+    "parallel_jobs": 2,
+    "topo_order": [701, 702]
+  },
+  "issue_registry": {
+    "701": {
+      "status": "pending",
+      "deps": [],
+      "context_file": "${WORK_DIR}/runtime-pool-ps1-context-701.md"
+    },
+    "702": {
+      "status": "pending",
+      "deps": [],
+      "context_file": "${WORK_DIR}/runtime-pool-ps1-context-702.md"
+    }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [],
+  "ledger_rows": []
+}
+JSON
+printf 'runtime pool ps1 context\\n' > "${WORK_DIR}/runtime-pool-ps1-context-701.md"
+printf 'runtime pool ps1 context\\n' > "${WORK_DIR}/runtime-pool-ps1-context-702.md"
+
+for runtime in py python; do
+  >"${RUNTIME_POOL_PS1_PY_CALLS}"
+  PYTHON_BIN="${RUNTIME_POOL_PS1_BIN}/fake-python.sh" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+    -AssetRoot "$RUNTIME_POOL_PS1_ASSET_ROOT" \
+    -StateFile "$RUNTIME_POOL_PS1_STATE" \
+    -ParallelJobs 2 \
+    -Agent fake \
+    -Model fake-model \
+    -HelperRuntime "$runtime" \
+    -ValidateOnly \
+    -StatusFile "${WORK_DIR}/runtime-pool-ps1-${runtime}-status.txt" \
+    -EventsLog "${WORK_DIR}/runtime-pool-ps1-${runtime}-events.txt" \
+    -MainLog "${WORK_DIR}/runtime-pool-ps1-${runtime}-main.log"
+  assert_contains "$(cat "${RUNTIME_POOL_PS1_PY_CALLS}")" "run-with-it-state.py" "helper runtime ${runtime} routes pool helper via PYTHON_BIN"
+done
+
+> "${RUNTIME_POOL_PS1_PY_CALLS}"
+PYTHON_BIN="${RUNTIME_POOL_PS1_BIN}/fake-python.sh" \
+"$PS_CMD" -NoProfile -File "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+  -AssetRoot "$RUNTIME_POOL_PS1_ASSET_ROOT" \
+  -StateFile "$RUNTIME_POOL_PS1_STATE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -ValidateOnly \
+  -StatusFile "${WORK_DIR}/runtime-pool-ps1-default-status.txt" \
+  -EventsLog "${WORK_DIR}/runtime-pool-ps1-default-events.txt" \
+  -MainLog "${WORK_DIR}/runtime-pool-ps1-default-main.log"
+assert_contains "$(cat "${RUNTIME_POOL_PS1_PY_CALLS}")" "run-with-it-state.py" "default runtime resolves Python helper path"
+
+set +e
+invalid_pool_runtime_output="$(mktemp -d)/pool-runtime-invalid.log"
+PYTHON_BIN="${RUNTIME_POOL_PS1_BIN}/fake-python.sh" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+  -AssetRoot "$RUNTIME_POOL_PS1_ASSET_ROOT" \
+  -StateFile "$RUNTIME_POOL_PS1_STATE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -HelperRuntime invalid-runtime \
+  -ValidateOnly \
+  -StatusFile "${WORK_DIR}/runtime-pool-ps1-invalid-status.txt" \
+  -EventsLog "${WORK_DIR}/runtime-pool-ps1-invalid-events.txt" \
+  -MainLog "${WORK_DIR}/runtime-pool-ps1-invalid-main.log" >"${invalid_pool_runtime_output}" 2>&1
+invalid_pool_runtime_status=$?
+set -e
+[[ "${invalid_pool_runtime_status}" != "0" ]] || fail "invalid helper runtime fails immediately in PowerShell pool"
+assert_contains "$(cat "${invalid_pool_runtime_output}")" "unsupported helper runtime: invalid-runtime" "invalid PowerShell pool runtime is rejected"
+
+for runtime in cs csharp c#; do
+  >"${RUNTIME_POOL_PS1_DOTNET_CALLS}"
+  DOTNET_BIN="${RUNTIME_POOL_PS1_BIN}/fake-dotnet.sh" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+    -AssetRoot "$RUNTIME_POOL_PS1_ASSET_ROOT" \
+    -StateFile "$RUNTIME_POOL_PS1_STATE" \
+    -ParallelJobs 2 \
+    -Agent fake \
+    -Model fake-model \
+    -HelperRuntime "$runtime" \
+    -ValidateOnly \
+    -StatusFile "${WORK_DIR}/runtime-pool-ps1-${runtime}-cs-status.txt" \
+    -EventsLog "${WORK_DIR}/runtime-pool-ps1-${runtime}-cs-events.txt" \
+    -MainLog "${WORK_DIR}/runtime-pool-ps1-${runtime}-cs-main.log"
+  assert_contains "$(cat "${RUNTIME_POOL_PS1_DOTNET_CALLS}")" "run-with-it-state.cs" "helper runtime ${runtime} routes pool helper via DOTNET_BIN"
+done
+
+# Verify helper runtime propagates to spawned dispatchers in dry-run mode
+dry_run_pool_output="$(DOTNET_BIN="${RUNTIME_POOL_PS1_BIN}/fake-dotnet.sh" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+  -AssetRoot "$RUNTIME_POOL_PS1_ASSET_ROOT" \
+  -StateFile "$RUNTIME_POOL_PS1_STATE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -HelperRuntime cs \
+  -DryRun)"
+assert_contains "${dry_run_pool_output}" "-HelperRuntime cs" "helper runtime propagates to spawned dispatchers in pool dry-run"
 
 echo "PASS: run-with-it-pool.ps1 contract"

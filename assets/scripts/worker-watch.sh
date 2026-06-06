@@ -2,6 +2,18 @@
 
 set -euo pipefail
 
+path_dirname() {
+  local path="${1:-}"
+
+  if [[ -z "${path}" || "${path}" != *"/"* ]]; then
+    printf '.\n'
+  elif [[ "${path}" == "/"* && "${path%/*}" == "" ]]; then
+    printf '/\n'
+  else
+    printf '%s\n' "${path%/*}"
+  fi
+}
+
 PID=""
 DONE_FILE=""
 LOG_FILE=""
@@ -73,7 +85,7 @@ if [[ -n "${LOG_FILE}" && -s "${LOG_FILE}" ]]; then
   if [[ "${tail_hash}" != "${previous_hash}" ]]; then
     log_tail_changed="true"
     if [[ -n "${TAIL_STATE_FILE}" ]]; then
-      mkdir -p "$(dirname "${TAIL_STATE_FILE}")"
+      mkdir -p "$(path_dirname "${TAIL_STATE_FILE}")"
       printf '%s\n' "${tail_hash}" > "${TAIL_STATE_FILE}"
     fi
   fi

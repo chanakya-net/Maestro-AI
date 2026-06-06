@@ -24,11 +24,11 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## Spawning Rules
 
-- Always spawn sub-coordinators via the platform dispatcher (`run-with-it-dispatch.sh --role sub-coord` on Bash, `run-with-it-dispatch.ps1 -Role sub-coord` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1` with `sub-coordinator-prompt.md`.
-- Always run the rolling pool via the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`). Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
+- Always spawn sub-coordinators via the platform dispatcher (`scripts/run-with-it-dispatch.sh --role sub-coord` on Bash, `powershell/run-with-it-dispatch.ps1 -Role sub-coord` on native PowerShell), which wraps `scripts/run-agent.sh` / `powershell/run-agent.ps1` with `prompts/sub-coordinator-prompt.md`.
+- Always run the rolling pool via the platform pool runner (`scripts/run-with-it-pool.sh` / `powershell/run-with-it-pool.ps1`). Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
 - Always inject `MAX_AGENT_DEPTH=1` into every sub-coordinator context file.
-- Pass status, event, log, done, state, and result paths to the platform dispatcher; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh` / `run-agent.ps1`.
+- Pass status, event, log, done, state, and result paths to the platform dispatcher; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `scripts/run-agent.sh` / `powershell/run-agent.ps1`.
 - Always pass `--issue-dir .run-with-it/issues/<n>`, `--log-file .run-with-it/issues/<n>/sub-coordinator.log`, `--done-file .run-with-it/issues/<n>/sub-coordinator.done`, and `--result-file .run-with-it/issues/<n>/report.json`.
 - Always run the platform pool runner as the single rolling-pool supervisor. The pool runner spawns each dispatch process in the background, captures its dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` to `main-state.json` before monitoring.
 - The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
@@ -41,7 +41,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
 - While a sub-coordinator runs, poll `current.txt` from the shell and print only changed status lines.
 - Do not tail raw sub-coordinator logs. The status bus is the terminal-visible progress channel; compact report JSON is the AI-visible outcome channel.
-- In the monitor loop, run the platform worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
+- In the monitor loop, run the platform worker watcher (`scripts/worker-watch.sh` / `powershell/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 
@@ -49,7 +49,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 - GitHub operations (close issues, post terminal comments) are the Main Orchestrator control plane's SOLE responsibility. The pool runner may perform per-issue terminal GitHub updates on the Main Orchestrator's behalf immediately after it finalizes a compact report.
 - Sub-coordinators never touch GitHub under any circumstances.
-- Main Orchestrator may create the final PR from `Maestro/<funny-action-animal>` to the original base branch after all issues are terminal. Shared run branches must use the `Maestro/` prefix plus a lowercase two-word funny action/trait animal slug such as `cunning-fox`, `unfaithful-lion`, `scheming-otter`, or `tapdancing-badger`; do not use raw UUID branches. Before `gh pr create`, render the body with `$ASSET_ROOT/run-with-it-pr-body.py render --state-file .run-with-it/main-state.json > .run-with-it/final-pr-body.md` and pass that file via `gh pr create --body-file .run-with-it/final-pr-body.md`. The rendered body must list closed issues as plain links like `#123` and must not use auto-closing keywords. Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
+- Main Orchestrator may create the final PR from `Maestro/<funny-action-animal>` to the original base branch after all issues are terminal. Shared run branches must use the `Maestro/` prefix plus a lowercase two-word funny action/trait animal slug such as `cunning-fox`, `unfaithful-lion`, `scheming-otter`, or `tapdancing-badger`; do not use raw UUID branches. Before `gh pr create`, render the body with `$ASSET_ROOT/python/run-with-it-pr-body.py render --state-file .run-with-it/main-state.json > .run-with-it/final-pr-body.md` and pass that file via `gh pr create --body-file .run-with-it/final-pr-body.md`. The rendered body must list closed issues as plain links like `#123` and must not use auto-closing keywords. Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
 - Main Orchestrator must never merge issue branches; normal merges belong to Sub-Coordinators and failed merges belong to the Merge Recovery Coordinator.
 - Post the terminal comment and close (or leave open) the issue immediately AFTER reading the sub-coordinator's terminal report. Do not wait for unrelated issues or `pool-empty`.
 - For terminal reports, comment with the report summary, verification, token usage, review notes, and blocking reasons. Close only `completed` issues; comment but leave `blocked`, `failed-review`, and `failed-merge` issues open.

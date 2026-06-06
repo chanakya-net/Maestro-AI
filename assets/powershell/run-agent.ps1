@@ -34,6 +34,7 @@ if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph 
     Push-Location $REPO_ROOT
     try { & codegraph unlock 2>$null } catch {} finally { Pop-Location }
 }
+$AssetRoot         = Split-Path $SCRIPT_DIR -Parent
 $AGENT             = $env:AGENT
 $MODEL             = $env:MODEL
 $CONTEXT_FILE      = $env:CONTEXT_PAYLOAD_FILE
@@ -41,7 +42,7 @@ $PROMPT_FILE_VAL   = $env:PROMPT_FILE
 $PRINT_PROMPT      = if ($env:PRINT_PROMPT) { $env:PRINT_PROMPT } else { "0" }
 $AGENT_PERM_MODE   = $env:AGENT_PERMISSION_MODE
 $AGENT_EXTRA_ARGS  = $env:AGENT_EXTRA_ARGS
-$REGISTRY_FILE     = if ($env:AGENT_REGISTRY_FILE) { $env:AGENT_REGISTRY_FILE } else { Join-Path $SCRIPT_DIR "agent-registry.json" }
+$REGISTRY_FILE     = if ($env:AGENT_REGISTRY_FILE) { $env:AGENT_REGISTRY_FILE } else { Join-Path $AssetRoot "agent-registry.json" }
 $UNATTENDED        = $env:UNATTENDED -eq "1"
 $GUI_MODE          = if ($env:GUI_MODE) { $env:GUI_MODE } else { "auto" }
 $RUN_STATUS_FILE   = $env:RUN_WITH_IT_STATUS_FILE
@@ -57,7 +58,7 @@ $LIST_AGENTS       = $false
 $DETECTED_ONLY     = $false
 $LIST_MODELS_AGENT = ""
 
-$DEFAULT_PROMPT_FILE = Join-Path $SCRIPT_DIR "prompt.md"
+$DEFAULT_PROMPT_FILE = Join-Path $AssetRoot "prompts" "prompt.md"
 if (-not $PROMPT_FILE_VAL) { $PROMPT_FILE_VAL = $DEFAULT_PROMPT_FILE }
 
 # ── Arg parsing ───────────────────────────────────────────────────────────────

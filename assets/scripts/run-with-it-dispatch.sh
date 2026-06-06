@@ -23,6 +23,7 @@ ISSUE_DIR=""
 STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-}"
 EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}"
 TAIL_STATE_FILE=""
+HELPER_RUNTIME="${RUN_WITH_IT_HELPER_RUNTIME:-py}"
 POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
 QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
 STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-300}"
@@ -38,6 +39,102 @@ DISPATCH_OUT_FILE=""
 fail() {
   echo "run-with-it-dispatch.sh: $1" >&2
   exit 2
+}
+
+path_dirname() {
+  local path="${1:-}"
+
+  if [[ -z "${path}" || "${path}" != *"/"* ]]; then
+    printf '.\n'
+  elif [[ "${path}" == "/"* && "${path%/*}" == "" ]]; then
+    printf '/\n'
+  else
+    printf '%s\n' "${path%/*}"
+  fi
+}
+
+normalize_helper_runtime() {
+  local runtime="${1:-py}"
+  local normalized_runtime
+
+  normalized_runtime="$(printf '%s' "$runtime" | tr '[:upper:]' '[:lower:]')"
+  case "${normalized_runtime}" in
+    py|python|python3) echo "py" ;;
+    cs|csharp|c#) echo "cs" ;;
+    *) fail "unsupported helper runtime: ${runtime}" ;;
+  esac
+}
+
+resolve_asset_layout() {
+  local runtime="$1"
+  local root="$2"
+
+  PROMPTS_DIR="${root}/prompts"
+  SCRIPTS_DIR="${root}/scripts"
+  POWERSHELL_DIR="${root}/powershell"
+  PYTHON_HELPERS_DIR="${root}/python"
+  CSHARP_HELPERS_DIR="${root}/csharp"
+
+  if [ "$runtime" = "py" ]; then
+    if [ ! -d "$SCRIPTS_DIR" ] && [ -f "${root}/run-with-it-dispatch.sh" ]; then
+      SCRIPTS_DIR="$root"
+    fi
+    if [ ! -d "$POWERSHELL_DIR" ] && [ -f "${root}/run-with-it-dispatch.ps1" ]; then
+      POWERSHELL_DIR="$root"
+    fi
+    if [ -d "${root}/python" ]; then
+      PYTHON_HELPERS_DIR="${root}/python"
+    else
+      PYTHON_HELPERS_DIR="$root"
+    fi
+    if [ -d "${root}/csharp" ]; then
+      CSHARP_HELPERS_DIR="${root}/csharp"
+    else
+      CSHARP_HELPERS_DIR="$root"
+    fi
+    REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
+    if [ -f "${root}/agent-registry.json" ] && [ ! -f "$REGISTRY_FILE" ]; then
+      REGISTRY_FILE="${root}/agent-registry.json"
+    fi
+    return 0
+  fi
+
+  if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ] || [ ! -d "$CSHARP_HELPERS_DIR" ]; then
+    fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
+  fi
+  REGISTRY_FILE="${CSHARP_HELPERS_DIR}/agent-registry.json"
+  if [ -f "${root}/agent-registry.json" ] && [ ! -f "$REGISTRY_FILE" ]; then
+    REGISTRY_FILE="${root}/agent-registry.json"
+  fi
+}
+
+helper_path() {
+  local base_name="$1"
+
+  if [ "$HELPER_RUNTIME" = "py" ]; then
+    printf '%s/%s.py\n' "$PYTHON_HELPERS_DIR" "$base_name"
+    return 0
+  fi
+  if [ "$HELPER_RUNTIME" = "cs" ]; then
+    printf '%s/%s.cs\n' "$CSHARP_HELPERS_DIR" "$base_name"
+    return 0
+  fi
+
+  fail "unsupported helper runtime: $HELPER_RUNTIME"
+}
+
+invoke_helper() {
+  local helper_base_name="$1"
+  shift
+
+  local helper_script
+  helper_script="$(helper_path "$helper_base_name")"
+
+  if [ "$HELPER_RUNTIME" = "py" ]; then
+    "$PYTHON_BIN" "$helper_script" "$@"
+  else
+    "$DOTNET_BIN" "$helper_script" "$@"
+  fi
 }
 
 usage() {
@@ -87,18 +184,23 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$ASSET_ROOT" ]; then
-  if [ -f "$HOME/.ai-skill-collections/assets/run-agent.sh" ]; then
+  if [ -f "$HOME/.ai-skill-collections/assets/scripts/run-agent.sh" ]; then
+    ASSET_ROOT="$HOME/.ai-skill-collections/assets"
+  elif [ -f "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" ]; then
     ASSET_ROOT="$HOME/.ai-skill-collections/assets"
   else
-    ASSET_ROOT="$SCRIPT_DIR"
+    ASSET_ROOT="${SCRIPT_DIR%/*}"
   fi
 fi
 
-RUN_AGENT="${ASSET_ROOT}/run-agent.sh"
-WORKER_WATCH="${ASSET_ROOT}/worker-watch.sh"
-REGISTRY_FILE="${ASSET_ROOT}/agent-registry.json"
-ARTIFACT_HELPER="${ASSET_ROOT}/run-with-it-artifacts.py"
+HELPER_RUNTIME="$(normalize_helper_runtime "${HELPER_RUNTIME}")"
+resolve_asset_layout "$HELPER_RUNTIME" "$ASSET_ROOT"
+
+RUN_AGENT="${SCRIPTS_DIR}/run-agent.sh"
+WORKER_WATCH="${SCRIPTS_DIR}/worker-watch.sh"
+ARTIFACT_HELPER="$(helper_path "run-with-it-artifacts")"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+DOTNET_BIN="${DOTNET_BIN:-dotnet}"
 
 [ -n "$ROLE" ] || fail "--role is required"
 [ -n "$ISSUE" ] || fail "--issue is required"
@@ -119,20 +221,24 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 if [ -n "$REPO_ROOT_OVERRIDE" ]; then
   [ -d "$REPO_ROOT_OVERRIDE" ] || fail "repo root not found: $REPO_ROOT_OVERRIDE"
 fi
-command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
+if [ "$HELPER_RUNTIME" = "py" ]; then
+  command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "helper runtime preflight failed: PYTHON_BIN not found or not executable: $PYTHON_BIN"
+else
+  command -v "$DOTNET_BIN" >/dev/null 2>&1 || fail "helper runtime preflight failed: DOTNET_BIN not found; install .NET SDK 10+"
+fi
 
 if [ -z "$STATE_FILE" ]; then
   log_name="$(basename "$LOG_FILE")"
   if [[ "$log_name" == *.log ]]; then
-    STATE_FILE="$(dirname "$LOG_FILE")/${log_name%.log}.state.json"
+    STATE_FILE="$(path_dirname "$LOG_FILE")/${log_name%.log}.state.json"
   else
     STATE_FILE="${LOG_FILE}.state.json"
   fi
 fi
 
-mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$DONE_FILE")" "$(dirname "$RESULT_FILE")" "$(dirname "$STATE_FILE")"
-if [ -n "$STATUS_FILE" ]; then mkdir -p "$(dirname "$STATUS_FILE")"; fi
-if [ -n "$EVENTS_LOG" ]; then mkdir -p "$(dirname "$EVENTS_LOG")"; fi
+mkdir -p "$(path_dirname "$LOG_FILE")" "$(path_dirname "$DONE_FILE")" "$(path_dirname "$RESULT_FILE")" "$(path_dirname "$STATE_FILE")"
+if [ -n "$STATUS_FILE" ]; then mkdir -p "$(path_dirname "$STATUS_FILE")"; fi
+if [ -n "$EVENTS_LOG" ]; then mkdir -p "$(path_dirname "$EVENTS_LOG")"; fi
 
 if [ -z "$TAIL_STATE_FILE" ]; then
   cycle_part="${CYCLE:-0}"
@@ -213,7 +319,7 @@ repo_root_for_worker() {
 }
 
 result_artifact_failure_reason() {
-  "$PYTHON_BIN" "$ARTIFACT_HELPER" failure-reason \
+  invoke_helper run-with-it-artifacts failure-reason \
     --role "$ROLE" \
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \
@@ -224,7 +330,7 @@ result_artifact_failure_reason() {
 }
 
 synthesize_result_artifact_if_possible() {
-  "$PYTHON_BIN" "$ARTIFACT_HELPER" synthesize \
+  invoke_helper run-with-it-artifacts synthesize \
     --role "$ROLE" \
     --issue "$ISSUE" \
     --result-file "$RESULT_FILE" \
@@ -429,7 +535,7 @@ if [ "$DETACH" = 1 ] && [ "$DETACHED_CHILD" != "1" ] && [ "$VALIDATE_ONLY" != "1
       DISPATCH_OUT_FILE="${LOG_FILE}.dispatch.out"
     fi
   fi
-  mkdir -p "$(dirname "$DISPATCH_OUT_FILE")"
+  mkdir -p "$(path_dirname "$DISPATCH_OUT_FILE")"
   # nohup alone can remain in the caller's process group; create a new session
   # so short-lived tool-call cleanup cannot kill the dispatcher before runner PID.
   detached_pid="$("$PYTHON_BIN" - "$DISPATCH_OUT_FILE" "$0" "${ORIGINAL_ARGS[@]}" <<'PY'

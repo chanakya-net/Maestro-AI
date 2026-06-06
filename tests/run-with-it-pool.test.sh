@@ -2,10 +2,12 @@
 
 set -euo pipefail
 
+unset RUN_WITH_IT_DETACHED_CHILD
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POOL_RUNNER="${ROOT_DIR}/assets/run-with-it-pool.sh"
-MAIN_RULES="${ROOT_DIR}/assets/main-orchestrator-rules.md"
-SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
+POOL_RUNNER="${ROOT_DIR}/assets/scripts/run-with-it-pool.sh"
+MAIN_RULES="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
+SUB_PROMPT="${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -168,3 +170,175 @@ if [[ "${dependency_output}" == *"--issue 203"* ]]; then
 fi
 
 echo "PASS: run-with-it pool contract"
+
+FLAT_ASSET_ROOT="${WORK_DIR}/flat-assets"
+mkdir -p "${FLAT_ASSET_ROOT}/prompts" "${FLAT_ASSET_ROOT}/python"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh"
+cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${FLAT_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${FLAT_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${FLAT_ASSET_ROOT}/python/"
+chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh"
+
+flat_dry_output="$("${POOL_RUNNER}" \
+  --dry-run \
+  --asset-root "${FLAT_ASSET_ROOT}" \
+  --state-file "${STATE_FILE}" \
+  --parallel-jobs 1 \
+  --agent codex \
+  --model gpt-5.5 \
+  --status-file "${STATUS_FILE}" \
+  --events-log "${EVENTS_LOG}" \
+  --main-log "${MAIN_LOG}")"
+
+assert_contains "${flat_dry_output}" "${FLAT_ASSET_ROOT}/run-with-it-dispatch.sh --asset-root ${FLAT_ASSET_ROOT}" "flat Python layout resolves root-level helper scripts"
+
+set +e
+cs_reject_output="$(
+  RUN_WITH_IT_HELPER_RUNTIME=cs "${POOL_RUNNER}" \
+    --dry-run \
+    --asset-root "${FLAT_ASSET_ROOT}" \
+    --state-file "${STATE_FILE}" \
+    --parallel-jobs 1 \
+    --agent codex \
+    --model gpt-5.5 \
+    --status-file "${STATUS_FILE}" \
+    --events-log "${EVENTS_LOG}" \
+    --main-log "${MAIN_LOG}" \
+    2>&1
+)"
+cs_reject_status="$?"
+set -e
+
+[[ "${cs_reject_status}" != "0" ]] || fail "flat C# layout must fail for legacy asset root"
+assert_contains "${cs_reject_output}" "missing nested asset layout for helper runtime 'cs'" "flat C# layout fails with nested asset error"
+
+echo "PASS: run-with-it pool contract"
+
+RUNTIME_ALIAS_BIN="${WORK_DIR}/pool-runtime-bins"
+mkdir -p "${RUNTIME_ALIAS_BIN}"
+RUNTIME_PY_CALLS="${RUNTIME_ALIAS_BIN}/python.calls.log"
+RUNTIME_DOTNET_CALLS="${RUNTIME_ALIAS_BIN}/dotnet.calls.log"
+export RUNTIME_PY_CALLS
+export RUNTIME_DOTNET_CALLS
+
+cat > "${RUNTIME_ALIAS_BIN}/fake-python.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${RUNTIME_PY_CALLS}"
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$@"
+elif command -v python >/dev/null 2>&1; then
+  python "$@"
+else
+  printf '%s\n' "python not available" >&2
+  exit 1
+fi
+SH
+cat > "${RUNTIME_ALIAS_BIN}/fake-dotnet.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${RUNTIME_DOTNET_CALLS}"
+helper="$1"
+command="$2"
+if [[ "$helper" == *"run-with-it-state.cs" ]]; then
+  if [[ "$command" == "ready-issues" ]]; then
+    echo "401 402"
+    exit 0
+  fi
+  if [[ "$command" == "parallel-jobs" ]]; then
+    echo "2"
+    exit 0
+  fi
+fi
+echo ""
+exit 0
+SH
+chmod +x "${RUNTIME_ALIAS_BIN}/fake-python.sh" "${RUNTIME_ALIAS_BIN}/fake-dotnet.sh"
+
+RUNTIME_ASSET_ROOT="${WORK_DIR}/runtime-alias-assets"
+mkdir -p "${RUNTIME_ASSET_ROOT}/prompts" "${RUNTIME_ASSET_ROOT}/scripts" "${RUNTIME_ASSET_ROOT}/python" "${RUNTIME_ASSET_ROOT}/powershell" "${RUNTIME_ASSET_ROOT}/csharp"
+cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${RUNTIME_ASSET_ROOT}/scripts/"
+cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${RUNTIME_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${RUNTIME_ASSET_ROOT}/prompts/"
+cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${RUNTIME_ASSET_ROOT}/python/"
+cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${RUNTIME_ASSET_ROOT}/python/"
+chmod +x "${RUNTIME_ASSET_ROOT}/scripts/run-with-it-dispatch.sh"
+cat > "${RUNTIME_ASSET_ROOT}/csharp/run-with-it-state.cs" <<'CS'
+Write-Output "run-with-it-state.cs"
+CS
+cat > "${RUNTIME_ASSET_ROOT}/csharp/run-with-it-github-update.cs" <<'CS'
+Write-Output "run-with-it-github-update.cs"
+CS
+
+for runtime in py python python3; do
+  >"${RUNTIME_PY_CALLS}"
+  PYTHON_BIN="${RUNTIME_ALIAS_BIN}/fake-python.sh" \
+  RUN_WITH_IT_HELPER_RUNTIME="$runtime" \
+  "${POOL_RUNNER}" \
+    --validate-only \
+    --asset-root "${ROOT_DIR}/assets" \
+    --state-file "${STATE_FILE}" \
+    --parallel-jobs 2 \
+    --agent codex \
+    --model gpt-5.5 \
+    --status-file "${WORK_DIR}/validate-status-${runtime}.txt" \
+    --events-log "${WORK_DIR}/validate-events-${runtime}.txt" \
+    --main-log "${WORK_DIR}/validate-main-${runtime}.log" \
+    2>/dev/null
+  assert_contains "$(cat "${RUNTIME_PY_CALLS}")" "run-with-it-state.py" "helper runtime ${runtime} resolves Python helper path"
+done
+
+> "${RUNTIME_PY_CALLS}"
+PYTHON_BIN="${RUNTIME_ALIAS_BIN}/fake-python.sh" \
+  "${POOL_RUNNER}" \
+    --validate-only \
+    --asset-root "${ROOT_DIR}/assets" \
+    --state-file "${STATE_FILE}" \
+    --parallel-jobs 2 \
+    --agent codex \
+    --model gpt-5.5 \
+    --status-file "${WORK_DIR}/validate-status-default.txt" \
+    --events-log "${WORK_DIR}/validate-events-default.txt" \
+    --main-log "${WORK_DIR}/validate-main-default.log" \
+    2>/dev/null
+assert_contains "$(cat "${RUNTIME_PY_CALLS}")" "run-with-it-state.py" "default runtime resolves Python helper path"
+
+set +e
+invalid_runtime_output_file="$(mktemp -d)/pool-invalid-runtime.log"
+RUN_WITH_IT_HELPER_RUNTIME=invalid-runtime \
+  "${POOL_RUNNER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --state-file "${STATE_FILE}" \
+  --parallel-jobs 2 \
+  --agent codex \
+  --model gpt-5.5 \
+  --status-file "${WORK_DIR}/invalid-runtime-status.txt" \
+  --events-log "${WORK_DIR}/invalid-runtime-events.log" \
+  --main-log "${WORK_DIR}/invalid-runtime-main.log" \
+  >"${invalid_runtime_output_file}" 2>&1
+invalid_runtime_status=$?
+set -e
+[[ "${invalid_runtime_status}" != "0" ]] || fail "invalid helper runtime fails immediately"
+assert_contains "$(cat "${invalid_runtime_output_file}")" "unsupported helper runtime: invalid-runtime" "invalid helper runtime is rejected"
+
+for runtime in cs csharp c#; do
+  >"${RUNTIME_DOTNET_CALLS}"
+  DOTNET_BIN="${RUNTIME_ALIAS_BIN}/fake-dotnet.sh" \
+  RUN_WITH_IT_HELPER_RUNTIME="$runtime" \
+    "${POOL_RUNNER}" \
+    --validate-only \
+    --asset-root "${RUNTIME_ASSET_ROOT}" \
+    --state-file "${STATE_FILE}" \
+    --parallel-jobs 2 \
+    --agent codex \
+    --model gpt-5.5 \
+    --status-file "${WORK_DIR}/validate-status-${runtime}-cs.txt" \
+    --events-log "${WORK_DIR}/validate-events-${runtime}-cs.txt" \
+    --main-log "${WORK_DIR}/validate-main-${runtime}-cs.log"
+  assert_contains "$(cat "${RUNTIME_DOTNET_CALLS}")" "run-with-it-state.cs" "helper runtime ${runtime} resolves C# helper path"
+done
+assert_contains "$(cat "${RUNTIME_DOTNET_CALLS}")" "run-with-it-state.cs" "DOTNET_BIN receives C# helper path in helper invocation"
+
+echo "PASS: run-with-it pool runtime selector contract"

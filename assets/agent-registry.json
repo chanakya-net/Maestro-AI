@@ -145,28 +145,6 @@
         "cost-efficient"
       ]
     },
-    "gpt-5.2": {
-      "provider": "openai",
-      "ability": "advanced",
-      "complexity_weight": 7,
-      "context_window": 400000,
-      "strengths": [
-        "agentic",
-        "long-context",
-        "adaptive-reasoning"
-      ]
-    },
-    "gpt-5.2-codex": {
-      "provider": "openai",
-      "ability": "advanced",
-      "complexity_weight": 7,
-      "context_window": 400000,
-      "strengths": [
-        "agentic-coding",
-        "prior-codex-default",
-        "swe-bench"
-      ]
-    },
     "gpt-5.3-codex": {
       "provider": "openai",
       "ability": "advanced",
@@ -596,7 +574,7 @@
           "agy"
         ]
       },
-      "_note": "Subscription usage targets are enforced by run-with-it-router.py. Overall default target is Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%; role and band targets protect scarce tools while keeping the overall mix Codex-heavy."
+      "_note": "Subscription usage targets are enforced by run-with-it-router helper via RUN_WITH_IT_HELPER_RUNTIME selection (`python` default transitional fallback, or `csharp`; C# requires .NET SDK 10+). Overall default target is Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%; role and band targets protect scarce tools while keeping the overall mix Codex-heavy."
     },
     "provider_routing_rules": {
       "google": {
@@ -721,8 +699,7 @@
           "gpt-5.4",
           "gpt-5.4-mini",
           "gpt-5.3-codex",
-          "gpt-5.3-codex-spark",
-          "gpt-5.2"
+          "gpt-5.3-codex-spark"
         ],
         "pricing_basis": "subscription",
         "metered_api_cost": false
@@ -820,8 +797,6 @@
         "known_models": [
           "claude-haiku-4.5",
           "claude-sonnet-4.6",
-          "gpt-5.2",
-          "gpt-5.2-codex",
           "gpt-5.3-codex",
           "gpt-5.4",
           "gpt-5.4-mini"

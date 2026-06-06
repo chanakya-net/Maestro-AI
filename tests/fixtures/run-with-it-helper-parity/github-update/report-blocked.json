@@ -1,0 +1,24 @@
+{
+  "outcome": "blocked",
+  "summary": "helper blocked",
+  "verification": {
+    "passed": false,
+    "commands_run": ["test"],
+    "evidence": "blocked by dependency"
+  },
+  "review_summary": {
+    "cycles_used": 2,
+    "final_verdict": "revise",
+    "reviewer_model": "claude-sonnet-4-6"
+  },
+  "token_usage": {
+    "impl_input": 12,
+    "impl_output": 6,
+    "cache_hit_tokens": 3
+  },
+  "commit_sha": "abc123",
+  "blocking_reasons": [
+    "waiting on dependency",
+    "missing context"
+  ]
+}

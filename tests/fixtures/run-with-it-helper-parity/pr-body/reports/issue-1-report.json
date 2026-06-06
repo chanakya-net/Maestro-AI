@@ -1,0 +1,22 @@
+{
+  "outcome": "completed",
+  "summary": "helper completed",
+  "verification": {
+    "passed": true,
+    "evidence": "all good"
+  },
+  "model_usage": [
+    {
+      "role": "impl",
+      "cycle": 2,
+      "agent": "codex",
+      "model": "gpt-5.3-codex",
+      "selection_reason": "under-target"
+    }
+  ],
+  "files_modified_count": 1,
+  "lines_added": 3,
+  "lines_deleted": 1,
+  "review_cycles": 1,
+  "commit_sha": "abc123"
+}
