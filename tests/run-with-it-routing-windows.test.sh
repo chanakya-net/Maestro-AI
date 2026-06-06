@@ -53,6 +53,10 @@ assert_not_contains_file "$SKILL_FILE" "native PowerShell can install assets and
 
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "run-with-it-dispatch.ps1" "sub-coordinator prompt uses PowerShell dispatcher"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "-Detach" "PowerShell worker launch uses detached dispatcher"
+assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" '-PromptFile (Join-Path $ASSET_ROOT "prompts/prompt.md")' "sub-coordinator PowerShell impl dispatch uses nested prompts path"
+assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" '-PromptFile (Join-Path $ASSET_ROOT "prompts/complexity-prompt.md")' "sub-coordinator PowerShell complexity dispatch uses nested prompts path"
+assert_contains_file "$SKILL_FILE" 'assets\csharp' "skill repair snippet provisions csharp helper directory on Windows"
+assert_contains_file "$SKILL_FILE" 'cp "$ASSET_ROOT/prompts/main-orchestrator-rules.md"' "skill copies main-orchestrator-rules from nested prompts path"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "-StateFile \$WORKER_STATE_FILE" "PowerShell worker launch passes state file"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\issues" "PowerShell examples use issue-scoped artifact folder"
 assert_not_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\done\\issue-" "PowerShell examples do not use legacy done folder"

@@ -16,7 +16,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Execution Rules
 
-- Never implement work directly in this session. All implementation must be done by worker-agents spawned via the platform dispatcher (`scripts/run-with-it-dispatch.sh` on Bash, `powershell/run-with-it-dispatch.ps1` on native PowerShell), which wraps `scripts/run-agent.sh` / `powershell/run-agent.ps1` using prompt.md (implementer), review-prompt.md (reviewer), or modifier-prompt.md (modifier).
+- Never implement work directly in this session. All implementation must be done by worker-agents spawned via the platform dispatcher (`scripts/run-with-it-dispatch.sh` on Bash, `powershell/run-with-it-dispatch.ps1` on native PowerShell), which wraps `scripts/run-agent.sh` / `powershell/run-agent.ps1` using `prompts/prompt.md` (implementer), `prompts/review-prompt.md` (reviewer), or `prompts/modifier-prompt.md` (modifier).
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS line to `$SUB_COORD_LOG_FILE`, and forget each line.

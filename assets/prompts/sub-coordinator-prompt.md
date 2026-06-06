@@ -112,11 +112,11 @@ Persist `feature_branch`, `issue_branch`, `worktree_path`, and `issue_dir` in `$
 
 ## Coordinator Rules File
 
-At the very start of execution (before any routing), copy `$ASSET_ROOT/coordinator-rules.md` to `.run-with-it/coordinator-rules.md`:
+At the very start of execution (before any routing), copy `$ASSET_ROOT/prompts/coordinator-rules.md` to `.run-with-it/coordinator-rules.md`:
 
 ```bash
 mkdir -p .run-with-it
-cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
+cp "$ASSET_ROOT/prompts/coordinator-rules.md" .run-with-it/coordinator-rules.md
 ```
 
 **Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
@@ -220,7 +220,7 @@ WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.j
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/prompt.md" \
+  --prompt-file "$ASSET_ROOT/prompts/prompt.md" \
   --log-file "$IMPL_LOG_FILE" \
   --done-file "$IMPL_DONE_FILE" \
   --result-file "$IMPL_RESULT_FILE" \
@@ -260,7 +260,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -Agent $AGENT `
   -Model $MODEL `
   -ContextFile $CONTEXT_PAYLOAD_FILE `
-  -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
+  -PromptFile (Join-Path $ASSET_ROOT "prompts/prompt.md") `
   -LogFile $IMPL_LOG_FILE `
   -DoneFile $IMPL_DONE_FILE `
   -ResultFile $IMPL_RESULT_FILE `
@@ -491,7 +491,7 @@ mkdir -p "$COMPLEXITY_WORKER_DIR"
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$COMPLEXITY_CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
+  --prompt-file "$ASSET_ROOT/prompts/complexity-prompt.md" \
   --log-file "$COMPLEXITY_LOG_FILE" \
   --done-file "$COMPLEXITY_DONE_FILE" \
   --result-file "$COMPLEXITY_RESULT_FILE" \
@@ -524,7 +524,7 @@ New-Item -ItemType Directory -Force -Path $COMPLEXITY_WORKER_DIR | Out-Null
   -Agent $AGENT `
   -Model $MODEL `
   -ContextFile $COMPLEXITY_CONTEXT_PAYLOAD_FILE `
-  -PromptFile (Join-Path $ASSET_ROOT "complexity-prompt.md") `
+  -PromptFile (Join-Path $ASSET_ROOT "prompts/complexity-prompt.md") `
   -LogFile $COMPLEXITY_LOG_FILE `
   -DoneFile $COMPLEXITY_DONE_FILE `
   -ResultFile $COMPLEXITY_RESULT_FILE `
@@ -639,7 +639,7 @@ mkdir -p "$IMPL_WORKER_DIR"
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/prompt.md" \
+  --prompt-file "$ASSET_ROOT/prompts/prompt.md" \
   --log-file "$IMPL_LOG_FILE" \
   --done-file "$IMPL_DONE_FILE" \
   --result-file "$IMPL_RESULT_FILE" \
@@ -675,7 +675,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -Agent $AGENT `
   -Model $MODEL `
   -ContextFile $CONTEXT_PAYLOAD_FILE `
-  -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
+  -PromptFile (Join-Path $ASSET_ROOT "prompts/prompt.md") `
   -LogFile $IMPL_LOG_FILE `
   -DoneFile $IMPL_DONE_FILE `
   -ResultFile $IMPL_RESULT_FILE `
@@ -823,7 +823,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
      --agent "$REVIEWER_AGENT" \
      --model "$REVIEWER_MODEL" \
      --context-file "$REVIEWER_CONTEXT_PAYLOAD_FILE" \
-     --prompt-file "$ASSET_ROOT/review-prompt.md" \
+     --prompt-file "$ASSET_ROOT/prompts/review-prompt.md" \
      --log-file "$REVIEW_LOG_FILE" \
      --done-file "$REVIEW_DONE_FILE" \
      --result-file "$REVIEW_RESULT_FILE" \
@@ -912,7 +912,7 @@ EOF
        --agent "$MODIFIER_AGENT" \
        --model "$MODIFIER_MODEL" \
        --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" \
-       --prompt-file "$ASSET_ROOT/modifier-prompt.md" \
+       --prompt-file "$ASSET_ROOT/prompts/modifier-prompt.md" \
        --log-file "$MODIFY_LOG_FILE" \
        --done-file "$MODIFY_DONE_FILE" \
        --result-file "$MODIFY_RESULT_FILE" \
