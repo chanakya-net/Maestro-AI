@@ -596,7 +596,7 @@
           "agy"
         ]
       },
-      "_note": "Subscription usage targets are enforced by run-with-it-router.py. Overall default target is Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%; role and band targets protect scarce tools while keeping the overall mix Codex-heavy."
+      "_note": "Subscription usage targets are enforced by run-with-it-router helper via RUN_WITH_IT_HELPER_RUNTIME selection (`python` default transitional fallback, or `csharp`; C# requires .NET SDK 10+). Overall default target is Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%; role and band targets protect scarce tools while keeping the overall mix Codex-heavy."
     },
     "provider_routing_rules": {
       "google": {

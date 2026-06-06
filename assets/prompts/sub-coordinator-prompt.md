@@ -14,7 +14,7 @@ Before any other action (including reading files, routing, spawning workers, or 
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
 These rules apply for the entire lifetime of this session:
 
-- **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via the platform dispatcher (`run-with-it-dispatch.sh` on Bash, `run-with-it-dispatch.ps1` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1`. There is no "implement in this chat" fallback option.
+- **Never implement work directly in this session.** All implementation, modification, and verification must be done by child agents spawned via the platform dispatcher (`scripts/run-with-it-dispatch.sh` on Bash, `powershell/run-with-it-dispatch.ps1` on native PowerShell), which wraps `scripts/run-agent.sh` / `powershell/run-agent.ps1`. There is no "implement in this chat" fallback option.
 - **Never run tests, build commands, or compile the project.** The implementing agent runs verification; you only read results from the agent's output report.
 - **Never pause after routing to ask the user how to proceed.** Execute via the runner immediately after routing completes.
 - **Never present execution option menus.**
@@ -85,13 +85,17 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Shared required files: `prompt.md`, `agent-registry.json`, `run-with-it-router.py`, `run-with-it-artifacts.py`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Shared required files: `prompts/prompt.md`, `agent-registry.json`, `prompts/review-prompt.md`, `prompts/modifier-prompt.md`, `prompts/complexity-prompt.md`, `prompts/coordinator-rules.md`.
 
-Bash required helper files: `run-agent.sh`, `run-with-it-dispatch.sh`, `worker-watch.sh`.
+Python helper runtime required files: `python/run-with-it-router.py`, `python/run-with-it-artifacts.py`.
 
-PowerShell required helper files: `run-agent.ps1`, `run-with-it-dispatch.ps1`, `worker-watch.ps1`.
+C# helper runtime required files: `csharp/run-with-it-router.cs`, `csharp/run-with-it-artifacts.cs`.
 
-Use the first asset root that contains the shared files plus the helper files for the detected platform. Do not require `.ps1` files for Bash/macOS/Linux/Git Bash/WSL runs, and do not require `.sh` files for native PowerShell runs.
+Bash required helper files: `scripts/run-agent.sh`, `scripts/run-with-it-dispatch.sh`, `scripts/worker-watch.sh`.
+
+PowerShell required helper files: `powershell/run-agent.ps1`, `powershell/run-with-it-dispatch.ps1`, `powershell/worker-watch.ps1`.
+
+Use the first asset root that contains the shared files, the helper files for the detected platform, and the helper runtime files selected by `RUN_WITH_IT_HELPER_RUNTIME`. Use `python/run-with-it-router.py` + `python/run-with-it-artifacts.py` via `PYTHON_BIN` for `python`, or `csharp/run-with-it-router.cs` + `csharp/run-with-it-artifacts.cs` via `DOTNET_BIN` for `csharp`. Do not require `.ps1` files for Bash/macOS/Linux/Git Bash/WSL runs, and do not require `.sh` files for native PowerShell runs.
 
 ## Issue Worktree Bootstrap
 
@@ -112,17 +116,17 @@ Persist `feature_branch`, `issue_branch`, `worktree_path`, and `issue_dir` in `$
 
 ## Coordinator Rules File
 
-At the very start of execution (before any routing), copy `$ASSET_ROOT/coordinator-rules.md` to `.run-with-it/coordinator-rules.md`:
+At the very start of execution (before any routing), copy `$ASSET_ROOT/prompts/coordinator-rules.md` to `.run-with-it/coordinator-rules.md`:
 
 ```bash
 mkdir -p .run-with-it
-cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
+cp "$ASSET_ROOT/prompts/coordinator-rules.md" .run-with-it/coordinator-rules.md
 ```
 
 **Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
 - before complexity sub-agent spawn
 - before routing
-- before each `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` invocation
+- before each `scripts/run-with-it-dispatch.sh` / `powershell/run-with-it-dispatch.ps1` invocation
 - before each review cycle step
 - before writing the final report
 
@@ -172,7 +176,7 @@ Start every worker through the detached platform dispatcher. After spawning a wo
 1. `RUN_WITH_IT_DONE_FILE` exists and the role-specific artifacts are valid, or
 2. the process exits without valid artifacts.
 
-Every worker launch must use the platform dispatcher so the Sub-Coordinator and Main Orchestrator share the same launch and monitor contract. The dispatcher wraps `run-agent.sh` / `run-agent.ps1`, forwards the `RUN_WITH_IT_*` environment, captures the child PID, writes dispatch status lines, and monitors with `assets/worker-watch.sh` / `assets/worker-watch.ps1`.
+Every worker launch must use the platform dispatcher so the Sub-Coordinator and Main Orchestrator share the same launch and monitor contract. The dispatcher wraps `scripts/run-agent.sh` / `powershell/run-agent.ps1`, forwards the `RUN_WITH_IT_*` environment, captures the child PID, writes dispatch status lines, and monitors with `scripts/worker-watch.sh` / `powershell/worker-watch.ps1`.
 
 Define this Bash helper once before the first worker dispatch and use it after every detached dispatcher invocation:
 
@@ -212,7 +216,7 @@ WORKER_LOG_TAIL_LINES="${WORKER_LOG_TAIL_LINES:-5}"
 WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-${RUN_WITH_IT_ROLE}-cycle-${CYCLE:-1}.tail.sha"
 WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.json"
 
-"$ASSET_ROOT/run-with-it-dispatch.sh" \
+"$ASSET_ROOT/scripts/run-with-it-dispatch.sh" \
   --asset-root "$ASSET_ROOT" \
   --role impl \
   --issue "$SUB_COORD_ISSUE_NUMBER" \
@@ -220,7 +224,7 @@ WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.j
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/prompt.md" \
+  --prompt-file "$ASSET_ROOT/prompts/prompt.md" \
   --log-file "$IMPL_LOG_FILE" \
   --done-file "$IMPL_DONE_FILE" \
   --result-file "$IMPL_RESULT_FILE" \
@@ -237,7 +241,7 @@ WORKER_PID="$(wait_for_worker_dispatcher_pid "$WORKER_STATE_FILE")"
 
 Bash `--detach` is implemented by the dispatcher as a new process session/process group launch. Do not replace it with a raw `nohup ... &` or plain background job; those can stay tied to the short-lived tool call and die before `dispatch-pid`.
 
-If the detached dispatcher command exits non-zero, emits `STATUS|type=dispatch-bootstrap-failed`, or the dispatcher PID is dead while `RUN_WITH_IT_STATE_FILE` still has no `runner_pid`, treat this as launch bootstrap loss rather than a worker/model result. Retry that same worker once in foreground monitor mode by invoking `run-with-it-dispatch.sh` without `--detach` and with the **same** log, done, result, state, repo-root, issue-dir, status, and events paths. Only after the foreground retry produces a concrete dispatcher failure or missing/invalid artifact should you consume the role's fallback budget.
+If the detached dispatcher command exits non-zero, emits `STATUS|type=dispatch-bootstrap-failed`, or the dispatcher PID is dead while `RUN_WITH_IT_STATE_FILE` still has no `runner_pid`, treat this as launch bootstrap loss rather than a worker/model result. Retry that same worker once in foreground monitor mode by invoking `scripts/run-with-it-dispatch.sh` without `--detach` and with the **same** log, done, result, state, repo-root, issue-dir, status, and events paths. Only after the foreground retry produces a concrete dispatcher failure or missing/invalid artifact should you consume the role's fallback budget.
 
 Every native PowerShell worker launch must follow this shape and keep all artifacts under `.run-with-it\issues\<n>\workers\<role>`:
 
@@ -252,7 +256,7 @@ $IMPL_DONE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).done"
 $IMPL_RESULT_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE)-result.json"
 $WORKER_STATE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).state.json"
 New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
-& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+& (Join-Path $ASSET_ROOT "powershell/run-with-it-dispatch.ps1") `
   -AssetRoot $ASSET_ROOT `
   -Role impl `
   -Issue $env:SUB_COORD_ISSUE_NUMBER `
@@ -260,7 +264,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -Agent $AGENT `
   -Model $MODEL `
   -ContextFile $CONTEXT_PAYLOAD_FILE `
-  -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
+  -PromptFile (Join-Path $ASSET_ROOT "prompts/prompt.md") `
   -LogFile $IMPL_LOG_FILE `
   -DoneFile $IMPL_DONE_FILE `
   -ResultFile $IMPL_RESULT_FILE `
@@ -357,7 +361,7 @@ This recovery contract covers `impl`, `review`, and `modify` together with the s
 
 ### Deterministic Router Helper (Mandatory)
 
-Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST` and `AGENT_DENYLIST`, and records the decision in `.run-with-it/usage-ledger.json`.
+Use the runtime-selected router helper for every worker route decision: `python/run-with-it-router.py` via `PYTHON_BIN` for `RUN_WITH_IT_HELPER_RUNTIME=python`, or `csharp/run-with-it-router.cs` via `DOTNET_BIN` for `RUN_WITH_IT_HELPER_RUNTIME=csharp`. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST` and `AGENT_DENYLIST`, and records the decision in `.run-with-it/usage-ledger.json`.
 
 Usage target summary from `agent-registry.json`:
 - overall default: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%
@@ -368,11 +372,24 @@ Usage target summary from `agent-registry.json`:
 
 Bash helper shape:
 ```bash
-ROUTER_FILE="$ASSET_ROOT/run-with-it-router.py"
+HELPER_RUNTIME="${RUN_WITH_IT_HELPER_RUNTIME:-python}"
+case "$HELPER_RUNTIME" in
+  python|py)
+    ROUTER_FILE="$ASSET_ROOT/python/run-with-it-router.py"
+    ROUTER_BIN="${PYTHON_BIN:-python3}"
+    ;;
+  csharp|cs)
+    ROUTER_FILE="$ASSET_ROOT/csharp/run-with-it-router.cs"
+    ROUTER_BIN="${DOTNET_BIN:-dotnet}"
+    ;;
+  *)
+    printf 'Unsupported RUN_WITH_IT_HELPER_RUNTIME=%s\n' "$HELPER_RUNTIME" >&2
+    exit 2
+    ;;
+esac
 ROUTER_LEDGER_FILE="${RUN_WITH_IT_USAGE_LEDGER_FILE:-.run-with-it/usage-ledger.json}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
-DETECTED_AGENTS="$("$ASSET_ROOT/run-agent.sh" --list-agents --detected-only | cut -f1 | paste -sd, -)"
-ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
+DETECTED_AGENTS="$("$ASSET_ROOT/scripts/run-agent.sh" --list-agents --detected-only | cut -f1 | paste -sd, -)"
+ROUTE_JSON="$("$ROUTER_BIN" "$ROUTER_FILE" \
   --registry-file "$ASSET_ROOT/agent-registry.json" \
   --ledger-file "$ROUTER_LEDGER_FILE" \
   --role "$ROUTE_ROLE" \
@@ -384,9 +401,12 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --forced-model "${FORCED_MODEL:-}" \
   --exclude-model "${EXCLUDE_MODEL:-}" \
   --record)"
-AGENT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["agent"])')"
-MODEL="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
-SELECTION_REASON="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
+json_field() {
+  printf '%s\n' "$ROUTE_JSON" | sed -n "s/^[[:space:]]*\"$1\":[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -n 1
+}
+AGENT="$(json_field agent)"
+MODEL="$(json_field model)"
+SELECTION_REASON="$(json_field selection_reason)"
 printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\n' \
   "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" "$SELECTION_REASON" \
   >> "$SUB_COORD_LOG_FILE"
@@ -394,11 +414,25 @@ printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\
 
 PowerShell helper shape:
 ```powershell
-$routerFile = Join-Path $ASSET_ROOT "run-with-it-router.py"
+$helperRuntime = if ($env:RUN_WITH_IT_HELPER_RUNTIME) { $env:RUN_WITH_IT_HELPER_RUNTIME } else { "python" }
+switch ($helperRuntime) {
+  { $_ -in @("python", "py") } {
+    $routerFile = Join-Path $ASSET_ROOT "python/run-with-it-router.py"
+    $routerBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python3" }
+    break
+  }
+  { $_ -in @("csharp", "cs") } {
+    $routerFile = Join-Path $ASSET_ROOT "csharp/run-with-it-router.cs"
+    $routerBin = if ($env:DOTNET_BIN) { $env:DOTNET_BIN } else { "dotnet" }
+    break
+  }
+  default {
+    throw "Unsupported RUN_WITH_IT_HELPER_RUNTIME=$helperRuntime"
+  }
+}
 $routerLedgerFile = if ($env:RUN_WITH_IT_USAGE_LEDGER_FILE) { $env:RUN_WITH_IT_USAGE_LEDGER_FILE } else { ".run-with-it/usage-ledger.json" }
-$pythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python3" }
-$detectedAgents = (& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only | ForEach-Object { ($_ -split "`t")[0] }) -join ","
-$routeJson = & $pythonBin $routerFile `
+$detectedAgents = (& (Join-Path $ASSET_ROOT "powershell/run-agent.ps1") --list-agents --detected-only | ForEach-Object { ($_ -split "`t")[0] }) -join ","
+$routeJson = & $routerBin $routerFile `
   --registry-file (Join-Path $ASSET_ROOT "agent-registry.json") `
   --ledger-file $routerLedgerFile `
   --role $env:ROUTE_ROLE `
@@ -423,7 +457,7 @@ Route helper inputs by phase:
 - reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity level and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed
 - modifier worker: `ROUTE_ROLE=modify`, use the current implementation band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
-If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
+If the runtime-selected router helper (`python/run-with-it-router.py` for `python`, `csharp/run-with-it-router.cs` for `csharp`) is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
 
 ### Complexity Sub-Agent Delegation
 
@@ -436,7 +470,7 @@ Override handling:
   `STATUS|type=complexity-skipped|reason=override`
 
 Sub-agent selection for complexity:
-1. Use `run-with-it-router.py` with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
+1. Use the runtime-selected router helper (`python/run-with-it-router.py` via `PYTHON_BIN`, or `csharp/run-with-it-router.cs` via `DOTNET_BIN`) with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
 2. The helper restricts the candidate pool to easy-medium band models, excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
 3. Pass both selected `AGENT` and selected `MODEL` explicitly to the sub-agent runner.
 
@@ -483,7 +517,7 @@ WORKER_STALL_SECONDS="${WORKER_STALL_SECONDS:-300}"
 WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
 WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-complexity-cycle-1.tail.sha"
 mkdir -p "$COMPLEXITY_WORKER_DIR"
-"$ASSET_ROOT/run-with-it-dispatch.sh" \
+"$ASSET_ROOT/scripts/run-with-it-dispatch.sh" \
   --asset-root "$ASSET_ROOT" \
   --role complexity \
   --issue "$SUB_COORD_ISSUE_NUMBER" \
@@ -491,7 +525,7 @@ mkdir -p "$COMPLEXITY_WORKER_DIR"
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$COMPLEXITY_CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
+  --prompt-file "$ASSET_ROOT/prompts/complexity-prompt.md" \
   --log-file "$COMPLEXITY_LOG_FILE" \
   --done-file "$COMPLEXITY_DONE_FILE" \
   --result-file "$COMPLEXITY_RESULT_FILE" \
@@ -516,7 +550,7 @@ $COMPLEXITY_DONE_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1.done"
 $COMPLEXITY_RESULT_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1-result.json"
 $COMPLEXITY_STATE_FILE = Join-Path $COMPLEXITY_WORKER_DIR "cycle-1.state.json"
 New-Item -ItemType Directory -Force -Path $COMPLEXITY_WORKER_DIR | Out-Null
-& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+& (Join-Path $ASSET_ROOT "powershell/run-with-it-dispatch.ps1") `
   -AssetRoot $ASSET_ROOT `
   -Role complexity `
   -Issue $env:SUB_COORD_ISSUE_NUMBER `
@@ -524,7 +558,7 @@ New-Item -ItemType Directory -Force -Path $COMPLEXITY_WORKER_DIR | Out-Null
   -Agent $AGENT `
   -Model $MODEL `
   -ContextFile $COMPLEXITY_CONTEXT_PAYLOAD_FILE `
-  -PromptFile (Join-Path $ASSET_ROOT "complexity-prompt.md") `
+  -PromptFile (Join-Path $ASSET_ROOT "prompts/complexity-prompt.md") `
   -LogFile $COMPLEXITY_LOG_FILE `
   -DoneFile $COMPLEXITY_DONE_FILE `
   -ResultFile $COMPLEXITY_RESULT_FILE `
@@ -550,7 +584,7 @@ If the fallback is used, set `complexity_source=fallback`. If the override path 
 
 ### Prompt Fallback Router
 
-Use this section only when `run-with-it-router.py` is unavailable or exits non-zero. The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above. The fallback is intentionally bounded to one phase so a helper failure is visible instead of silently changing routing behavior for the whole run.
+Use this section only when the runtime-selected router helper (`python/run-with-it-router.py` for `python`, `csharp/run-with-it-router.cs` for `csharp`) is unavailable or exits non-zero. The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above. The fallback is intentionally bounded to one phase so a helper failure is visible instead of silently changing routing behavior for the whole run.
 
 #### Step 1 — Map Score to Target Weight Range
 
@@ -631,7 +665,7 @@ WORKER_STALL_SECONDS="${WORKER_STALL_SECONDS:-300}"
 WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
 WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-impl-cycle-${CYCLE:-1}.tail.sha"
 mkdir -p "$IMPL_WORKER_DIR"
-"$ASSET_ROOT/run-with-it-dispatch.sh" \
+"$ASSET_ROOT/scripts/run-with-it-dispatch.sh" \
   --asset-root "$ASSET_ROOT" \
   --role impl \
   --issue "$SUB_COORD_ISSUE_NUMBER" \
@@ -639,7 +673,7 @@ mkdir -p "$IMPL_WORKER_DIR"
   --agent "$AGENT" \
   --model "$MODEL" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
-  --prompt-file "$ASSET_ROOT/prompt.md" \
+  --prompt-file "$ASSET_ROOT/prompts/prompt.md" \
   --log-file "$IMPL_LOG_FILE" \
   --done-file "$IMPL_DONE_FILE" \
   --result-file "$IMPL_RESULT_FILE" \
@@ -667,7 +701,7 @@ $IMPL_DONE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).done"
 $IMPL_RESULT_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE)-result.json"
 $IMPL_STATE_FILE = Join-Path $IMPL_WORKER_DIR "cycle-$($env:CYCLE).state.json"
 New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
-& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+& (Join-Path $ASSET_ROOT "powershell/run-with-it-dispatch.ps1") `
   -AssetRoot $ASSET_ROOT `
   -Role impl `
   -Issue $env:SUB_COORD_ISSUE_NUMBER `
@@ -675,7 +709,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -Agent $AGENT `
   -Model $MODEL `
   -ContextFile $CONTEXT_PAYLOAD_FILE `
-  -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
+  -PromptFile (Join-Path $ASSET_ROOT "prompts/prompt.md") `
   -LogFile $IMPL_LOG_FILE `
   -DoneFile $IMPL_DONE_FILE `
   -ResultFile $IMPL_RESULT_FILE `
@@ -815,7 +849,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
    WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-review-cycle-${CYCLE}.tail.sha"
    mkdir -p "$REVIEW_WORKER_DIR"
-   "$ASSET_ROOT/run-with-it-dispatch.sh" \
+   "$ASSET_ROOT/scripts/run-with-it-dispatch.sh" \
      --asset-root "$ASSET_ROOT" \
      --role review \
      --issue "$SUB_COORD_ISSUE_NUMBER" \
@@ -823,7 +857,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
      --agent "$REVIEWER_AGENT" \
      --model "$REVIEWER_MODEL" \
      --context-file "$REVIEWER_CONTEXT_PAYLOAD_FILE" \
-     --prompt-file "$ASSET_ROOT/review-prompt.md" \
+     --prompt-file "$ASSET_ROOT/prompts/review-prompt.md" \
      --log-file "$REVIEW_LOG_FILE" \
      --done-file "$REVIEW_DONE_FILE" \
      --result-file "$REVIEW_RESULT_FILE" \
@@ -847,7 +881,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 
 ### Review Artifact Guardrail
 
-The dispatcher validates review artifacts through `run-with-it-artifacts.py`. It may safely repair two partial review handoffs:
+The dispatcher validates review artifacts through `python/run-with-it-artifacts.py`. It may safely repair two partial review handoffs:
 - valid `REVIEWER_INSTRUCTIONS_FILE` but missing/invalid status file → synthesize the minimal status JSON;
 - valid status file with `verdict="approve"` but missing/invalid instructions file → synthesize an empty approve instructions JSON.
 
@@ -881,7 +915,7 @@ The implementer (or modifier) has already committed all changes as part of its m
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, and `CHECKIN_OWNER=modify-worker`.
+   - Pass: original issue context, original `prompts/prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, and `CHECKIN_OWNER=modify-worker`.
    - Run via this background-worker shape; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions:
 
      ```bash
@@ -904,7 +938,7 @@ EOF
      WORKER_LOG_SUMMARY_SECONDS="${WORKER_LOG_SUMMARY_SECONDS:-60}"
      WORKER_TAIL_STATE_FILE=".run-with-it/status/issue-${SUB_COORD_ISSUE_NUMBER}-modify-cycle-${CYCLE}.tail.sha"
      mkdir -p "$MODIFY_WORKER_DIR"
-     "$ASSET_ROOT/run-with-it-dispatch.sh" \
+     "$ASSET_ROOT/scripts/run-with-it-dispatch.sh" \
        --asset-root "$ASSET_ROOT" \
        --role modify \
        --issue "$SUB_COORD_ISSUE_NUMBER" \
@@ -912,7 +946,7 @@ EOF
        --agent "$MODIFIER_AGENT" \
        --model "$MODIFIER_MODEL" \
        --context-file "$MODIFIER_CONTEXT_PAYLOAD_FILE" \
-       --prompt-file "$ASSET_ROOT/modifier-prompt.md" \
+       --prompt-file "$ASSET_ROOT/prompts/modifier-prompt.md" \
        --log-file "$MODIFY_LOG_FILE" \
        --done-file "$MODIFY_DONE_FILE" \
        --result-file "$MODIFY_RESULT_FILE" \
@@ -1006,7 +1040,7 @@ On merge success, include `merge.status="completed"`, `merge.merge_sha`, `issue_
 
 ### Sandbox
 
-**Invoke the platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `run-agent.sh` / `run-agent.ps1`, preserving unattended runner flags configured in `agent-registry.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
+**Invoke the platform dispatcher (`scripts/run-with-it-dispatch.sh` / `powershell/run-with-it-dispatch.ps1`) through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `scripts/run-agent.sh` / `powershell/run-agent.ps1`, preserving unattended runner flags configured in `agent-registry.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
 
 ## Appendix D: Sub-Coordinator State (Compaction Survival)
 
@@ -1173,7 +1207,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.state.json`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.state.json`
 
-The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are legacy advisory hints; log activity observed by the dispatcher is the liveness signal.
+The platform dispatcher (`scripts/run-with-it-dispatch.sh` / `powershell/run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are legacy advisory hints; log activity observed by the dispatcher is the liveness signal.
 
 For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Treat this as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
 
@@ -1186,7 +1220,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.done`
 
-The worker may write this file when its required artifacts are complete. The platform dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
+The worker may write this file when its required artifacts are complete. The platform dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `scripts/run-agent.sh` / `powershell/run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
 - impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`)
