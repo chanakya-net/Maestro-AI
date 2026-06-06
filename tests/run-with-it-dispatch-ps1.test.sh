@@ -709,4 +709,52 @@ assert_json_file "$REVIEW_RESULT" "PowerShell dispatcher synthesizes missing rev
 assert_file_contains "$REVIEW_RESULT" '"source": "dispatcher-synthesized"' "PowerShell synthesized review status is auditable"
 assert_file_contains "$REVIEW_STATE" '"state": "completed"' "PowerShell review instructions-only worker completes"
 
+DETACH_CS_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/48"
+DETACH_CS_CONTEXT="${SMOKE_PROJECT}/detach-cs-context.md"
+DETACH_CS_LOG="${DETACH_CS_ISSUE_DIR}/workers/impl/cycle-1.log"
+DETACH_CS_DONE="${DETACH_CS_ISSUE_DIR}/workers/impl/cycle-1.done"
+DETACH_CS_RESULT="${DETACH_CS_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+DETACH_CS_STATE="${DETACH_CS_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+DETACH_CS_OUT="${DETACH_CS_ISSUE_DIR}/workers/impl/cycle-1.dispatch.out"
+mkdir -p "$(dirname "$DETACH_CS_RESULT")"
+printf 'RESULT_FILE=%s\n' "$DETACH_CS_RESULT" > "$DETACH_CS_CONTEXT"
+
+# Clean up previous dotnet calls log
+>"${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}"
+
+DOTNET_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-dotnet.sh" \
+"$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+  -Detach \
+  -AssetRoot "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}" \
+  -Role impl \
+  -Issue 48 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$DETACH_CS_CONTEXT" \
+  -PromptFile "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md" \
+  -LogFile "$DETACH_CS_LOG" \
+  -DoneFile "$DETACH_CS_DONE" \
+  -ResultFile "$DETACH_CS_RESULT" \
+  -StateFile "$DETACH_CS_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$DETACH_CS_ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -DispatchOutFile "$DETACH_CS_OUT" \
+  -HelperRuntime cs \
+  -PollSeconds 1 >/dev/null
+
+for _ in {1..40}; do
+  if [[ -f "$DETACH_CS_LOG" ]] && grep -Fq "STATUS|type=dispatch-complete|issue=48|role=impl" "$DETACH_CS_LOG"; then
+    break
+  fi
+  sleep 0.25
+done
+
+assert_file_contains "$DETACH_CS_LOG" "STATUS|type=dispatch-detached|issue=48|role=impl|cycle=1" "detached C# PowerShell dispatcher logs parent handoff"
+assert_file_contains "$DETACH_CS_LOG" "STATUS|type=dispatch-start|issue=48|role=impl|cycle=1" "detached C# PowerShell dispatcher starts child monitor"
+assert_json_file "$DETACH_CS_RESULT" "detached C# PowerShell dispatcher writes result JSON"
+assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}")" "run-with-it-artifacts.cs" "detached C# dispatcher child routes helper via DOTNET_BIN"
+
 echo "PASS: run-with-it-dispatch.ps1 contract"

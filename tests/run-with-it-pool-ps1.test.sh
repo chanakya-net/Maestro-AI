@@ -404,4 +404,16 @@ for runtime in cs csharp c#; do
   assert_contains "$(cat "${RUNTIME_POOL_PS1_DOTNET_CALLS}")" "run-with-it-state.cs" "helper runtime ${runtime} routes pool helper via DOTNET_BIN"
 done
 
+# Verify helper runtime propagates to spawned dispatchers in dry-run mode
+dry_run_pool_output="$(DOTNET_BIN="${RUNTIME_POOL_PS1_BIN}/fake-dotnet.sh" \
+  "$PS_CMD" -NoProfile -File "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \
+  -AssetRoot "$RUNTIME_POOL_PS1_ASSET_ROOT" \
+  -StateFile "$RUNTIME_POOL_PS1_STATE" \
+  -ParallelJobs 2 \
+  -Agent fake \
+  -Model fake-model \
+  -HelperRuntime cs \
+  -DryRun)"
+assert_contains "${dry_run_pool_output}" "-HelperRuntime cs" "helper runtime propagates to spawned dispatchers in pool dry-run"
+
 echo "PASS: run-with-it-pool.ps1 contract"

@@ -346,6 +346,7 @@ function Get-DispatchArgs([string]$issue, [string]$contextFile, [string]$issueDi
         "-NoProfile",
         "-File", $Dispatcher,
         "-AssetRoot", $AssetRoot,
+        "-HelperRuntime", $HelperRuntime,
         "-Role", "sub-coord",
         "-Issue", $issue,
         "-Agent", $Agent,

@@ -442,6 +442,7 @@ if ($Detach -and -not $DetachedChild -and -not $ValidateOnly) {
         "-NoProfile",
         "-File", $PSCommandPath,
         "-AssetRoot", $AssetRoot,
+        "-HelperRuntime", $HelperRuntime,
         "-Role", $Role,
         "-Issue", $Issue,
         "-Cycle", $Cycle,
