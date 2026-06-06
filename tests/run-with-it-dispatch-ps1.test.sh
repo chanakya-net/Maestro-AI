@@ -421,6 +421,14 @@ chmod +x "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
 printf 'runtime dispatch helper path context\n' > "${WORK_DIR}/runtime-dispatch-ps1-context-981.md"
 printf 'runtime dispatch helper path context\n' > "${WORK_DIR}/runtime-dispatch-ps1-context-982.md"
 printf 'runtime dispatch helper path context\n' > "${WORK_DIR}/runtime-dispatch-ps1-context-983.md"
+RUNTIME_DISPATCH_PS1_REPO_ROOT="${WORK_DIR}/runtime-dispatch-ps1-repo"
+mkdir -p "${RUNTIME_DISPATCH_PS1_REPO_ROOT}"
+git -C "${RUNTIME_DISPATCH_PS1_REPO_ROOT}" init -q
+git -C "${RUNTIME_DISPATCH_PS1_REPO_ROOT}" config user.email "test@example.com"
+git -C "${RUNTIME_DISPATCH_PS1_REPO_ROOT}" config user.name "Test User"
+printf 'baseline\n' > "${RUNTIME_DISPATCH_PS1_REPO_ROOT}/README.md"
+git -C "${RUNTIME_DISPATCH_PS1_REPO_ROOT}" add README.md
+git -C "${RUNTIME_DISPATCH_PS1_REPO_ROOT}" commit -m "baseline" >/dev/null
 
 RUNTIME_DISPATCH_PS1_ISSUE=980
 for runtime in py python; do
@@ -441,6 +449,7 @@ for runtime in py python; do
     -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}.done" \
     -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-result.json" \
     -StateFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}.state.json" \
+    -RepoRoot "$RUNTIME_DISPATCH_PS1_REPO_ROOT" \
     -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-issue" \
     -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-status.txt" \
     -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-py-${runtime}-events.txt" \
@@ -463,6 +472,7 @@ PYTHON_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" \
     -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-default-py.done" \
     -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-default-py-result.json" \
     -StateFile "${WORK_DIR}/runtime-dispatch-ps1-default-py.state.json" \
+    -RepoRoot "$RUNTIME_DISPATCH_PS1_REPO_ROOT" \
     -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-default-py-issue" \
     -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-default-py-status.txt" \
     -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-default-py-events.txt" \
@@ -488,6 +498,7 @@ for runtime in cs csharp c#; do
     -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}.done" \
     -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-result.json" \
     -StateFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}.state.json" \
+    -RepoRoot "$RUNTIME_DISPATCH_PS1_REPO_ROOT" \
     -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-issue" \
     -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-status.txt" \
     -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-events.txt" \
@@ -532,6 +543,7 @@ RUN_WITH_IT_HELPER_RUNTIME=cs \
   -DoneFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run.done" \
   -ResultFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-result.json" \
   -StateFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run.state.json" \
+  -RepoRoot "$RUNTIME_DISPATCH_PS1_REPO_ROOT" \
   -IssueDir "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-issue" \
   -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-status.txt" \
   -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-root-registry-run-events.txt" \
