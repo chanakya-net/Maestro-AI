@@ -5,6 +5,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROUTER_PATH="${ROOT_DIR}/assets/python/run-with-it-router.py"
 REGISTRY_PATH="${ROOT_DIR}/assets/agent-registry.json"
+PARITY_HELPER="${ROOT_DIR}/tests/run-with-it-helper-parity.test.sh"
+
+[[ -f "${ROOT_DIR}/assets/csharp/run-with-it-router.cs" ]] || {
+  echo "FAIL: C# router helper exists (missing: ${ROOT_DIR}/assets/csharp/run-with-it-router.cs)" >&2
+  exit 1
+}
+
+[[ -f "${PARITY_HELPER}" ]] || {
+  echo "FAIL: helper parity suite exists (missing: ${PARITY_HELPER})" >&2
+  exit 1
+}
 
 fail() {
   echo "FAIL: $1" >&2

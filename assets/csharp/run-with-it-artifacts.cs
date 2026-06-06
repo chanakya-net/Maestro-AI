@@ -45,7 +45,7 @@ class Program
     catch (Exception ex)
     {
         Console.Error.WriteLine(ex.Message);
-        return 2;
+        return 1;
     }
 }
 

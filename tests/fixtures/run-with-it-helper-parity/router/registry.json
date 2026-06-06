@@ -1,0 +1,123 @@
+{
+  "agents": {
+    "agy": {
+      "model": {
+        "known_models": ["gemini-3.5-flash-medium"]
+      }
+    },
+    "codex": {
+      "model": {
+        "known_models": ["gpt-5.3-codex"]
+      }
+    },
+    "claude": {
+      "model": {
+        "known_models": ["claude-sonnet-4-6"]
+      }
+    }
+  },
+  "model_catalog": {
+    "gemini-3.5-flash-medium": {
+      "provider": "google",
+      "ability": "reasoning",
+      "complexity_weight": 3,
+      "context_window": 256000
+    },
+    "gpt-5.3-codex": {
+      "provider": "openai",
+      "ability": "coding",
+      "complexity_weight": 3,
+      "context_window": 128000
+    },
+    "claude-sonnet-4-6": {
+      "provider": "anthropic",
+      "ability": "review",
+      "complexity_weight": 4,
+      "context_window": 200000
+    }
+  },
+  "model_routing": {
+    "score_to_weight": [
+      {
+        "label": "easy",
+        "score_min": 1,
+        "score_max": 10,
+        "weight_min": 1,
+        "weight_max": 3
+      },
+      {
+        "label": "medium",
+        "score_min": 11,
+        "score_max": 20,
+        "weight_min": 3,
+        "weight_max": 4
+      },
+      {
+        "label": "medium-hard",
+        "score_min": 21,
+        "score_max": 30,
+        "weight_min": 4,
+        "weight_max": 5
+      },
+      {
+        "label": "complex",
+        "score_min": 31,
+        "score_max": 40,
+        "weight_min": 5,
+        "weight_max": 6
+      }
+    ],
+    "usage_distribution": {
+      "default_target_percent": {
+        "codex": 50,
+        "agy": 30,
+        "claude": 20
+      },
+      "role_target_percent": {
+        "impl": {
+          "codex": 50,
+          "agy": 30,
+          "claude": 20
+        },
+        "review": {
+          "codex": 20,
+          "agy": 0,
+          "claude": 80
+        },
+        "complexity": {
+          "codex": 20,
+          "agy": 60,
+          "claude": 20
+        },
+        "modify": {
+          "codex": 40,
+          "agy": 40,
+          "claude": 20
+        },
+        "merge-recovery": {
+          "codex": 30,
+          "agy": 40,
+          "claude": 30
+        }
+      },
+      "role_band_target_percent": {
+        "review": {
+          "medium-hard": {
+            "codex": 10,
+            "agy": 0,
+            "claude": 90
+          }
+        }
+      },
+      "role_agent_preference": {
+        "default": ["agy", "codex", "claude"],
+        "impl": ["agy", "codex", "claude"],
+        "review": ["claude", "codex", "agy"],
+        "complexity": ["agy", "codex", "claude"]
+      }
+    },
+    "band_required_models": {
+      "medium": ["gpt-5.3-codex"]
+    }
+  }
+}

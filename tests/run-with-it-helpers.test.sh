@@ -6,6 +6,25 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_HELPER="${ROOT_DIR}/assets/python/run-with-it-state.py"
 GITHUB_HELPER="${ROOT_DIR}/assets/python/run-with-it-github-update.py"
 PR_BODY_HELPER="${ROOT_DIR}/assets/python/run-with-it-pr-body.py"
+PARITY_HELPER="${ROOT_DIR}/tests/run-with-it-helper-parity.test.sh"
+
+for helper in \
+  run-with-it-state \
+  run-with-it-router \
+  run-with-it-artifacts \
+  run-with-it-github-update \
+  run-with-it-pr-body
+do
+  [[ -f "${ROOT_DIR}/assets/csharp/${helper}.cs" ]] || {
+    echo "FAIL: C# ${helper} helper exists (missing: ${ROOT_DIR}/assets/csharp/${helper}.cs)" >&2
+    exit 1
+  }
+done
+
+[[ -f "${PARITY_HELPER}" ]] || {
+  echo "FAIL: helper parity suite exists (missing: ${PARITY_HELPER})" >&2
+  exit 1
+}
 
 fail() {
   echo "FAIL: $1" >&2
