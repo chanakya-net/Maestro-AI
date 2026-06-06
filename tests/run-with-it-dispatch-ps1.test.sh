@@ -73,7 +73,13 @@ if ($Prompt -eq "--version") {
   Write-Output "fake-agent 1.0"
   exit 0
 }
-$resultFile = (($Prompt -split "`r`n|`n|`r| " | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", "")
+$resultFile = $null
+foreach ($line in ($Prompt -split "`r`n|`n|`r")) {
+  if ($line -like "RESULT_FILE=*") {
+    $resultFile = $line -replace "^RESULT_FILE=", ""
+    break
+  }
+}
 if (-not $resultFile) {
   $resultFile = $env:RUN_WITH_IT_RESULT_FILE
 }
@@ -83,13 +89,18 @@ if (-not $RepoRoot) {
 Write-Output "STATUS|type=heartbeat|issue=$env:RUN_WITH_IT_ISSUE|role=$env:RUN_WITH_IT_ROLE|phase=testing|progress=repo-root"
 Write-Output "fake-agent stdout is captured"
 [Console]::Error.WriteLine("fake-agent stderr is captured")
-New-Item -ItemType Directory -Force -Path $RepoRoot | Out-Null
-New-Item -ItemType Directory -Force -Path (Split-Path $resultFile) | Out-Null
-Set-Content -Path (Join-Path $RepoRoot "marker.txt") -Value "seen" -Encoding UTF8
-& git -C $RepoRoot add marker.txt | Out-Null
-& git -C $RepoRoot commit -m "impl fake marker" | Out-Null
-$commitSha = (& git -C $RepoRoot rev-parse HEAD).Trim()
-Set-Content -Path $resultFile -Value "{`"schema_version`":1,`"issue`":`"$env:RUN_WITH_IT_ISSUE`",`"role`":`"$env:RUN_WITH_IT_ROLE`",`"status`":`"success`",`"commit_sha`":`"$commitSha`",`"files_committed`":[`"marker.txt`"],`"verification`":{`"passed`":true,`"commands`":[`"fake`"]},`"repo_root_seen`":`"$RepoRoot`"}" -Encoding UTF8
+try {
+  New-Item -ItemType Directory -Force -Path $RepoRoot | Out-Null
+  New-Item -ItemType Directory -Force -Path (Split-Path $resultFile) | Out-Null
+  Set-Content -Path (Join-Path $RepoRoot "marker.txt") -Value "seen" -Encoding UTF8
+  & git -C $RepoRoot add marker.txt | Out-Null
+  & git -C $RepoRoot commit -m "impl fake marker" | Out-Null
+  $commitSha = (& git -C $RepoRoot rev-parse HEAD).Trim()
+  Set-Content -Path $resultFile -Value "{`"schema_version`":1,`"issue`":`"$env:RUN_WITH_IT_ISSUE`",`"role`":`"$env:RUN_WITH_IT_ROLE`",`"status`":`"success`",`"commit_sha`":`"$commitSha`",`"files_committed`":[`"marker.txt`"],`"verification`":{`"passed`":true,`"commands`":[`"fake`"]},`"repo_root_seen`":`"$RepoRoot`"}" -Encoding UTF8
+} catch {
+  [Console]::Error.WriteLine("fake-agent EXCEPTION: $_")
+  [Console]::Error.WriteLine("fake-agent STACKTRACE: $($_.ScriptStackTrace)")
+}
 PS1
 
 SILENT_AGENT="${WORK_DIR}/silent-agent.ps1"
@@ -99,7 +110,13 @@ if ($Prompt -eq "--version") {
   Write-Output "silent-agent 1.0"
   exit 0
 }
-$resultFile = (($Prompt -split "`r`n|`n|`r| " | Where-Object { $_ -like "RESULT_FILE=*" } | Select-Object -First 1) -replace "^RESULT_FILE=", "")
+$resultFile = $null
+foreach ($line in ($Prompt -split "`r`n|`n|`r")) {
+  if ($line -like "RESULT_FILE=*") {
+    $resultFile = $line -replace "^RESULT_FILE=", ""
+    break
+  }
+}
 if (-not $resultFile) {
   $resultFile = $env:RUN_WITH_IT_RESULT_FILE
 }
@@ -228,47 +245,52 @@ cp "${ROOT_DIR}/assets/prompts/prompt.md" "${FLAT_ASSET_ROOT}/prompts/prompt.md"
 chmod +x "${FLAT_ASSET_ROOT}/run-with-it-dispatch.ps1" "${FLAT_ASSET_ROOT}/run-agent.ps1" \
   "${FLAT_ASSET_ROOT}/worker-watch.ps1" "${FLAT_ASSET_ROOT}/run-with-it-pool.ps1"
 
-flat_output="$("${PS_CMD}" -NoProfile -File "$DISPATCHER" \
-  -DryRun \
-  -AssetRoot "$FLAT_ASSET_ROOT" \
-  -Role impl \
-  -Issue 88 \
-  -Cycle 1 \
-  -Agent fake \
-  -Model fake-model \
-  -ContextFile "$CONTEXT_FILE" \
-  -PromptFile "${FLAT_ASSET_ROOT}/prompts/prompt.md" \
-  -LogFile "$LOG_FILE" \
-  -DoneFile "$DONE_FILE" \
-  -ResultFile "$RESULT_FILE" \
-  -StateFile "$STATE_FILE" \
-  -RepoRoot "$SMOKE_REPO_ROOT" \
-  -IssueDir "$ISSUE_DIR" \
-  -StatusFile "$STATUS_FILE" \
-  -EventsLog "$EVENTS_LOG" \
-  -HelperRuntime py)"
+flat_output="$(
+  "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+    -DryRun \
+    -AssetRoot "$FLAT_ASSET_ROOT" \
+    -Role impl \
+    -Issue 88 \
+    -Cycle 1 \
+    -Agent fake \
+    -Model fake-model \
+    -ContextFile "$CONTEXT_FILE" \
+    -PromptFile "${FLAT_ASSET_ROOT}/prompts/prompt.md" \
+    -LogFile "$LOG_FILE" \
+    -DoneFile "$DONE_FILE" \
+    -ResultFile "$RESULT_FILE" \
+    -StateFile "$STATE_FILE" \
+    -RepoRoot "$SMOKE_REPO_ROOT" \
+    -IssueDir "$ISSUE_DIR" \
+    -StatusFile "$STATUS_FILE" \
+    -EventsLog "$EVENTS_LOG" \
+    -HelperRuntime py
+)"
 assert_contains "$flat_output" "${FLAT_ASSET_ROOT}/run-agent.ps1 --agent fake" "flat Python layout resolves root-level run-agent helper"
 
 set +e
-cs_output="$("${PS_CMD}" -NoProfile -File "$DISPATCHER" \
-  -DryRun \
-  -AssetRoot "$FLAT_ASSET_ROOT" \
-  -Role impl \
-  -Issue 89 \
-  -Cycle 1 \
-  -Agent fake \
-  -Model fake-model \
-  -ContextFile "$CONTEXT_FILE" \
-  -PromptFile "${FLAT_ASSET_ROOT}/prompts/prompt.md" \
-  -LogFile "$LOG_FILE" \
-  -DoneFile "$DONE_FILE" \
-  -ResultFile "$RESULT_FILE" \
-  -StateFile "$STATE_FILE" \
-  -RepoRoot "$SMOKE_REPO_ROOT" \
-  -IssueDir "$ISSUE_DIR" \
-  -StatusFile "$STATUS_FILE" \
-  -EventsLog "$EVENTS_LOG" \
-  -HelperRuntime cs 2>&1)"
+cs_output="$(
+  "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+    -DryRun \
+    -AssetRoot "$FLAT_ASSET_ROOT" \
+    -Role impl \
+    -Issue 89 \
+    -Cycle 1 \
+    -Agent fake \
+    -Model fake-model \
+    -ContextFile "$CONTEXT_FILE" \
+    -PromptFile "${FLAT_ASSET_ROOT}/prompts/prompt.md" \
+    -LogFile "$LOG_FILE" \
+    -DoneFile "$DONE_FILE" \
+    -ResultFile "$RESULT_FILE" \
+    -StateFile "$STATE_FILE" \
+    -RepoRoot "$SMOKE_REPO_ROOT" \
+    -IssueDir "$ISSUE_DIR" \
+    -StatusFile "$STATUS_FILE" \
+    -EventsLog "$EVENTS_LOG" \
+    -HelperRuntime cs \
+    2>&1
+)"
 cs_status="$?"
 set -e
 
@@ -355,20 +377,20 @@ SH
 chmod +x "${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" "${RUNTIME_DISPATCH_PS1_BIN}/fake-dotnet.sh"
 
 RUNTIME_DISPATCH_PS1_ASSET_ROOT="${WORK_DIR}/runtime-dispatch-ps1-assets"
-mkdir -p "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/scripts" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/python"
+mkdir -p "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/scripts" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/python" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp"
 cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1"
 cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/scripts/run-agent.ps1"
 cp "${ROOT_DIR}/assets/powershell/run-agent.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-agent.ps1"
 cp "${ROOT_DIR}/assets/powershell/worker-watch.ps1" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/worker-watch.ps1"
 cp "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/python/"
 cp "${ROOT_DIR}/assets/prompts/prompt.md" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/prompts/prompt.md"
-cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-with-it-artifacts.cs" <<'CS'
+cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" <<'CS'
 namespace Dummy;
 CS
-cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/run-with-it-github-update.cs" <<'CS'
+cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/run-with-it-github-update.cs" <<'CS'
 namespace Dummy;
 CS
-cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/powershell/agent-registry.json" <<JSON
+cat > "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/agent-registry.json" <<JSON
 {
   "schema_version": 1,
   "aliases": {},
@@ -429,6 +451,7 @@ done
 > "${RUNTIME_DISPATCH_PS1_PY_CALLS}"
 PYTHON_BIN="${RUNTIME_DISPATCH_PS1_BIN}/fake-python.sh" \
   "$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
+    -AssetRoot "$RUNTIME_DISPATCH_PS1_ASSET_ROOT" \
     -Role impl \
     -Issue 985 \
     -Cycle 1 \
@@ -469,15 +492,15 @@ for runtime in cs csharp c#; do
     -StatusFile "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-status.txt" \
     -EventsLog "${WORK_DIR}/runtime-dispatch-ps1-${runtime}-events.txt" \
     -PollSeconds 1
-  assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}")" "run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
+  assert_contains "$(cat "${RUNTIME_DISPATCH_PS1_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
 done
 
 set +e
 invalid_dispatch_runtime_output_file="$(mktemp -d)/ps1-runtime-dispatch-invalid.log"
 RUN_WITH_IT_HELPER_RUNTIME=invalid-runtime \
   "$PS_CMD" -NoProfile -File "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}/run-with-it-dispatch.ps1" \
-  -ValidateOnly \
-  -AssetRoot "${ROOT_DIR}/assets" \
+    -ValidateOnly \
+    -AssetRoot "${RUNTIME_DISPATCH_PS1_ASSET_ROOT}" \
   -Role impl \
   -Issue 990 \
   -Cycle 1 \
@@ -566,6 +589,7 @@ assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-start|issue=45|role=imp
 assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-pid|issue=45|role=impl|cycle=1" "detached PowerShell dispatcher captures runner pid"
 assert_json_file "$DETACH_STATE" "detached PowerShell dispatcher writes state JSON"
 assert_json_file "$DETACH_RESULT" "detached PowerShell dispatcher writes result JSON"
+
 
 SILENT_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/43"
 SILENT_CONTEXT="${SMOKE_PROJECT}/silent-context.md"

@@ -75,7 +75,7 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
     $scriptsDir = Join-Path $assetRoot "scripts"
     $powershellDir = Join-Path $assetRoot "powershell"
     $pythonHelpersDir = Join-Path $assetRoot "python"
-    $csharpHelpersDir = Join-Path $assetRoot "powershell"
+    $csharpHelpersDir = Join-Path $assetRoot "csharp"
 
     if ($helperRuntime -eq "py") {
         if (-not (Test-Path $scriptsDir) -and (Test-Path (Join-Path $assetRoot "run-with-it-dispatch.ps1"))) {
@@ -96,7 +96,7 @@ function Resolve-AssetLayout([string]$assetRoot, [string]$helperRuntime) {
         }
     }
 
-    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir)) {
+    if (-not (Test-Path $promptsDir) -or -not (Test-Path $scriptsDir) -or -not (Test-Path $powershellDir) -or -not (Test-Path $pythonHelpersDir) -or -not (Test-Path $csharpHelpersDir)) {
         Fail "missing nested asset layout for helper runtime 'cs' at $assetRoot; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
     }
 
@@ -167,8 +167,8 @@ function Remove-ProcessCapture($entry) {
 }
 
 if (-not $AssetRoot) {
-    $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\assets"
-    if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-with-it-dispatch.ps1")) {
+    $homeAssetRoot = Join-Path $env:USERPROFILE ".ai-skill-collections\\assets"
+    if (Test-Path (Join-Path $homeAssetRoot "powershell" "run-agent.ps1")) {
         $AssetRoot = $homeAssetRoot
     } else {
         $AssetRoot = Split-Path $PSScriptRoot -Parent
@@ -193,14 +193,15 @@ if (-not (Test-Path $StateFile)) { Fail "state file not found: $StateFile" }
 
 $RunRoot = (Resolve-Path (Join-Path (Split-Path $StateFile) "..")).Path
 $PowerShellExe = Get-PowerShellExe
-$script:PythonExe = Get-PythonExe
 $script:DotNetExe = Get-DotNetExe
 
 if ($HelperRuntime -eq "py") {
+    $script:PythonExe = Get-PythonExe
     if (-not (Get-Command $script:PythonExe -ErrorAction SilentlyContinue)) {
         Fail "helper runtime preflight failed: PYTHON_BIN not found or not executable: $script:PythonExe"
     }
 } else {
+    $script:PythonExe = $null
     if (-not (Get-Command $script:DotNetExe -ErrorAction SilentlyContinue)) {
         Fail "helper runtime preflight failed: DOTNET_BIN not found; install .NET SDK 10+"
     }

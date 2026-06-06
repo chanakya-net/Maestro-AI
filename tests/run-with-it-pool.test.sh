@@ -257,17 +257,17 @@ SH
 chmod +x "${RUNTIME_ALIAS_BIN}/fake-python.sh" "${RUNTIME_ALIAS_BIN}/fake-dotnet.sh"
 
 RUNTIME_ASSET_ROOT="${WORK_DIR}/runtime-alias-assets"
-mkdir -p "${RUNTIME_ASSET_ROOT}/prompts" "${RUNTIME_ASSET_ROOT}/scripts" "${RUNTIME_ASSET_ROOT}/python" "${RUNTIME_ASSET_ROOT}/powershell"
+mkdir -p "${RUNTIME_ASSET_ROOT}/prompts" "${RUNTIME_ASSET_ROOT}/scripts" "${RUNTIME_ASSET_ROOT}/python" "${RUNTIME_ASSET_ROOT}/powershell" "${RUNTIME_ASSET_ROOT}/csharp"
 cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${RUNTIME_ASSET_ROOT}/scripts/"
 cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${RUNTIME_ASSET_ROOT}/prompts/"
 cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${RUNTIME_ASSET_ROOT}/prompts/"
 cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${RUNTIME_ASSET_ROOT}/python/"
 cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${RUNTIME_ASSET_ROOT}/python/"
 chmod +x "${RUNTIME_ASSET_ROOT}/scripts/run-with-it-dispatch.sh"
-cat > "${RUNTIME_ASSET_ROOT}/powershell/run-with-it-state.cs" <<'CS'
+cat > "${RUNTIME_ASSET_ROOT}/csharp/run-with-it-state.cs" <<'CS'
 Write-Output "run-with-it-state.cs"
 CS
-cat > "${RUNTIME_ASSET_ROOT}/powershell/run-with-it-github-update.cs" <<'CS'
+cat > "${RUNTIME_ASSET_ROOT}/csharp/run-with-it-github-update.cs" <<'CS'
 Write-Output "run-with-it-github-update.cs"
 CS
 

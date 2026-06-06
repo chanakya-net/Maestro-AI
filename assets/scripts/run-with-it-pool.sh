@@ -59,7 +59,7 @@ resolve_asset_layout() {
   SCRIPTS_DIR="${root}/scripts"
   POWERSHELL_DIR="${root}/powershell"
   PYTHON_HELPERS_DIR="${root}/python"
-  CSHARP_HELPERS_DIR="${root}/powershell"
+  CSHARP_HELPERS_DIR="${root}/csharp"
 
   if [ "$runtime" = "py" ]; then
     if [ ! -d "$SCRIPTS_DIR" ] && [ -f "${root}/run-with-it-dispatch.sh" ]; then
@@ -76,7 +76,7 @@ resolve_asset_layout() {
     return 0
   fi
 
-  if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ]; then
+  if [ ! -d "$SCRIPTS_DIR" ] || [ ! -d "$POWERSHELL_DIR" ] || [ ! -d "$PROMPTS_DIR" ] || [ ! -d "$PYTHON_HELPERS_DIR" ] || [ ! -d "$CSHARP_HELPERS_DIR" ]; then
     fail "missing nested asset layout for helper runtime 'cs' at ${root}; use RUN_WITH_IT_HELPER_RUNTIME=py for legacy flat python fallback"
   fi
   return 0

@@ -287,7 +287,7 @@ SH
 chmod +x "${RUNTIME_POOL_PS1_BIN}/fake-python.sh" "${RUNTIME_POOL_PS1_BIN}/fake-dotnet.sh"
 
 RUNTIME_POOL_PS1_ASSET_ROOT="${WORK_DIR}/runtime-pool-ps1-assets"
-mkdir -p "${RUNTIME_POOL_PS1_ASSET_ROOT}/prompts" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python" "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell" "${RUNTIME_POOL_PS1_ASSET_ROOT}/scripts"
+mkdir -p "${RUNTIME_POOL_PS1_ASSET_ROOT}/prompts" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python" "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell" "${RUNTIME_POOL_PS1_ASSET_ROOT}/scripts" "${RUNTIME_POOL_PS1_ASSET_ROOT}/csharp"
 cp "${ROOT_DIR}/assets/powershell/run-with-it-pool.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1"
 cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/scripts/run-with-it-dispatch.ps1"
 cp "${ROOT_DIR}/assets/powershell/run-with-it-dispatch.ps1" "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell/run-with-it-dispatch.ps1"
@@ -297,10 +297,10 @@ cp "${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md" "${RUNTIME_POOL_PS1_AS
 cp "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" "${RUNTIME_POOL_PS1_ASSET_ROOT}/prompts/"
 cp "${ROOT_DIR}/assets/python/run-with-it-state.py" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python/"
 cp "${ROOT_DIR}/assets/python/run-with-it-github-update.py" "${RUNTIME_POOL_PS1_ASSET_ROOT}/python/"
-cat > "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell/run-with-it-state.cs" <<'CS'
+cat > "${RUNTIME_POOL_PS1_ASSET_ROOT}/csharp/run-with-it-state.cs" <<'CS'
 Write-Output "run-with-it-state.cs"
 CS
-cat > "${RUNTIME_POOL_PS1_ASSET_ROOT}/powershell/run-with-it-github-update.cs" <<'CS'
+cat > "${RUNTIME_POOL_PS1_ASSET_ROOT}/csharp/run-with-it-github-update.cs" <<'CS'
 Write-Output "run-with-it-github-update.cs"
 CS
 chmod +x "${RUNTIME_POOL_PS1_ASSET_ROOT}/run-with-it-pool.ps1" \

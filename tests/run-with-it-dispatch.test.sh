@@ -306,7 +306,7 @@ SH
 chmod +x "${RUNTIME_DISPATCH_BIN}/fake-python.sh" "${RUNTIME_DISPATCH_BIN}/fake-dotnet.sh"
 
 RUNTIME_DISPATCH_ASSET_ROOT="${WORK_DIR}/runtime-dispatch-assets"
-mkdir -p "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts" "${RUNTIME_DISPATCH_ASSET_ROOT}/python" "${RUNTIME_DISPATCH_ASSET_ROOT}/powershell"
+mkdir -p "${RUNTIME_DISPATCH_ASSET_ROOT}/prompts" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts" "${RUNTIME_DISPATCH_ASSET_ROOT}/python" "${RUNTIME_DISPATCH_ASSET_ROOT}/powershell" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp"
 cp "${ROOT_DIR}/assets/scripts/run-with-it-dispatch.sh" "${RUNTIME_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh"
 cp "${ROOT_DIR}/assets/scripts/run-agent.sh" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh"
 cp "${ROOT_DIR}/assets/scripts/worker-watch.sh" "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh"
@@ -348,10 +348,10 @@ SH
 chmod +x "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/run-agent.sh" \
   "${RUNTIME_DISPATCH_ASSET_ROOT}/scripts/worker-watch.sh" \
   "${RUNTIME_DISPATCH_ASSET_ROOT}/run-with-it-dispatch.sh"
-cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/powershell/run-with-it-artifacts.cs" <<'CS'
+cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" <<'CS'
 namespace Dummy;
 CS
-cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/powershell/agent-registry.json" <<'JSON'
+cat > "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/agent-registry.json" <<'JSON'
 {
   "schema_version": 1,
   "aliases": {},
@@ -453,7 +453,7 @@ for runtime in cs csharp c#; do
     --status-file "${WORK_DIR}/runtime-dispatch-cs-${runtime}-status.txt" \
     --events-log "${WORK_DIR}/runtime-dispatch-cs-${runtime}-events.txt" \
     --poll-seconds 1
-  assert_contains "$(cat "${RUNTIME_DISPATCH_DOTNET_CALLS}")" "run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
+  assert_contains "$(cat "${RUNTIME_DISPATCH_DOTNET_CALLS}")" "${RUNTIME_DISPATCH_ASSET_ROOT}/csharp/run-with-it-artifacts.cs" "helper runtime ${runtime} routes artifact helper via DOTNET_BIN"
 done
 
 set +e
