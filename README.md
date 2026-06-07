@@ -129,7 +129,7 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 | File | What it does |
 |------|-------------|
 | `agent-registry.json` | Agent catalog — detection commands, invocation templates, 27-model catalog with complexity weights, routing rules, and subscription distribution targets. |
-| `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across 4 providers with role-specific and complexity-band-specific targets (default: Codex 50%, Agy 20%, Copilot 20%, Claude 10%). |
+| `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across 4 providers with role-specific and complexity-band-specific targets (default: Codex 55%, Claude 30%, Copilot 10%, Agy 5%). |
 | `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, and merge recovery state transitions. |
 | `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
 | `run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |

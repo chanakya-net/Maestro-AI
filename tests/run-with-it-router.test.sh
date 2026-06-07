@@ -53,10 +53,10 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 distribution = registry["model_routing"]["usage_distribution"]
 target = distribution["default_target_percent"]
 expected = {
-    "codex": 50,
-    "agy": 20,
-    "github-copilot": 20,
-    "claude": 10,
+    "codex": 55,
+    "claude": 30,
+    "github-copilot": 10,
+    "agy": 5,
 }
 if target != expected:
     raise SystemExit(f"default target mismatch: {target!r}")
@@ -67,8 +67,19 @@ for role in ("complexity", "impl", "review", "modify", "merge-recovery"):
         raise SystemExit(f"missing role target for {role}")
 
 codex_model = registry["agents"]["codex"]["model"]
-if "routing_disabled_models" in codex_model:
-    raise SystemExit("codex registry must not disable known models by default")
+if codex_model.get("known_models") != ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]:
+    raise SystemExit(f"codex known models mismatch: {codex_model.get('known_models')!r}")
+if codex_model.get("routing_disabled_models") != ["gpt-5.3-codex-spark"]:
+    raise SystemExit("codex registry must disable Spark while the weekly limit is hit")
+
+claude_model = registry["agents"]["claude"]["model"]
+if claude_model.get("known_models") != ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]:
+    raise SystemExit(f"claude known models mismatch: {claude_model.get('known_models')!r}")
+catalog = registry["model_catalog"]
+if catalog["claude-opus-4.7"].get("routing_disabled") is not True:
+    raise SystemExit("Opus 4.7 must be disabled by default")
+if catalog["gpt-5.3-codex-spark"].get("routing_disabled") is not True:
+    raise SystemExit("Codex Spark must be disabled by default")
 PY
 
 echo "PASS: registry declares subscription usage distribution"
@@ -95,8 +106,9 @@ codex_heavy_output="$("${ROUTER_PATH}" \
   --complexity-level easy \
   --detected-agents codex,agy,github-copilot,claude)"
 
-assert_json_field "${codex_heavy_output}" 'payload["agent"] in {"agy", "github-copilot"}' "codex-heavy ledger shifts easy implementation away from Codex"
-assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["codex"] == 50' "router reports Codex 50 percent default target"
+assert_json_field "${codex_heavy_output}" 'payload["agent"] in {"claude", "github-copilot", "agy"}' "codex-heavy ledger shifts easy implementation away from Codex"
+assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["codex"] == 55' "router reports Codex 55 percent default target"
+assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["claude"] == 30' "router reports Claude 30 percent default target"
 assert_json_field "${codex_heavy_output}" 'payload["ledger"]["updated"] is False' "router does not update ledger unless requested"
 
 echo "PASS: router shifts easy work away from over-target Codex"
@@ -108,10 +120,10 @@ complexity_output="$("${ROUTER_PATH}" \
   --complexity-level medium \
   --detected-agents codex,agy,github-copilot,claude)"
 
-assert_json_field "${complexity_output}" 'payload["agent"] == "agy"' "complexity scoring prefers Agy when all tools are available"
-assert_json_field "${complexity_output}" 'payload["model"] in {"gemini-3.1-pro-low", "gemini-3.1-pro-high", "gemini-3.5-flash-medium"}' "complexity scoring picks an easy-medium Agy model"
+assert_json_field "${complexity_output}" 'payload["agent"] in {"claude", "codex"}' "complexity scoring prefers primary subscription tools when all tools are available"
+assert_json_field "${complexity_output}" 'payload["model"] != "gpt-5.3-codex-spark"' "complexity scoring does not select disabled Codex Spark"
 
-echo "PASS: router protects scarce tools during complexity scoring"
+echo "PASS: router uses primary subscriptions during complexity scoring"
 
 review_output="$("${ROUTER_PATH}" \
   --registry-file "${REGISTRY_PATH}" \
@@ -253,11 +265,11 @@ total = sum(counts.values())
 percent = {agent: counts.get(agent, 0) / total * 100 for agent in ("codex", "agy", "github-copilot", "claude")}
 
 if percent["codex"] < 45:
-    raise SystemExit(f"Codex should stay near the 50 percent overall target, saw {percent['codex']:.1f}%")
-if not 15 <= percent["agy"] <= 30:
-    raise SystemExit(f"Agy should stay near the 20 percent overall target, saw {percent['agy']:.1f}%")
-if percent["claude"] > 16:
-    raise SystemExit(f"Claude should be protected near the 10 percent overall target, saw {percent['claude']:.1f}%")
+    raise SystemExit(f"Codex should stay near the 55 percent overall target, saw {percent['codex']:.1f}%")
+if percent["claude"] < 20:
+    raise SystemExit(f"Claude should increase toward the 30 percent overall target, saw {percent['claude']:.1f}%")
+if percent["agy"] > 15:
+    raise SystemExit(f"Agy should stay near the 5 percent support target, saw {percent['agy']:.1f}%")
 PY
 
-echo "PASS: mixed dummy queue stays near overall subscription targets"
+echo "PASS: mixed dummy queue tracks updated subscription targets"

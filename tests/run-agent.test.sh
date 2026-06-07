@@ -152,21 +152,22 @@ expected_codex_models = [
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
-    "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
 ]
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
-check("routing_disabled_models" not in codex_model, "codex registry does not disable known models by default")
+check(codex_model.get("routing_disabled_models") == ["gpt-5.3-codex-spark"], "codex disables Spark while the weekly limit is hit")
 check(codex_model.get("pricing_basis") == "subscription", "codex declares subscription pricing basis")
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
 for model_id in expected_codex_models:
     check(model_id in model_catalog, f"codex model catalog includes {model_id}")
+check(model_catalog["gpt-5.3-codex-spark"].get("routing_disabled") is True, "Codex Spark is disabled in the model catalog")
 check("routing_cost_overrides" not in codex_model, "codex model metadata omits cost overrides")
 
 claude_model = agents["claude"]["model"]
 expected_claude_models = [
     "claude-opus-4-8",
     "claude-sonnet-4-6",
+    "claude-haiku-4-5",
 ]
 check(claude_model.get("default") == "claude-sonnet-4-6", "claude defaults to selected balanced model")
 check(claude_model.get("known_models") == expected_claude_models, "claude known models match available Claude model list")
@@ -190,6 +191,7 @@ for model_id in expected_copilot_models:
     check(model_id in model_catalog, f"copilot model catalog includes {model_id}")
 check("claude-sonnet-4.6" in copilot_model.get("known_models", []), "Copilot-specific Claude model ID is preserved")
 check("claude-sonnet-4-6" in claude_model.get("known_models", []), "Claude-specific Claude model ID is preserved")
+check(model_catalog["claude-opus-4.7"].get("routing_disabled") is True, "Opus 4.7 is disabled by default")
 
 google_rules = provider_rules.get("google", {})
 check(google_rules.get("automatic_routing") == "all", "google provider can route through agy for all bands")
@@ -214,7 +216,7 @@ for model_id in expected_agy_models:
 
 anthropic_rules = provider_rules.get("anthropic", {})
 check(anthropic_rules.get("automatic_routing") == "all", "direct Claude routing remains automatic")
-check(anthropic_rules.get("preferred_agents") == ["github-copilot", "claude"], "Copilot and Claude are preferred for Claude-provider models")
+check(anthropic_rules.get("preferred_agents") == ["claude", "github-copilot"], "direct Claude is preferred for Claude-provider models")
 check(anthropic_rules.get("fallback_agents") == ["claude"], "direct Claude is the fallback agent for Claude-provider models")
 
 agent_preference_rules = model_routing.get("agent_preference_rules", [])
@@ -224,6 +226,7 @@ check(haiku_rules[0].get("preferred_agents") == ["github-copilot", "claude"], "H
 anthropic_agent_rules = [rule for rule in agent_preference_rules if rule.get("provider") == "anthropic"]
 check(anthropic_agent_rules, "anthropic provider has explicit agent preference rule")
 check(anthropic_agent_rules[0].get("automatic_routing") == "all", "anthropic direct Claude rule remains automatic")
+check(anthropic_agent_rules[0].get("preferred_agents") == ["claude", "github-copilot"], "anthropic provider rule prefers direct Claude")
 
 for agent_id, agent in agents.items():
     fallback_order = agent.get("fallback_order", [])
@@ -489,9 +492,9 @@ cat > "${OPENCODE_REGISTRY}" <<'JSON'
 }
 JSON
 
-dry_run_output="$("${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+dry_run_output="$("${RUNNER_PATH}" --agent codex --model gpt-5.4 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${dry_run_output}" "codex exec" "dry-run prints codex command"
-assert_contains "${dry_run_output}" "--model gpt-5.3-codex" "dry-run includes selected model"
+assert_contains "${dry_run_output}" "--model gpt-5.4" "dry-run includes selected model"
 assert_contains "${dry_run_output}" "--dangerously-bypass-approvals-and-sandbox" "dry-run includes unattended permission mode"
 assert_not_contains "${dry_run_output}" "--ask-for-approval" "codex exec dry-run excludes unsupported approval flag"
 assert_contains "${dry_run_output}" "Issue context" "dry-run includes combined payload"
@@ -504,17 +507,17 @@ EXTERNAL_ASSET_ROOT="${WORK_DIR}/external-assets"
 mkdir -p "${EXTERNAL_ASSET_ROOT}"
 cp "${RUNNER_PATH}" "${EXTERNAL_ASSET_ROOT}/run-agent.sh"
 cp "${REGISTRY_PATH}" "${EXTERNAL_ASSET_ROOT}/agent-registry.json"
-external_asset_dry_run_output="$("${EXTERNAL_ASSET_ROOT}/run-agent.sh" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+external_asset_dry_run_output="$("${EXTERNAL_ASSET_ROOT}/run-agent.sh" --agent codex --model gpt-5.4 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${external_asset_dry_run_output}" "-C ${ROOT_DIR}" "runner defaults repo root to launch directory when assets live elsewhere"
 assert_not_contains "${external_asset_dry_run_output}" "-C ${WORK_DIR}/external-assets" "runner does not treat installed asset directory as repo root"
 
 echo "PASS: run-agent defaults repo root to launch directory"
 
-codex_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+codex_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent codex --model gpt-5.4 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${codex_gui_dry_run_output}" "--sandbox=workspace-write" "GUI mode uses workspace-write sandbox for Codex"
 assert_not_contains "${codex_gui_dry_run_output}" "--dangerously-bypass-approvals-and-sandbox" "GUI mode avoids Codex sandbox bypass"
 
-codex_auto_gui_dry_run_output="$(GUI_MODE=auto TERM_PROGRAM=vscode "${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+codex_auto_gui_dry_run_output="$(GUI_MODE=auto TERM_PROGRAM=vscode "${RUNNER_PATH}" --agent codex --model gpt-5.4 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${codex_auto_gui_dry_run_output}" "--sandbox=workspace-write" "GUI auto-detection uses workspace-write sandbox for Codex"
 
 claude_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
@@ -706,7 +709,7 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 
 large_prompt_stderr="${WORK_DIR}/large-prompt.stderr"
-"${RUNNER_PATH}" --agent codex --model gpt-5.3-codex --context-file "${CONTEXT_FILE}" --prompt-file "${LARGE_PROMPT_FILE}" --dry-run --unattended >/dev/null 2>"${large_prompt_stderr}"
+"${RUNNER_PATH}" --agent codex --model gpt-5.4 --context-file "${CONTEXT_FILE}" --prompt-file "${LARGE_PROMPT_FILE}" --dry-run --unattended >/dev/null 2>"${large_prompt_stderr}"
 large_prompt_warning="$(<"${large_prompt_stderr}")"
 assert_contains "${large_prompt_warning}" "warn: prompt exceeds 128KB" "large inline prompts emit a sandbox truncation warning"
 
