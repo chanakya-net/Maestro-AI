@@ -73,6 +73,7 @@ printf '{"outcome":"completed"}\n' > "${RESULT_FILE}"
 [[ -f "${DISPATCHER}" ]] || fail "run-with-it-dispatch.sh exists"
 assert_executable "${DISPATCHER}"
 assert_file_contains "${DISPATCHER}" "start_new_session=True" "detached dispatcher starts in a new session"
+assert_file_contains "${DISPATCHER}" 'RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity,impl,modify' "dispatcher auto-fails stalled implementation and modification workers by default"
 
 dry_output="$("${DISPATCHER}" \
   --dry-run \
@@ -459,6 +460,7 @@ printf 'baseline\n' > "${SMOKE_REPO_ROOT}/README.md"
 git -C "${SMOKE_REPO_ROOT}" add README.md
 git -C "${SMOKE_REPO_ROOT}" commit -m "baseline" >/dev/null
 
+set +e
 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
@@ -481,20 +483,16 @@ PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --stall-seconds 2 >/dev/null &
 silent_dispatch_pid="$!"
 
-saw_stalled=0
-for _ in {1..40}; do
-  if [[ -f "${SILENT_STATE}" ]] && grep -Fq '"state": "stalled"' "${SILENT_STATE}"; then
-    saw_stalled=1
-    break
-  fi
-  sleep 0.2
-done
-
 wait "${silent_dispatch_pid}"
-[[ "${saw_stalled}" == "1" ]] || fail "silent live worker should be marked stalled before completion"
+silent_dispatch_status="$?"
+set -e
+[[ "${silent_dispatch_status}" != "0" ]] || fail "stalled impl worker must fail instead of completing after silence"
 assert_json_file "${SILENT_STATE}" "silent worker final watchdog state JSON is valid"
-assert_file_contains "${SILENT_STATE}" '"state": "completed"' "silent worker eventually completes"
+assert_file_contains "${SILENT_STATE}" '"state": "failed"' "silent worker records failed state after stall timeout"
+assert_file_contains "${SILENT_STATE}" '"stall_reason": "alive-but-silent"' "silent worker records precise stall reason"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled status"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stall-timeout|issue=43|role=impl|cycle=1" "silent worker emits stall timeout status"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-failed|issue=43|role=impl|cycle=1" "silent worker exits dispatcher as failed"
 
 cat > "${SMOKE_BIN}/noarg-commit-agent" <<'SH'
 #!/usr/bin/env bash

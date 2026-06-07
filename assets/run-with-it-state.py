@@ -484,6 +484,9 @@ def write_sub_coord_recovery_context(args: argparse.Namespace) -> int:
         handle.write("If a worker result is valid, process it and continue from the next phase.\n")
         handle.write("Never rerun a phase that already has a valid result artifact.\n")
         handle.write("If a worker failed without a valid result, apply the existing worker artifact recovery contract.\n\n")
+        handle.write(
+            "Preserve the full original issue scope, acceptance criteria, verification commands, and recovery artifact paths in every worker retry payload.\n\n"
+        )
         handle.write("Original sub-coordinator context follows:\n")
         handle.write(original_text)
         if original_text and not original_text.endswith("\n"):

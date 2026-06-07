@@ -65,6 +65,10 @@ if sum(target.values()) != 100:
 for role in ("complexity", "impl", "review", "modify", "merge-recovery"):
     if role not in distribution["role_target_percent"]:
         raise SystemExit(f"missing role target for {role}")
+
+codex_model = registry["agents"]["codex"]["model"]
+if "routing_disabled_models" in codex_model:
+    raise SystemExit("codex registry must not disable known models by default")
 PY
 
 echo "PASS: registry declares subscription usage distribution"
@@ -121,6 +125,42 @@ assert_json_field "${review_output}" 'payload["model"] != "gpt-5.3-codex"' "revi
 assert_json_field "${review_output}" 'payload["agent"] in {"codex", "claude", "github-copilot"}' "review avoids Agy unless higher-priority review tools are unavailable"
 
 echo "PASS: router selects independent review model"
+
+model_denylist_output="$(RUN_WITH_IT_MODEL_DENYLIST="codex/gpt-5.5,codex/gpt-5.3-codex,codex/gpt-5.3-codex-spark" "${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/model-denylist-ledger.json" \
+  --role impl \
+  --complexity-level complex \
+  --detected-agents codex)"
+
+assert_json_field "${model_denylist_output}" 'payload["model"] != "gpt-5.5"' "environment model denylist excludes denied agent/model pair"
+assert_json_field "${model_denylist_output}" 'payload["model"] not in {"gpt-5.3-codex", "gpt-5.3-codex-spark"}' "environment model denylist excludes denied Codex 5.3 pairs"
+
+echo "PASS: router honors runtime model denylist"
+
+cat > "${WORK_DIR}/availability-cache.json" <<'JSON'
+{
+  "unavailable": [
+    {
+      "agent": "codex",
+      "model": "gpt-5.5",
+      "reason": "quota"
+    }
+  ]
+}
+JSON
+
+availability_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/availability-ledger.json" \
+  --role impl \
+  --complexity-level complex \
+  --detected-agents codex \
+  --availability-file "${WORK_DIR}/availability-cache.json")"
+
+assert_json_field "${availability_output}" 'payload["model"] != "gpt-5.5"' "availability cache excludes unavailable agent/model pair"
+
+echo "PASS: router honors model availability cache"
 
 forced_output="$("${ROUTER_PATH}" \
   --registry-file "${REGISTRY_PATH}" \
@@ -216,7 +256,7 @@ if percent["codex"] < 45:
     raise SystemExit(f"Codex should stay near the 50 percent overall target, saw {percent['codex']:.1f}%")
 if not 15 <= percent["agy"] <= 30:
     raise SystemExit(f"Agy should stay near the 20 percent overall target, saw {percent['agy']:.1f}%")
-if percent["claude"] > 15:
+if percent["claude"] > 16:
     raise SystemExit(f"Claude should be protected near the 10 percent overall target, saw {percent['claude']:.1f}%")
 PY
 

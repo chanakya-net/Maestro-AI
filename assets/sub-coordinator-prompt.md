@@ -345,8 +345,8 @@ apply this exact policy:
      cp "$ISSUE_WORKTREE_PATH/$file" "$UNTRACKED_DIR/$file"
    done
    ```
-4. Retry the same role and same review/implementation cycle up to `MAX_AGENT_FALLBACKS` attempts. Re-run routing with the failed model in `EXCLUDE_MODEL` when possible; a different model on the same agent is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-result.json`, `.done`, `.log`, and `.state.json` so stale partial artifacts cannot satisfy the retry.
-5. When retrying after a dirty-worktree failure, tell the next worker that uncommitted partial work exists, include the recovery patch/status paths in its context payload, and instruct it to inspect the current worktree before deciding whether to salvage or replace the partial changes.
+4. Retry the same role and same review/implementation cycle up to `MAX_AGENT_FALLBACKS` attempts. Re-run routing with the failed model in `EXCLUDE_MODEL` when possible and add failed account/model pairs to `RUN_WITH_IT_MODEL_DENYLIST` or `RUN_WITH_IT_MODEL_AVAILABILITY_FILE` so retries do not select known-unavailable routes. If the runner emits `STATUS|type=agent-unavailable`, treat that line as structured evidence for the denylist. A different model on the same agent is acceptable only when the failed pair is excluded. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-result.json`, `.done`, `.log`, and `.state.json` so stale partial artifacts cannot satisfy the retry.
+5. When retrying after a dirty-worktree failure, tell the next worker that uncommitted partial work exists, include the full original issue scope, acceptance criteria, required verification commands, failed state/result paths, and recovery patch/status paths in its context payload, and instruct it to inspect the current worktree before deciding whether to salvage or replace the partial changes. Do not compress the retry context down to a short summary.
 6. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not implementation/review verdicts.
 7. If a retry produces a valid result artifact and commit, continue normal commit verification, review, or next-cycle routing.
 8. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["impl-missing-result-artifact"]` or `["modify-missing-result-artifact"]`. The report must include failed role, cycle, attempt count, agent/model, final `stall_reason`, state/log/done/result paths, dirty worktree status, changed files, recovery patch/status/untracked paths if created, and a concrete recovery plan.
@@ -357,7 +357,7 @@ This recovery contract covers `impl`, `review`, and `modify` together with the s
 
 ### Deterministic Router Helper (Mandatory)
 
-Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST` and `AGENT_DENYLIST`, and records the decision in `.run-with-it/usage-ledger.json`.
+Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, `RUN_WITH_IT_MODEL_DENYLIST`, and `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`, and records the decision in `.run-with-it/usage-ledger.json`.
 
 Usage target summary from `agent-registry.json`:
 - overall default: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%
@@ -383,6 +383,8 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --forced-agent "${FORCED_AGENT:-}" \
   --forced-model "${FORCED_MODEL:-}" \
   --exclude-model "${EXCLUDE_MODEL:-}" \
+  --model-denylist "${RUN_WITH_IT_MODEL_DENYLIST:-}" \
+  --availability-file "${RUN_WITH_IT_MODEL_AVAILABILITY_FILE:-}" \
   --record)"
 AGENT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["agent"])')"
 MODEL="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
@@ -409,6 +411,8 @@ $routeJson = & $pythonBin $routerFile `
   --forced-agent $env:FORCED_AGENT `
   --forced-model $env:FORCED_MODEL `
   --exclude-model $env:EXCLUDE_MODEL `
+  --model-denylist $env:RUN_WITH_IT_MODEL_DENYLIST `
+  --availability-file $env:RUN_WITH_IT_MODEL_AVAILABILITY_FILE `
   --record
 $route = $routeJson | ConvertFrom-Json
 $AGENT = $route.agent

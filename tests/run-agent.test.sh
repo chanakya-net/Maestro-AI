@@ -156,6 +156,7 @@ expected_codex_models = [
     "gpt-5.3-codex-spark",
 ]
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
+check("routing_disabled_models" not in codex_model, "codex registry does not disable known models by default")
 check(codex_model.get("pricing_basis") == "subscription", "codex declares subscription pricing basis")
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
 for model_id in expected_codex_models:
@@ -337,6 +338,35 @@ cat > "${CUSTOM_REGISTRY}" <<JSON
         "skip_message": ""
       }
     },
+    "unsupported": {
+      "display_name": "Unsupported Agent",
+      "detection": {
+        "command": "unsupported-agent",
+        "args": ["--version"]
+      },
+      "invocation": {
+        "command": "unsupported-agent",
+        "args_template": ["{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "",
+        "available": [""]
+      },
+      "model": {
+        "default": "unsupported-model",
+        "flag_template": "--model {{model}}",
+        "known_models": ["unsupported-model"]
+      },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": {
+        "requires_user_model_config": false,
+        "config_paths": [],
+        "skip_when_unconfigured": false,
+        "skip_message": ""
+      }
+    },
     "cwd-probe": {
       "display_name": "CWD Probe",
       "detection": {
@@ -401,6 +431,17 @@ JSON
 
 printf '#!/usr/bin/env bash\nexit 7\n' > "${FAKE_BIN}/failing-agent"
 chmod +x "${FAKE_BIN}/failing-agent"
+
+cat > "${FAKE_BIN}/unsupported-agent" <<'SH'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'unsupported-agent 1.0\n'
+  exit 0
+fi
+printf 'Error: gpt-5.3-codex is not supported when using Codex with a ChatGPT account.\n' >&2
+exit 7
+SH
+chmod +x "${FAKE_BIN}/unsupported-agent"
 
 printf '#!/usr/bin/env bash\nif [[ "${1:-}" == "--version" ]]; then printf "cwd-probe-agent 1.0\\n"; exit 0; fi\npwd > "${CWD_CAPTURE_FILE:?}"\nprintf "cwd-probe done\\n"\n' > "${FAKE_BIN}/cwd-probe-agent"
 chmod +x "${FAKE_BIN}/cwd-probe-agent"
@@ -553,6 +594,33 @@ assert_equals "" "${failing_run_output}" "failing invocation preserves empty std
 assert_contains "${failing_run_telemetry}" "STATUS|type=telemetry|agent=failing|model=unknown|input_tokens=unknown|output_tokens=unknown|cache_hit_tokens=unknown|status=failed|source=runner-default" "failed invocation emits normalized telemetry"
 
 echo "PASS: run-agent emits normalized telemetry contract"
+
+UNSUPPORTED_LOG="${WORK_DIR}/unsupported.log"
+UNSUPPORTED_STATUS="${WORK_DIR}/unsupported.status"
+UNSUPPORTED_EVENTS="${WORK_DIR}/unsupported.events"
+set +e
+unsupported_stderr="${WORK_DIR}/unsupported.stderr"
+PATH="${FAKE_BIN}:${PATH}" \
+  AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" \
+  AGENT=unsupported \
+  MODEL=unsupported-model \
+  CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" \
+  PROMPT_FILE="${PROMPT_FILE}" \
+  RUN_WITH_IT_LOG_FILE="${UNSUPPORTED_LOG}" \
+  RUN_WITH_IT_STATUS_FILE="${UNSUPPORTED_STATUS}" \
+  RUN_WITH_IT_EVENTS_LOG="${UNSUPPORTED_EVENTS}" \
+  RUN_WITH_IT_ROLE=impl \
+  RUN_WITH_IT_ISSUE=547 \
+  UNATTENDED=1 \
+  "${RUNNER_PATH}" >/dev/null 2>"${unsupported_stderr}"
+unsupported_status="$?"
+set -e
+assert_equals "7" "${unsupported_status}" "runner preserves unsupported model exit status"
+assert_contains "$(<"${unsupported_stderr}")" "STATUS|type=agent-unavailable|issue=547|role=impl|agent=unsupported|model=unsupported-model|reason=model-unsupported|action=exclude-route" "unsupported model failure emits structured status"
+assert_contains "$(<"${UNSUPPORTED_LOG}")" "STATUS|type=agent-unavailable|issue=547|role=impl|agent=unsupported|model=unsupported-model|reason=model-unsupported|action=exclude-route" "unsupported model status is written to role log"
+assert_contains "$(<"${UNSUPPORTED_EVENTS}")" "STATUS|type=agent-unavailable|issue=547|role=impl|agent=unsupported|model=unsupported-model|reason=model-unsupported|action=exclude-route" "unsupported model status is appended to events log"
+
+echo "PASS: run-agent emits structured agent-unavailable status"
 
 print_prompt_output="$(AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" AGENT=fake CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" PROMPT_FILE="${PROMPT_FILE}" PRINT_PROMPT=1 "${RUNNER_PATH}")"
 assert_equals $'Issue context\n\nInstructions:\n\nDo the work' "${print_prompt_output}" "PRINT_PROMPT prints combined payload and exits"

@@ -190,6 +190,50 @@ emit_run_status() {
   printf '%s\n' "${line}" >&2
 }
 
+classify_agent_unavailable_reason() {
+  local log_tail lower_tail
+
+  if [[ -z "${RUN_WITH_IT_LOG_FILE}" || ! -f "${RUN_WITH_IT_LOG_FILE}" ]]; then
+    return 1
+  fi
+
+  log_tail="$(tail -n 200 "${RUN_WITH_IT_LOG_FILE}" 2>/dev/null || true)"
+  lower_tail="$(printf '%s' "${log_tail}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${lower_tail}" in
+    *"failed to authenticate"*|*"invalid authentication credentials"*|*"api error: 401"*|*"authentication failed"*)
+      printf 'auth\n'
+      return 0
+      ;;
+    *"usage limit"*|*"quota"*|*"rate limit"*)
+      printf 'quota\n'
+      return 0
+      ;;
+    *"not supported when using codex with a chatgpt account"*|*"unsupported model"*|*"model is not supported"*|*"not supported"*)
+      printf 'model-unsupported\n'
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
+emit_agent_unavailable_status() {
+  local reason="$1"
+  local line
+
+  line="$(printf 'STATUS|type=agent-unavailable|issue=%s|role=%s|agent=%s|model=%s|reason=%s|action=exclude-route' \
+    "$(normalize_telemetry_value "${RUN_WITH_IT_ISSUE}")" \
+    "$(normalize_telemetry_value "${RUN_WITH_IT_ROLE}")" \
+    "$(normalize_telemetry_value "${AGENT}")" \
+    "$(normalize_telemetry_value "${MODEL}")" \
+    "$(normalize_telemetry_value "${reason}")")"
+
+  write_status_line "${line}"
+  write_log_line "${line}"
+  printf '%s\n' "${line}" >&2
+}
+
 forward_status_stream() {
   local target_fd="$1"
   local line suppress_console
@@ -709,6 +753,10 @@ if [[ "${command_status}" == "0" ]]; then
   emit_run_status "agent-complete" "success"
   emit_telemetry "success"
 else
+  unavailable_reason="$(classify_agent_unavailable_reason || true)"
+  if [[ -n "${unavailable_reason}" ]]; then
+    emit_agent_unavailable_status "${unavailable_reason}"
+  fi
   write_done_file "failed" "runner-exit"
   emit_run_status "worker-done" "failed"
   emit_run_status "agent-complete" "failed"

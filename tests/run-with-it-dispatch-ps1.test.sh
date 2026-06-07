@@ -41,6 +41,7 @@ assert_json_file() {
 
 assert_file_contains "$DISPATCHER" '[switch]$Detach' "PowerShell dispatcher exposes detach switch"
 assert_file_contains "$DISPATCHER" 'STATUS|type=dispatch-detached' "PowerShell dispatcher reports detached launch"
+assert_file_contains "$DISPATCHER" 'complexity,impl,modify' "PowerShell dispatcher auto-fails stalled implementation and modification workers by default"
 
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"
@@ -287,6 +288,7 @@ SILENT_STATE="${SILENT_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 mkdir -p "$(dirname "$SILENT_RESULT")"
 printf 'RESULT_FILE=%s\n' "$SILENT_RESULT" > "$SILENT_CONTEXT"
 
+set +e
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
@@ -309,20 +311,16 @@ printf 'RESULT_FILE=%s\n' "$SILENT_RESULT" > "$SILENT_CONTEXT"
   -StallSeconds 2 >/dev/null &
 silent_pid="$!"
 
-saw_stalled=0
-for _ in {1..40}; do
-  if [[ -f "$SILENT_STATE" ]] && grep -Fq '"state": "stalled"' "$SILENT_STATE"; then
-    saw_stalled=1
-    break
-  fi
-  sleep 0.2
-done
-
 wait "$silent_pid"
-[[ "$saw_stalled" == "1" ]] || fail "silent live worker should be marked stalled before completion"
+silent_status="$?"
+set -e
+[[ "$silent_status" != "0" ]] || fail "stalled PowerShell impl worker must fail instead of completing after silence"
 assert_json_file "$SILENT_STATE" "silent final state JSON is valid"
-assert_file_contains "$SILENT_STATE" '"state": "completed"' "silent worker eventually completes"
+assert_file_contains "$SILENT_STATE" '"state": "failed"' "silent PowerShell worker records failed state after stall timeout"
+assert_file_contains "$SILENT_STATE" '"stall_reason": "alive-but-silent"' "silent PowerShell worker records precise stall reason"
 assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled event"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-stall-timeout|issue=43|role=impl|cycle=1" "silent PowerShell worker emits stall timeout event"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=dispatch-failed|issue=43|role=impl|cycle=1" "silent PowerShell worker exits dispatcher as failed"
 
 REVIEW_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/44"
 REVIEW_LOG="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.log"

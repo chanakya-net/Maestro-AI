@@ -20,6 +20,7 @@ param(
     [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
     [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
     [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
+    [string]$AutoFailStalledRoles = $(if ($env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES) { $env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES } else { "complexity,impl,modify" }),
     [string]$DispatchOutFile = "",
     [switch]$Detach,
     [switch]$DetachedChild,
@@ -207,6 +208,13 @@ function Test-ImplementationRole {
     return ($Role -eq "impl" -or $Role -eq "modify")
 }
 
+function Test-AutoFailStalledRole {
+    foreach ($roleName in ($AutoFailStalledRoles -split ",")) {
+        if ($roleName.Trim() -eq $Role) { return $true }
+    }
+    return $false
+}
+
 function Get-RepoRootForWorker {
     if ($RepoRoot) { return $RepoRoot }
     if ($env:REPO_ROOT) { return $env:REPO_ROOT }
@@ -347,6 +355,7 @@ if ($Detach -and -not $DetachedChild -and -not $ValidateOnly) {
         "-QuietSeconds", $QuietSeconds,
         "-StallSeconds", $StallSeconds,
         "-TimeoutSeconds", $TimeoutSeconds,
+        "-AutoFailStalledRoles", $AutoFailStalledRoles,
         "-DispatchOutFile", $DispatchOutFile,
         "-Detach",
         "-DetachedChild"
@@ -504,6 +513,16 @@ while ($true) {
             Write-Status "STATUS|type=worker-stalled|issue=$Issue|role=$Role$cycleField|reason=alive-but-silent|silence_seconds=$silenceSeconds|state_file=$StateFile"
         }
         $script:lastState = $state
+    }
+
+    if (($state -eq "stalled") -and (Test-AutoFailStalledRole)) {
+        Write-Status "STATUS|type=worker-stall-timeout|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|action=terminate-runner"
+        try {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        } catch {}
+        Write-WorkerState "failed" $false 124 "alive-but-silent"
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|done_file=$DoneFile|result_file=$ResultFile"
+        exit 1
     }
 
     if ($TimeoutSeconds -ne 0) {

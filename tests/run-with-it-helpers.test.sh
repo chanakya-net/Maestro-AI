@@ -323,6 +323,7 @@ grep -Fq "SUB_COORD_RECOVERY_ATTEMPT=1" "$SUB_RECOVERY_CONTEXT" || fail "sub-coo
 grep -Fq "SUB_COORD_RECOVERY_REASON=in-flight-worker-finished" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context records reason"
 grep -Fq "SUB_COORD_STATE_FILE=$WORK_DIR/issues/5/sub-state.json" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context records sub-state path"
 grep -Fq "Do not restart from scratch." "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context forbids restart from scratch"
+grep -Fq "Preserve the full original issue scope, acceptance criteria, verification commands, and recovery artifact paths in every worker retry payload." "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context preserves full retry context contract"
 grep -Fq "# issue 5 context" "$SUB_RECOVERY_CONTEXT" || fail "sub-coordinator recovery context includes original context"
 
 comment="$(python3 "$GITHUB_HELPER" render-comment --outcome completed --report-file "$REPORT_FILE")"

@@ -31,6 +31,9 @@ DEFAULT_AGENTS = ["codex", "agy", "github-copilot", "claude"]
 GLOBAL_DEBT_WEIGHT = 1.5
 
 
+Availability = dict[str, set[Any]]
+
+
 def fail(message: str) -> None:
     print(f"run-with-it-router: {message}", file=sys.stderr)
     raise SystemExit(2)
@@ -86,6 +89,152 @@ def split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def parse_agent_model_token(token: str) -> tuple[str | None, str]:
+    for separator in ("/", ":"):
+        if separator in token:
+            agent, model = token.split(separator, 1)
+            agent = agent.strip()
+            model = model.strip()
+            if agent and model:
+                return agent, model
+    return None, token.strip()
+
+
+def empty_availability() -> Availability:
+    return {"agents": set(), "models": set(), "pairs": set()}
+
+
+def add_unavailable_token(availability: Availability, token: str) -> None:
+    agent, model = parse_agent_model_token(token)
+    if not model:
+        return
+    if agent:
+        availability["pairs"].add((agent, model))
+    else:
+        availability["models"].add(model)
+
+
+def add_unavailable_entry(availability: Availability, entry: Any) -> None:
+    if isinstance(entry, str):
+        add_unavailable_token(availability, entry)
+        return
+    if not isinstance(entry, dict):
+        return
+    if entry.get("available") is True or entry.get("status") == "available":
+        return
+
+    agent = str(entry.get("agent") or entry.get("agent_id") or "").strip()
+    model = str(entry.get("model") or entry.get("model_id") or "").strip()
+    if agent and model:
+        availability["pairs"].add((agent, model))
+    elif agent:
+        availability["agents"].add(agent)
+    elif model:
+        availability["models"].add(model)
+
+
+def registry_availability(registry: dict[str, Any]) -> Availability:
+    availability = empty_availability()
+
+    for agent_id, agent in registry.get("agents", {}).items():
+        if agent.get("routing_disabled") is True:
+            availability["agents"].add(str(agent_id))
+        model_meta = agent.get("model", {})
+        for key in ("routing_disabled_models", "disabled_models", "unavailable_models"):
+            for model_id in model_meta.get(key, []):
+                availability["pairs"].add((str(agent_id), str(model_id)))
+
+    for model_id, entry in registry.get("model_catalog", {}).items():
+        if entry.get("routing_disabled") is True:
+            availability["models"].add(str(model_id))
+        for key in ("routing_disabled_agents", "disabled_agents", "unavailable_agents"):
+            for agent_id in entry.get(key, []):
+                availability["pairs"].add((str(agent_id), str(model_id)))
+
+    return availability
+
+
+def merge_availability(left: Availability, right: Availability) -> Availability:
+    merged = empty_availability()
+    for key in merged:
+        merged[key] = set(left.get(key, set())) | set(right.get(key, set()))
+    return merged
+
+
+def env_model_denylist_availability(value: str | None) -> Availability:
+    availability = empty_availability()
+    for token in split_csv(value):
+        add_unavailable_token(availability, token)
+    return availability
+
+
+def availability_from_file(path: Path | None) -> Availability:
+    availability = empty_availability()
+    if not path:
+        return availability
+
+    payload = read_json_file(path)
+    if not isinstance(payload, dict):
+        fail(f"availability file must contain a JSON object: {path}")
+
+    for key in ("deny_models", "unavailable_models"):
+        for model_id in payload.get(key, []):
+            availability["models"].add(str(model_id))
+
+    for key in ("deny_agents", "unavailable_agents"):
+        for agent_id in payload.get(key, []):
+            availability["agents"].add(str(agent_id))
+
+    for key in ("deny_agent_models", "unavailable_agent_models", "unavailable"):
+        for entry in payload.get(key, []):
+            add_unavailable_entry(availability, entry)
+
+    for agent_id, agent_payload in payload.get("agents", {}).items():
+        if isinstance(agent_payload, dict):
+            if agent_payload.get("available") is False or agent_payload.get("status") in {"unavailable", "quota", "auth", "unsupported"}:
+                availability["agents"].add(str(agent_id))
+            for model_id, model_payload in agent_payload.get("models", {}).items():
+                if isinstance(model_payload, dict):
+                    if model_payload.get("available") is False or model_payload.get("status") in {"unavailable", "quota", "auth", "unsupported"}:
+                        availability["pairs"].add((str(agent_id), str(model_id)))
+                elif model_payload is False:
+                    availability["pairs"].add((str(agent_id), str(model_id)))
+
+    return availability
+
+
+def routing_availability(
+    registry: dict[str, Any],
+    model_denylist: str | None,
+    availability_file: str | None,
+) -> Availability:
+    availability = merge_availability(registry_availability(registry), env_model_denylist_availability(model_denylist))
+    if availability_file:
+        availability = merge_availability(availability, availability_from_file(Path(availability_file)))
+    return availability
+
+
+def availability_summary(availability: Availability) -> dict[str, list[Any]]:
+    return {
+        "agents": sorted(str(agent) for agent in availability.get("agents", set())),
+        "models": sorted(str(model) for model in availability.get("models", set())),
+        "agent_models": [
+            {"agent": agent, "model": model}
+            for agent, model in sorted(availability.get("pairs", set()))
+        ],
+    }
+
+
+def agent_model_available(availability: Availability, agent_id: str, model_id: str) -> bool:
+    if agent_id in availability.get("agents", set()):
+        return False
+    if model_id in availability.get("models", set()):
+        return False
+    if (agent_id, model_id) in availability.get("pairs", set()):
+        return False
+    return True
 
 
 def normalize_ledger(ledger: dict[str, Any] | None) -> dict[str, Any]:
@@ -166,6 +315,7 @@ def compatible_agents_for_model(
     detected_agents: set[str],
     allowlist: set[str],
     denylist: set[str],
+    availability: Availability,
     forced_agent: str | None,
 ) -> list[str]:
     agents = registry.get("agents", {})
@@ -181,6 +331,8 @@ def compatible_agents_for_model(
         if allowlist and agent_id not in allowlist:
             continue
         if agent_id in denylist:
+            continue
+        if not agent_model_available(availability, agent_id, model_id):
             continue
         if model_id not in agent.get("model", {}).get("known_models", []):
             continue
@@ -252,6 +404,7 @@ def candidate_pairs(
     detected_agents: set[str],
     allowlist: set[str],
     denylist: set[str],
+    availability: Availability,
     forced_agent: str | None,
     forced_model: str | None,
     exclude_model: str | None,
@@ -266,6 +419,7 @@ def candidate_pairs(
             detected_agents,
             allowlist,
             denylist,
+            availability,
             forced_agent,
         ):
             entry = catalog[model_id]
@@ -290,6 +444,7 @@ def select_pair(
     detected_agents: set[str],
     allowlist: set[str],
     denylist: set[str],
+    availability: Availability,
     forced_agent: str | None,
     forced_model: str | None,
     exclude_model: str | None,
@@ -311,6 +466,7 @@ def select_pair(
         detected_agents,
         allowlist,
         denylist,
+        availability,
         forced_agent,
         forced_model,
         exclude_model,
@@ -319,7 +475,8 @@ def select_pair(
         fail(
             "no compatible routing candidates "
             f"role={role} level={level} detected={sorted(detected_agents)} "
-            f"allowlist={sorted(allowlist)} denylist={sorted(denylist)}"
+            f"allowlist={sorted(allowlist)} denylist={sorted(denylist)} "
+            f"availability_exclusions={availability_summary(availability)}"
         )
 
     distribution = registry.get("model_routing", {}).get("usage_distribution", {})
@@ -391,6 +548,7 @@ def select_pair(
         }
         for pair in sorted(pairs, key=sort_key)[:8]
     ]
+    selected["availability_exclusions"] = availability_summary(availability)
     return selected
 
 
@@ -448,6 +606,7 @@ def build_output(
             "selected_agent_count": counts.get(agent, 0),
         },
         "evaluated_candidates": selection.get("evaluated_candidates", []),
+        "availability_exclusions": selection.get("availability_exclusions", {}),
     }
     return output
 
@@ -465,6 +624,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forced-agent", default="")
     parser.add_argument("--forced-model", default="")
     parser.add_argument("--exclude-model", default="")
+    parser.add_argument("--model-denylist", default=os.environ.get("RUN_WITH_IT_MODEL_DENYLIST", ""))
+    parser.add_argument("--availability-file", default=os.environ.get("RUN_WITH_IT_MODEL_AVAILABILITY_FILE", ""))
     parser.add_argument("--record", action="store_true")
     return parser.parse_args()
 
@@ -488,6 +649,7 @@ def main() -> int:
     forced_agent = args.forced_agent or None
     forced_model = args.forced_model or None
     exclude_model = args.exclude_model or None
+    availability = routing_availability(registry, args.model_denylist, args.availability_file)
 
     if args.record:
         with DirectoryLock(ledger_file):
@@ -500,6 +662,7 @@ def main() -> int:
                 detected_agents,
                 allowlist,
                 denylist,
+                availability,
                 forced_agent,
                 forced_model,
                 exclude_model,
@@ -517,6 +680,7 @@ def main() -> int:
             detected_agents,
             allowlist,
             denylist,
+            availability,
             forced_agent,
             forced_model,
             exclude_model,
