@@ -111,14 +111,16 @@ cat > "${FAKE_BIN}/fake-review" <<'SH'
 set -euo pipefail
 verdict="approve"
 comment_count="0"
+comments='[]'
 if [[ "${REVIEW_CYCLE:-1}" == "1" ]]; then
   verdict="revise"
   comment_count="1"
+  comments='[{"id":"R001","file":"README.md","line":1,"severity":"warning","category":"test","blocking":false,"fix":"Add review-cycle smoke verification evidence.","evidence":"The smoke fixture intentionally requests one modification cycle.","expected_change":"Record that the modifier addressed the smoke review.","verification":"Run the log harness smoke test."}]'
 fi
 printf 'STATUS|type=heartbeat|issue=%s|role=review|phase=review|progress=writing json\n' "${RUN_WITH_IT_ISSUE:-unknown}"
 mkdir -p "$(dirname "${REVIEWER_STATUS_FILE}")"
 printf '{"verdict":"%s","comment_count":%s,"nitpick_only":false}\n' "${verdict}" "${comment_count}" > "${REVIEWER_STATUS_FILE}"
-printf '{"verdict":"%s","summary":"smoke review cycle %s","comments":[],"blocking_reasons":[]}\n' "${verdict}" "${REVIEW_CYCLE:-1}" > "${REVIEWER_INSTRUCTIONS_FILE}"
+printf '{"verdict":"%s","summary":"smoke review cycle %s","comments":%s,"blocking_reasons":[]}\n' "${verdict}" "${REVIEW_CYCLE:-1}" "${comments}" > "${REVIEWER_INSTRUCTIONS_FILE}"
 python3 -m json.tool "${REVIEWER_STATUS_FILE}" >/dev/null
 python3 -m json.tool "${REVIEWER_INSTRUCTIONS_FILE}" >/dev/null
 if [[ -n "${RUN_WITH_IT_DONE_FILE:-}" ]]; then

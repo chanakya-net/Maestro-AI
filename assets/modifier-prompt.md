@@ -24,7 +24,7 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep the fix focused on reviewer feedback and failing verification.
 - Preserve the original issue intent and acceptance criteria.
-- Fix failing tests even when the failure appears outside the original issue scope.
+- Fix failing tests caused by the reviewed change. For pre-existing or infrastructure failures, record concrete evidence and keep changes scoped unless a reviewer comment explicitly requires broader repair.
 - Do not add unrelated refactors or broad rewrites.
 
 ## Inputs Expected
@@ -59,12 +59,24 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 ## Workflow
 
 1. Read the original issue context, latest diff, and complete reviewer JSON.
-2. Identify every actionable reviewer comment and blocking reason.
+2. Identify every actionable reviewer comment, stable comment `id`, category, verification instruction, and blocking reason.
 3. Edit the working tree to address all reviewer comments that can be fixed safely.
 4. Run the required verification commands supplied by the coordinator.
-5. If any test fails, diagnose and fix the failure, even when the failing test is outside the original scope.
+5. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
 6. Re-run verification until all required checks pass.
 7. Produce the final output report only after verification passes.
+
+## Review Comment Closure
+
+Reviewer instructions may include stable comment IDs such as `R001`, `R002`, and so on. Treat those IDs as the authoritative checklist for the modification cycle.
+
+- Do not finish until every reviewer comment `id` has a closure entry in `review_comment_closure`.
+- Closure status values are `addressed | declined | blocked`.
+- Use `addressed` only when code, tests, or documentation changed and verification proves the reviewer concern is closed.
+- Use `declined` only when the reviewer comment is demonstrably incorrect, obsolete after another fix, or unsafe to apply; include evidence.
+- Use `blocked` only when external state or missing information prevents a safe fix; include the exact blocker and the smallest next action.
+- Keep one closure entry per review comment ID. Do not merge unrelated reviewer comments into one entry.
+- Re-run reviewer-provided verification commands when present; if a command cannot run, record the concrete reason in the closure entry and in the result artifact.
 
 ## Progress Visibility
 
@@ -160,6 +172,15 @@ payload = {
     "status": "success",
     "commit_sha": commit_sha,
     "files_committed": [item for item in files if item],
+    "review_comment_closure": [
+        {
+            "id": "R001",
+            "status": "addressed",
+            "action": "short description of the code/test change",
+            "files_changed": ["path/to/file"],
+            "verification": ["exact command or inspection proving closure"],
+        }
+    ],
     "verification": {
         "passed": True,
         "commands": ["REPLACE_WITH_EXACT_COMMANDS_RUN"],
@@ -182,6 +203,15 @@ $payload = @{
   status = "success"
   commit_sha = $modifyCommitSha
   files_committed = @($filesCommitted)
+  review_comment_closure = @(
+    @{
+      id = "R001"
+      status = "addressed"
+      action = "short description of the code/test change"
+      files_changed = @("path/to/file")
+      verification = @("exact command or inspection proving closure")
+    }
+  )
   verification = @{
     passed = $true
     commands = @("REPLACE_WITH_EXACT_COMMANDS_RUN")
@@ -230,7 +260,7 @@ Report:
 
 1. **Commit SHA** — the exact SHA of the commit made in the mandatory commit step (required)
 2. **Files committed** — list of all files included in that commit
-3. Reviewer comments addressed
+3. Reviewer comments addressed — include the same `review_comment_closure` entries written to `RUN_WITH_IT_RESULT_FILE`
 4. Key modification decisions
 5. Tests run, suites executed, and pass/fail results (required — must show tests passed)
 6. Any remaining risks or follow-up notes

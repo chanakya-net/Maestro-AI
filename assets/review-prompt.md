@@ -58,20 +58,49 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 1. Read issue/task requirements and acceptance criteria.
 2. Fetch the diff: run `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`. Use only these two explicit SHAs — never substitute `HEAD` for `REVIEW_HEAD_SHA`.
-3. Review the complete diff before writing either output file.
-4. Validate behavior, risk, and verification evidence against requirements.
-5. Write the status file to `REVIEWER_STATUS_FILE`.
-6. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
-7. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
-8. Stop.
+3. Build an internal acceptance-criteria checklist from the issue/task context.
+4. Review the complete diff before writing either output file.
+5. Expand context around changed public APIs, security-sensitive code, tests, config, and call sites when the diff alone is not enough to prove behavior.
+6. Validate behavior, risk, and verification evidence against requirements.
+7. Complete the required coverage_matrix and Threat Model Pass before choosing a verdict.
+8. Write the status file to `REVIEWER_STATUS_FILE`.
+9. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
+10. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
+11. Stop.
 
 ## Review Completeness
 
 - Complete the review in a single pass. Do not intentionally defer comments to later review cycles.
 - Do not cap comments at 3, 4, or any other arbitrary number. Report every concrete, actionable finding discovered in the complete diff review.
-- Before finalizing, re-scan the diff and requirements for missed correctness, security, regression, edge-case, verification, and acceptance-criteria issues.
+- Before finalizing, re-scan the diff and requirements for missed requirement, correctness, security, regression, edge-case, verification, and acceptance-criteria issues.
 - Merge duplicate findings when one root cause explains multiple lines, but do not drop distinct actionable issues just to keep the comment list short.
 - Prefer complete high-signal coverage over terse minimal output. It is acceptable for `comments` to contain many entries when the diff has many distinct issues.
+- Every actionable comment must have a stable `id` such as `R001`, `R002`, and so on. IDs must remain unique within the review artifact so the modifier can close each item exactly once.
+- Every actionable comment must include a category, concrete evidence, expected change, and verification guidance.
+
+## Required Review Passes
+
+Populate `coverage_matrix` after completing these passes. Use `covered`, `issue_found`, or `not_applicable` for each status, and include evidence for every row:
+
+- `requirements`: each acceptance criterion and issue requirement is implemented or has a finding.
+- `correctness`: behavior, edge cases, error handling, data validation, concurrency, and regressions are checked.
+- `security`: complete the Threat Model Pass below.
+- `tests`: verification evidence and missing test coverage are checked.
+- `scope`: unrelated refactors, unrelated file churn, and ownership boundary violations are checked.
+- `maintainability`: risky complexity, brittle parsing, duplicated logic, and unclear contracts are checked.
+
+### Threat Model Pass
+
+For every changed area, explicitly check trust boundaries and security-sensitive operations:
+
+- User, issue, model, environment, filesystem, network, and Git data treated as input.
+- Secrets, credentials, tokens, logs, and generated artifacts that could leak sensitive data.
+- Shell commands, subprocess calls, argument quoting, path traversal, unsafe file writes, and symlink/worktree boundary behavior.
+- JSON artifact poisoning, prompt/context injection, untrusted markdown, and malformed structured output.
+- Authentication, authorization, permission checks, if the changed code touches access control.
+- Race conditions, stale sentinels, lock handling, and concurrent worker behavior.
+
+Raise a blocking finding when a realistic exploit, data leak, privilege boundary issue, or unsafe destructive operation is possible. security, correctness, acceptance-criteria, regression, and test-coverage issues can never be nitpicks.
 
 ## Output Contract
 
@@ -107,15 +136,38 @@ This is read directly by the modifier worker-agent (never by the Sub-Coordinator
 {
   "verdict": "approve | revise | reject",
   "summary": "one-paragraph rationale",
+  "coverage_matrix": [
+    {
+      "area": "requirements | correctness | security | tests | scope | maintainability",
+      "status": "covered | issue_found | not_applicable",
+      "evidence": "specific proof, missing coverage, or not-applicable rationale"
+    }
+  ],
+  "verification_reviewed": [
+    {
+      "command": "exact command reviewed or run",
+      "result": "passed | failed | missing | not_run",
+      "evidence": "short output summary or gap"
+    }
+  ],
   "comments": [
     {
+      "id": "R001",
       "file": "path/to/file",
       "line": 42,
       "severity": "info | warning | critical",
-      "fix": "concrete suggested change"
+      "category": "requirement | security | correctness | test | regression | performance | maintainability | scope",
+      "blocking": true,
+      "fix": "concrete suggested change",
+      "evidence": "what in the diff or context proves this is a problem",
+      "expected_change": "what the modifier must change",
+      "verification": "specific command, test, or inspection that should prove closure"
     }
   ],
-  "blocking_reasons": ["list when verdict=reject"]
+  "blocking_reasons": ["list when verdict=reject"],
+  "modifier_handoff": {
+    "review_comment_closure": "modifier must return one closure entry for every comment id"
+  }
 }
 ```
 
@@ -129,6 +181,10 @@ The `comments` array must include every distinct actionable finding from the com
 - Use `revise` when the issue is directionally correct but needs targeted fixes.
 - Use `reject` when the change is fundamentally off-scope, unsafe, or cannot be repaired with a small follow-up.
 - Keep comments actionable and grounded in the diff.
+- Use `category="requirement"` for missed or partially satisfied acceptance criteria.
+- Use `category="security"` for exploitable input handling, secrets, permissions, unsafe filesystem, subprocess, Git, network, or artifact-boundary behavior.
+- Use `category="test"` for missing or misleading verification that could let a regression ship.
+- For `approve`, comments must be empty or nitpick-only. Any warning, critical, blocking, requirement, security, correctness, regression, or test-coverage finding requires `revise` or `reject`.
 
 ## Nitpick Policy
 

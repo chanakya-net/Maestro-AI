@@ -39,6 +39,18 @@ COMPLEXITY_SCORE_KEYS = {
 }
 
 REVIEW_VERDICTS = {"approve", "revise", "reject"}
+REVIEW_SEVERITIES = {"info", "warning", "critical"}
+REVIEW_CATEGORIES = {
+    "requirement",
+    "security",
+    "correctness",
+    "test",
+    "regression",
+    "performance",
+    "maintainability",
+    "scope",
+}
+NON_NITPICK_CATEGORIES = {"requirement", "security", "correctness", "test", "regression"}
 
 
 def load_json(path: str) -> tuple[Any | None, str | None]:
@@ -269,14 +281,57 @@ def valid_review_status(payload: Any) -> bool:
     )
 
 
+def non_empty_str(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def is_nitpick_comment(comment: dict[str, Any]) -> bool:
+    return comment.get("severity") == "info" and isinstance(comment.get("fix"), str) and comment["fix"].startswith("[nitpick]")
+
+
+def valid_review_comment(comment: Any) -> bool:
+    if not isinstance(comment, dict):
+        return False
+    for key in ("id", "file", "severity", "category", "fix", "evidence", "expected_change", "verification"):
+        if not non_empty_str(comment.get(key)):
+            return False
+    if comment.get("severity") not in REVIEW_SEVERITIES:
+        return False
+    category = comment.get("category")
+    if category not in REVIEW_CATEGORIES:
+        return False
+    if not isinstance(comment.get("blocking"), bool):
+        return False
+    line = comment.get("line")
+    if line is not None and (not isinstance(line, int) or line < 1):
+        return False
+    if comment["blocking"] and comment["severity"] == "info":
+        return False
+    if category in NON_NITPICK_CATEGORIES and is_nitpick_comment(comment):
+        return False
+    return True
+
+
 def valid_review_instructions(payload: Any) -> bool:
-    return (
+    if not (
         isinstance(payload, dict)
         and payload.get("verdict") in REVIEW_VERDICTS
         and isinstance(payload.get("summary"), str)
         and isinstance(payload.get("comments"), list)
         and isinstance(payload.get("blocking_reasons"), list)
-    )
+    ):
+        return False
+    comments = payload["comments"]
+    if any(not valid_review_comment(comment) for comment in comments):
+        return False
+    verdict = payload["verdict"]
+    if verdict == "approve" and comments and not nitpick_only(comments):
+        return False
+    if verdict == "revise" and not comments:
+        return False
+    if verdict == "reject" and not payload["blocking_reasons"]:
+        return False
+    return True
 
 
 def review_instructions_file(result_file: str) -> str:
@@ -305,10 +360,7 @@ def nitpick_only(comments: list[Any]) -> bool:
     for comment in comments:
         if not isinstance(comment, dict):
             return False
-        if comment.get("severity") != "info":
-            return False
-        fix = comment.get("fix")
-        if not isinstance(fix, str) or not fix.startswith("[nitpick]"):
+        if not is_nitpick_comment(comment):
             return False
     return True
 
@@ -329,6 +381,11 @@ def review_result_reason(args: argparse.Namespace, status_payload: Any, status_e
         return "invalid-review-instructions-artifact"
     if instructions_payload.get("verdict") != status_payload.get("verdict"):
         return "review-artifact-verdict-mismatch"
+    comments = instructions_payload.get("comments", [])
+    if status_payload.get("comment_count") != len(comments):
+        return "review-comment-count-mismatch"
+    if status_payload.get("nitpick_only") != nitpick_only(comments):
+        return "review-nitpick-only-mismatch"
     return ""
 
 

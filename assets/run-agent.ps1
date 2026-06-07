@@ -32,7 +32,7 @@ $SCRIPT_DIR        = $PSScriptRoot
 $REPO_ROOT         = if ($env:REPO_ROOT) { $env:REPO_ROOT } else { $PWD.Path }
 if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph -ErrorAction SilentlyContinue)) {
     Push-Location $REPO_ROOT
-    try { & codegraph unlock 2>$null } catch {} finally { Pop-Location }
+    try { & codegraph unlock *> $null } catch {} finally { Pop-Location }
 }
 $AGENT             = $env:AGENT
 $MODEL             = $env:MODEL
@@ -550,7 +550,7 @@ try {
     }
     if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph -ErrorAction SilentlyContinue)) {
         Push-Location $REPO_ROOT
-        try { & codegraph mark-dirty 2>$null } catch {} finally { Pop-Location }
+        try { & codegraph mark-dirty *> $null } catch {} finally { Pop-Location }
     }
     if ($commandExitCode -eq 0) {
         Write-DoneFile "success" "runner-exit"
