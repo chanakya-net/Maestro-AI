@@ -360,11 +360,11 @@ This recovery contract covers `impl`, `review`, and `modify` together with the s
 Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, `RUN_WITH_IT_MODEL_DENYLIST`, and `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`, and records the decision in `.run-with-it/usage-ledger.json`.
 
 Usage target summary from `agent-registry.json`:
-- overall default: Codex 50%, Agy 20%, GitHub Copilot 20%, Claude 10%
-- complexity: prefer Agy and GitHub Copilot, protect direct Claude
-- implementation/modification: use Codex heavily for higher bands, shift easier work to Agy/Copilot when Codex is over target
-- review: prefer an independent Codex/Claude/Copilot model, avoid Agy unless higher-priority review tools are unavailable
-- merge recovery: prefer Codex, then Claude
+- overall default: Codex 55%, Claude 30%, GitHub Copilot 10%, Agy 5%
+- complexity: prefer direct Claude and Codex, with GitHub Copilot/Agy as support routes
+- implementation/modification: use Codex heavily, with Claude as the main secondary route
+- review: prefer an independent Claude/Codex/Copilot model, avoid Agy unless higher-priority review tools are unavailable
+- merge recovery: prefer Codex, then Claude, with GitHub Copilot/Agy only as fallbacks
 
 Bash helper shape:
 ```bash

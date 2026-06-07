@@ -110,6 +110,8 @@ assert_contains "${dry_output}" "--context-file ${WORK_DIR}/.run-with-it/context
 assert_contains "${dry_output}" "--issue-dir ${WORK_DIR_REAL}/.run-with-it/issues/101" "dry-run forwards issue-scoped sub-coordinator folder"
 assert_contains "${dry_output}" "--log-file ${WORK_DIR_REAL}/.run-with-it/issues/101/sub-coordinator.log" "dry-run places sub-coordinator log in issue folder"
 assert_contains "${dry_output}" "--result-file ${WORK_DIR_REAL}/.run-with-it/issues/101/report.json" "dry-run places compact report in issue folder"
+assert_contains "${dry_output}" "--state-file ${WORK_DIR_REAL}/.run-with-it/issues/101/sub-coordinator.state.json" "dry-run passes sub-coordinator dispatcher state file"
+assert_contains "${dry_output}" "--detach" "dry-run launches sub-coordinator dispatcher in detached mode"
 
 printf '# issue 201 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-201.md"
 printf '# issue 202 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-202.md"

@@ -266,18 +266,19 @@ def parallel_jobs(args: argparse.Namespace) -> int:
 def mark_in_progress(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     entry = issue_entry(state, args.issue)
-    entry.update(
-        {
-            "status": "in_progress",
-            "context_file": args.context_file,
-            "issue_dir": args.issue_dir,
-            "pid": int(args.pid),
-            "started_at": int(time.time()),
-            "log_file": args.log_file,
-            "done_file": args.done_file,
-            "report_file": args.report_file,
-        }
-    )
+    payload = {
+        "status": "in_progress",
+        "context_file": args.context_file,
+        "issue_dir": args.issue_dir,
+        "pid": int(args.pid),
+        "started_at": int(time.time()),
+        "log_file": args.log_file,
+        "done_file": args.done_file,
+        "report_file": args.report_file,
+    }
+    if args.sub_coord_state_file:
+        payload["sub_coord_state_file"] = args.sub_coord_state_file
+    entry.update(payload)
     active = [str(value) for value in state.setdefault("active_pool_issues", [])]
     if str(args.issue) not in active:
         active.append(str(args.issue))
@@ -646,6 +647,7 @@ def build_parser() -> argparse.ArgumentParser:
     progress.add_argument("--done-file", required=True)
     progress.add_argument("--report-file", required=True)
     progress.add_argument("--issue-dir", required=True)
+    progress.add_argument("--sub-coord-state-file", default="")
     progress.set_defaults(func=mark_in_progress)
 
     final = subparsers.add_parser("finalize-issue")

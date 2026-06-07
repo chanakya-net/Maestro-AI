@@ -120,7 +120,8 @@ mark_in_progress() {
     --log-file "$4" \
     --done-file "$5" \
     --report-file "$6" \
-    --issue-dir "$7"
+    --issue-dir "$7" \
+    --sub-coord-state-file "${8:-}"
 }
 
 finalize_issue() {
@@ -225,10 +226,63 @@ print_dispatch_command() {
   local log_file="$4"
   local done_file="$5"
   local report_file="$6"
-  printf '%s --asset-root %s --role sub-coord --issue %s --agent %s --model %s --context-file %s --prompt-file %s --log-file %s --done-file %s --result-file %s --issue-dir %s --status-file %s --events-log %s --poll-seconds %s --timeout-seconds %s\n' \
+  local state_file="$7"
+  printf '%s --asset-root %s --role sub-coord --issue %s --agent %s --model %s --context-file %s --prompt-file %s --log-file %s --done-file %s --result-file %s --state-file %s --issue-dir %s --status-file %s --events-log %s --poll-seconds %s --timeout-seconds %s --detach\n' \
     "$DISPATCHER" "$ASSET_ROOT" "$issue" "$SUB_COORD_AGENT" "$SUB_COORD_MODEL" \
-    "$context_file" "$PROMPT_FILE" "$log_file" "$done_file" "$report_file" "$issue_dir" \
+    "$context_file" "$PROMPT_FILE" "$log_file" "$done_file" "$report_file" "$state_file" "$issue_dir" \
     "$STATUS_FILE" "$EVENTS_LOG" "$POLL_SECONDS" "$TIMEOUT_SECONDS"
+}
+
+wait_for_dispatcher_pid() {
+  local state_file="$1"
+  "$PYTHON_BIN" - "$state_file" <<'PY'
+import json
+import sys
+import time
+
+path = sys.argv[1]
+for _ in range(100):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        pid = data.get("dispatcher_pid")
+        if pid:
+            print(pid)
+            raise SystemExit(0)
+    except (OSError, json.JSONDecodeError):
+        pass
+    time.sleep(0.1)
+raise SystemExit(1)
+PY
+}
+
+launch_sub_coord_dispatcher() {
+  local issue="$1"
+  local context_file="$2"
+  local log_file="$3"
+  local done_file="$4"
+  local report_file="$5"
+  local issue_dir="$6"
+  local state_file="$7"
+
+  "$DISPATCHER" \
+    --asset-root "$ASSET_ROOT" \
+    --role sub-coord \
+    --issue "$issue" \
+    --agent "$SUB_COORD_AGENT" \
+    --model "$SUB_COORD_MODEL" \
+    --context-file "$context_file" \
+    --prompt-file "$PROMPT_FILE" \
+    --log-file "$log_file" \
+    --done-file "$done_file" \
+    --result-file "$report_file" \
+    --state-file "$state_file" \
+    --issue-dir "$issue_dir" \
+    --status-file "$STATUS_FILE" \
+    --events-log "$EVENTS_LOG" \
+    --poll-seconds "$POLL_SECONDS" \
+    --timeout-seconds "$TIMEOUT_SECONDS" \
+    --detach >/dev/null
 }
 
 POOL_ISSUES=""
@@ -287,43 +341,34 @@ emit_waiting_context_status() {
 
 spawn_issue() {
   local issue="$1"
-  local context_file issue_dir log_file done_file report_file pid
+  local context_file issue_dir log_file done_file report_file state_file pid
   context_file="$(context_file_for "$issue")"
   [ -f "$context_file" ] || fail "context file missing for issue $issue: $context_file"
   issue_dir="$(issue_dir_for "$issue")"
   log_file="${issue_dir}/sub-coordinator.log"
   done_file="${issue_dir}/sub-coordinator.done"
   report_file="${issue_dir}/report.json"
+  state_file="${issue_dir}/sub-coordinator.state.json"
   mkdir -p "$issue_dir"
-  nohup "$DISPATCHER" \
-    --asset-root "$ASSET_ROOT" \
-    --role sub-coord \
-    --issue "$issue" \
-    --agent "$SUB_COORD_AGENT" \
-    --model "$SUB_COORD_MODEL" \
-    --context-file "$context_file" \
-    --prompt-file "$PROMPT_FILE" \
-    --log-file "$log_file" \
-    --done-file "$done_file" \
-    --result-file "$report_file" \
-    --issue-dir "$issue_dir" \
-    --status-file "$STATUS_FILE" \
-    --events-log "$EVENTS_LOG" \
-    --poll-seconds "$POLL_SECONDS" \
-    --timeout-seconds "$TIMEOUT_SECONDS" \
-    >/dev/null 2>&1 < /dev/null &
-  pid="$!"
+  if ! launch_sub_coord_dispatcher "$issue" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir" "$state_file"; then
+    write_status "STATUS|type=sub-coord-dispatch-bootstrap-failed|issue=${issue}|state_file=${state_file}|report_file=${report_file}"
+    return 1
+  fi
+  if ! pid="$(wait_for_dispatcher_pid "$state_file")"; then
+    write_status "STATUS|type=sub-coord-dispatch-bootstrap-failed|issue=${issue}|reason=missing-dispatcher-pid|state_file=${state_file}|report_file=${report_file}"
+    return 1
+  fi
   pool_add "$issue"
   pool_set PID "$issue" "$pid"
   pool_set REPORT "$issue" "$report_file"
-  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir"
-  write_status "STATUS|type=sub-coord-spawn|issue=${issue}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|pool_size=$(set -- $POOL_ISSUES; echo $#)|parallel_jobs=${PARALLEL_JOBS}"
+  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir" "$state_file"
+  write_status "STATUS|type=sub-coord-spawn|issue=${issue}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|state_file=${state_file}|pool_size=$(set -- $POOL_ISSUES; echo $#)|parallel_jobs=${PARALLEL_JOBS}"
 }
 
 spawn_recovery_issue() {
   local issue="$1"
   local decision_json="$2"
-  local issue_dir context_file log_file done_file report_file pid attempt reason
+  local issue_dir context_file log_file done_file report_file state_file pid attempt reason
   issue_dir="$(issue_dir_for "$issue")"
   report_file="${issue_dir}/report.json"
   attempt="$(decision_field "$decision_json" recovery_attempt)"
@@ -331,31 +376,26 @@ spawn_recovery_issue() {
   context_file="${issue_dir}/sub-coordinator-recovery-${attempt}-context.md"
   log_file="${issue_dir}/sub-coordinator-recovery-${attempt}.log"
   done_file="${issue_dir}/sub-coordinator-recovery-${attempt}.done"
+  state_file="${issue_dir}/sub-coordinator-recovery-${attempt}.state.json"
   mkdir -p "$issue_dir"
   write_sub_coord_recovery_context "$issue" "$context_file" "$attempt" "$reason"
   mark_sub_coord_recovery_started "$issue" "$attempt" "$reason" "$context_file"
-  nohup "$DISPATCHER" \
-    --asset-root "$ASSET_ROOT" \
-    --role sub-coord \
-    --issue "$issue" \
-    --agent "$SUB_COORD_AGENT" \
-    --model "$SUB_COORD_MODEL" \
-    --context-file "$context_file" \
-    --prompt-file "$PROMPT_FILE" \
-    --log-file "$log_file" \
-    --done-file "$done_file" \
-    --result-file "$report_file" \
-    --issue-dir "$issue_dir" \
-    --status-file "$STATUS_FILE" \
-    --events-log "$EVENTS_LOG" \
-    --poll-seconds "$POLL_SECONDS" \
-    --timeout-seconds "$TIMEOUT_SECONDS" \
-    >/dev/null 2>&1 < /dev/null &
-  pid="$!"
+  if ! launch_sub_coord_dispatcher "$issue" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir" "$state_file"; then
+    write_status "STATUS|type=sub-coord-recovery-dispatch-bootstrap-failed|issue=${issue}|attempt=${attempt}|state_file=${state_file}|report_file=${report_file}"
+    mark_sub_coord_recovery_dispatch_failed "$issue" "$report_file"
+    finalize_pool_issue "$issue" "$report_file"
+    return 0
+  fi
+  if ! pid="$(wait_for_dispatcher_pid "$state_file")"; then
+    write_status "STATUS|type=sub-coord-recovery-dispatch-bootstrap-failed|issue=${issue}|attempt=${attempt}|reason=missing-dispatcher-pid|state_file=${state_file}|report_file=${report_file}"
+    mark_sub_coord_recovery_dispatch_failed "$issue" "$report_file"
+    finalize_pool_issue "$issue" "$report_file"
+    return 0
+  fi
   pool_set PID "$issue" "$pid"
   pool_set REPORT "$issue" "$report_file"
-  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir"
-  write_status "STATUS|type=sub-coord-recovery-spawn|issue=${issue}|attempt=${attempt}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|reason=${reason}"
+  mark_in_progress "$issue" "$pid" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir" "$state_file"
+  write_status "STATUS|type=sub-coord-recovery-spawn|issue=${issue}|attempt=${attempt}|pid=${pid}|agent=${SUB_COORD_AGENT}|model=${SUB_COORD_MODEL}|state_file=${state_file}|reason=${reason}"
 }
 
 finalize_pool_issue() {
@@ -465,7 +505,8 @@ if [ "$DRY_RUN" = 1 ]; then
       "$issue_dir" \
       "${issue_dir}/sub-coordinator.log" \
       "${issue_dir}/sub-coordinator.done" \
-      "${issue_dir}/report.json"
+      "${issue_dir}/report.json" \
+      "${issue_dir}/sub-coordinator.state.json"
   done
   exit 0
 fi
