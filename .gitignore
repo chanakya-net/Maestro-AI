@@ -143,3 +143,8 @@ vite.config.ts.timestamp-*
 .vite/
 
 .run-with-it/
+.codegraph/config.json
+.codegraph/codegraph.db
+.codegraph/codegraph.db-wal
+.codegraph/codegraph.db-shm
+.codegraph/.dirty

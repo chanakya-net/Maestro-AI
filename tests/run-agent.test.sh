@@ -154,7 +154,6 @@ expected_codex_models = [
     "gpt-5.4-mini",
     "gpt-5.3-codex",
     "gpt-5.3-codex-spark",
-    "gpt-5.2",
 ]
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
 check(codex_model.get("pricing_basis") == "subscription", "codex declares subscription pricing basis")
@@ -180,8 +179,6 @@ copilot_model = agents["github-copilot"]["model"]
 expected_copilot_models = [
     "claude-haiku-4.5",
     "claude-sonnet-4.6",
-    "gpt-5.2",
-    "gpt-5.2-codex",
     "gpt-5.3-codex",
     "gpt-5.4",
     "gpt-5.4-mini",

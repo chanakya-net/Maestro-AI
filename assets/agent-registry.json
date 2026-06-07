@@ -145,28 +145,6 @@
         "cost-efficient"
       ]
     },
-    "gpt-5.2": {
-      "provider": "openai",
-      "ability": "advanced",
-      "complexity_weight": 7,
-      "context_window": 400000,
-      "strengths": [
-        "agentic",
-        "long-context",
-        "adaptive-reasoning"
-      ]
-    },
-    "gpt-5.2-codex": {
-      "provider": "openai",
-      "ability": "advanced",
-      "complexity_weight": 7,
-      "context_window": 400000,
-      "strengths": [
-        "agentic-coding",
-        "prior-codex-default",
-        "swe-bench"
-      ]
-    },
     "gpt-5.3-codex": {
       "provider": "openai",
       "ability": "advanced",
@@ -175,7 +153,7 @@
       "strengths": [
         "agentic-coding",
         "swe-bench-pro",
-        "25pct-faster-than-5.2",
+        "fast-codex",
         "copilot-business-base"
       ]
     },
@@ -187,7 +165,7 @@
       "strengths": [
         "agentic-coding",
         "code-speed",
-        "preferred-over-5.3-and-5.2-non-mini",
+        "preferred-over-5.3-non-mini",
         "easy-to-medium-hard-complexity"
       ]
     },
@@ -721,8 +699,7 @@
           "gpt-5.4",
           "gpt-5.4-mini",
           "gpt-5.3-codex",
-          "gpt-5.3-codex-spark",
-          "gpt-5.2"
+          "gpt-5.3-codex-spark"
         ],
         "pricing_basis": "subscription",
         "metered_api_cost": false
@@ -820,8 +797,6 @@
         "known_models": [
           "claude-haiku-4.5",
           "claude-sonnet-4.6",
-          "gpt-5.2",
-          "gpt-5.2-codex",
           "gpt-5.3-codex",
           "gpt-5.4",
           "gpt-5.4-mini"
