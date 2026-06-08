@@ -9,7 +9,10 @@
     {
       "name": "ai-skill-collections",
       "description": "Token-saving modes, workflow helpers, and productivity boosters.",
-      "source": "./",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/chanakya-net/AI-Skills.git"
+      },
       "category": "productivity"
     }
   ]
