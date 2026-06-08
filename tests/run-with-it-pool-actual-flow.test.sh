@@ -68,14 +68,14 @@ make_fixture() {
   local project="${root}/project"
   local fake_bin="${root}/bin"
   mkdir -p "$asset_root" "$project" "$fake_bin"
-  cp "${ROOT_DIR}/assets/run-agent.sh" \
-    "${ROOT_DIR}/assets/worker-watch.sh" \
-    "${ROOT_DIR}/assets/run-with-it-dispatch.sh" \
-    "${ROOT_DIR}/assets/run-with-it-pool.sh" \
-    "${ROOT_DIR}/assets/run-with-it-state.py" \
-    "${ROOT_DIR}/assets/run-with-it-github-update.py" \
-    "${ROOT_DIR}/assets/run-with-it-artifacts.py" \
-    "${ROOT_DIR}/assets/merge-recovery-prompt.md" \
+  cp "${ROOT_DIR}/assets/shell/run-agent.sh" \
+    "${ROOT_DIR}/assets/shell/worker-watch.sh" \
+    "${ROOT_DIR}/assets/shell/run-with-it-dispatch.sh" \
+    "${ROOT_DIR}/assets/shell/run-with-it-pool.sh" \
+    "${ROOT_DIR}/assets/python/run-with-it-state.py" \
+    "${ROOT_DIR}/assets/python/run-with-it-github-update.py" \
+    "${ROOT_DIR}/assets/python/run-with-it-artifacts.py" \
+    "${ROOT_DIR}/assets/prompts/merge-recovery-prompt.md" \
     "$asset_root/"
   chmod +x "$asset_root/run-agent.sh" \
     "$asset_root/worker-watch.sh" \

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ROUTER_PATH="${ROOT_DIR}/assets/run-with-it-router.py"
+ROUTER_PATH="${ROOT_DIR}/assets/python/run-with-it-router.py"
 REGISTRY_PATH="${ROOT_DIR}/assets/agent-registry.json"
 
 fail() {

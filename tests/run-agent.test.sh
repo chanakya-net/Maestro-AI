@@ -4,7 +4,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY_PATH="${ROOT_DIR}/assets/agent-registry.json"
-RUNNER_PATH="${ROOT_DIR}/assets/run-agent.sh"
+RUNNER_PATH="${ROOT_DIR}/assets/shell/run-agent.sh"
+# run-agent.sh now lives in assets/shell/, so the shared registry at the assets/
+# root is no longer its SCRIPT_DIR sibling. Point bare invocations at it explicitly;
+# the installed (flat) layout keeps them adjacent, and inline overrides still win.
+export AGENT_REGISTRY_FILE="${REGISTRY_PATH}"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -49,7 +53,7 @@ if [[ ! -x "${RUNNER_PATH}" ]]; then
   fail "run-agent.sh exists and is executable"
 fi
 
-prompt_contract="$(<"${ROOT_DIR}/assets/prompt.md")"
+prompt_contract="$(<"${ROOT_DIR}/assets/prompts/prompt.md")"
 assert_contains "${prompt_contract}" "## Progress Visibility" "implementation prompt documents progress visibility"
 assert_contains "${prompt_contract}" "Do not emit periodic heartbeat or status-check lines while working." "implementation prompt keeps workers focused"
 assert_not_contains "${prompt_contract}" "STATUS|type=heartbeat|issue=<issue-or-unknown>|role=impl" "implementation prompt does not request child heartbeat output"
@@ -64,7 +68,7 @@ assert_contains "${prompt_contract}" 'CHECKIN_OWNER=impl-worker' "implementation
 assert_contains "${prompt_contract}" 'CHECKIN_TARGET=issue-worktree' "implementation prompt requires issue worktree check-in target"
 assert_contains "${prompt_contract}" 'wrong check-in branch' "implementation prompt includes branch assertion"
 
-modifier_contract="$(<"${ROOT_DIR}/assets/modifier-prompt.md")"
+modifier_contract="$(<"${ROOT_DIR}/assets/prompts/modifier-prompt.md")"
 assert_contains "${modifier_contract}" 'RUN_WITH_IT_RESULT_FILE' "modifier prompt names dispatcher result path"
 assert_contains "${modifier_contract}" 'RUN_WITH_IT_DONE_FILE' "modifier prompt names dispatcher done path"
 assert_contains "${modifier_contract}" 'Never write modification handoff JSON to SUB_COORD_REPORT_FILE' "modifier prompt forbids report path handoff"
@@ -75,11 +79,11 @@ assert_contains "${modifier_contract}" 'CHECKIN_OWNER=modify-worker' "modifier p
 assert_contains "${modifier_contract}" 'CHECKIN_TARGET=issue-worktree' "modifier prompt requires issue worktree check-in target"
 assert_contains "${modifier_contract}" 'wrong check-in branch' "modifier prompt includes branch assertion"
 
-review_contract="$(<"${ROOT_DIR}/assets/review-prompt.md")"
+review_contract="$(<"${ROOT_DIR}/assets/prompts/review-prompt.md")"
 assert_contains "${review_contract}" 'RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE' "review prompt ties dispatcher result path to reviewer status JSON"
 assert_contains "${review_contract}" 'RUN_WITH_IT_DONE_FILE' "review prompt names dispatcher done path"
 
-complexity_contract="$(<"${ROOT_DIR}/assets/complexity-prompt.md")"
+complexity_contract="$(<"${ROOT_DIR}/assets/prompts/complexity-prompt.md")"
 assert_contains "${complexity_contract}" 'The only file you may write is RUN_WITH_IT_RESULT_FILE' "complexity prompt permits required dispatcher result artifact"
 assert_contains "${complexity_contract}" 'plus the single required write to `RUN_WITH_IT_RESULT_FILE`' "complexity prompt exempts the required result write from read-only exploration"
 assert_not_contains "${complexity_contract}" 'Read-only tools only.' "complexity prompt does not contradict the required result artifact write"

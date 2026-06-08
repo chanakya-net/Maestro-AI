@@ -101,7 +101,7 @@ Each skill is a standalone `SKILL.md` file that AI coding agents load as special
 
 ## Runtime Assets
 
-The `assets/` directory contains the shared prompts, scripts, and configuration that power `run-with-it`.
+The `assets/` directory contains the shared prompts, scripts, and configuration that power `run-with-it`, organized by language: `assets/prompts/` (agent instructions), `assets/python/` (helpers), `assets/shell/` (Bash runners), `assets/powershell/` (PowerShell runners), with the shared `agent-registry.json` at the `assets/` root. The installer flattens all of these into a single directory (`~/.ai-skill-collections/assets`), which is the layout the runtime scripts resolve siblings from.
 
 ### Runner & Dispatcher
 
@@ -237,7 +237,8 @@ Re-run the installer: `bash install.sh` or `.\install.ps1`
 
 ```bash
 mkdir -p "$HOME/.ai-skill-collections/assets"
-for f in assets/*; do cp "$f" "$HOME/.ai-skill-collections/assets/"; done
+# Source files live in language subfolders; the install layout is flat.
+find assets -type f -exec cp {} "$HOME/.ai-skill-collections/assets/" \;
 chmod +x "$HOME/.ai-skill-collections/assets/"*.sh "$HOME/.ai-skill-collections/assets/"*.py
 ```
 
@@ -273,25 +274,33 @@ AI-Skills/
 │   ├── save-tokens/SKILL.md
 │   └── tdd-implementation/SKILL.md
 │
-├── assets/                                # Shared prompts, scripts, and configs
+├── assets/                                # Shared assets (installer flattens these into one dir)
 │   ├── agent-registry.json                # Agent detection, invocation, model catalog
-│   ├── run-agent.sh / run-agent.ps1       # Cross-agent CLI runner
-│   ├── run-with-it-dispatch.sh / run-with-it-dispatch.ps1 # Worker dispatcher with stall detection
-│   ├── run-with-it-pool.sh / run-with-it-pool.ps1         # Rolling-pool supervisor
-│   ├── run-with-it-router.py              # Deterministic usage-debt model router
-│   ├── run-with-it-state.py               # Atomic JSON state mutations
-│   ├── run-with-it-artifacts.py           # Artifact validation and synthesis
-│   ├── run-with-it-github-update.py       # GitHub issue comment/close helper
-│   ├── run-with-it-pr-body.py             # Final PR body renderer
-│   ├── worker-watch.sh / worker-watch.ps1 # Worker liveness watcher
-│   ├── prompt.md                          # Implementation worker prompt
-│   ├── sub-coordinator-prompt.md          # Sub-Coordinator prompt
-│   ├── merge-recovery-prompt.md           # Merge Recovery Coordinator prompt
-│   ├── review-prompt.md                   # Review worker prompt
-│   ├── modifier-prompt.md                 # Modify worker prompt
-│   ├── complexity-prompt.md               # Complexity scoring prompt
-│   ├── coordinator-rules.md               # Compact Sub-Coordinator rules
-│   └── main-orchestrator-rules.md         # Compact Main Orchestrator rules
+│   ├── prompts/                           # Agent instructions (markdown)
+│   │   ├── prompt.md                      # Implementation worker prompt
+│   │   ├── sub-coordinator-prompt.md      # Sub-Coordinator prompt
+│   │   ├── merge-recovery-prompt.md       # Merge Recovery Coordinator prompt
+│   │   ├── review-prompt.md               # Review worker prompt
+│   │   ├── modifier-prompt.md             # Modify worker prompt
+│   │   ├── complexity-prompt.md           # Complexity scoring prompt
+│   │   ├── coordinator-rules.md           # Compact Sub-Coordinator rules
+│   │   └── main-orchestrator-rules.md     # Compact Main Orchestrator rules
+│   ├── python/                            # Shared Python helpers
+│   │   ├── run-with-it-router.py          # Deterministic usage-debt model router
+│   │   ├── run-with-it-state.py           # Atomic JSON state mutations
+│   │   ├── run-with-it-artifacts.py       # Artifact validation and synthesis
+│   │   ├── run-with-it-github-update.py   # GitHub issue comment/close helper
+│   │   └── run-with-it-pr-body.py         # Final PR body renderer
+│   ├── shell/                             # Bash runners
+│   │   ├── run-agent.sh                   # Cross-agent CLI runner
+│   │   ├── run-with-it-dispatch.sh        # Worker dispatcher with stall detection
+│   │   ├── run-with-it-pool.sh            # Rolling-pool supervisor
+│   │   └── worker-watch.sh                # Worker liveness watcher
+│   └── powershell/                        # PowerShell runners
+│       ├── run-agent.ps1                  # Cross-agent CLI runner
+│       ├── run-with-it-dispatch.ps1       # Worker dispatcher with stall detection
+│       ├── run-with-it-pool.ps1           # Rolling-pool supervisor
+│       └── worker-watch.ps1               # Worker liveness watcher
 │
 ├── tests/                                 # Contract test suite (22 files)
 │   ├── run-agent.test.sh                  # Runner behavior, dry-run, telemetry

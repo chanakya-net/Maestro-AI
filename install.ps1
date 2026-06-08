@@ -101,13 +101,15 @@ function Try-Run {
 function Install-Assets {
     Say "→ Installing shared assets"
 
-    $files   = @("prompt.md", "sub-coordinator-prompt.md", "main-orchestrator-rules.md", "merge-recovery-prompt.md", "complexity-prompt.md", "review-prompt.md", "modifier-prompt.md", "coordinator-rules.md", "run-with-it-state.py", "run-with-it-github-update.py", "run-with-it-pr-body.py", "run-with-it-router.py", "run-with-it-artifacts.py", "run-agent.ps1", "run-with-it-dispatch.ps1", "run-with-it-pool.ps1", "worker-watch.ps1", "agent-registry.json")
+    # Source paths are subfoldered in the repo; the installed layout stays flat
+    # (each file lands directly under $ASSETS_DEST by basename).
+    $files   = @("prompts/prompt.md", "prompts/sub-coordinator-prompt.md", "prompts/main-orchestrator-rules.md", "prompts/merge-recovery-prompt.md", "prompts/complexity-prompt.md", "prompts/review-prompt.md", "prompts/modifier-prompt.md", "prompts/coordinator-rules.md", "python/run-with-it-state.py", "python/run-with-it-github-update.py", "python/run-with-it-pr-body.py", "python/run-with-it-router.py", "python/run-with-it-artifacts.py", "powershell/run-agent.ps1", "powershell/run-with-it-dispatch.ps1", "powershell/run-with-it-pool.ps1", "powershell/worker-watch.ps1", "agent-registry.json")
     $baseUrl = "https://raw.githubusercontent.com/$REPO/$ASSETS_REF/assets"
 
     if ($DryRun) {
         Note "  [dry-run] New-Item -ItemType Directory -Force '$ASSETS_DEST'"
         foreach ($f in $files) {
-            Note "  [dry-run] Invoke-WebRequest $baseUrl/$f -OutFile $ASSETS_DEST\$f"
+            Note "  [dry-run] Invoke-WebRequest $baseUrl/$f -OutFile $ASSETS_DEST\$(Split-Path -Leaf $f)"
         }
         $WOULD_INSTALL.Add("assets")
         Write-Host ""
@@ -117,9 +119,10 @@ function Install-Assets {
     New-Item -ItemType Directory -Force -Path $ASSETS_DEST | Out-Null
 
     foreach ($f in $files) {
+        $base = Split-Path -Leaf $f
         $url  = "$baseUrl/$f"
-        $tmp  = "$ASSETS_DEST\$f.tmp"
-        $dest = "$ASSETS_DEST\$f"
+        $tmp  = "$ASSETS_DEST\$base.tmp"
+        $dest = "$ASSETS_DEST\$base"
         try {
             Invoke-WebRequest -Uri $url -OutFile $tmp -ErrorAction Stop
             Move-Item -Force $tmp $dest

@@ -131,14 +131,16 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "merge-recovery-prompt.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-with-it-state.py" "run-with-it-github-update.py" "run-with-it-pr-body.py" "run-with-it-router.py" "run-with-it-artifacts.py" "run-agent.sh" "run-with-it-dispatch.sh" "run-with-it-pool.sh" "worker-watch.sh" "agent-registry.json")
+  # Source paths are subfoldered in the repo; the installed layout stays flat
+  # (each file lands directly under $ASSETS_DEST by basename).
+  local files=("prompts/prompt.md" "prompts/sub-coordinator-prompt.md" "prompts/main-orchestrator-rules.md" "prompts/merge-recovery-prompt.md" "prompts/complexity-prompt.md" "prompts/review-prompt.md" "prompts/modifier-prompt.md" "prompts/coordinator-rules.md" "python/run-with-it-state.py" "python/run-with-it-github-update.py" "python/run-with-it-pr-body.py" "python/run-with-it-router.py" "python/run-with-it-artifacts.py" "shell/run-agent.sh" "shell/run-with-it-dispatch.sh" "shell/run-with-it-pool.sh" "shell/worker-watch.sh" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then
     note "  [dry-run] mkdir -p $ASSETS_DEST"
     local f
     for f in "${files[@]}"; do
-      note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
+      note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f##*/}"
     done
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-agent.sh"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-dispatch.sh"
@@ -163,10 +165,11 @@ install_assets() {
 
   mkdir -p "$ASSETS_DEST"
 
-  local f url tmp
+  local f url base tmp
   for f in "${files[@]}"; do
     url="${base_url}/${f}"
-    tmp="${ASSETS_DEST}/${f}.tmp"
+    base="${f##*/}"
+    tmp="${ASSETS_DEST}/${base}.tmp"
 
     if ! curl -fsSL "$url" -o "$tmp"; then
       rm -f "$tmp"
@@ -176,7 +179,7 @@ install_assets() {
       return 1
     fi
 
-    mv "$tmp" "${ASSETS_DEST}/${f}"
+    mv "$tmp" "${ASSETS_DEST}/${base}"
   done
 
   chmod +x "${ASSETS_DEST}/run-agent.sh"
