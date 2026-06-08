@@ -84,7 +84,7 @@ This isolation means each issue's implementation complexity is contained to its 
 
 - Do not synthesize PRDs.
 - Do not author initial issue templates.
-- Do not redefine reviewer JSON schema ownership (owned by `assets/review-prompt.md`).
+- Do not redefine reviewer JSON schema ownership (owned by `assets/prompts/review-prompt.md`).
 - Do not modify runner script implementation details.
 - Do not mutate registry data definitions in `assets/agent-registry.json`.
 
@@ -200,12 +200,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompts\prompt.md, .\assets\powershell\run-agent.ps1, .\assets\powershell\run-with-it-dispatch.ps1, .\assets\powershell\run-with-it-pool.ps1, .\assets\powershell\worker-watch.ps1, .\assets\python\run-with-it-state.py, .\assets\python\run-with-it-github-update.py, .\assets\python\run-with-it-pr-body.py, .\assets\python\run-with-it-router.py, .\assets\python\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\prompts\review-prompt.md, .\assets\prompts\modifier-prompt.md, .\assets\prompts\complexity-prompt.md, .\assets\prompts\coordinator-rules.md, .\assets\prompts\sub-coordinator-prompt.md, .\assets\prompts\main-orchestrator-rules.md, .\assets\prompts\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompts/prompt.md ./assets/shell/run-agent.sh ./assets/shell/run-with-it-dispatch.sh ./assets/shell/run-with-it-pool.sh ./assets/shell/worker-watch.sh ./assets/python/run-with-it-state.py ./assets/python/run-with-it-github-update.py ./assets/python/run-with-it-pr-body.py ./assets/python/run-with-it-router.py ./assets/python/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/prompts/review-prompt.md ./assets/prompts/modifier-prompt.md ./assets/prompts/complexity-prompt.md ./assets/prompts/coordinator-rules.md ./assets/prompts/sub-coordinator-prompt.md ./assets/prompts/main-orchestrator-rules.md ./assets/prompts/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File

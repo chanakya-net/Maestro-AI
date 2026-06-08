@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STATE_HELPER="${ROOT_DIR}/assets/run-with-it-state.py"
-GITHUB_HELPER="${ROOT_DIR}/assets/run-with-it-github-update.py"
-PR_BODY_HELPER="${ROOT_DIR}/assets/run-with-it-pr-body.py"
+STATE_HELPER="${ROOT_DIR}/assets/python/run-with-it-state.py"
+GITHUB_HELPER="${ROOT_DIR}/assets/python/run-with-it-github-update.py"
+PR_BODY_HELPER="${ROOT_DIR}/assets/python/run-with-it-pr-body.py"
 
 fail() {
   echo "FAIL: $1" >&2

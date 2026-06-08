@@ -3,8 +3,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNNER_PATH="${ROOT_DIR}/assets/run-agent.sh"
-ASSET_ROOT="${ROOT_DIR}/assets"
+RUNNER_PATH="${ROOT_DIR}/assets/shell/run-agent.sh"
+# Workers resolve prompts/helpers from a single flat AssetRoot (the installed
+# layout). Stage that flat dir from the subfoldered source tree.
+source "${ROOT_DIR}/tests/lib/stage-assets.sh"
+ASSET_ROOT="$(mktemp -d)"
+stage_flat_assets "${ROOT_DIR}/assets" "${ASSET_ROOT}"
 
 fail() {
   echo "FAIL: $1" >&2

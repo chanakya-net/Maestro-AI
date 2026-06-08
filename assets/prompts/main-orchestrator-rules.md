@@ -41,7 +41,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
 - While a sub-coordinator runs, poll `current.txt` from the shell and print only changed status lines.
 - Do not tail raw sub-coordinator logs. The status bus is the terminal-visible progress channel; compact report JSON is the AI-visible outcome channel.
-- In the monitor loop, run the platform worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
+- In the monitor loop, run the platform worker watcher (`assets/shell/worker-watch.sh` / `assets/powershell/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 

@@ -3,9 +3,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POOL_RUNNER="${ROOT_DIR}/assets/run-with-it-pool.sh"
-MAIN_RULES="${ROOT_DIR}/assets/main-orchestrator-rules.md"
-SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
+POOL_RUNNER="${ROOT_DIR}/assets/shell/run-with-it-pool.sh"
+MAIN_RULES="${ROOT_DIR}/assets/prompts/main-orchestrator-rules.md"
+SUB_PROMPT="${ROOT_DIR}/assets/prompts/sub-coordinator-prompt.md"
+
+# The pool runner resolves all of its siblings from a single flat --asset-root,
+# mirroring the installed layout. Stage that flat dir from the subfoldered source.
+source "${ROOT_DIR}/tests/lib/stage-assets.sh"
+FLAT_ASSETS="$(mktemp -d)"
+stage_flat_assets "${ROOT_DIR}/assets" "${FLAT_ASSETS}"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -78,7 +84,7 @@ assert_file_contains "${SUB_PROMPT}" "SUB_COORD_RECOVERY_MODE=1" "sub-coordinato
 
 validate_output="$("${POOL_RUNNER}" \
   --validate-only \
-  --asset-root "${ROOT_DIR}/assets" \
+  --asset-root "${FLAT_ASSETS}" \
   --state-file "${STATE_FILE}" \
   --parallel-jobs 2 \
   --agent codex \
@@ -93,7 +99,7 @@ assert_file_contains "${EVENTS_LOG}" "STATUS|type=pool-ready|parallel_jobs=2|rea
 
 dry_output="$("${POOL_RUNNER}" \
   --dry-run \
-  --asset-root "${ROOT_DIR}/assets" \
+  --asset-root "${FLAT_ASSETS}" \
   --state-file "${STATE_FILE}" \
   --parallel-jobs 2 \
   --agent codex \
@@ -155,7 +161,7 @@ JSON
 
 dependency_output="$("${POOL_RUNNER}" \
   --dry-run \
-  --asset-root "${ROOT_DIR}/assets" \
+  --asset-root "${FLAT_ASSETS}" \
   --state-file "${STATE_FILE}" \
   --parallel-jobs 4 \
   --agent codex \

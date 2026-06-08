@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARTIFACT_HELPER="${ROOT_DIR}/assets/run-with-it-artifacts.py"
+ARTIFACT_HELPER="${ROOT_DIR}/assets/python/run-with-it-artifacts.py"
 
 fail() {
   echo "FAIL: $1" >&2
