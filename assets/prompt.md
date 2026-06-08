@@ -23,6 +23,7 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep changes minimal and focused.
 - Do not add unrelated refactors or architecture changes.
+- Keep authored functions and files small and maintainable — see `Code Size & Maintainability`.
 
 ## Inputs Expected
 
@@ -55,6 +56,26 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 3. Respect existing boundaries and dependency direction.
 4. Prefer the smallest compatible extension if a gap is found.
 5. Follow `save-tokens` and `tdd-implementation` as the source of truth for concise communication and test-first workflow.
+
+## Code Size & Maintainability
+
+Write code that stays easy to read and change. Apply these to code you author or substantially rewrite in this slice.
+
+**Functions / methods**
+- Target ≤ 40 lines; treat 60 as a hard ceiling.
+- One responsibility per function. If you reach for "and" to describe what it does, split it.
+- When a function grows past the ceiling, extract a well-named helper rather than adding branches inline.
+- Keep nesting ≤ 3 levels; use early returns / guard clauses instead of deep `if` pyramids.
+
+**Files / modules**
+- Target ≤ 300 lines; treat 400 as a hard ceiling.
+- When a file grows past the ceiling, split it by responsibility into a new module and import — do not let one file accumulate unrelated concerns.
+
+**Precedence and judgment**
+- Repo config wins: if a linter or formatter defines limits (e.g. eslint `max-lines`, `max-lines-per-function`, ruff/pylint), those values override the defaults above — never write code that trips a configured limit.
+- Match surrounding conventions: mirror how the existing module is already organized before introducing a new split.
+- Prefer cohesion over count: do not fragment tightly-coupled logic into many tiny files just to hit a number — a maintainable split groups things that change together.
+- This governs new/rewritten code only. Do not refactor unrelated oversized existing files to satisfy these limits; if an assigned change forces you to touch one, note the oversize as a follow-up risk in your output report instead of expanding scope.
 
 ## Progress Visibility
 

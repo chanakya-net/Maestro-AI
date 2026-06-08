@@ -222,6 +222,8 @@ Try to capture requirment in detils
 
 Each slice must be end-to-end (schema, API, UI, tests), demoable on its own, and as small as possible.
 
+Default to the smallest demoable increment. When in doubt, split.
+
 Prefer AFK slices over HITL slices where possible.
 
 <vertical-slice-rules>
@@ -229,6 +231,26 @@ Prefer AFK slices over HITL slices where possible.
 - A completed slice is independently verifiable
 - Prefer many thin slices over few thick slices
 </vertical-slice-rules>
+
+<slice-sizing>
+Hold every slice to these ceilings. A slice that exceeds any of them must be split:
+
+- One slice delivers one user-visible behavior. Two behaviors that could ship and demo separately are two slices.
+- Target 3-7 implementation steps per slice. More than ~8 concrete steps is a signal to split.
+- A slice should land in a single focused PR a reviewer can read in one sitting.
+- Each slice has 1-3 acceptance criteria. If you need more to describe it, it is doing too much.
+
+Splitting heuristics — apply these before presenting the breakdown:
+
+- Split CRUD by operation: create, read, update, delete are usually separate slices.
+- Split read path from write path.
+- Split happy path from error/validation/edge handling; ship the happy path first.
+- Split per entity, endpoint, or screen rather than bundling several behind one slice.
+- Split "wire it up" from "make it robust" (auth, pagination, retries, empty states) — ship the thin path, then harden in a follow-up slice.
+- A scaffolding/skeleton step plus its first real behavior can be one slice; further behaviors are their own slices.
+
+It is better to produce more slices than to produce slices that are too large. Err toward finer granularity.
+</slice-sizing>
 
 ### 7. Quiz user on issue breakdown
 
@@ -241,9 +263,9 @@ Present a numbered list for review. For each slice include:
 
 Ask:
 
-- Is granularity right (too coarse or too fine)?
+- Is granularity right? Default bias is to split — flag any slice over ~8 steps or with more than one user-visible behavior as a split candidate.
 - Are dependencies correct?
-- Should any slices be merged or split?
+- Should any slices be split further? (Merging is the exception, not the default.)
 - Are HITL and AFK assignments correct?
 
 Iterate until approved.
@@ -293,17 +315,19 @@ A concise end-to-end description of this slice.
 
 ## Implementation Steps
 
-Ordered, numbered steps an implementing agent must follow to deliver this slice. Each step must be concrete and actionable:
+Ordered, numbered steps an implementing agent must follow to deliver this slice. Each step names a concrete artifact and an action on it:
 
 1. **Step title** — specific action (file to create/modify/delete, function/method/component to add or change, migration to write, test to add). Include exact paths and symbol names derived from codebase exploration.
 2. ...
 
 Rules for this section:
-- Ordered by execution dependency (earlier steps must not depend on later ones).
-- Every step must reference a concrete artifact (file path, function name, API endpoint, schema field, test case name).
-- Include at least one test step per slice.
-- If a step requires human input or a decision at runtime, flag it: `[HITL]`.
-- Do not include steps that belong to other slices.
+- Keep it to 3–7 steps, matching the slice sizing ceiling. If you need more, the slice is too big — split it.
+- Order by execution dependency: earlier steps must not depend on later ones, and no later step rewrites or undoes an earlier one.
+- Every step references a concrete artifact (file path, function name, API endpoint, schema field, test case name) derived from codebase exploration — not a vague verb like "implement logic" or "update backend".
+- Write the test step first where the codebase practices TDD: add a failing test, then make it pass. Otherwise pair each behavior step with its test. Every slice has at least one test step.
+- Each step should leave the tree in a working state (compiles / suite green) so progress is verifiable mid-slice.
+- The steps together must satisfy every acceptance criterion below — and nothing beyond this slice. Do not include steps that belong to other slices.
+- If a step requires human input or a runtime decision, flag it `[HITL]` and state what is needed.
 
 ## Agent Routing
 

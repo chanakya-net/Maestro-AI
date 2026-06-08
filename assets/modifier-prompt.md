@@ -26,6 +26,7 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - Preserve the original issue intent and acceptance criteria.
 - Fix failing tests caused by the reviewed change. For pre-existing or infrastructure failures, record concrete evidence and keep changes scoped unless a reviewer comment explicitly requires broader repair.
 - Do not add unrelated refactors or broad rewrites.
+- Keep authored functions and files small and maintainable — see `Code Size & Maintainability`.
 
 ## Inputs Expected
 
@@ -65,6 +66,26 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 5. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
 6. Re-run verification until all required checks pass.
 7. Produce the final output report only after verification passes.
+
+## Code Size & Maintainability
+
+Write code that stays easy to read and change. Apply these to code you author or substantially rewrite while addressing reviewer comments.
+
+**Functions / methods**
+- Target ≤ 40 lines; treat 60 as a hard ceiling.
+- One responsibility per function. If you reach for "and" to describe what it does, split it.
+- When a function grows past the ceiling, extract a well-named helper rather than adding branches inline.
+- Keep nesting ≤ 3 levels; use early returns / guard clauses instead of deep `if` pyramids.
+
+**Files / modules**
+- Target ≤ 300 lines; treat 400 as a hard ceiling.
+- When a file grows past the ceiling, split it by responsibility into a new module and import — do not let one file accumulate unrelated concerns.
+
+**Precedence and judgment**
+- Repo config wins: if a linter or formatter defines limits (e.g. eslint `max-lines`, `max-lines-per-function`, ruff/pylint), those values override the defaults above — never write code that trips a configured limit.
+- Match surrounding conventions: mirror how the existing module is already organized before introducing a new split.
+- Prefer cohesion over count: do not fragment tightly-coupled logic into many tiny files just to hit a number.
+- This governs new/rewritten code only. Do not refactor unrelated oversized existing files to satisfy these limits, and do not exceed reviewer-comment scope; if a fix forces you to touch one, note the oversize as a follow-up risk in your output report.
 
 ## Review Comment Closure
 
