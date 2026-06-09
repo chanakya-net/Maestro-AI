@@ -351,4 +351,135 @@ assert_json_file "$REVIEW_RESULT" "PowerShell dispatcher synthesizes missing rev
 assert_file_contains "$REVIEW_RESULT" '"source": "dispatcher-synthesized"' "PowerShell synthesized review status is auditable"
 assert_file_contains "$REVIEW_STATE" '"state": "completed"' "PowerShell review instructions-only worker completes"
 
+# --- #2: committed work is synthesized even when the worker exits NONZERO (parity with Bash) ---
+COMMIT_FAIL_AGENT="${WORK_DIR}/commit-then-fail-agent.ps1"
+cat > "$COMMIT_FAIL_AGENT" <<'PS1'
+param([string]$RepoRoot, [string]$Prompt)
+if ($Prompt -eq "--version") {
+  Write-Output "commit-then-fail-agent 1.0"
+  exit 0
+}
+if (-not $RepoRoot) { $RepoRoot = $env:REPO_ROOT }
+& git -C $RepoRoot config user.email "test@example.com" | Out-Null
+& git -C $RepoRoot config user.name "Test User" | Out-Null
+Set-Content -Path (Join-Path $RepoRoot "crashed.txt") -Value "committed then crashed" -Encoding UTF8
+& git -C $RepoRoot add crashed.txt | Out-Null
+& git -C $RepoRoot commit -m "impl committed before crash" | Out-Null
+[Console]::Error.WriteLine("transient backend hiccup, dropping connection")
+exit 7
+PS1
+
+# --- #1: agent-unavailable (auth) with no committed work → infrastructure failure class ---
+UNAVAIL_AGENT="${WORK_DIR}/unavailable-agent.ps1"
+cat > "$UNAVAIL_AGENT" <<'PS1'
+param([string]$RepoRoot, [string]$Prompt)
+if ($Prompt -eq "--version") {
+  Write-Output "unavailable-agent 1.0"
+  exit 0
+}
+[Console]::Error.WriteLine("API error: 401 authentication failed for this account")
+exit 1
+PS1
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" "${PS_CMD}" "${COMMIT_FAIL_AGENT}" "${UNAVAIL_AGENT}" <<'PY'
+import json, sys
+path, ps_cmd, commit_fail, unavail = sys.argv[1:5]
+with open(path) as handle:
+    registry = json.load(handle)
+def entry(script, name):
+    return {
+        "display_name": name,
+        "detection": {"command": ps_cmd, "args": ["-NoProfile", "-File", script, "unused", "--version"]},
+        "invocation": {
+            "command": ps_cmd,
+            "args_template": ["-NoProfile", "-File", script, "{{repo_root}}", "{{prompt}}"],
+            "prompt_argument_template": "{{prompt}}",
+        },
+        "permission_modes": {"default": "", "available": [""]},
+        "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+        "capability_band": "balanced",
+        "fallback_order": [],
+        "user_model_configuration": {
+            "requires_user_model_config": False,
+            "config_paths": [],
+            "skip_when_unconfigured": False,
+            "skip_message": "",
+        },
+    }
+registry["agents"]["commit-then-fail"] = entry(commit_fail, "Commit Then Fail")
+registry["agents"]["unavailable"] = entry(unavail, "Unavailable")
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+PSFAIL_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/46"
+PSFAIL_CONTEXT="${SMOKE_PROJECT}/psfail-context.md"
+PSFAIL_LOG="${PSFAIL_ISSUE_DIR}/workers/impl/cycle-1.log"
+PSFAIL_DONE="${PSFAIL_ISSUE_DIR}/workers/impl/cycle-1.done"
+PSFAIL_RESULT="${PSFAIL_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+PSFAIL_STATE="${PSFAIL_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+mkdir -p "$(dirname "$PSFAIL_RESULT")"
+printf 'RESULT_FILE=%s\n' "$PSFAIL_RESULT" > "$PSFAIL_CONTEXT"
+
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role impl \
+  -Issue 46 \
+  -Cycle 1 \
+  -Agent commit-then-fail \
+  -Model fake-model \
+  -ContextFile "$PSFAIL_CONTEXT" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "$PSFAIL_LOG" \
+  -DoneFile "$PSFAIL_DONE" \
+  -ResultFile "$PSFAIL_RESULT" \
+  -StateFile "$PSFAIL_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$PSFAIL_ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 >/dev/null
+
+assert_json_file "$PSFAIL_RESULT" "PowerShell synthesizes committed work even when the worker exits nonzero"
+assert_file_contains "$PSFAIL_RESULT" '"crashed.txt"' "PowerShell nonzero-exit synthesis records the committed file"
+assert_file_contains "$PSFAIL_RESULT" '"source": "dispatcher-synthesized"' "PowerShell nonzero-exit synthesis is auditable"
+assert_file_contains "$PSFAIL_STATE" '"state": "completed"' "PowerShell nonzero-exit worker with committed work completes"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=result-artifact-synthesized|issue=46|role=impl|cycle=1" "PowerShell nonzero-exit synthesis emits status"
+
+UNAVAIL_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/47"
+UNAVAIL_CONTEXT="${SMOKE_PROJECT}/unavail-context.md"
+UNAVAIL_LOG="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1.log"
+UNAVAIL_DONE="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1.done"
+UNAVAIL_RESULT="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+UNAVAIL_STATE="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+mkdir -p "$(dirname "$UNAVAIL_RESULT")"
+printf 'RESULT_FILE=%s\n' "$UNAVAIL_RESULT" > "$UNAVAIL_CONTEXT"
+
+set +e
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role impl \
+  -Issue 47 \
+  -Cycle 1 \
+  -Agent unavailable \
+  -Model fake-model \
+  -ContextFile "$UNAVAIL_CONTEXT" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "$UNAVAIL_LOG" \
+  -DoneFile "$UNAVAIL_DONE" \
+  -ResultFile "$UNAVAIL_RESULT" \
+  -StateFile "$UNAVAIL_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$UNAVAIL_ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 >/dev/null
+unavail_status="$?"
+set -e
+
+[[ "$unavail_status" != "0" ]] || fail "agent-unavailable PowerShell failure should not report success"
+assert_file_contains "$UNAVAIL_LOG" "STATUS|type=agent-unavailable" "PowerShell runner records agent-unavailable from auth error"
+assert_file_contains "$EVENTS_LOG" "|reason=missing-result-artifact|failure_class=infrastructure|" "PowerShell dispatch-failed classifies availability loss as infrastructure"
+assert_file_contains "$UNAVAIL_STATE" '"failure_class": "infrastructure"' "PowerShell state JSON records infrastructure failure class"
+
 echo "PASS: run-with-it-dispatch.ps1 contract"

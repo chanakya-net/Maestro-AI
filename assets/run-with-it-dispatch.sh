@@ -223,6 +223,18 @@ result_artifact_failure_reason() {
     --pre-spawn-head "${pre_spawn_head:-}"
 }
 
+result_artifact_failure_class() {
+  "$PYTHON_BIN" "$ARTIFACT_HELPER" failure-class \
+    --role "$ROLE" \
+    --issue "$ISSUE" \
+    --result-file "$RESULT_FILE" \
+    --done-file "$DONE_FILE" \
+    --log-file "$LOG_FILE" \
+    --issue-dir "$ISSUE_DIR" \
+    --repo-root "$(repo_root_for_worker)" \
+    --pre-spawn-head "${pre_spawn_head:-}"
+}
+
 synthesize_result_artifact_if_possible() {
   "$PYTHON_BIN" "$ARTIFACT_HELPER" synthesize \
     --role "$ROLE" \
@@ -299,8 +311,9 @@ write_worker_state() {
   local alive="$2"
   local exit_code="${3:-}"
   local stall_reason="${4:-}"
+  local failure_class="${5:-}"
   local now_epoch now_iso done_present result_present log_present log_size log_mtime
-  local seconds_since_output seconds_since_heartbeat runner_pid_json exit_code_json stall_reason_json tmp_file
+  local seconds_since_output seconds_since_heartbeat runner_pid_json exit_code_json stall_reason_json failure_class_json tmp_file
 
   now_epoch="$(date +%s)"
   now_iso="$(iso_now)"
@@ -326,6 +339,8 @@ write_worker_state() {
   if [ -n "$exit_code" ]; then exit_code_json="$exit_code"; fi
   stall_reason_json="null"
   if [ -n "$stall_reason" ]; then stall_reason_json="$(json_string "$stall_reason")"; fi
+  failure_class_json="null"
+  if [ -n "$failure_class" ]; then failure_class_json="$(json_string "$failure_class")"; fi
   worktree_status="$(worktree_status_json)"
 
   tmp_file="${STATE_FILE}.tmp.$$"
@@ -367,6 +382,7 @@ write_worker_state() {
   "last_heartbeat_at": $(json_nullable_string "${last_heartbeat_at:-}"),
   "updated_at": $(json_string "$now_iso"),
   "stall_reason": ${stall_reason_json},
+  "failure_class": ${failure_class_json},
   "exit_code": ${exit_code_json},
   "worktree": ${worktree_status}
 }
@@ -480,10 +496,10 @@ PY
       exit 0
     fi
     if ! kill -0 "$detached_pid" 2>/dev/null; then
-      set +e
-      wait "$detached_pid" 2>/dev/null
-      detached_status="$?"
-      set -e
+      # See note below on the dead-runner wait: avoid tripping the ERR trap on
+      # bash 3.2 while still capturing the real exit code.
+      detached_status=0
+      wait "$detached_pid" 2>/dev/null || detached_status="$?"
       if ! "$PYTHON_BIN" - "$STATE_FILE" <<'PY' >/dev/null 2>&1
 import json
 import sys
@@ -604,12 +620,19 @@ while true; do
   fi
 
   if ! kill -0 "$pid" 2>/dev/null; then
-    set +e
-    wait "$pid" 2>/dev/null
-    exit_code="$?"
-    set -e
-    if [ "$exit_code" = "0" ] && synthesize_result_artifact_if_possible; then
-      write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+    # Capture the runner exit code without tripping the ERR trap. On bash 3.2
+    # (macOS) the ERR trap fires on `wait` returning non-zero even under
+    # `set +e`; the `|| exit_code=$?` form makes the command succeed so the
+    # trap never runs, while still recording the real exit code.
+    exit_code=0
+    wait "$pid" 2>/dev/null || exit_code="$?"
+    # Synthesis is gated by git ground-truth inside the helper (HEAD must have
+    # advanced past pre_spawn_head with committed files), so it is safe to
+    # attempt regardless of exit code: a worker that committed real work and
+    # then crashed (e.g. a provider auth/quota failure mid-run) is salvaged
+    # instead of burning a fallback attempt.
+    if synthesize_result_artifact_if_possible; then
+      write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|exit_code=${exit_code}|result_file=${RESULT_FILE}"
       last_log_signature="$(log_signature)"
     fi
     if completion_ready; then
@@ -621,8 +644,9 @@ while true; do
     if [ -z "$failure_reason" ]; then
       failure_reason="process-exited-missing-done-or-result"
     fi
-    write_worker_state "failed" "false" "$exit_code" "$failure_reason"
-    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${failure_reason}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+    failure_class="$(result_artifact_failure_class)"
+    write_worker_state "failed" "false" "$exit_code" "$failure_reason" "$failure_class"
+    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${failure_reason}|failure_class=${failure_class}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
     exit 1
   fi
 
@@ -651,8 +675,9 @@ while true; do
 
   if [ "$state" = "stalled" ] && should_auto_fail_stalled_role; then
     write_status "STATUS|type=worker-stall-timeout|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|action=terminate-runner"
-    write_worker_state "failed" "false" "124" "alive-but-silent"
-    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+    failure_class="$(result_artifact_failure_class)"
+    write_worker_state "failed" "false" "124" "alive-but-silent" "$failure_class"
+    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|failure_class=${failure_class}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
     set +e
     terminate_runner_tree "$pid" >/dev/null 2>&1
     set -e

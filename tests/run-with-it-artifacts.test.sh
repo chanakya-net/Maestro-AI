@@ -68,4 +68,36 @@ write_review_artifacts \
   '{"verdict":"approve","summary":"Approve cannot carry warning comments.","comments":['"${approval_warning_comment}"'],"blocking_reasons":[]}'
 assert_eq "$(review_reason)" "invalid-review-instructions-artifact" "approve artifacts may only contain nitpick comments"
 
+failure_class() {
+  python3 "${ARTIFACT_HELPER}" failure-class \
+    --role impl \
+    --issue 567 \
+    --result-file "${WORK_DIR}/cycle-1-result.json" \
+    --done-file "${WORK_DIR}/cycle-1.done" \
+    --log-file "${WORK_DIR}/cycle-1.log"
+}
+
+# Missing log → capability (no infrastructure signal observed)
+rm -f "${WORK_DIR}/cycle-1.log"
+assert_eq "$(failure_class)" "capability" "missing log defaults to capability"
+
+# Ordinary worker output with no availability marker → capability
+printf 'STATUS|type=dispatch-start|issue=567|role=impl\nSTATUS|type=worker-done|issue=567|role=impl|status=failed\n' > "${WORK_DIR}/cycle-1.log"
+assert_eq "$(failure_class)" "capability" "ordinary failure is a capability failure"
+
+# Runner emitted agent-unavailable (auth/quota) → infrastructure
+printf 'STATUS|type=dispatch-start|issue=567|role=impl\nSTATUS|type=agent-unavailable|issue=567|role=impl|agent=claude|model=claude-sonnet-4-6|reason=auth|action=exclude-route\n' > "${WORK_DIR}/cycle-1.log"
+assert_eq "$(failure_class)" "infrastructure" "agent-unavailable is an infrastructure failure"
+
+# A STALE bootstrap marker must NOT classify a later real failure as infrastructure.
+# The foreground bootstrap retry reuses the same log; if that retry then fails for a
+# real capability reason (no current agent-unavailable), the inherited bootstrap
+# marker must not exempt it from the fallback budget.
+printf 'STATUS|type=dispatch-bootstrap-failed|issue=567|role=impl|reason=dispatcher-exited-before-runner-pid\nSTATUS|type=agent-start|issue=567|role=impl|agent=codex|model=gpt-5.4-mini\nSTATUS|type=worker-done|issue=567|role=impl|status=failed\n' > "${WORK_DIR}/cycle-1.log"
+assert_eq "$(failure_class)" "capability" "stale bootstrap marker does not mask a real capability failure"
+
+# But a current agent-unavailable on the reused log is still infrastructure.
+printf 'STATUS|type=dispatch-bootstrap-failed|issue=567|role=impl|reason=dispatcher-exited-before-runner-pid\nSTATUS|type=agent-start|issue=567|role=impl|agent=claude|model=claude-sonnet-4-6\nSTATUS|type=agent-unavailable|issue=567|role=impl|agent=claude|model=claude-sonnet-4-6|reason=quota|action=exclude-route\n' > "${WORK_DIR}/cycle-1.log"
+assert_eq "$(failure_class)" "infrastructure" "current agent-unavailable still classifies as infrastructure"
+
 echo "PASS: run-with-it artifact validation"

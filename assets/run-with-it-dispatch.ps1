@@ -157,7 +157,8 @@ function Write-WorkerState(
     [string]$state,
     [bool]$alive,
     [Nullable[int]]$exitCode = $null,
-    [string]$stallReason = ""
+    [string]$stallReason = "",
+    [string]$failureClass = ""
 ) {
     $nowEpoch = Get-UnixNow
     $secondsSinceOutput = $nowEpoch - $script:lastOutputEpoch
@@ -195,6 +196,7 @@ function Write-WorkerState(
         last_heartbeat_at = $(if ($script:lastHeartbeatAt) { $script:lastHeartbeatAt } else { $null })
         updated_at = Get-IsoNow
         stall_reason = $(if ($stallReason) { $stallReason } else { $null })
+        failure_class = $(if ($failureClass) { $failureClass } else { $null })
         exit_code = $exitCode
     }
 
@@ -246,6 +248,14 @@ function Get-ResultArtifactFailureReason {
 function Try-SynthesizeResultArtifact {
     Invoke-ArtifactHelper "synthesize" *> $null
     return ($LASTEXITCODE -eq 0)
+}
+
+function Get-ResultArtifactFailureClass {
+    $output = Invoke-ArtifactHelper "failure-class" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return "capability"
+    }
+    return (($output -join "`n").Trim())
 }
 
 function Get-CompletionFailureReason {
@@ -479,8 +489,13 @@ while ($true) {
     $process.Refresh()
     if ($process.HasExited) {
         $exitCode = $process.ExitCode
-        if (($exitCode -eq 0) -and (Try-SynthesizeResultArtifact)) {
-            Write-Status "STATUS|type=result-artifact-synthesized|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+        # Synthesis is gated by git ground-truth inside the helper (HEAD must
+        # have advanced past pre_spawn_head with committed files), so it is safe
+        # to attempt regardless of exit code: a worker that committed real work
+        # then crashed (e.g. a provider auth/quota failure mid-run) is salvaged
+        # instead of burning a fallback attempt.
+        if (Try-SynthesizeResultArtifact) {
+            Write-Status "STATUS|type=result-artifact-synthesized|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|exit_code=$exitCode|result_file=$ResultFile"
         }
         if (Test-CompletionReady) {
             Write-WorkerState "completed" $false $exitCode
@@ -489,8 +504,9 @@ while ($true) {
         }
         $failureReason = Get-CompletionFailureReason
         if (-not $failureReason) { $failureReason = "process-exited-missing-done-or-result" }
-        Write-WorkerState "failed" $false $exitCode $failureReason
-        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$failureReason|done_file=$DoneFile|result_file=$ResultFile"
+        $failureClass = Get-ResultArtifactFailureClass
+        Write-WorkerState "failed" $false $exitCode $failureReason $failureClass
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$failureReason|failure_class=$failureClass|done_file=$DoneFile|result_file=$ResultFile"
         exit 1
     }
 
@@ -520,8 +536,9 @@ while ($true) {
         try {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
         } catch {}
-        Write-WorkerState "failed" $false 124 "alive-but-silent"
-        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|done_file=$DoneFile|result_file=$ResultFile"
+        $failureClass = Get-ResultArtifactFailureClass
+        Write-WorkerState "failed" $false 124 "alive-but-silent" $failureClass
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|failure_class=$failureClass|done_file=$DoneFile|result_file=$ResultFile"
         exit 1
     }
 

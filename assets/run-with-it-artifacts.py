@@ -410,6 +410,48 @@ def result_failure_reason(args: argparse.Namespace) -> str:
     return ""
 
 
+# A log marker that means the route was never usable (auth/quota/model
+# unavailable) for THIS worker run, rather than the agent trying and producing
+# a bad artifact. An infrastructure failure must not consume the capability
+# fallback budget (MAX_AGENT_FALLBACKS) — the coordinator excludes the route and
+# re-routes instead.
+#
+# Only `agent-unavailable` is used. It is emitted by run-agent.sh for the
+# current runner, and every post-availability retry uses a fresh
+# attempt-specific log, so it cannot be inherited. `dispatch-bootstrap-failed`
+# is deliberately NOT a marker: a bootstrap loss happens before any runner_pid
+# and exits via a path that never calls this classifier, so the only way the
+# marker reaches a log scanned here is the foreground bootstrap retry reusing
+# the same log (see sub-coordinator-prompt.md) — where it is always stale and
+# would misclassify a later real capability failure as infrastructure. Bootstrap
+# exemption is handled separately by the coordinator, not by this scan.
+INFRASTRUCTURE_LOG_MARKERS = (
+    "type=agent-unavailable",
+)
+
+
+def log_signals_unavailable_route(log_file: str) -> bool:
+    if not log_file or not os.path.exists(log_file) or os.path.getsize(log_file) == 0:
+        return False
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:  # bounded: one line at a time, short-circuits on hit
+                for marker in INFRASTRUCTURE_LOG_MARKERS:
+                    if marker in line:
+                        return True
+    except OSError:
+        return False
+    return False
+
+
+def failure_class(args: argparse.Namespace) -> int:
+    """Classify a worker failure as infrastructure (availability/bootstrap) or
+    capability (the agent ran and could not produce a valid artifact)."""
+    klass = "infrastructure" if log_signals_unavailable_route(getattr(args, "log_file", "")) else "capability"
+    print(klass)
+    return 0
+
+
 def synthesize_implementation(args: argparse.Namespace) -> bool:
     if args.role not in {"impl", "modify"}:
         return False
@@ -571,7 +613,7 @@ def failure_reason(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for command in ("failure-reason", "synthesize"):
+    for command in ("failure-reason", "failure-class", "synthesize"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--role", required=True)
         sub.add_argument("--issue", required=True)
@@ -589,6 +631,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "failure-reason":
         return failure_reason(args)
+    if args.command == "failure-class":
+        return failure_class(args)
     if args.command == "synthesize":
         return synthesize(args)
     parser.error(f"unknown command: {args.command}")

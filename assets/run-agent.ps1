@@ -186,6 +186,23 @@ function Write-RunStatus([string]$type, [string]$status = "") {
     [Console]::Error.WriteLine($line)
 }
 
+function Get-AgentUnavailableReason {
+    if (-not $RUN_LOG_FILE -or -not (Test-Path $RUN_LOG_FILE)) { return $null }
+    $tail = ((Get-Content -Path $RUN_LOG_FILE -Tail 200 -ErrorAction SilentlyContinue) -join "`n")
+    $lower = $tail.ToLowerInvariant()
+    if ($lower -match 'failed to authenticate|invalid authentication credentials|api error: 401|authentication failed') { return 'auth' }
+    if ($lower -match 'usage limit|quota|rate limit') { return 'quota' }
+    if ($lower -match 'not supported when using codex with a chatgpt account|unsupported model|model is not supported|not supported') { return 'model-unsupported' }
+    return $null
+}
+
+function Emit-AgentUnavailableStatus([string]$reason) {
+    $line = "STATUS|type=agent-unavailable|issue=$(Normalize-TelemetryValue $RUN_ISSUE)|role=$(Normalize-TelemetryValue $RUN_ROLE)|agent=$(Normalize-TelemetryValue $AGENT)|model=$(Normalize-TelemetryValue $MODEL)|reason=$(Normalize-TelemetryValue $reason)|action=exclude-route"
+    Write-StatusLine $line
+    Write-LogLine $line
+    [Console]::Error.WriteLine($line)
+}
+
 function Forward-AgentLine([string]$line, [string]$stream) {
     Write-LogLine $line
 
@@ -558,6 +575,10 @@ try {
         Write-RunStatus "agent-complete" "success"
         Write-Telemetry "success"
     } else {
+        $unavailableReason = Get-AgentUnavailableReason
+        if ($unavailableReason) {
+            Emit-AgentUnavailableStatus $unavailableReason
+        }
         Write-DoneFile "failed" "runner-exit"
         Write-RunStatus "worker-done" "failed"
         Write-RunStatus "agent-complete" "failed"

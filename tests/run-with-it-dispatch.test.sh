@@ -735,6 +735,165 @@ assert_file_contains "${RECOVER_RESULT}" '"source": "dispatcher-synthesized"' "s
 assert_file_contains "${RECOVER_STATE}" '"state": "completed"' "recoverable missing result completes"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=45|role=impl|cycle=1" "recovery emits synthesis status"
 
+# --- #2: committed work is synthesized even when the worker exits NONZERO ---
+# (e.g. a provider auth/quota failure that kills the agent mid-run after it committed).
+cat > "${SMOKE_BIN}/commit-then-fail-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'commit-then-fail-agent 1.0\n'
+  exit 0
+fi
+repo_root="$1"
+git -C "$repo_root" config user.email "test@example.com"
+git -C "$repo_root" config user.name "Test User"
+printf 'committed then crashed\n' > "$repo_root/crashed.txt"
+git -C "$repo_root" add crashed.txt
+git -C "$repo_root" commit -m "impl committed before crash" >/dev/null
+printf 'transient backend hiccup, dropping connection\n' >&2
+exit 7
+SH
+chmod +x "${SMOKE_BIN}/commit-then-fail-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+registry["agents"]["commit-then-fail"] = {
+    "display_name": "Commit Then Fail",
+    "detection": {"command": "commit-then-fail-agent", "args": ["--version"]},
+    "invocation": {
+        "command": "commit-then-fail-agent",
+        "args_template": ["{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}",
+    },
+    "permission_modes": {"default": "", "available": [""]},
+    "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+    "capability_band": "balanced",
+    "fallback_order": [],
+    "user_model_configuration": {
+        "requires_user_model_config": False,
+        "config_paths": [],
+        "skip_when_unconfigured": False,
+        "skip_message": "",
+    },
+}
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+NONZERO_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/46"
+NONZERO_CONTEXT="${SMOKE_PROJECT}/nonzero-context.md"
+NONZERO_RESULT="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+NONZERO_LOG="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.log"
+NONZERO_DONE="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.done"
+NONZERO_STATE="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+printf '# nonzero exit synthesis\n' > "${NONZERO_CONTEXT}"
+
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl \
+  --issue 46 \
+  --cycle 1 \
+  --agent commit-then-fail \
+  --model fake-model \
+  --context-file "${NONZERO_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${NONZERO_LOG}" \
+  --done-file "${NONZERO_DONE}" \
+  --result-file "${NONZERO_RESULT}" \
+  --state-file "${NONZERO_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${NONZERO_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+
+assert_json_file "${NONZERO_RESULT}" "committed work is synthesized even when the worker exits nonzero"
+assert_file_contains "${NONZERO_RESULT}" '"crashed.txt"' "nonzero-exit synthesis records the committed file"
+assert_file_contains "${NONZERO_RESULT}" '"source": "dispatcher-synthesized"' "nonzero-exit synthesis is auditable"
+assert_file_contains "${NONZERO_STATE}" '"state": "completed"' "nonzero-exit worker with committed work completes"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=46|role=impl|cycle=1" "nonzero-exit synthesis emits status"
+
+# --- #1: an agent-unavailable (auth/quota) failure with no committed work is classified
+# as infrastructure, so the coordinator can re-route without consuming the fallback budget. ---
+cat > "${SMOKE_BIN}/unavailable-agent" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'unavailable-agent 1.0\n'
+  exit 0
+fi
+printf 'API error: 401 authentication failed for this account\n' >&2
+exit 1
+SH
+chmod +x "${SMOKE_BIN}/unavailable-agent"
+
+python3 - "${SMOKE_ASSET_ROOT}/agent-registry.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as handle:
+    registry = json.load(handle)
+registry["agents"]["unavailable"] = {
+    "display_name": "Unavailable",
+    "detection": {"command": "unavailable-agent", "args": ["--version"]},
+    "invocation": {
+        "command": "unavailable-agent",
+        "args_template": ["{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}",
+    },
+    "permission_modes": {"default": "", "available": [""]},
+    "model": {"default": "fake-model", "flag_template": "", "known_models": ["fake-model"]},
+    "capability_band": "balanced",
+    "fallback_order": [],
+    "user_model_configuration": {
+        "requires_user_model_config": False,
+        "config_paths": [],
+        "skip_when_unconfigured": False,
+        "skip_message": "",
+    },
+}
+with open(path, "w") as handle:
+    json.dump(registry, handle, indent=2)
+PY
+
+UNAVAIL_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/47"
+UNAVAIL_CONTEXT="${SMOKE_PROJECT}/unavail-context.md"
+UNAVAIL_RESULT="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1-result.json"
+UNAVAIL_LOG="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1.log"
+UNAVAIL_DONE="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1.done"
+UNAVAIL_STATE="${UNAVAIL_ISSUE_DIR}/workers/impl/cycle-1.state.json"
+UNAVAIL_OUTPUT="${WORK_DIR}/unavail-dispatch.out"
+printf '# unavailable route\n' > "${UNAVAIL_CONTEXT}"
+
+set +e
+PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl \
+  --issue 47 \
+  --cycle 1 \
+  --agent unavailable \
+  --model fake-model \
+  --context-file "${UNAVAIL_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${UNAVAIL_LOG}" \
+  --done-file "${UNAVAIL_DONE}" \
+  --result-file "${UNAVAIL_RESULT}" \
+  --state-file "${UNAVAIL_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${UNAVAIL_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >"${UNAVAIL_OUTPUT}" 2>&1
+unavail_status="$?"
+set -e
+
+[[ "${unavail_status}" != "0" ]] || fail "agent-unavailable failure should not report success"
+assert_file_contains "${UNAVAIL_LOG}" "STATUS|type=agent-unavailable" "runner records agent-unavailable from auth error"
+assert_file_contains "${UNAVAIL_OUTPUT}" "failure_class=infrastructure" "dispatch-failed classifies availability loss as infrastructure"
+assert_file_contains "${UNAVAIL_STATE}" '"failure_class": "infrastructure"' "state JSON records infrastructure failure class"
+
 cat > "${SMOKE_BIN}/wrong-path-modifier-agent" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
