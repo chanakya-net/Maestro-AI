@@ -152,7 +152,9 @@ $modifyCommitSha = git -C $checkinRepoRoot rev-parse HEAD
 Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
 ```
 
-**If there is nothing to commit** (no files changed), emit `MODIFY_COMMIT_SHA=NONE` and continue — the sub-coordinator will treat a missing commit as a failure.
+**If there is nothing to commit** (no files changed), there are two distinct cases:
+- **You did not apply the requested fixes** (incomplete, gave up, or could not finish) → emit `MODIFY_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
+- **Every review comment is already addressed upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `MODIFY_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}`. The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite and confirming each comment is resolved — never use it to skip real work.
 
 **Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and list of committed files.
 

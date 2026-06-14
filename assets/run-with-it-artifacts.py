@@ -160,6 +160,14 @@ def abort_cherry_pick(repo_root: str) -> None:
     git_success(repo_root, "cherry-pick", "--abort")
 
 
+def commit_salvaged_tree(repo_root: str, issue: str, role: str) -> bool:
+    """Commit a worker's uncommitted work so a stall/kill does not lose it."""
+    if not git_success(repo_root, "add", "-A"):
+        return False
+    message = f"salvage(#{issue}): recover {role} work from interrupted worker"
+    return git_success(repo_root, "commit", "--no-verify", "-m", message)
+
+
 def recover_wrong_worktree_commit(args: argparse.Namespace, payload: dict[str, Any], head: str, commit_sha: str) -> bool:
     if not args.pre_spawn_head:
         return False
@@ -206,6 +214,26 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
         return "invalid-result-artifact"
     if payload.get("status") != "success":
         return "invalid-result-artifact"
+
+    # Verified no-op: the slice is already satisfied upstream, so the worker made
+    # no new commit but ran the verification suite and it passed. Accept this as
+    # success instead of forcing a terminal missing-implementation-commit /
+    # invalid-result-artifact (see issue 620: a correct no-op burned 7 review
+    # cycles + a manual requeue). Requires an explicit no_op flag AND passing
+    # verification so a worker cannot claim success without doing the work.
+    if payload.get("no_op") is True:
+        verification = payload.get("verification")
+        if not isinstance(verification, dict) or verification.get("passed") is not True:
+            return "verified-no-op-requires-passing-verification"
+        if args.repo_root and repo_available(args.repo_root):
+            try:
+                head = current_head(args.repo_root)
+            except Exception:
+                return "implementation-repo-unavailable"
+            if args.pre_spawn_head and head != args.pre_spawn_head:
+                # HEAD advanced, so this is not actually a no-op.
+                return "verified-no-op-with-unexpected-commit"
+        return ""
 
     commit_sha = payload.get("commit_sha")
     if not isinstance(commit_sha, str) or not commit_sha or commit_sha == "NONE":
@@ -461,7 +489,11 @@ def synthesize_implementation(args: argparse.Namespace) -> bool:
         return False
     if worker_payload_written_to_issue_report(args):
         return False
-    if not args.done_file or not os.path.exists(args.done_file) or os.path.getsize(args.done_file) == 0:
+    # A clean worker exit writes a DONE sentinel; a worker the dispatcher is
+    # about to kill on a stall has not. Allow salvage without the sentinel only
+    # when explicitly invoked from the stall path (--from-stall).
+    have_done = bool(args.done_file) and os.path.exists(args.done_file) and os.path.getsize(args.done_file) > 0
+    if not have_done and not getattr(args, "from_stall", False):
         return False
     if not args.repo_root or not repo_available(args.repo_root):
         return False
@@ -469,8 +501,29 @@ def synthesize_implementation(args: argparse.Namespace) -> bool:
         head = current_head(args.repo_root)
     except Exception:
         return False
-    if not head or not args.pre_spawn_head or head == args.pre_spawn_head:
+    if not head or not args.pre_spawn_head:
         return False
+
+    note = "Worker advanced HEAD but did not write RUN_WITH_IT_RESULT_FILE; verification evidence was not machine-readable."
+    if head == args.pre_spawn_head:
+        # HEAD did not advance. On the STALL path only, salvage any uncommitted
+        # work the worker left before it was killed by committing the dirty tree
+        # (alive-but-silent stalls: issues 601/602/616/617/618). On a clean exit
+        # a no-commit worker genuinely failed, so do not salvage — that path must
+        # still report missing-implementation-commit / missing-result-artifact.
+        if not getattr(args, "from_stall", False):
+            return False
+        if working_tree_clean(args.repo_root):
+            return False
+        if not commit_salvaged_tree(args.repo_root, str(args.issue), args.role):
+            return False
+        try:
+            head = current_head(args.repo_root)
+        except Exception:
+            return False
+        if not head or head == args.pre_spawn_head:
+            return False
+        note = "Worker left uncommitted work and did not write RUN_WITH_IT_RESULT_FILE; dispatcher committed the dirty tree to salvage it. Verification was not run on the salvaged commit."
     try:
         files = [
             line
@@ -494,7 +547,7 @@ def synthesize_implementation(args: argparse.Namespace) -> bool:
                 "passed": False,
                 "commands": [],
                 "source": "dispatcher-synthesized",
-                "note": "Worker exited successfully and advanced HEAD but did not write RUN_WITH_IT_RESULT_FILE; verification evidence was not machine-readable.",
+                "note": note,
             },
             "source": "dispatcher-synthesized",
         },
@@ -552,9 +605,15 @@ def synthesize_review(args: argparse.Namespace) -> bool:
         )
         return result_failure_reason(args) == ""
 
+    # Only synthesize an empty approve when the reviewer self-reported ZERO
+    # comments. A status with comment_count > 0 but a missing/invalid
+    # instructions file means real review feedback was lost — synthesizing an
+    # approve here silently drops it. Fall through to a failure reason instead so
+    # the coordinator retries the reviewer (see issues 622/625/626/628).
     if (
         valid_review_status(status_payload)
         and status_payload.get("verdict") == "approve"
+        and status_payload.get("comment_count") == 0
         and instructions_file
         and (instructions_error or not valid_review_instructions(instructions_payload))
     ):
@@ -562,7 +621,7 @@ def synthesize_review(args: argparse.Namespace) -> bool:
             instructions_file,
             {
                 "verdict": "approve",
-                "summary": "Dispatcher synthesized approve instructions because the reviewer wrote a valid approve status artifact but omitted REVIEWER_INSTRUCTIONS_FILE.",
+                "summary": "Dispatcher synthesized approve instructions because the reviewer wrote a valid approve status artifact with zero comments but omitted REVIEWER_INSTRUCTIONS_FILE.",
                 "comments": [],
                 "blocking_reasons": [],
                 "source": "dispatcher-synthesized",
@@ -623,6 +682,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--issue-dir", default="")
         sub.add_argument("--repo-root", default="")
         sub.add_argument("--pre-spawn-head", default="")
+        sub.add_argument("--from-stall", action="store_true", default=False)
     return parser
 
 

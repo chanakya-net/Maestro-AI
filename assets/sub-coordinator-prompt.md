@@ -864,7 +864,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 
 The dispatcher validates review artifacts through `run-with-it-artifacts.py`. It may safely repair two partial review handoffs:
 - valid `REVIEWER_INSTRUCTIONS_FILE` but missing/invalid status file → synthesize the minimal status JSON;
-- valid status file with `verdict="approve"` but missing/invalid instructions file → synthesize an empty approve instructions JSON.
+- valid status file with `verdict="approve"` **and `comment_count=0`** but missing/invalid instructions file → synthesize an empty approve instructions JSON. A status with `comment_count>0` and missing/invalid instructions is NOT auto-approved — synthesizing an empty approve there would silently drop the reviewer's comments, so it fails and retries instead.
 
 For any review worker state with `state="failed"` and `stall_reason` in this set:
 - `missing-result-artifact`
@@ -872,6 +872,8 @@ For any review worker state with `state="failed"` and `stall_reason` in this set
 - `missing-review-instructions-artifact`
 - `invalid-review-instructions-artifact`
 - `review-artifact-verdict-mismatch`
+- `review-comment-count-mismatch`
+- `review-nitpick-only-mismatch`
 
 apply this exact policy:
 1. Emit `STATUS|type=review-artifact-failed|issue=<n>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
@@ -996,23 +998,41 @@ done
 trap 'rmdir .run-with-it/locks/merge.lock 2>/dev/null || true' EXIT
 ```
 
-Then:
+Then merge in a **fresh throwaway worktree** created from the latest `origin/$RUN_FEATURE_BRANCH`. **Never run `git checkout "$RUN_FEATURE_BRANCH"` or `git merge` in the shared root checkout** — a conflict there leaves the shared checkout with an unresolved index and a dangling `MERGE_HEAD` that breaks the merge for every later issue (the root cause of the `shared-worktree-dirty` / `pre-existing-unresolved-index` cascade). The throwaway worktree isolates the merge so a conflict only aborts locally and the shared checkout is never touched.
 
 ```bash
 STATUS_LINE="STATUS|type=merge-start|issue=${SUB_COORD_ISSUE_NUMBER}|branch=${ISSUE_BRANCH}|target=${RUN_FEATURE_BRANCH}"
 echo "$STATUS_LINE" >> "$SUB_COORD_LOG_FILE"
 echo "$STATUS_LINE"
-git fetch --all --prune 2>/dev/null || true
-git checkout "$RUN_FEATURE_BRANCH"
-git pull --ff-only origin "$RUN_FEATURE_BRANCH" 2>/dev/null || true
-if git merge --no-ff "$ISSUE_BRANCH" -m "merge(#${SUB_COORD_ISSUE_NUMBER}): integrate issue branch"; then
-  MERGE_SHA="$(git rev-parse HEAD)"
-  git push origin "$RUN_FEATURE_BRANCH" 2>/dev/null || true
+
+git fetch origin "$RUN_FEATURE_BRANCH" 2>/dev/null || true
+MERGE_BASE_REF="origin/${RUN_FEATURE_BRANCH}"
+git rev-parse --verify "$MERGE_BASE_REF" >/dev/null 2>&1 || MERGE_BASE_REF="$RUN_FEATURE_BRANCH"
+
+MERGE_WT=".run-with-it/worktrees/merge-${SUB_COORD_ISSUE_NUMBER}"
+MERGE_TMP_BRANCH="merge-tmp-${SUB_COORD_ISSUE_NUMBER}"
+git worktree remove --force "$MERGE_WT" 2>/dev/null || true
+git branch -D "$MERGE_TMP_BRANCH" 2>/dev/null || true
+git worktree add --force -B "$MERGE_TMP_BRANCH" "$MERGE_WT" "$MERGE_BASE_REF"
+
+if git -C "$MERGE_WT" merge --no-ff "$ISSUE_BRANCH" -m "merge(#${SUB_COORD_ISSUE_NUMBER}): integrate issue branch"; then
+  MERGE_SHA="$(git -C "$MERGE_WT" rev-parse HEAD)"
+  git -C "$MERGE_WT" push origin "HEAD:${RUN_FEATURE_BRANCH}" 2>/dev/null || true
+  # Keep the local shared-branch ref current for future issue worktrees (best effort).
+  git branch -f "$RUN_FEATURE_BRANCH" "$MERGE_SHA" 2>/dev/null || true
   STATUS_LINE="STATUS|type=merge-complete|issue=${SUB_COORD_ISSUE_NUMBER}|merge_sha=${MERGE_SHA}|pushed=true"
 else
-  CONFLICT_FILES="$(git diff --name-only --diff-filter=U | tr '\n' ' ')"
+  # Capture conflicts BEFORE aborting (abort clears the index), then abort so the
+  # throwaway worktree — and the shared checkout — are left clean.
+  CONFLICT_FILES="$(git -C "$MERGE_WT" diff --name-only --diff-filter=U | tr '\n' ' ')"
+  git -C "$MERGE_WT" merge --abort 2>/dev/null || true
   STATUS_LINE="STATUS|type=merge-failed|issue=${SUB_COORD_ISSUE_NUMBER}|reason=conflict|conflict_files=${CONFLICT_FILES}"
 fi
+
+# Always remove the throwaway worktree and temp branch. The shared root checkout is never touched.
+git worktree remove --force "$MERGE_WT" 2>/dev/null || true
+git branch -D "$MERGE_TMP_BRANCH" 2>/dev/null || true
+
 echo "$STATUS_LINE" >> "$SUB_COORD_LOG_FILE"
 echo "$STATUS_LINE"
 ```

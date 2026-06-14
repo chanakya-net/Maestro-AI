@@ -25,7 +25,7 @@ EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-}"
 TAIL_STATE_FILE=""
 POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
 QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
-STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-300}"
+STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-600}"
 TIMEOUT_SECONDS="${RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS:-0}"
 DETACH_BOOTSTRAP_SECONDS="${RUN_WITH_IT_DETACH_BOOTSTRAP_SECONDS:-3}"
 AUTO_FAIL_STALLED_ROLES="${RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity,impl,modify}"
@@ -245,6 +245,22 @@ synthesize_result_artifact_if_possible() {
     --issue-dir "$ISSUE_DIR" \
     --repo-root "$(repo_root_for_worker)" \
     --pre-spawn-head "${pre_spawn_head:-}" >/dev/null 2>&1
+}
+
+# Like the above but for the stall path: a stalled runner never wrote a DONE
+# sentinel, so --from-stall lets the helper salvage a committed-but-unreported
+# HEAD advance or an uncommitted dirty tree (it commits it) before we kill it.
+synthesize_stalled_result_if_possible() {
+  "$PYTHON_BIN" "$ARTIFACT_HELPER" synthesize \
+    --role "$ROLE" \
+    --issue "$ISSUE" \
+    --result-file "$RESULT_FILE" \
+    --done-file "$DONE_FILE" \
+    --log-file "$LOG_FILE" \
+    --issue-dir "$ISSUE_DIR" \
+    --repo-root "$(repo_root_for_worker)" \
+    --pre-spawn-head "${pre_spawn_head:-}" \
+    --from-stall >/dev/null 2>&1
 }
 
 completion_failure_reason() {
@@ -674,6 +690,20 @@ while true; do
   fi
 
   if [ "$state" = "stalled" ] && should_auto_fail_stalled_role; then
+    # Before killing a silent-but-alive runner, salvage any work it left behind:
+    # a committed-but-unreported HEAD advance, or an uncommitted dirty tree
+    # (the helper commits it). Only when there is genuinely no git progress do we
+    # fail the worker (alive-but-silent stalls: issues 601/602/616/617/618).
+    if synthesize_stalled_result_if_possible && completion_ready; then
+      write_status "STATUS|type=worker-stall-timeout|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|action=salvage-and-terminate"
+      write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=stall-salvage|result_file=${RESULT_FILE}"
+      write_worker_state "completed" "false" "0" "salvaged-from-stall"
+      write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+      set +e
+      terminate_runner_tree "$pid" >/dev/null 2>&1
+      set -e
+      exit 0
+    fi
     write_status "STATUS|type=worker-stall-timeout|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|action=terminate-runner"
     failure_class="$(result_artifact_failure_class)"
     write_worker_state "failed" "false" "124" "alive-but-silent" "$failure_class"

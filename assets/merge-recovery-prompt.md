@@ -59,19 +59,48 @@ trap 'rmdir .run-with-it/locks/merge.lock 2>/dev/null || true' EXIT
 
 ## Workflow
 
+Do **all** merge work in a **fresh throwaway worktree** created from the latest `origin/<feature-branch>`. **Never `git checkout` or `git merge` the shared feature branch in the shared root checkout** — a conflict there leaves the shared checkout with an unresolved index that breaks every later issue. The throwaway worktree isolates recovery completely.
+
 1. Read the failed merge report and issue context.
 2. Acquire `.run-with-it/locks/merge.lock`.
-3. Fetch the latest remote refs when a remote exists.
-4. Check out the shared feature branch.
-5. Merge the failed issue branch.
-6. Resolve conflicts using the issue requirements and completed summaries.
-7. Run the supplied verification commands.
-8. If verification fails, diagnose and fix failures caused by the merge.
-9. Commit the resolved merge to the shared feature branch.
-10. Push the shared feature branch.
-11. Write the compact merge recovery report.
-12. Write `RUN_WITH_IT_DONE_FILE`.
-13. Release the merge lock.
+3. Create the throwaway worktree from `origin/<feature-branch>` and merge the failed issue branch inside it (recipe below).
+4. Resolve conflicts inside the throwaway worktree using the issue requirements and completed summaries.
+5. Run the supplied verification commands with the throwaway worktree as the working directory.
+6. If verification fails, diagnose and fix failures caused by the merge (inside the worktree).
+7. Commit the resolved merge inside the throwaway worktree.
+8. Push the merge commit to the shared feature branch: `git -C "$MERGE_WT" push origin "HEAD:${FEATURE_BRANCH}"`.
+9. Remove the throwaway worktree and temp branch (always, success or failure).
+10. Write the compact merge recovery report.
+11. Write `RUN_WITH_IT_DONE_FILE`.
+12. Release the merge lock.
+
+Recipe (set `FEATURE_BRANCH`, `ISSUE_BRANCH`, `ISSUE_NUMBER` from the inputs):
+
+```bash
+git fetch origin "$FEATURE_BRANCH" 2>/dev/null || true
+MERGE_BASE_REF="origin/${FEATURE_BRANCH}"
+git rev-parse --verify "$MERGE_BASE_REF" >/dev/null 2>&1 || MERGE_BASE_REF="$FEATURE_BRANCH"
+
+MERGE_WT=".run-with-it/worktrees/merge-recovery-${ISSUE_NUMBER}"
+MERGE_TMP_BRANCH="merge-recovery-tmp-${ISSUE_NUMBER}"
+git worktree remove --force "$MERGE_WT" 2>/dev/null || true
+git branch -D "$MERGE_TMP_BRANCH" 2>/dev/null || true
+git worktree add --force -B "$MERGE_TMP_BRANCH" "$MERGE_WT" "$MERGE_BASE_REF"
+
+# Start the merge; resolve conflicts by editing files inside $MERGE_WT.
+git -C "$MERGE_WT" merge --no-ff "$ISSUE_BRANCH" \
+  -m "merge(#${ISSUE_NUMBER}): recover issue branch into ${FEATURE_BRANCH}" || true
+# ... resolve, then: git -C "$MERGE_WT" add -A && git -C "$MERGE_WT" commit --no-edit
+# ... run verification with $MERGE_WT as the working dir
+# On success:
+#   git -C "$MERGE_WT" push origin "HEAD:${FEATURE_BRANCH}"
+#   git branch -f "$FEATURE_BRANCH" "$(git -C "$MERGE_WT" rev-parse HEAD)" 2>/dev/null || true
+
+# Always clean up (success or giving up):
+git -C "$MERGE_WT" merge --abort 2>/dev/null || true   # only if abandoning an in-progress merge
+git worktree remove --force "$MERGE_WT" 2>/dev/null || true
+git branch -D "$MERGE_TMP_BRANCH" 2>/dev/null || true
+```
 
 ## Progress Visibility
 

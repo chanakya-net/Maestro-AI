@@ -44,6 +44,13 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - In the monitor loop, run the platform worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
+- The pool runner emits a compact per-issue stage board as `STATUS|type=run-board|board=...` to `current.txt`/`events.log` whenever the board changes (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`). This is the "current stage, not detail" view of the whole run.
+- On demand, print the same board with `run-with-it-state.py status-board --state-file .run-with-it/main-state.json` (one issue per line), or `--oneline` for the single-line form. This is read-only and safe to run at any time. Stages: `ready`/`queued`, `blocked:<deps>`, `<role>(cyc<n>)` while in progress, `merge-recovery`, `blocked`, `done`.
+
+## Requeue Rules
+
+- To force a fresh retry of an issue whose state was poisoned by stale terminal artifacts (the situation that previously needed a manual clean-requeue), run `run-with-it-state.py requeue --issue <n> --reason "<why>" --state-file .run-with-it/main-state.json`. It quarantines the stale `report.json` / `*.done` / `sub-state.json` into `issues/<n>/recovery/requeue-<ts>/`, clears `blocking_reasons`, drops the issue from the active pool, and resets it to `pending` so the pool re-dispatches it from scratch.
+- Dependent unblocking is automatic: when an issue completes, `finalize-issue` resets any dependent that was `blocked` solely by that (now-satisfied) dependency back to `pending` and quarantines its stale blocked artifacts. You no longer need a manual "reset-to-pending" + "durable-unblock" repair after a dependency finishes.
 
 ## GitHub Rules
 

@@ -83,7 +83,7 @@ Do not emit periodic heartbeat or status-check lines while working. The dispatch
 
 ## Check-In Target
 
-The implementation worker is responsible for checking in its own completed code. All edits, verification commands, `git add`, and `git commit` must happen in `RUN_WITH_IT_REPO_ROOT` / `REPO_ROOT`, which is the issue worktree. Never commit implementation work to the parent repository worktree or to `RUN_WITH_IT_SHARED_FEATURE_BRANCH`.
+The implementation worker is responsible for checking in its own completed code. All edits, verification commands, `git add`, and `git commit` must happen in `RUN_WITH_IT_REPO_ROOT` / `REPO_ROOT`, which is the issue worktree. Never commit implementation work to the parent repository worktree or to `RUN_WITH_IT_SHARED_FEATURE_BRANCH`, and never `git checkout` a different branch. Your `commit_sha` must be a **new commit you create on the issue branch in this run** — never report a pre-existing commit (e.g. one from a previous attempt or another branch) as your handoff. If the work already exists upstream and no new commit is needed, use the **verified no-op** path instead (see Mandatory Commit Before Handoff).
 
 Before making the mandatory handoff commit, verify the target:
 
@@ -149,7 +149,9 @@ $implCommitSha = git -C $checkinRepoRoot rev-parse HEAD
 Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 ```
 
-**If there is nothing to commit** (no files changed), emit `IMPL_COMMIT_SHA=NONE` and continue — the sub-coordinator will treat a missing commit as a failure.
+**If there is nothing to commit** (no files changed), there are two distinct cases:
+- **You did not actually implement the slice** (incomplete work, gave up, or could not finish) → emit `IMPL_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
+- **The acceptance criteria are already fully satisfied upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `IMPL_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}` (see Result Artifact → *Verified no-op variant*). The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite — never use it to skip real work.
 
 **Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
 
@@ -218,6 +220,27 @@ $payload = @{
 }
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
 $payload | ConvertTo-Json -Depth 5 | Set-Content -Path $env:RUN_WITH_IT_RESULT_FILE
+```
+
+### Verified no-op variant
+
+Use this **only** when the acceptance criteria are already fully met upstream and the verification suite passes with no changes needed (no commit was made). Set `"no_op": true`, leave `"files_committed"` empty, and report the real verification result. The dispatcher accepts this as success; it rejects a no-op whose `verification.passed` is not `true`.
+
+```json
+{
+  "schema_version": 1,
+  "issue": "<issue>",
+  "role": "impl",
+  "status": "success",
+  "no_op": true,
+  "commit_sha": "NONE",
+  "files_committed": [],
+  "verification": {
+    "passed": true,
+    "commands": ["<exact verification commands run>"],
+    "note": "Acceptance criteria already satisfied upstream; no changes required."
+  }
+}
 ```
 
 ## Completion Sentinel

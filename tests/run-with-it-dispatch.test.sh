@@ -405,15 +405,11 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 prompt_payload="$2"
-sleep 4
-git -C "$1" config user.email "test@example.com"
-git -C "$1" config user.name "Test User"
-printf 'silent\n' > "$1/silent.txt"
-git -C "$1" add silent.txt
-git -C "$1" commit -m "impl test" >/dev/null
-commit_sha="$(git -C "$1" rev-parse HEAD)"
-mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
-printf '{"schema_version":1,"issue":"%s","role":"%s","status":"success","commit_sha":"%s","files_committed":["silent.txt"],"verification":{"passed":true,"commands":["fake"]}}\n' "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}" "$commit_sha" > "$RUN_WITH_IT_RESULT_FILE"
+# Stay alive past the stall window producing NOTHING — no output, no commit, no
+# dirty tree. This is the genuinely-silent worker the stall path must terminate
+# and fail. (Stall salvage only rescues a worker that left committed-or-dirty git
+# work; a worker with no git progress, like this one, must still fail.)
+sleep 30
 SH
 chmod +x "${SMOKE_BIN}/silent-agent"
 

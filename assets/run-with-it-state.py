@@ -206,6 +206,108 @@ def issue_dependencies_completed(info: dict[str, Any], completed: set[int]) -> b
     return all(int(dep) in completed for dep in info.get("deps", []))
 
 
+def utc_stamp() -> str:
+    return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
+
+def is_dependency_blocking_reason(reason: Any, deps: list[Any]) -> bool:
+    """True if a blocking_reason is only about an upstream dependency, so it can
+    be cleared once that dependency completes."""
+    if not isinstance(reason, str):
+        return False
+    low = reason.lower()
+    if "blocked by" in low or "blocked-by" in low or "blocked_by" in low:
+        return True
+    for dep in deps:
+        if f"#{dep}" in reason or f"issue-{dep}" in reason or f"issue {dep}" in reason:
+            return True
+    return False
+
+
+def quarantine_artifacts(issue_dir: str, paths: list[str], label: str) -> str | None:
+    """Move stale terminal artifacts (report.json / done / sub-state) aside so a
+    requeued issue is re-run fresh instead of reusing poisoned state. Returns the
+    archive dir, or None if there was nothing to move."""
+    if not issue_dir:
+        return None
+    seen: set[str] = set()
+    existing: list[str] = []
+    for path in paths:
+        if not path:
+            continue
+        real = os.path.abspath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        if os.path.exists(path):
+            existing.append(path)
+    if not existing:
+        return None
+    archive_dir = os.path.join(issue_dir, "recovery", label)
+    os.makedirs(archive_dir, exist_ok=True)
+    for path in existing:
+        try:
+            os.replace(path, os.path.join(archive_dir, os.path.basename(path)))
+        except OSError:
+            pass
+    return archive_dir
+
+
+def stale_terminal_artifact_paths(entry: dict[str, Any], issue_dir: str) -> list[str]:
+    paths = [entry.get("report_file", ""), entry.get("done_file", "")]
+    if issue_dir:
+        paths += [
+            os.path.join(issue_dir, "report.json"),
+            os.path.join(issue_dir, "sub-coordinator.done"),
+            os.path.join(issue_dir, "sub-state.json"),
+        ]
+    return paths
+
+
+def auto_unblock_dependents(
+    state: dict[str, Any], completed_issue: str, completed: set[int], timestamp: str
+) -> list[dict[str, Any]]:
+    """When an issue completes, reset any dependent that is BLOCKED solely
+    because of this (now-satisfied) dependency back to pending, quarantining its
+    stale blocked artifacts so the pool re-dispatches it. Replaces the manual
+    "reset-to-pending" + "durable-unblock" repairs seen for issue 631."""
+    repairs: list[dict[str, Any]] = []
+    registry = state.get("issue_registry", {})
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        deps = entry.get("deps", []) or []
+        if int(completed_issue) not in [int(dep) for dep in deps]:
+            continue
+        if entry.get("status") != "blocked":
+            continue
+        if not issue_dependencies_completed(entry, completed):
+            continue
+        remaining = [r for r in entry.get("blocking_reasons", []) if not is_dependency_blocking_reason(r, deps)]
+        if remaining:
+            # Still blocked for a non-dependency reason — leave it alone.
+            continue
+        issue_dir = entry.get("issue_dir", "") or ""
+        archived = quarantine_artifacts(
+            issue_dir, stale_terminal_artifact_paths(entry, issue_dir), f"auto-unblock-{timestamp}"
+        )
+        entry["status"] = "pending"
+        entry["blocking_reasons"] = []
+        entry["auto_unblocked_at"] = timestamp
+        entry["auto_unblocked_after_issue"] = int(completed_issue)
+        if archived:
+            entry["auto_unblock_archive_dir"] = archived
+        repairs.append(
+            {
+                "at": timestamp,
+                "kind": f"auto-unblock-issue-{key}-after-{completed_issue}-completed",
+                "issue": int(key),
+                "archive_dir": archived,
+            }
+        )
+    return repairs
+
+
 def ready_issues(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     registry = state.get("issue_registry", {})
@@ -329,6 +431,11 @@ def finalize_issue(args: argparse.Namespace) -> int:
     state.setdefault("ledger_rows", []).append(
         f"STATUS|type=ledger|task={args.issue}|outcome={status}|report={args.report_file}"
     )
+    if status == "completed":
+        # entry["status"] is already "completed" in-memory, so it is counted here.
+        repairs = auto_unblock_dependents(state, args.issue, completed_issue_numbers(state), utc_stamp())
+        if repairs:
+            state.setdefault("auto_repairs", []).extend(repairs)
     save_json(args.state_file, state)
     print(status)
     return 0
@@ -613,6 +720,95 @@ def mark_merge_recovery_dispatch_failed(args: argparse.Namespace) -> int:
     return 0
 
 
+def requeue_issue(args: argparse.Namespace) -> int:
+    """Force a fresh retry: quarantine stale terminal artifacts and reset the
+    issue to pending so the pool re-dispatches it from scratch. Programmatic
+    replacement for the manual clean-requeue done for issue 618."""
+    state = load_json(args.state_file)
+    entry = issue_entry(state, args.issue)
+    issue_dir = entry.get("issue_dir", "") or issue_dir_for_report(state, args.issue, entry.get("report_file", ""))
+    timestamp = utc_stamp()
+    archived = quarantine_artifacts(
+        issue_dir, stale_terminal_artifact_paths(entry, issue_dir), f"requeue-{timestamp}"
+    )
+    entry["status"] = "pending"
+    entry["blocking_reasons"] = []
+    entry["requeued_at"] = timestamp
+    if getattr(args, "reason", ""):
+        entry["manual_requeue_reason"] = args.reason
+    if archived:
+        entry["requeue_archive_dir"] = archived
+    state["active_pool_issues"] = [
+        value for value in state.get("active_pool_issues", []) if str(value) != str(args.issue)
+    ]
+    state.setdefault("auto_repairs", []).append(
+        {
+            "at": timestamp,
+            "kind": f"requeue-issue-{args.issue}",
+            "issue": int(args.issue),
+            "reason": getattr(args, "reason", ""),
+            "archive_dir": archived,
+        }
+    )
+    save_json(args.state_file, state)
+    print("pending")
+    return 0
+
+
+def issue_stage(entry: dict[str, Any], completed: set[int]) -> str:
+    """Compact, human-readable current stage for an issue (no detail)."""
+    status = entry.get("status")
+    if status == "completed":
+        return "done"
+    if status == "merge_recovery":
+        return "merge-recovery"
+    if status == "blocked":
+        return "blocked"
+    if status == "pending":
+        if not issue_dependencies_completed(entry, completed):
+            pending = [str(dep) for dep in entry.get("deps", []) if int(dep) not in completed]
+            return "blocked:" + ",".join(pending) if pending else "queued"
+        return "ready"
+    if status == "in_progress":
+        sub_state_file = entry.get("sub_coord_state_file") or (
+            os.path.join(entry.get("issue_dir", ""), "sub-state.json") if entry.get("issue_dir") else ""
+        )
+        sub = load_optional_json(sub_state_file)
+        phase = sub.get("phase") if isinstance(sub.get("phase"), str) else None
+        in_flight = sub.get("in_flight_agents") if isinstance(sub.get("in_flight_agents"), list) else []
+        if in_flight and isinstance(in_flight[0], dict):
+            role = in_flight[0].get("role") or phase or "running"
+            cycle = in_flight[0].get("cycle")
+            return f"{role}(cyc{cycle})" if isinstance(cycle, int) else str(role)
+        if phase:
+            return phase
+        return "running"
+    return str(status or "unknown")
+
+
+def status_board(args: argparse.Namespace) -> int:
+    """One compact line per issue showing its current stage. With --oneline,
+    emit a single pipe-joined board line for the live status feed."""
+    state = load_json(args.state_file)
+    registry = state.get("issue_registry", {})
+    completed = completed_issue_numbers(state)
+    order = [str(issue) for issue in state.get("execution_plan", {}).get("topo_order", [])]
+    if not order:
+        order = sorted(registry.keys(), key=lambda value: int(value) if str(value).isdigit() else 0)
+    cells: list[tuple[str, str]] = []
+    for key in order:
+        entry = registry.get(str(key), {})
+        if not isinstance(entry, dict):
+            continue
+        cells.append((str(key), issue_stage(entry, completed)))
+    if getattr(args, "oneline", False):
+        print(" | ".join(f"#{key} {stage}" for key, stage in cells))
+    else:
+        for key, stage in cells:
+            print(f"#{key:<5} {stage}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="run-with-it shared state helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -703,6 +899,17 @@ def build_parser() -> argparse.ArgumentParser:
     recovery_failed.add_argument("--issue", required=True)
     recovery_failed.add_argument("--report-file", required=True)
     recovery_failed.set_defaults(func=mark_merge_recovery_dispatch_failed)
+
+    requeue = subparsers.add_parser("requeue")
+    add_state_file(requeue)
+    requeue.add_argument("--issue", required=True)
+    requeue.add_argument("--reason", default="")
+    requeue.set_defaults(func=requeue_issue)
+
+    board = subparsers.add_parser("status-board")
+    add_state_file(board)
+    board.add_argument("--oneline", action="store_true", default=False)
+    board.set_defaults(func=status_board)
 
     return parser
 

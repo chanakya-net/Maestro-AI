@@ -100,4 +100,76 @@ assert_eq "$(failure_class)" "capability" "stale bootstrap marker does not mask 
 printf 'STATUS|type=dispatch-bootstrap-failed|issue=567|role=impl|reason=dispatcher-exited-before-runner-pid\nSTATUS|type=agent-start|issue=567|role=impl|agent=claude|model=claude-sonnet-4-6\nSTATUS|type=agent-unavailable|issue=567|role=impl|agent=claude|model=claude-sonnet-4-6|reason=quota|action=exclude-route\n' > "${WORK_DIR}/cycle-1.log"
 assert_eq "$(failure_class)" "infrastructure" "current agent-unavailable still classifies as infrastructure"
 
+# --- Fix C: dispatcher must not silently auto-approve dropped review comments ---
+synth_review() {
+  python3 "${ARTIFACT_HELPER}" synthesize \
+    --role review \
+    --issue 77 \
+    --result-file "${WORK_DIR}/synth-status.json" \
+    --done-file "${WORK_DIR}/synth.done"
+}
+printf 'DONE\n' > "${WORK_DIR}/synth.done"
+
+# approve + comment_count=0 + missing instructions → safe to synthesize an empty approve.
+printf '%s\n' '{"verdict":"approve","comment_count":0,"nitpick_only":false}' > "${WORK_DIR}/synth-status.json"
+rm -f "${WORK_DIR}/synth-instructions.json"
+set +e; synth_review; synth_rc=$?; set -e
+assert_eq "${synth_rc}" "0" "synthesize approves a zero-comment status with missing instructions"
+[[ -f "${WORK_DIR}/synth-instructions.json" ]] || fail "expected synthesized approve instructions for zero-comment status"
+
+# approve + comment_count>0 + missing instructions → must NOT auto-approve (retry instead).
+printf '%s\n' '{"verdict":"approve","comment_count":2,"nitpick_only":true}' > "${WORK_DIR}/synth-status.json"
+rm -f "${WORK_DIR}/synth-instructions.json"
+set +e; synth_review; synth_rc=$?; set -e
+assert_eq "${synth_rc}" "1" "synthesize refuses to auto-approve when comment_count>0 with missing instructions"
+[[ ! -f "${WORK_DIR}/synth-instructions.json" ]] || fail "must not fabricate approve instructions when comments were reported"
+
+# --- Fix E: a verified no-op implementation is accepted as success ---
+impl_reason() {
+  python3 "${ARTIFACT_HELPER}" failure-reason \
+    --role impl \
+    --issue 88 \
+    --result-file "${WORK_DIR}/impl-result.json"
+}
+printf '%s\n' '{"schema_version":1,"issue":"88","role":"impl","status":"success","no_op":true,"commit_sha":"NONE","files_committed":[],"verification":{"passed":true,"commands":["bun test"]}}' > "${WORK_DIR}/impl-result.json"
+assert_eq "$(impl_reason)" "" "verified no-op with passing verification is accepted as success"
+
+printf '%s\n' '{"schema_version":1,"issue":"88","role":"impl","status":"success","no_op":true,"commit_sha":"NONE","files_committed":[],"verification":{"passed":false}}' > "${WORK_DIR}/impl-result.json"
+assert_eq "$(impl_reason)" "verified-no-op-requires-passing-verification" "no-op requires passing verification"
+
+# --- Fix B: stall salvage commits a dirty tree only with --from-stall ---
+SALVAGE_REPO="${WORK_DIR}/salvage-repo"
+mkdir -p "${SALVAGE_REPO}"
+git -C "${SALVAGE_REPO}" init -q
+git -C "${SALVAGE_REPO}" config user.email t@t.t
+git -C "${SALVAGE_REPO}" config user.name t
+printf 'base\n' > "${SALVAGE_REPO}/base.txt"
+git -C "${SALVAGE_REPO}" add -A
+git -C "${SALVAGE_REPO}" commit -q -m base
+SALVAGE_BASE="$(git -C "${SALVAGE_REPO}" rev-parse HEAD)"
+printf 'work in progress\n' > "${SALVAGE_REPO}/feature.txt"   # uncommitted dirty work
+
+salvage() {
+  local from_stall="$1"
+  rm -f "${WORK_DIR}/salvage-result.json"
+  python3 "${ARTIFACT_HELPER}" synthesize \
+    --role impl --issue 99 \
+    --result-file "${WORK_DIR}/salvage-result.json" \
+    --done-file "${WORK_DIR}/salvage.done" \
+    --repo-root "${SALVAGE_REPO}" \
+    --pre-spawn-head "${SALVAGE_BASE}" ${from_stall}
+}
+
+# Without --from-stall (clean-exit path, no done sentinel) → no salvage.
+rm -f "${WORK_DIR}/salvage.done"
+set +e; salvage ""; salvage_rc=$?; set -e
+assert_eq "${salvage_rc}" "1" "clean-exit synthesize does not salvage a dirty tree without a done sentinel"
+
+# With --from-stall → commit the dirty tree and synthesize a success result.
+set +e; salvage "--from-stall"; salvage_rc=$?; set -e
+assert_eq "${salvage_rc}" "0" "stall salvage commits the dirty tree and writes a result"
+git -C "${SALVAGE_REPO}" diff --quiet && git -C "${SALVAGE_REPO}" diff --cached --quiet || fail "stall salvage should leave a clean tree after committing"
+salvaged_head="$(git -C "${SALVAGE_REPO}" rev-parse HEAD)"
+[[ "${salvaged_head}" != "${SALVAGE_BASE}" ]] || fail "stall salvage should advance HEAD with a new commit"
+
 echo "PASS: run-with-it artifact validation"

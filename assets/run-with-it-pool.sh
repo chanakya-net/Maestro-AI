@@ -95,6 +95,19 @@ write_status() {
   printf '%s\n' "$line" >> "$EVENTS_LOG"
 }
 
+# Compact per-issue stage board for main-coordinator visibility. Emitted only
+# when the board changes so the event log stays bounded.
+LAST_RUN_BOARD=""
+emit_run_board() {
+  local board
+  board="$("$PYTHON_BIN" "$STATE_HELPER" status-board --oneline --state-file "$STATE_FILE" 2>/dev/null || true)"
+  [ -n "$board" ] || return 0
+  if [ "$board" != "$LAST_RUN_BOARD" ]; then
+    write_status "STATUS|type=run-board|board=${board}"
+    LAST_RUN_BOARD="$board"
+  fi
+}
+
 ready_issues() {
   "$PYTHON_BIN" "$STATE_HELPER" ready-issues --state-file "$STATE_FILE" --limit "$1"
 }
@@ -514,6 +527,7 @@ fi
 for issue in $READY_INITIAL; do
   spawn_issue "$issue"
 done
+emit_run_board
 
 while [ -n "$POOL_ISSUES" ]; do
   sleep "$POLL_SECONDS"
@@ -529,6 +543,7 @@ while [ -n "$POOL_ISSUES" ]; do
   done
   fill_free_slots "tick"
   emit_waiting_context_status
+  emit_run_board
 done
 
 write_status "STATUS|type=pool-empty|state_file=${STATE_FILE}"
