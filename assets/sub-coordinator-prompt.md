@@ -97,9 +97,11 @@ Use the first asset root that contains the shared files plus the helper files fo
 
 Before complexity analysis, create an isolated issue branch and worktree from the latest shared run feature branch. All implementation, review, modification, verification, commit capture, and diff commands for this issue happen inside that issue worktree.
 
+> **Issue-branch separator is `-`, never `/`.** Do not nest the issue branch *under* `RUN_FEATURE_BRANCH` as a path segment (e.g. `Maestro/dramatic-llama/issue-631`). Git's ref store is filesystem-backed and cannot hold both a ref `Maestro/<slug>` and a ref `Maestro/<slug>/issue-<n>` — the parent ref already exists as a leaf, so creating the child fails with `cannot lock ref '…/issue-<n>': '…/<slug>' exists; cannot create …` (a directory/file conflict). Because `RUN_FEATURE_BRANCH` is always created first, the nested form fails on *every* issue. Use the flat `${RUN_FEATURE_BRANCH}-issue-<n>` form below.
+
 Bash:
 ```bash
-ISSUE_BRANCH="${ISSUE_BRANCH:-${RUN_FEATURE_BRANCH}/issue-${SUB_COORD_ISSUE_NUMBER}}"
+ISSUE_BRANCH="${ISSUE_BRANCH:-${RUN_FEATURE_BRANCH}-issue-${SUB_COORD_ISSUE_NUMBER}}"
 ISSUE_WORKTREE_PATH="${ISSUE_WORKTREE_PATH:-$(pwd -P)/.run-with-it/worktrees/issue-${SUB_COORD_ISSUE_NUMBER}}"
 git fetch --all --prune 2>/dev/null || true
 git worktree add -B "$ISSUE_BRANCH" "$ISSUE_WORKTREE_PATH" "$RUN_FEATURE_BRANCH"
@@ -1055,7 +1057,7 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
   "modify_commit_sha": "<SHA captured after latest modifier's mandatory commit — null until set>",
   "review_head_sha": "<current REVIEW_HEAD_SHA for next reviewer — equals impl_commit_sha or modify_commit_sha>",
   "feature_branch": "Maestro/cunning-fox",
-  "issue_branch": "Maestro/cunning-fox/issue-36",
+  "issue_branch": "Maestro/cunning-fox-issue-36",
   "worktree_path": ".run-with-it/worktrees/issue-36",
   "queue": {
     "ready": [
@@ -1276,7 +1278,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     }
   ],
   "commit_sha": "abc1234",
-  "issue_branch": "Maestro/cunning-fox/issue-36",
+  "issue_branch": "Maestro/cunning-fox-issue-36",
   "feature_branch": "Maestro/cunning-fox",
   "worktree_path": ".run-with-it/worktrees/issue-36",
   "merge": {

@@ -364,7 +364,7 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
      RUN_FEATURE_BRANCH=<shared-run-feature-branch>
      RUN_BASE_BRANCH=<original-base-branch>
      RUN_BASE_SHA=<original-base-sha>
-     ISSUE_BRANCH=<shared-run-feature-branch>/issue-<n>
+     ISSUE_BRANCH=<shared-run-feature-branch>-issue-<n>
      ISSUE_WORKTREE_PATH=<abs-path-to-.run-with-it/worktrees/issue-<n>>
      MAX_AGENT_DEPTH=1
      DELEGATED_REVIEW=<value>
@@ -629,7 +629,7 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
       "report_file": ".run-with-it/issues/36/report.json",
       "merge_recovery_report_file": ".run-with-it/issues/36/merge-recovery-report.json",
       "log_file": ".run-with-it/issues/36/sub-coordinator.log",
-      "issue_branch": "Maestro/cunning-fox/issue-36",
+      "issue_branch": "Maestro/cunning-fox-issue-36",
       "worktree_path": ".run-with-it/worktrees/issue-36",
       "commit_sha": "abc1234"
     }
