@@ -42,6 +42,8 @@ $PRINT_PROMPT      = if ($env:PRINT_PROMPT) { $env:PRINT_PROMPT } else { "0" }
 $AGENT_PERM_MODE   = $env:AGENT_PERMISSION_MODE
 $AGENT_EXTRA_ARGS  = $env:AGENT_EXTRA_ARGS
 $REGISTRY_FILE     = if ($env:AGENT_REGISTRY_FILE) { $env:AGENT_REGISTRY_FILE } else { Join-Path $SCRIPT_DIR "agent-registry.json" }
+$PERMANENTLY_BLOCKED_AGENTS = @("github-copilot")
+$PERMANENTLY_BLOCKED_AGENT_REASON = "GitHub Copilot plan is exhausted; blocked from automatic routing and direct run-agent use."
 $UNATTENDED        = $env:UNATTENDED -eq "1"
 $GUI_MODE          = if ($env:GUI_MODE) { $env:GUI_MODE } else { "auto" }
 $RUN_STATUS_FILE   = $env:RUN_WITH_IT_STATUS_FILE
@@ -402,12 +404,33 @@ function Resolve-AgentId([string]$id) {
     return $id
 }
 
+function Test-AgentPermanentlyBlocked([string]$id) {
+    $resolved = Resolve-AgentId $id
+    return $PERMANENTLY_BLOCKED_AGENTS -contains $resolved
+}
+
 function Get-AgentDef([string]$id) {
     $id = Resolve-AgentId $id
     if ($agentMap.PSObject.Properties[$id]) {
         return $agentMap.PSObject.Properties[$id].Value
     }
     return $null
+}
+
+function Test-AgentDisabled([string]$id) {
+    if (Test-AgentPermanentlyBlocked $id) { return $true }
+    $def = Get-AgentDef $id
+    if (-not $def) { return $false }
+    return ($def.routing_disabled -eq $true -or $def.usage_disabled -eq $true)
+}
+
+function Get-AgentDisabledReason([string]$id) {
+    if (Test-AgentPermanentlyBlocked $id) { return $PERMANENTLY_BLOCKED_AGENT_REASON }
+    $def = Get-AgentDef $id
+    if (-not $def) { return "agent disabled by registry" }
+    if ($def.routing_disabled_reason) { return $def.routing_disabled_reason }
+    if ($def.disabled_reason) { return $def.disabled_reason }
+    return "agent disabled by registry"
 }
 
 function Expand-ConfigPath([string]$path) {
@@ -433,6 +456,7 @@ function Test-AgentConfigured([string]$id) {
 function Get-AgentStatus([string]$id) {
     $def = Get-AgentDef $id
     if (-not $def) { return "missing", "unknown agent" }
+    if (Test-AgentDisabled $id) { return "disabled", (Get-AgentDisabledReason $id) }
     $cmd = $def.detection.command
     if (-not $cmd) { return "missing", "missing detection command" }
     if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) { return "missing", "missing command: $cmd" }
@@ -460,6 +484,7 @@ if ($LIST_MODELS_AGENT) {
     $id  = Resolve-AgentId $LIST_MODELS_AGENT
     $def = Get-AgentDef $id
     if (-not $def) { Fail "unknown agent: $LIST_MODELS_AGENT" }
+    if (Test-AgentDisabled $id) { Fail "agent is disabled: $id ($(Get-AgentDisabledReason $id))" }
     $models = $def.model.known_models
     if (-not $models) { Write-Host "No configured models for ${id}."; exit 0 }
     $models | ForEach-Object { Write-Host $_ }
@@ -471,6 +496,7 @@ if (-not $AGENT)        { Fail "agent is required. Pass --agent or set AGENT." }
 $AGENT    = Resolve-AgentId $AGENT
 $agentDef = Get-AgentDef $AGENT
 if (-not $agentDef)     { Fail "unknown agent: $AGENT" }
+if (Test-AgentDisabled $AGENT) { Fail "agent is disabled: $AGENT ($(Get-AgentDisabledReason $AGENT))" }
 if (-not $CONTEXT_FILE) { Fail "context payload file is required. Pass --context-file or set CONTEXT_PAYLOAD_FILE." }
 if (-not (Test-Path $CONTEXT_FILE))    { Fail "context payload file not found: $CONTEXT_FILE" }
 if (-not (Test-Path $PROMPT_FILE_VAL)) { Fail "prompt file not found: $PROMPT_FILE_VAL" }

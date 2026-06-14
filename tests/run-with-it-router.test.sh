@@ -34,6 +34,13 @@ assert_file_exists() {
   [[ -f "${file}" ]] || fail "${message} (missing: ${file})"
 }
 
+assert_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "${haystack}" == *"${needle}"* ]] || fail "${message} (missing: ${needle})"
+}
+
 assert_file_exists "${ROUTER_PATH}" "router helper exists"
 [[ -x "${ROUTER_PATH}" ]] || fail "router helper is executable"
 
@@ -53,36 +60,96 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 distribution = registry["model_routing"]["usage_distribution"]
 target = distribution["default_target_percent"]
 expected = {
-    "codex": 55,
-    "claude": 30,
-    "github-copilot": 10,
+    "codex": 60,
+    "claude": 35,
     "agy": 5,
 }
 if target != expected:
     raise SystemExit(f"default target mismatch: {target!r}")
 if sum(target.values()) != 100:
     raise SystemExit("default target must sum to 100")
-for role in ("complexity", "impl", "review", "modify", "merge-recovery"):
+for role in ("complexity", "impl", "review", "modify", "artifact-recovery", "merge-recovery"):
     if role not in distribution["role_target_percent"]:
         raise SystemExit(f"missing role target for {role}")
+if distribution["role_target_percent"]["complexity"] != {"agy": 50, "codex": 25, "claude": 25}:
+    raise SystemExit(f"complexity target mismatch: {distribution['role_target_percent']['complexity']!r}")
+if distribution["role_band_target_percent"]["complexity"]["quite-easy"] != {"codex": 40, "claude": 35, "agy": 25}:
+    raise SystemExit(f"quite-easy complexity target mismatch: {distribution['role_band_target_percent']['complexity']['quite-easy']!r}")
+
+copilot = registry["agents"]["github-copilot"]
+if copilot.get("routing_disabled") is not True:
+    raise SystemExit("GitHub Copilot must be permanently disabled for routing")
+if "exhausted" not in copilot.get("routing_disabled_reason", "").lower():
+    raise SystemExit("GitHub Copilot disabled reason must mention exhausted plan")
+
+def assert_no_positive_copilot_targets(node, path="usage_distribution"):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            next_path = f"{path}.{key}"
+            if key == "github-copilot" and isinstance(value, (int, float)) and value > 0:
+                raise SystemExit(f"GitHub Copilot has positive routing target at {next_path}: {value}")
+            assert_no_positive_copilot_targets(value, next_path)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            assert_no_positive_copilot_targets(value, f"{path}[{index}]")
+
+for key in ("default_target_percent", "role_target_percent", "role_band_target_percent"):
+    assert_no_positive_copilot_targets(distribution.get(key, {}), key)
+
+for role, preference in distribution.get("role_agent_preference", {}).items():
+    if "github-copilot" in preference:
+        raise SystemExit(f"GitHub Copilot remains in {role} role preference")
 
 codex_model = registry["agents"]["codex"]["model"]
 if codex_model.get("known_models") != ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]:
     raise SystemExit(f"codex known models mismatch: {codex_model.get('known_models')!r}")
-if codex_model.get("routing_disabled_models") != ["gpt-5.3-codex-spark"]:
-    raise SystemExit("codex registry must disable Spark while the weekly limit is hit")
+if "gpt-5.3-codex-spark" in codex_model.get("routing_disabled_models", []):
+    raise SystemExit("codex registry must not disable Spark after the weekly limit reset")
 
 claude_model = registry["agents"]["claude"]["model"]
 if claude_model.get("known_models") != ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]:
     raise SystemExit(f"claude known models mismatch: {claude_model.get('known_models')!r}")
 catalog = registry["model_catalog"]
-if catalog["claude-opus-4.7"].get("routing_disabled") is not True:
-    raise SystemExit("Opus 4.7 must be disabled by default")
-if catalog["gpt-5.3-codex-spark"].get("routing_disabled") is not True:
-    raise SystemExit("Codex Spark must be disabled by default")
+if "claude-opus-4.7" in catalog:
+    raise SystemExit("Opus 4.7 must be removed from the model catalog; use only Opus 4.8 series")
+if "claude-opus-4-8" not in catalog:
+    raise SystemExit("Opus 4.8 must remain in the model catalog")
+if catalog["gpt-5.3-codex-spark"].get("routing_disabled") is True:
+    raise SystemExit("Codex Spark must be routable after the weekly limit reset")
 PY
 
 echo "PASS: registry declares subscription usage distribution"
+
+UNBLOCKED_COPILOT_REGISTRY="${WORK_DIR}/unblocked-copilot-registry.json"
+python3 - "${REGISTRY_PATH}" "${UNBLOCKED_COPILOT_REGISTRY}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    registry = json.load(handle)
+
+registry["agents"]["github-copilot"].pop("routing_disabled", None)
+registry["agents"]["github-copilot"].pop("routing_disabled_reason", None)
+
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(registry, handle, indent=2)
+    handle.write("\n")
+PY
+
+set +e
+hard_block_error="$("${ROUTER_PATH}" \
+  --registry-file "${UNBLOCKED_COPILOT_REGISTRY}" \
+  --ledger-file "${WORK_DIR}/hard-block-ledger.json" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents github-copilot 2>&1 >/dev/null)"
+hard_block_status=$?
+set -e
+
+[[ "${hard_block_status}" -ne 0 ]] || fail "router must hard-block Copilot even if a registry copy omits routing_disabled"
+assert_contains "${hard_block_error}" "github-copilot" "router hard-block diagnostics mention Copilot"
+
+echo "PASS: router hard-blocks Copilot beyond registry metadata"
 
 cat > "${WORK_DIR}/codex-heavy-ledger.json" <<'JSON'
 {
@@ -99,6 +166,22 @@ cat > "${WORK_DIR}/codex-heavy-ledger.json" <<'JSON'
 }
 JSON
 
+set +e
+disabled_only_error="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/disabled-only-ledger.json" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents github-copilot 2>&1 >/dev/null)"
+disabled_only_status=$?
+set -e
+
+[[ "${disabled_only_status}" -ne 0 ]] || fail "router must reject Copilot as the only detected agent"
+assert_contains "${disabled_only_error}" "no compatible routing candidates" "router explains disabled-only Copilot has no candidates"
+assert_contains "${disabled_only_error}" "github-copilot" "router diagnostics mention disabled Copilot"
+
+echo "PASS: router rejects disabled Copilot even when detected"
+
 codex_heavy_output="$("${ROUTER_PATH}" \
   --registry-file "${REGISTRY_PATH}" \
   --ledger-file "${WORK_DIR}/codex-heavy-ledger.json" \
@@ -106,9 +189,9 @@ codex_heavy_output="$("${ROUTER_PATH}" \
   --complexity-level easy \
   --detected-agents codex,agy,github-copilot,claude)"
 
-assert_json_field "${codex_heavy_output}" 'payload["agent"] in {"claude", "github-copilot", "agy"}' "codex-heavy ledger shifts easy implementation away from Codex"
-assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["codex"] == 55' "router reports Codex 55 percent default target"
-assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["claude"] == 30' "router reports Claude 30 percent default target"
+assert_json_field "${codex_heavy_output}" 'payload["agent"] in {"claude", "agy"}' "codex-heavy ledger shifts easy implementation away from Codex without using Copilot"
+assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["codex"] == 60' "router reports Codex 60 percent default target"
+assert_json_field "${codex_heavy_output}" 'payload["policy"]["default_target_percent"]["claude"] == 35' "router reports Claude 35 percent default target"
 assert_json_field "${codex_heavy_output}" 'payload["ledger"]["updated"] is False' "router does not update ledger unless requested"
 
 echo "PASS: router shifts easy work away from over-target Codex"
@@ -120,10 +203,35 @@ complexity_output="$("${ROUTER_PATH}" \
   --complexity-level medium \
   --detected-agents codex,agy,github-copilot,claude)"
 
-assert_json_field "${complexity_output}" 'payload["agent"] in {"claude", "codex"}' "complexity scoring prefers primary subscription tools when all tools are available"
-assert_json_field "${complexity_output}" 'payload["model"] != "gpt-5.3-codex-spark"' "complexity scoring does not select disabled Codex Spark"
+assert_json_field "${complexity_output}" 'payload["agent"] == "agy"' "complexity scoring routes medium scoring work to Agy when all tools are available"
 
-echo "PASS: router uses primary subscriptions during complexity scoring"
+echo "PASS: router shifts complexity scoring toward Agy"
+
+spark_forced_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/spark-forced-ledger.json" \
+  --role impl \
+  --complexity-level medium \
+  --detected-agents codex \
+  --forced-agent codex \
+  --forced-model gpt-5.3-codex-spark)"
+
+assert_json_field "${spark_forced_output}" 'payload["agent"] == "codex"' "forced Spark route uses Codex"
+assert_json_field "${spark_forced_output}" 'payload["model"] == "gpt-5.3-codex-spark"' "router allows Codex Spark after weekly limit reset"
+
+echo "PASS: router allows Codex Spark after reset"
+
+artifact_recovery_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/empty-ledger.json" \
+  --role artifact-recovery \
+  --complexity-level medium-hard \
+  --detected-agents codex,agy,github-copilot,claude)"
+
+assert_json_field "${artifact_recovery_output}" 'payload["role"] == "artifact-recovery"' "router accepts artifact recovery role"
+assert_json_field "${artifact_recovery_output}" 'payload["agent"] in {"codex", "claude"}' "artifact recovery avoids Agy and disabled Copilot unless stronger tools are unavailable"
+
+echo "PASS: router selects artifact recovery worker"
 
 review_output="$("${ROUTER_PATH}" \
   --registry-file "${REGISTRY_PATH}" \
@@ -134,7 +242,7 @@ review_output="$("${ROUTER_PATH}" \
   --detected-agents codex,agy,github-copilot,claude)"
 
 assert_json_field "${review_output}" 'payload["model"] != "gpt-5.3-codex"' "review excludes implementation model"
-assert_json_field "${review_output}" 'payload["agent"] in {"codex", "claude", "github-copilot"}' "review avoids Agy unless higher-priority review tools are unavailable"
+assert_json_field "${review_output}" 'payload["agent"] in {"codex", "claude"}' "review avoids Agy and disabled Copilot unless higher-priority review tools are unavailable"
 
 echo "PASS: router selects independent review model"
 
@@ -262,14 +370,21 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 
 counts = ledger["totals"]["agents"]
 total = sum(counts.values())
-percent = {agent: counts.get(agent, 0) / total * 100 for agent in ("codex", "agy", "github-copilot", "claude")}
+if counts.get("github-copilot", 0) != 0:
+    raise SystemExit("GitHub Copilot must not be selected in mixed dummy queue")
+percent = {agent: counts.get(agent, 0) / total * 100 for agent in ("codex", "agy", "claude")}
+complexity_counts = ledger["totals"]["roles"]["complexity"]["agents"]
+complexity_total = sum(complexity_counts.values())
+complexity_agy_percent = complexity_counts.get("agy", 0) / complexity_total * 100
 
 if percent["codex"] < 45:
-    raise SystemExit(f"Codex should stay near the 55 percent overall target, saw {percent['codex']:.1f}%")
+    raise SystemExit(f"Codex should stay near the 60 percent overall target, saw {percent['codex']:.1f}%")
 if percent["claude"] < 20:
-    raise SystemExit(f"Claude should increase toward the 30 percent overall target, saw {percent['claude']:.1f}%")
-if percent["agy"] > 15:
-    raise SystemExit(f"Agy should stay near the 5 percent support target, saw {percent['agy']:.1f}%")
+    raise SystemExit(f"Claude should increase toward the 35 percent overall target, saw {percent['claude']:.1f}%")
+if percent["agy"] > 30:
+    raise SystemExit(f"Agy should stay bounded outside complexity scoring, saw {percent['agy']:.1f}% overall")
+if not (35 <= complexity_agy_percent <= 65):
+    raise SystemExit(f"Agy should take roughly half of complexity scoring, saw {complexity_agy_percent:.1f}%")
 PY
 
 echo "PASS: mixed dummy queue tracks updated subscription targets"

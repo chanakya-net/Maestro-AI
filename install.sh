@@ -131,7 +131,7 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "merge-recovery-prompt.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-with-it-state.py" "run-with-it-github-update.py" "run-with-it-pr-body.py" "run-with-it-router.py" "run-with-it-artifacts.py" "run-agent.sh" "run-with-it-dispatch.sh" "run-with-it-pool.sh" "worker-watch.sh" "agent-registry.json")
+  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "artifact-recovery-prompt.md" "merge-recovery-prompt.md" "complexity-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-with-it-state.py" "run-with-it-github-update.py" "run-with-it-pr-body.py" "run-with-it-router.py" "run-with-it-artifacts.py" "run-agent.sh" "run-with-it-dispatch.sh" "run-with-it-pool.sh" "worker-watch.sh" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then

@@ -66,10 +66,17 @@ Preferred upstream flow:
 - Creates an issue branch and issue worktree from the shared run feature branch
 - Runs complexity analysis, deterministic routing, implementation, review, and modification loops
 - Runs child workers with `REPO_ROOT` pointing at the issue worktree while keeping logs/reports under the root `.run-with-it/`
+- Spawns an Artifact Recovery Worker when implementation/modification artifact retries are exhausted so dirty work can be inspected, verified, committed, or requeued before any terminal blocked report
 - Attempts the normal merge back into the shared feature branch under `.run-with-it/locks/merge.lock`
 - Writes a compact report JSON and full log file under `.run-with-it/issues/<n>/` when done
 - Spawns worker agents whose logs/results/done sentinels are written under `.run-with-it/issues/<n>/workers/<role>/`
 - Never touches GitHub; never updates `main-state.json`
+
+**Artifact Recovery Worker** (spawned via `artifact-recovery-prompt.md`, runs only after exhausted impl/modify artifact failures):
+- Inspects the issue worktree, including dirty uncommitted work and preserved recovery patches
+- Runs verification and commits salvaged work on the issue branch when the work is complete
+- Writes the missing `impl` or `modify` result artifact only with concrete commit and verification evidence
+- Returns a structured `synthesized-result`, `requeue`, or `blocked` decision to the Sub-Coordinator
 
 **Merge Recovery Coordinator** (spawned via `merge-recovery-prompt.md`, runs only after `merge_failed`):
 - Handles one failed issue-branch merge
@@ -161,6 +168,7 @@ Shared required files:
 - `coordinator-rules.md`
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
+- `artifact-recovery-prompt.md`
 - `merge-recovery-prompt.md`
 - `run-with-it-state.py`
 - `run-with-it-github-update.py`
@@ -200,12 +208,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\artifact-recovery-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/artifact-recovery-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -521,7 +529,7 @@ run-agent.sh --list-models <agent>
 
 | Flag | Env var equivalent | Required | Description |
 |------|--------------------|----------|-------------|
-| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `agy`) |
+| `--agent <agent>` | `AGENT` | Yes | Enabled agent slug (e.g. `codex`, `claude`, `agy`; `github-copilot`/`copilot` is registry-disabled while the Copilot plan is exhausted) |
 | `--model <model>` | `MODEL` | Yes (always pass explicitly) | Model id to use |
 | `--context-file <file>` | `CONTEXT_PAYLOAD_FILE` | Yes | Path to the assembled context payload file |
 | `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `<script-dir>/prompt.md`) | Path to the prompt file |

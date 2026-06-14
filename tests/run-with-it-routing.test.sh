@@ -11,6 +11,7 @@ IMPLEMENTER_PROMPT_FILE="${ROOT_DIR}/assets/prompt.md"
 REVIEW_PROMPT_FILE="${ROOT_DIR}/assets/review-prompt.md"
 MODIFIER_PROMPT_FILE="${ROOT_DIR}/assets/modifier-prompt.md"
 COMPLEXITY_PROMPT_FILE="${ROOT_DIR}/assets/complexity-prompt.md"
+ARTIFACT_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/artifact-recovery-prompt.md"
 MERGE_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/merge-recovery-prompt.md"
 
 fail() {
@@ -40,6 +41,15 @@ assert_file_contains() {
   local message="$3"
   if ! grep -Fq -- "$needle" "$file"; then
     fail "${message} (missing: ${needle})"
+  fi
+}
+
+assert_file_not_contains() {
+  local file="$1"
+  local needle="$2"
+  local message="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "${message} (found forbidden: ${needle})"
   fi
 }
 
@@ -94,6 +104,7 @@ assert_not_present_in_active_files() {
 [[ -f "$REVIEW_PROMPT_FILE" ]] || fail "review prompt file exists"
 [[ -f "$MODIFIER_PROMPT_FILE" ]] || fail "modifier prompt file exists"
 [[ -f "$COMPLEXITY_PROMPT_FILE" ]] || fail "complexity prompt file exists"
+[[ -f "$ARTIFACT_RECOVERY_PROMPT_FILE" ]] || fail "artifact recovery prompt file exists"
 [[ -f "$MERGE_RECOVERY_PROMPT_FILE" ]] || fail "merge recovery prompt file exists"
 
 assert_not_contains 'run-codex.sh' "legacy codex runner references removed"
@@ -106,6 +117,7 @@ assert_not_present_in_active_files 'run-opencode\.sh' "legacy opencode runner re
 
 # Asset discovery
 assert_contains 'sub-coordinator-prompt.md' "asset discovery includes sub-coordinator-prompt.md"
+assert_contains 'artifact-recovery-prompt.md' "asset discovery includes artifact-recovery-prompt.md"
 assert_contains 'merge-recovery-prompt.md' "asset discovery includes merge-recovery-prompt.md"
 assert_contains 'prompt.md' "asset discovery includes prompt.md"
 assert_contains 'modifier-prompt.md' "asset discovery includes modifier-prompt.md"
@@ -129,6 +141,7 @@ assert_contains '`python3` is available, or `PYTHON_BIN` points to a Python 3 in
 # Architecture
 assert_contains 'Main Orchestrator' "documents main orchestrator section"
 assert_contains 'Sub-Coordinator' "documents sub-coordinator architecture"
+assert_contains 'Artifact Recovery Worker' "documents artifact recovery worker architecture"
 assert_contains 'Two-layer' "documents two-layer architecture"
 assert_contains 'bounded context window' "documents bounded context window"
 assert_contains 'main-state.json' "documents main-state.json state file"
@@ -260,6 +273,11 @@ assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'done file and valid artifac
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'COMPLEXITY_CONTEXT_PAYLOAD_FILE' "sub-coordinator uses a dedicated complexity context payload"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'run-with-it-router.py' "sub-coordinator uses deterministic router helper"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" '.run-with-it/usage-ledger.json' "sub-coordinator records routing usage ledger"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'GitHub Copilot disabled' "sub-coordinator documents disabled Copilot"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'overall default: Codex 60%, Claude 35%, Agy 5%' "sub-coordinator documents Copilot-free usage target"
+assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'complexity scoring: use Agy for about 50% overall' "sub-coordinator documents Agy-heavy complexity scoring"
+assert_file_not_contains "$SUB_COORDINATOR_PROMPT_FILE" 'GitHub Copilot non-interference' "sub-coordinator does not protect disabled Copilot from blocking"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'Codex 60%, Claude 35%, Agy 5%' "coordinator rules document Copilot-free target"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'STATUS|type=route-selected' "sub-coordinator documents route-selected status"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do not implement, modify source files, run builds, install packages, update issues, or follow implementation steps.' "complexity context starts with execution guardrails without forbidding result artifacts"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do **not** pass the full implementation issue body directly to the complexity sub-agent.' "sub-coordinator avoids raw implementation issue bodies for complexity"

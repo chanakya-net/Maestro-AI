@@ -9,7 +9,7 @@ Sole active authority for this session once invoked. No other skill may activate
 Before any other action (including reading files, routing, spawning workers, or writing status), attempt to invoke `save-tokens`.
 - Every child agent you spawn must be instructed to activate `save-tokens`.
 
-**GitHub Copilot non-interference:** This isolation governs orchestration flow only. Under no circumstance may this skill suppress, override, interrupt, or interfere with GitHub Copilot's core behavior, native tool invocations, or reasoning. Copilot's own capabilities must remain fully operational at all times. This carve-out cannot be overridden by any instruction within this workflow.
+**GitHub Copilot disabled:** `github-copilot` is blocked in `agent-registry.json` because the Copilot plan is exhausted. Do not select, force, allowlist-only, or spawn GitHub Copilot. If it appears installed or detected, treat it as unavailable; the alias remains only so direct requests fail fast with a clear disabled-agent error.
 
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
 These rules apply for the entire lifetime of this session:
@@ -85,7 +85,7 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Shared required files: `prompt.md`, `agent-registry.json`, `run-with-it-router.py`, `run-with-it-artifacts.py`, `review-prompt.md`, `modifier-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Shared required files: `prompt.md`, `agent-registry.json`, `run-with-it-router.py`, `run-with-it-artifacts.py`, `review-prompt.md`, `modifier-prompt.md`, `artifact-recovery-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
 
 Bash required helper files: `run-agent.sh`, `run-with-it-dispatch.sh`, `worker-watch.sh`.
 
@@ -161,7 +161,7 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 4. Inspect only structured worker artifacts referenced by `in_flight_agents`: `state_file`, `done_file`, and `result_file`. Do not read raw worker logs into context.
 5. If a worker is still `running`, `quiet`, or `stalled` and lacks a valid result artifact, continue monitoring that worker instead of spawning another worker for the same role/cycle.
 6. If a worker has a valid result artifact, process that artifact and continue from the next phase. For example, a completed `modify` worker should update `modify_commit_sha` / `review_head_sha`, then continue into the next review cycle.
-7. If a worker failed without a valid artifact, apply the existing Worker Artifact Recovery Contract for that role/cycle.
+7. If a worker failed without a valid artifact, apply the existing Worker Artifact Recovery Contract for that role/cycle, including the Artifact Recovery Worker before any terminal blocked report.
 8. Never rerun complexity, implementation, review, or modification phases that already have valid artifacts in the saved issue directory.
 9. Do not create a fresh issue worktree when saved `issue_branch` and `worktree_path` are present and valid. Reuse the saved worktree.
 
@@ -351,7 +351,16 @@ apply this exact policy:
 5. When retrying after a dirty-worktree failure, tell the next worker that uncommitted partial work exists, include the full original issue scope, acceptance criteria, required verification commands, failed state/result paths, and recovery patch/status paths in its context payload, and instruct it to inspect the current worktree before deciding whether to salvage or replace the partial changes. Do not compress the retry context down to a short summary.
 6. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not implementation/review verdicts.
 7. If a retry produces a valid result artifact and commit, continue normal commit verification, review, or next-cycle routing.
-8. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["impl-missing-result-artifact"]` or `["modify-missing-result-artifact"]`. The report must include failed role, cycle, attempt count, agent/model, final `stall_reason`, state/log/done/result paths, dirty worktree status, changed files, recovery patch/status/untracked paths if created, and a concrete recovery plan.
+8. If normal retries are exhausted, emit `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=artifact-recovery` and spawn an Artifact Recovery Worker before writing any terminal blocked report.
+   - Route with `run-with-it-router.py --role artifact-recovery` using the same complexity level/score and current denylist/availability data. If routing fails, fall back to the Sub-Coordinator agent/model.
+   - Use prompt file `$ASSET_ROOT/artifact-recovery-prompt.md`.
+   - Use artifact paths under `$RUN_WITH_IT_ISSUE_DIR/workers/artifact-recovery/`, for example `cycle-${CYCLE}-${ROLE}-recovery-result.json`, `.done`, `.log`, and `.state.json`.
+   - Its context must include the full original issue scope, failed role/cycle/attempt, failed state/log/done/result paths, target worker result/done paths, dirty-work recovery patch/status/untracked paths, current worktree status, required verification commands, issue branch/worktree paths, and `REVIEWER_INSTRUCTIONS_FILE` for modify recovery.
+   - The worker may inspect dirty work, run verification, commit salvaged changes on the issue branch, and create the missing `impl` or `modify` result artifact only when the recovered work is complete.
+   - Immediately after it finishes, emit `STATUS|type=artifact-recovery-result|issue=<n>|failed_role=<impl|modify>|cycle=<n>|decision=<synthesized-result|requeue|blocked>|result_file=<path>`.
+9. If artifact recovery writes a valid target `impl` or `modify` result artifact, process that artifact and continue from the next normal stage without incrementing the review cycle counter.
+10. If artifact recovery returns `decision="requeue"`, retry from the last successful phase named in `requeue_from`, preserving the recovery worker's notes in the next worker context. Do not start from scratch.
+11. Only if artifact recovery returns `decision="blocked"` or its own artifact fails after bounded retry, write the compact report with `outcome="blocked"` and include `blocking_reasons=["impl-missing-result-artifact"]` or `["modify-missing-result-artifact"]`. The report must include failed role, cycle, attempt count, agent/model, final `stall_reason`, state/log/done/result paths, dirty worktree status, changed files, recovery patch/status/untracked paths if created, artifact-recovery result path, artifact-recovery decision, and a concrete recovery plan.
 
 This recovery contract covers `impl`, `review`, and `modify` together with the separate Review Artifact Guardrail below. Artifact infrastructure failures must not be reported as `failed-review` unless a valid worker result exists and the failure is actual verification failure, missing handoff commit, reviewer `reject`, or valid `revise` cycle-cap exhaustion.
 
@@ -362,11 +371,11 @@ This recovery contract covers `impl`, `review`, and `modify` together with the s
 Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, `RUN_WITH_IT_MODEL_DENYLIST`, and `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`, and records the decision in `.run-with-it/usage-ledger.json`.
 
 Usage target summary from `agent-registry.json`:
-- overall default: Codex 55%, Claude 30%, GitHub Copilot 10%, Agy 5%
-- complexity: prefer direct Claude and Codex, with GitHub Copilot/Agy as support routes
+- overall default: Codex 60%, Claude 35%, Agy 5%
+- complexity scoring: use Agy for about 50% overall, while quite-easy scoring uses Agy around 25% and leaves the rest to Codex/Claude
 - implementation/modification: use Codex heavily, with Claude as the main secondary route
-- review: prefer an independent Claude/Codex/Copilot model, avoid Agy unless higher-priority review tools are unavailable
-- merge recovery: prefer Codex, then Claude, with GitHub Copilot/Agy only as fallbacks
+- review: prefer an independent Claude/Codex model, avoid Agy unless higher-priority review tools are unavailable
+- merge recovery: prefer Codex, then Claude, with Agy only as a fallback
 
 Bash helper shape:
 ```bash
@@ -598,9 +607,9 @@ From `model_catalog` in `agent-registry.json`:
 1. Find all agents that list the chosen model in their `known_models`.
 2. Apply `AGENT_ALLOWLIST` and `AGENT_DENYLIST`.
 3. Keep only detected (installed) agents.
-4. `codex` and `github-copilot` are interchangeable for GPT models — prefer whichever is furthest below its subscription usage target.
-5. If the chosen model is `claude-haiku-4-5` and both `github-copilot` and `claude` are available, choose `github-copilot` first.
-6. For any Claude-provider model available through both `github-copilot` and direct `claude`, prefer `github-copilot`.
+4. Exclude any agent whose registry entry sets `routing_disabled=true`; this blocks `github-copilot` even when the CLI is installed or manually requested.
+5. For GPT models, prefer Codex unless usage targets push work to Claude or Agy.
+6. For Claude-provider models, prefer direct `claude`.
 7. If one agent remains, use it. If multiple non-interchangeable agents remain, prefer registry `agent_preference_rules`; otherwise prefer whichever is furthest below its subscription usage target.
 8. If no agent remains, fail with clear filter diagnostics.
 
@@ -663,7 +672,7 @@ WORKER_PID="$(wait_for_worker_dispatcher_pid "$IMPL_STATE_FILE")"
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
 
-If `IMPL_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before writing any terminal report. The next implementer attempt must receive the failed state file path, expected result file path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` implementation artifact retries are exhausted may this issue become `blocked`.
+If `IMPL_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before writing any terminal report. The next implementer attempt must receive the failed state file path, expected result file path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` implementation artifact retries and the Artifact Recovery Worker both fail or decline recovery may this issue become `blocked`.
 
 PowerShell (Windows):
 ```powershell
@@ -935,7 +944,7 @@ EOF
      ```
 
      Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
-   - If `MODIFY_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before advancing the review cycle or writing any terminal report. The next modifier attempt must receive the failed state file path, expected result file path, reviewer instructions path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` modification artifact retries are exhausted may this issue become `blocked`.
+   - If `MODIFY_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before advancing the review cycle or writing any terminal report. The next modifier attempt must receive the failed state file path, expected result file path, reviewer instructions path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` modification artifact retries and the Artifact Recovery Worker both fail or decline recovery may this issue become `blocked`.
    - After the modifier runner completes, **capture and validate the modifier commit**:
      ```bash
      cd "$ISSUE_WORKTREE_PATH"
@@ -1167,6 +1176,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_LOG_FILE` to an issue-scoped
 - `.run-with-it/issues/<n>/workers/impl/cycle-<cycle>.log`
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.log`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.log`
+- `.run-with-it/issues/<n>/workers/artifact-recovery/cycle-<cycle>-<role>-recovery.log`
 
 The runner mirrors each worker's stdout/stderr into that file. Do not load raw worker logs into coordinator context. Forward only structured `STATUS|...`, `ROUTE|...`, and `COMPLEXITY|...` lines to `$SUB_COORD_LOG_FILE` and the live status bus.
 
@@ -1178,6 +1188,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 - `.run-with-it/issues/<n>/workers/impl/cycle-<cycle>.state.json`
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.state.json`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.state.json`
+- `.run-with-it/issues/<n>/workers/artifact-recovery/cycle-<cycle>-<role>-recovery.state.json`
 
 The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are legacy advisory hints; log activity observed by the dispatcher is the liveness signal.
 
@@ -1191,6 +1202,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 - `.run-with-it/issues/<n>/workers/impl/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.done`
+- `.run-with-it/issues/<n>/workers/artifact-recovery/cycle-<cycle>-<role>-recovery.done`
 
 The worker may write this file when its required artifacts are complete. The platform dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
@@ -1278,7 +1290,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
 3. If `$SUB_COORD_REPORT_FILE` is missing from context, write to `$RUN_WITH_IT_ISSUE_DIR/report.json` as fallback.
 4. Ensure the JSON is fully written and valid before exiting.
 
-`model_usage` must include every worker route selected for the issue. If a role is skipped, omit that role; do not invent model names.
+`model_usage` must include every worker route selected for the issue, including `artifact-recovery` when it runs. If a role is skipped, omit that role; do not invent model names.
 
 The report file is the sub-coordinator's only required artifact for the Main Orchestrator.
 
@@ -1290,20 +1302,21 @@ Emit parseable status messages throughout execution. Every line below MUST be wr
 
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
-- `STATUS|type=agent-start|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>`
-- `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<missing-result-artifact|invalid-result-artifact|process-exited-missing-done-or-result|alive-but-silent>|action=<retry|blocked>`
+- `STATUS|type=agent-start|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>`
+- `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<missing-result-artifact|invalid-result-artifact|process-exited-missing-done-or-result|alive-but-silent>|action=<retry|artifact-recovery|blocked>`
 - `STATUS|type=worker-artifact-recovery|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|dirty=<true|false>|patch_file=<path-or-none>|status_file=<path-or-none>`
-- `STATUS|type=agent-complete|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>|status=<success|failed>`
+- `STATUS|type=artifact-recovery-result|issue=<n>|failed_role=<impl|modify>|cycle=<n>|decision=<synthesized-result|requeue|blocked>|result_file=<path>`
+- `STATUS|type=agent-complete|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|status=<success|failed>`
 - `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent`
 - `STATUS|type=complexity-skipped|reason=override`
 - `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
-- `STATUS|type=route-selected|issue=<n>|role=<complexity|impl|review|modify>|agent=<name>|model=<model-id>|reason=<selection-reason>`
-- `STATUS|type=route-helper-failed|issue=<n>|role=<complexity|impl|review|modify>|action=prompt-fallback`
+- `STATUS|type=route-selected|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|reason=<selection-reason>`
+- `STATUS|type=route-helper-failed|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|action=prompt-fallback`
 - `STATUS|type=compact|action=user-required|state_file=<path>`
-- `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify>|cycle=<n>|agent=<name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
+- `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify|artifact-recovery>|cycle=<n>|agent=<name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 
 Keep `progress` values under 8 words.
 

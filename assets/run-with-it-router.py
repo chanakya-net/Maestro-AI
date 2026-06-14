@@ -27,7 +27,8 @@ REVIEW_BUMP = {
     "complex": "holy-fuck",
     "holy-fuck": "holy-fuck",
 }
-DEFAULT_AGENTS = ["codex", "agy", "github-copilot", "claude"]
+DEFAULT_AGENTS = ["codex", "agy", "claude"]
+PERMANENTLY_BLOCKED_AGENTS = {"github-copilot"}
 GLOBAL_DEBT_WEIGHT = 1.5
 
 
@@ -137,6 +138,8 @@ def add_unavailable_entry(availability: Availability, entry: Any) -> None:
 
 def registry_availability(registry: dict[str, Any]) -> Availability:
     availability = empty_availability()
+    for agent_id in PERMANENTLY_BLOCKED_AGENTS:
+        availability["agents"].add(agent_id)
 
     for agent_id, agent in registry.get("agents", {}).items():
         if agent.get("routing_disabled") is True:
@@ -493,6 +496,7 @@ def select_pair(
     role_total = sum(role_counts.values())
     weight_min, weight_max = (1, 6) if role == "complexity" else weight_range_for_level(registry, level)
     weight_center = (weight_min + weight_max) / 2.0
+    global_debt_weight = 0.25 if role == "complexity" else GLOBAL_DEBT_WEIGHT
 
     def sort_key(pair: dict[str, Any]) -> tuple[Any, ...]:
         agent = pair["agent"]
@@ -508,7 +512,7 @@ def select_pair(
         role_projected = ((role_counts.get(agent, 0) + 1) / (role_total + 1) * 100.0)
         global_debt = global_target - current
         role_debt = role_target - role_current
-        combined_debt = (global_debt * GLOBAL_DEBT_WEIGHT) + role_debt
+        combined_debt = (global_debt * global_debt_weight) + role_debt
         projected_error = abs(projected - global_target) + abs(role_projected - role_target)
         return (
             target_penalty,
@@ -615,7 +619,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select a run-with-it worker agent/model.")
     parser.add_argument("--registry-file", required=True)
     parser.add_argument("--ledger-file", required=True)
-    parser.add_argument("--role", required=True, choices=["complexity", "impl", "review", "modify", "merge-recovery"])
+    parser.add_argument(
+        "--role",
+        required=True,
+        choices=["complexity", "impl", "review", "modify", "artifact-recovery", "merge-recovery"],
+    )
     parser.add_argument("--complexity-level", choices=BAND_ORDER)
     parser.add_argument("--complexity-score", type=int)
     parser.add_argument("--detected-agents", default=",".join(DEFAULT_AGENTS))

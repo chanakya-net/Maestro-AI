@@ -43,6 +43,7 @@ dry_run_output="$("$PS_CMD" -NoProfile -File "${INSTALLER_PATH}" -DryRun)"
 
 assert_contains "${dry_run_output}" "prompt.md" "PowerShell dry-run includes prompt asset"
 assert_contains "${dry_run_output}" "sub-coordinator-prompt.md" "PowerShell dry-run includes sub-coordinator prompt asset"
+assert_contains "${dry_run_output}" "artifact-recovery-prompt.md" "PowerShell dry-run includes artifact recovery prompt asset"
 assert_contains "${dry_run_output}" "merge-recovery-prompt.md" "PowerShell dry-run includes merge recovery prompt asset"
 assert_contains "${dry_run_output}" "modifier-prompt.md" "PowerShell dry-run includes modifier prompt asset"
 assert_contains "${dry_run_output}" "coordinator-rules.md" "PowerShell dry-run includes coordinator-rules asset"

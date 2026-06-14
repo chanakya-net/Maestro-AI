@@ -75,6 +75,8 @@ assert_file_contains "${POOL_RUNNER}" "sub-coord-recovery-wait" "pool runner wai
 assert_file_contains "${POOL_RUNNER}" "sub-coord-recovery-spawn" "pool runner spawns replacement sub-coordinator"
 assert_file_contains "${MAIN_RULES}" "sub-state.json" "main rules permit structured sub-coordinator recovery state"
 assert_file_contains "${SUB_PROMPT}" "SUB_COORD_RECOVERY_MODE=1" "sub-coordinator prompt documents recovery mode"
+assert_file_contains "${SUB_PROMPT}" "artifact-recovery-prompt.md" "sub-coordinator prompt documents artifact recovery worker prompt"
+assert_file_contains "${SUB_PROMPT}" "STATUS|type=artifact-recovery-result" "sub-coordinator prompt documents artifact recovery result status"
 
 validate_output="$("${POOL_RUNNER}" \
   --validate-only \

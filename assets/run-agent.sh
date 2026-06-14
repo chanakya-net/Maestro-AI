@@ -27,6 +27,7 @@ if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; t
   (cd "${REPO_ROOT}" && codegraph unlock >/dev/null 2>&1) || true
 fi
 AGENT_REGISTRY_FILE="${AGENT_REGISTRY_FILE:-${SCRIPT_DIR}/agent-registry.json}"
+PERMANENTLY_BLOCKED_AGENT_REASON="GitHub Copilot plan is exhausted; blocked from automatic routing and direct run-agent use."
 
 AGENT="${AGENT:-}"
 MODEL="${MODEL:-}"
@@ -449,6 +450,13 @@ elif action == "exists":
     sys.exit(0 if agent_id(arg) in agents else 1)
 elif action == "display":
     print(agent(arg).get("display_name", ""))
+elif action == "disabled":
+    agent_def = agent(arg)
+    disabled = agent_def.get("routing_disabled") is True or agent_def.get("usage_disabled") is True
+    print("true" if disabled else "false")
+elif action == "disabled_reason":
+    agent_def = agent(arg)
+    print(agent_def.get("routing_disabled_reason") or agent_def.get("disabled_reason") or "")
 elif action == "detect_command":
     print(agent(arg).get("detection", {}).get("command", ""))
 elif action == "detect_args":
@@ -492,6 +500,8 @@ json_value() {
       agents) json_jq '.agents | keys[]' ;;
       exists) jq -e --arg a "${arg}" '(.aliases[$a] // $a) as $id | has("agents") and (.agents[$id] != null)' "${AGENT_REGISTRY_FILE}" >/dev/null ;;
       display) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].display_name // ""' ;;
+      disabled) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | if ((.agents[$id].routing_disabled // false) or (.agents[$id].usage_disabled // false)) then "true" else "false" end' ;;
+      disabled_reason) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].routing_disabled_reason // .agents[$id].disabled_reason // ""' ;;
       detect_command) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].detection.command // ""' ;;
       detect_args) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].detection.args[]?' ;;
       invoke_command) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].invocation.command // ""' ;;
@@ -534,9 +544,34 @@ agent_configured() {
   return 1
 }
 
+agent_disabled() {
+  local agent="$1"
+  if [[ "$(json_value normalize "${agent}")" == "github-copilot" ]]; then
+    return 0
+  fi
+  [[ "$(json_value disabled "${agent}")" == "true" ]]
+}
+
+agent_disabled_reason() {
+  local agent="$1"
+  local message
+  if [[ "$(json_value normalize "${agent}")" == "github-copilot" ]]; then
+    echo "${PERMANENTLY_BLOCKED_AGENT_REASON}"
+    return 0
+  fi
+  message="$(json_value disabled_reason "${agent}")"
+  echo "${message:-agent disabled by registry}"
+}
+
 agent_detection_reason() {
   local agent="$1"
   local command_name
+
+  if agent_disabled "${agent}"; then
+    agent_disabled_reason "${agent}"
+    return 1
+  fi
+
   command_name="$(json_value detect_command "${agent}")"
 
   if [[ -z "${command_name}" ]]; then
@@ -564,7 +599,10 @@ list_agents() {
   local agent display reason status
   while IFS= read -r agent; do
     display="$(json_value display "${agent}")"
-    if reason="$(agent_detection_reason "${agent}")"; then
+    if agent_disabled "${agent}"; then
+      status="disabled"
+      reason="$(agent_disabled_reason "${agent}")"
+    elif reason="$(agent_detection_reason "${agent}")"; then
       status="detected"
     else
       status="missing"
@@ -582,6 +620,9 @@ list_models() {
   local agent="$1"
   agent="$(json_value normalize "${agent}")"
   json_value exists "${agent}" || fail "unknown agent: ${agent}"
+  if agent_disabled "${agent}"; then
+    fail "agent is disabled: ${agent} ($(agent_disabled_reason "${agent}"))"
+  fi
 
   local models
   models="$(json_value known_models "${agent}")"
@@ -606,6 +647,9 @@ fi
 [[ -n "${AGENT}" ]] || fail "agent is required. Pass --agent or set AGENT."
 AGENT="$(json_value normalize "${AGENT}")"
 json_value exists "${AGENT}" || fail "unknown agent: ${AGENT}"
+if agent_disabled "${AGENT}"; then
+  fail "agent is disabled: ${AGENT} ($(agent_disabled_reason "${AGENT}"))"
+fi
 
 [[ -n "${CONTEXT_PAYLOAD_FILE}" ]] || fail "context payload file is required. Pass --context-file or set CONTEXT_PAYLOAD_FILE."
 [[ -f "${CONTEXT_PAYLOAD_FILE}" ]] || fail "context payload file not found: ${CONTEXT_PAYLOAD_FILE}"

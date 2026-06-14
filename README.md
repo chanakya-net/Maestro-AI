@@ -1,12 +1,12 @@
 # AI-Skills
 
-> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, cost-optimized model routing, and automatic merge recovery across 4 providers and 27 models.
+> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, cost-optimized model routing, and automatic merge recovery across 4 providers and 26 models.
 
 📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram &nbsp;·&nbsp;
 
 ## Overview
 
-AI-Skills coordinates multiple AI coding agents (Codex, Claude, Copilot, Gemini) through a two-layer orchestration runtime. It takes GitHub issues from "ready" to "merged PR" without human intervention — routing each task to the best agent/model based on complexity, managing parallel execution in isolated git worktrees, recovering from merge conflicts automatically, and opening a single final pull request.
+AI-Skills coordinates multiple AI coding agents (Codex, Claude, Gemini/Agy, OpenCode) through a two-layer orchestration runtime. It takes GitHub issues from "ready" to "merged PR" without human intervention — routing each task to the best agent/model based on complexity, managing parallel execution in isolated git worktrees, recovering from merge conflicts automatically, and opening a single final pull request. GitHub Copilot metadata is retained only for fail-fast blocking while the Copilot plan is exhausted.
 
 The system runs end-to-end:
 1. Analyze requirements and discover dependencies
@@ -20,7 +20,7 @@ The system runs end-to-end:
 - **Git** — orchestration runs in isolated `git worktree`s (works without git too; it just skips commit-history context)
 - **Python 3** — the routing, state, artifact, and PR-body helpers are Python scripts
 - **GitHub CLI (`gh`)**, authenticated — for issue intake, comments, and the final PR (optional; falls back to local files when unavailable)
-- **At least one supported coding agent** — Codex, Claude Code, GitHub Copilot, Gemini/Antigravity, or OpenCode
+- **At least one supported enabled coding agent** — Codex, Claude Code, Gemini/Antigravity, Agy, or OpenCode. GitHub Copilot is registry-disabled while the Copilot plan is exhausted.
 
 ## Installation
 
@@ -36,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install
 irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
 ```
 
-The installer detects which coding agents you have (Codex, Claude, Copilot, Gemini, Agy) and installs skills + shared assets for each. Assets go to `~/.ai-skill-collections/assets` (macOS/Linux) or `%USERPROFILE%\.ai-skill-collections\assets` (Windows).
+The installer detects which coding agents you have (Codex, Claude, Gemini, Agy, OpenCode; Copilot metadata remains blocked) and installs skills + shared assets for each. Assets go to `~/.ai-skill-collections/assets` (macOS/Linux) or `%USERPROFILE%\.ai-skill-collections\assets` (Windows).
 
 **Per-agent install (without shared assets):**
 
@@ -44,7 +44,7 @@ The installer detects which coding agents you have (Codex, Claude, Copilot, Gemi
 claude plugin install github:chanakya-net/AI-Skills              # Claude Code
 gemini extensions install github.com/chanakya-net/AI-Skills       # Gemini CLI
 npx -y skills add chanakya-net/AI-Skills -a codex                # Codex
-npx -y skills add chanakya-net/AI-Skills -a github-copilot        # GitHub Copilot
+npx -y skills add chanakya-net/AI-Skills -a github-copilot        # GitHub Copilot skill target; runtime use remains blocked while exhausted
 npx -y skills add chanakya-net/AI-Skills -a antigravity           # Antigravity
 ```
 
@@ -107,7 +107,7 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 | File | What it does |
 |------|-------------|
-| `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Copilot, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading. |
+| `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading; `github-copilot`/`copilot` fails fast while disabled. |
 | `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
 | `run-with-it-pool.sh` / `run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
 
@@ -119,6 +119,7 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 | `prompt.md` | Implementation worker — writes code, commits to issue worktree, produces result artifact JSON with verification evidence. |
 | `review-prompt.md` | Review worker — read-only diff analysis producing JSON verdict with file/line/severity/fix comments. |
 | `modifier-prompt.md` | Modify worker — addresses reviewer comments, re-verifies, commits fixes on the issue branch. |
+| `artifact-recovery-prompt.md` | Artifact Recovery Worker — inspects dirty impl/modify work after artifact retry exhaustion, verifies or commits salvage, and writes a synthesized-result/requeue/blocked decision. |
 | `complexity-prompt.md` | Complexity scoring agent — scores issues on 9 dimensions (dependency risk, architecture risk, blast radius, etc.) for routing decisions. |
 | `merge-recovery-prompt.md` | Merge Recovery Coordinator — resolves conflicts when an issue branch can't merge into the shared feature branch. |
 | `coordinator-rules.md` | Compact Sub-Coordinator rules re-read before every major phase for compaction survival. |
@@ -128,8 +129,8 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 | File | What it does |
 |------|-------------|
-| `agent-registry.json` | Agent catalog — detection commands, invocation templates, 27-model catalog with complexity weights, routing rules, and subscription distribution targets. |
-| `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across 4 providers with role-specific and complexity-band-specific targets (default: Codex 55%, Claude 30%, Copilot 10%, Agy 5%). |
+| `agent-registry.json` | Agent catalog — detection commands, invocation templates, 26-model catalog with complexity weights, routing rules, and subscription distribution targets. |
+| `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across usable providers with role-specific and complexity-band-specific targets (default: Codex 60%, Claude 35%, Agy 5%; GitHub Copilot is registry-disabled while the plan is exhausted). |
 | `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, and merge recovery state transitions. |
 | `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
 | `run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |
@@ -194,7 +195,7 @@ Override routing behavior with environment variables:
 
 | Variable | Effect |
 |----------|--------|
-| `AGENT` | Force a specific agent (codex, claude, github-copilot, agy) |
+| `AGENT` | Force a specific enabled agent (codex, claude, agy). `github-copilot`/`copilot` fails fast while the Copilot plan is exhausted. |
 | `MODEL` | Force a specific model |
 | `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
 | `AGENT_DENYLIST` | Comma-separated agent slugs to block |
@@ -289,6 +290,7 @@ AI-Skills/
 │   ├── merge-recovery-prompt.md           # Merge Recovery Coordinator prompt
 │   ├── review-prompt.md                   # Review worker prompt
 │   ├── modifier-prompt.md                 # Modify worker prompt
+│   ├── artifact-recovery-prompt.md        # Artifact recovery worker prompt
 │   ├── complexity-prompt.md               # Complexity scoring prompt
 │   ├── coordinator-rules.md               # Compact Sub-Coordinator rules
 │   └── main-orchestrator-rules.md         # Compact Main Orchestrator rules

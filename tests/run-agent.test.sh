@@ -121,6 +121,12 @@ check(aliases.get("claude-code") == "claude", "claude-code alias resolves to cla
 check(aliases.get("open_code") == "opencode", "open_code alias resolves to opencode")
 check(aliases.get("gemini-cli") is None, "gemini-cli alias is removed with standalone gemini agent")
 
+check(agents["github-copilot"].get("routing_disabled") is True, "github-copilot is disabled while the Copilot plan is exhausted")
+check(
+    "exhausted" in agents["github-copilot"].get("routing_disabled_reason", "").lower(),
+    "github-copilot disabled reason mentions exhausted plan",
+)
+
 for agent_id, agent in agents.items():
     check(agent.get("display_name"), f"{agent_id} has display_name")
     check(agent.get("detection", {}).get("command"), f"{agent_id} has detection command")
@@ -155,12 +161,12 @@ expected_codex_models = [
     "gpt-5.3-codex-spark",
 ]
 check(codex_model.get("known_models") == expected_codex_models, "codex known models match available Codex model list")
-check(codex_model.get("routing_disabled_models") == ["gpt-5.3-codex-spark"], "codex disables Spark while the weekly limit is hit")
+check("gpt-5.3-codex-spark" not in codex_model.get("routing_disabled_models", []), "codex Spark is routable after the weekly limit reset")
 check(codex_model.get("pricing_basis") == "subscription", "codex declares subscription pricing basis")
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
 for model_id in expected_codex_models:
     check(model_id in model_catalog, f"codex model catalog includes {model_id}")
-check(model_catalog["gpt-5.3-codex-spark"].get("routing_disabled") is True, "Codex Spark is disabled in the model catalog")
+check(model_catalog["gpt-5.3-codex-spark"].get("routing_disabled") is not True, "Codex Spark is enabled in the model catalog")
 check("routing_cost_overrides" not in codex_model, "codex model metadata omits cost overrides")
 
 claude_model = agents["claude"]["model"]
@@ -191,7 +197,8 @@ for model_id in expected_copilot_models:
     check(model_id in model_catalog, f"copilot model catalog includes {model_id}")
 check("claude-sonnet-4.6" in copilot_model.get("known_models", []), "Copilot-specific Claude model ID is preserved")
 check("claude-sonnet-4-6" in claude_model.get("known_models", []), "Claude-specific Claude model ID is preserved")
-check(model_catalog["claude-opus-4.7"].get("routing_disabled") is True, "Opus 4.7 is disabled by default")
+check("claude-opus-4.7" not in model_catalog, "Opus 4.7 is removed from the model catalog")
+check("claude-opus-4-8" in model_catalog, "Opus 4.8 remains in the model catalog")
 
 google_rules = provider_rules.get("google", {})
 check(google_rules.get("automatic_routing") == "all", "google provider can route through agy for all bands")
@@ -216,17 +223,37 @@ for model_id in expected_agy_models:
 
 anthropic_rules = provider_rules.get("anthropic", {})
 check(anthropic_rules.get("automatic_routing") == "all", "direct Claude routing remains automatic")
-check(anthropic_rules.get("preferred_agents") == ["claude", "github-copilot"], "direct Claude is preferred for Claude-provider models")
+check(anthropic_rules.get("preferred_agents") == ["claude"], "Claude-provider models do not route through disabled Copilot")
 check(anthropic_rules.get("fallback_agents") == ["claude"], "direct Claude is the fallback agent for Claude-provider models")
 
 agent_preference_rules = model_routing.get("agent_preference_rules", [])
 haiku_rules = [rule for rule in agent_preference_rules if any("haiku" in m for m in rule.get("models", []))]
 check(haiku_rules, "Haiku has explicit agent preference rule")
-check(haiku_rules[0].get("preferred_agents") == ["github-copilot", "claude"], "Haiku prefers Copilot before Claude")
+check(haiku_rules[0].get("preferred_agents") == ["claude"], "Haiku avoids disabled Copilot")
 anthropic_agent_rules = [rule for rule in agent_preference_rules if rule.get("provider") == "anthropic"]
 check(anthropic_agent_rules, "anthropic provider has explicit agent preference rule")
 check(anthropic_agent_rules[0].get("automatic_routing") == "all", "anthropic direct Claude rule remains automatic")
-check(anthropic_agent_rules[0].get("preferred_agents") == ["claude", "github-copilot"], "anthropic provider rule prefers direct Claude")
+check(anthropic_agent_rules[0].get("preferred_agents") == ["claude"], "anthropic provider rule avoids disabled Copilot")
+
+distribution = model_routing.get("usage_distribution", {})
+
+def check_no_positive_copilot_targets(node, path="usage_distribution"):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            next_path = f"{path}.{key}"
+            if key == "github-copilot" and isinstance(value, (int, float)) and value > 0:
+                check(False, f"github-copilot has positive routing target at {next_path}")
+            check_no_positive_copilot_targets(value, next_path)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            check_no_positive_copilot_targets(value, f"{path}[{index}]")
+
+for target_key in ("default_target_percent", "role_target_percent", "role_band_target_percent"):
+    check_no_positive_copilot_targets(distribution.get(target_key, {}), target_key)
+for role, preference in distribution.get("role_agent_preference", {}).items():
+    check("github-copilot" not in preference, f"github-copilot removed from {role} role preference")
+for group in model_routing.get("interchangeable_agent_groups", []):
+    check("github-copilot" not in group.get("agents", []), "disabled Copilot removed from interchangeable agent groups")
 
 for agent_id, agent in agents.items():
     fallback_order = agent.get("fallback_order", [])
@@ -524,9 +551,12 @@ claude_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent claude --model 
 assert_contains "${claude_gui_dry_run_output}" "--permission-mode=acceptEdits" "GUI mode uses acceptEdits permission mode for Claude"
 assert_not_contains "${claude_gui_dry_run_output}" "--dangerously-skip-permissions" "GUI mode avoids Claude permission bypass"
 
-copilot_gui_dry_run_output="$(GUI_MODE=1 "${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${copilot_gui_dry_run_output}" "--allow-all-tools" "GUI mode keeps Copilot non-interactive tool permission"
-assert_not_contains "${copilot_gui_dry_run_output}" "--allow-all-paths" "GUI mode avoids Copilot all-paths permission"
+set +e
+copilot_gui_dry_run_error="$(GUI_MODE=1 "${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended 2>&1 >/dev/null)"
+copilot_gui_dry_run_status=$?
+set -e
+[[ "${copilot_gui_dry_run_status}" -ne 0 ]] || fail "GUI mode must reject disabled Copilot before building a dry-run command"
+assert_contains "${copilot_gui_dry_run_error}" "agent is disabled: github-copilot" "GUI mode reports disabled Copilot"
 
 echo "PASS: run-agent GUI mode selects safer non-interactive permissions"
 
@@ -539,10 +569,42 @@ assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dr
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
 
-copilot_dry_run_output="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
-assert_contains "${copilot_dry_run_output}" "copilot " "copilot dry-run uses copilot command"
-assert_contains "${copilot_dry_run_output}" "--model gpt-5.5" "copilot dry-run forwards selected model"
-assert_contains "${copilot_dry_run_output}" " -p " "copilot dry-run uses prompt flag"
+set +e
+copilot_dry_run_error="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended 2>&1 >/dev/null)"
+copilot_dry_run_status=$?
+set -e
+[[ "${copilot_dry_run_status}" -ne 0 ]] || fail "run-agent must reject disabled Copilot before building a dry-run command"
+assert_contains "${copilot_dry_run_error}" "agent is disabled: github-copilot" "run-agent reports disabled Copilot"
+
+set +e
+copilot_alias_dry_run_error="$("${RUNNER_PATH}" --agent copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended 2>&1 >/dev/null)"
+copilot_alias_dry_run_status=$?
+set -e
+[[ "${copilot_alias_dry_run_status}" -ne 0 ]] || fail "run-agent must reject the disabled Copilot alias before building a dry-run command"
+assert_contains "${copilot_alias_dry_run_error}" "agent is disabled: github-copilot" "run-agent normalizes the Copilot alias before rejecting it"
+
+UNBLOCKED_COPILOT_REGISTRY="${WORK_DIR}/unblocked-copilot-registry.json"
+python3 - "${REGISTRY_PATH}" "${UNBLOCKED_COPILOT_REGISTRY}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    registry = json.load(handle)
+
+registry["agents"]["github-copilot"].pop("routing_disabled", None)
+registry["agents"]["github-copilot"].pop("routing_disabled_reason", None)
+
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    json.dump(registry, handle, indent=2)
+    handle.write("\n")
+PY
+
+set +e
+copilot_hard_block_error="$(AGENT_REGISTRY_FILE="${UNBLOCKED_COPILOT_REGISTRY}" "${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended 2>&1 >/dev/null)"
+copilot_hard_block_status=$?
+set -e
+[[ "${copilot_hard_block_status}" -ne 0 ]] || fail "run-agent must hard-block Copilot even if a registry copy omits routing_disabled"
+assert_contains "${copilot_hard_block_error}" "agent is disabled: github-copilot" "run-agent hard-block reports disabled Copilot"
 
 opencode_dry_run_output="$("${RUNNER_PATH}" --agent opencode --model github-copilot/gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${opencode_dry_run_output}" "opencode run --dangerously-skip-permissions --model github-copilot/gpt-5.5" "opencode dry-run places supported run permission flag after subcommand"

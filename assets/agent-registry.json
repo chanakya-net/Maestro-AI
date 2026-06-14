@@ -97,21 +97,6 @@
         "frontier"
       ]
     },
-    "claude-opus-4.7": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "min_band": "holy-fuck",
-      "routing_disabled": true,
-      "context_window": 1000000,
-      "strengths": [
-        "best-coding",
-        "agentic",
-        "adaptive-thinking",
-        "frontier"
-      ],
-      "_note": "GitHub Copilot CLI model ID for Opus 4.7 (dot format). Disabled by default because current routing must not use Opus 4.7."
-    },
     "claude-opus-4-8-high": {
       "provider": "anthropic",
       "ability": "frontier",
@@ -162,7 +147,6 @@
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 6,
-      "routing_disabled": true,
       "context_window": 400000,
       "strengths": [
         "agentic-coding",
@@ -170,7 +154,7 @@
         "preferred-over-5.3-non-mini",
         "easy-to-medium-hard-complexity"
       ],
-      "_note": "Known Codex CLI model, but disabled by default while the weekly Spark limit is hit."
+      "_note": "Known Codex CLI model. Weekly Spark limit has reset, so this model is eligible for routing."
     },
     "gpt-5.4": {
       "provider": "openai",
@@ -366,187 +350,163 @@
     "_strategy_note": "Sort candidates by complexity_weight and capability/context fit. Pricing fields are intentionally omitted because routing assumes subscription plans. Take the top selection_pool_size models, then randomly pick one from that pool.",
     "usage_distribution": {
       "default_target_percent": {
-        "codex": 55,
-        "claude": 30,
-        "github-copilot": 10,
+        "codex": 60,
+        "claude": 35,
         "agy": 5
       },
       "role_target_percent": {
         "complexity": {
-          "claude": 45,
-          "codex": 30,
-          "github-copilot": 15,
-          "agy": 10
+          "agy": 50,
+          "codex": 25,
+          "claude": 25
         },
         "impl": {
-          "codex": 60,
+          "codex": 65,
           "claude": 30,
-          "github-copilot": 5,
           "agy": 5
         },
         "review": {
-          "claude": 50,
+          "claude": 60,
           "codex": 35,
-          "github-copilot": 10,
           "agy": 5
         },
         "modify": {
-          "codex": 60,
+          "codex": 65,
           "claude": 30,
-          "github-copilot": 5,
           "agy": 5
+        },
+        "artifact-recovery": {
+          "codex": 60,
+          "claude": 40,
+          "agy": 0
         },
         "merge-recovery": {
           "codex": 60,
-          "claude": 35,
-          "github-copilot": 5,
+          "claude": 40,
           "agy": 0
         }
       },
       "role_band_target_percent": {
         "complexity": {
           "quite-easy": {
-            "claude": 40,
-            "codex": 30,
-            "github-copilot": 20,
-            "agy": 10
+            "codex": 40,
+            "claude": 35,
+            "agy": 25
           },
           "easy": {
-            "claude": 40,
-            "codex": 30,
-            "github-copilot": 20,
-            "agy": 10
+            "agy": 50,
+            "codex": 25,
+            "claude": 25
           },
           "medium": {
-            "claude": 45,
-            "codex": 30,
-            "github-copilot": 15,
-            "agy": 10
+            "agy": 50,
+            "codex": 25,
+            "claude": 25
           },
           "medium-hard": {
-            "claude": 45,
-            "codex": 35,
-            "github-copilot": 10,
-            "agy": 10
+            "agy": 50,
+            "codex": 25,
+            "claude": 25
           },
           "complex": {
-            "codex": 45,
-            "claude": 40,
-            "github-copilot": 10,
-            "agy": 5
+            "agy": 50,
+            "codex": 25,
+            "claude": 25
           },
           "holy-fuck": {
-            "codex": 55,
-            "claude": 40,
-            "github-copilot": 5,
-            "agy": 0
+            "agy": 50,
+            "codex": 25,
+            "claude": 25
           }
         },
         "impl": {
           "quite-easy": {
-            "codex": 45,
+            "codex": 55,
             "claude": 35,
-            "github-copilot": 10,
             "agy": 10
           },
           "easy": {
-            "codex": 50,
-            "claude": 35,
-            "github-copilot": 10,
+            "codex": 55,
+            "claude": 40,
             "agy": 5
           },
           "medium": {
-            "codex": 60,
+            "codex": 65,
             "claude": 30,
-            "github-copilot": 5,
             "agy": 5
           },
           "medium-hard": {
-            "codex": 65,
+            "codex": 70,
             "claude": 30,
-            "github-copilot": 5,
             "agy": 0
           },
           "complex": {
-            "codex": 65,
+            "codex": 70,
             "claude": 30,
-            "github-copilot": 5,
             "agy": 0
           },
           "holy-fuck": {
             "codex": 60,
-            "claude": 35,
-            "github-copilot": 5,
+            "claude": 40,
             "agy": 0
           }
         },
         "modify": {
           "quite-easy": {
-            "codex": 45,
+            "codex": 55,
             "claude": 35,
-            "github-copilot": 10,
             "agy": 10
           },
           "easy": {
-            "codex": 50,
-            "claude": 35,
-            "github-copilot": 10,
+            "codex": 55,
+            "claude": 40,
             "agy": 5
           },
           "medium": {
-            "codex": 60,
+            "codex": 65,
             "claude": 30,
-            "github-copilot": 5,
             "agy": 5
           },
           "medium-hard": {
-            "codex": 65,
+            "codex": 70,
             "claude": 30,
-            "github-copilot": 5,
             "agy": 0
           },
           "complex": {
-            "codex": 65,
+            "codex": 70,
             "claude": 30,
-            "github-copilot": 5,
             "agy": 0
           },
           "holy-fuck": {
             "codex": 60,
-            "claude": 35,
-            "github-copilot": 5,
+            "claude": 40,
             "agy": 0
           }
         },
         "review": {
           "easy": {
-            "claude": 45,
+            "claude": 55,
             "codex": 40,
-            "github-copilot": 10,
             "agy": 5
           },
           "medium": {
-            "claude": 50,
+            "claude": 60,
             "codex": 35,
-            "github-copilot": 10,
             "agy": 5
           },
           "medium-hard": {
-            "claude": 55,
+            "claude": 60,
             "codex": 35,
-            "github-copilot": 5,
             "agy": 5
           },
           "complex": {
-            "claude": 55,
+            "claude": 60,
             "codex": 35,
-            "github-copilot": 5,
             "agy": 5
           },
           "holy-fuck": {
-            "claude": 55,
+            "claude": 60,
             "codex": 40,
-            "github-copilot": 5,
             "agy": 0
           }
         }
@@ -555,29 +515,30 @@
         "default": [
           "codex",
           "claude",
-          "github-copilot",
           "agy"
         ],
         "complexity": [
           "claude",
           "codex",
-          "github-copilot",
           "agy"
         ],
         "review": [
           "claude",
           "codex",
-          "github-copilot",
+          "agy"
+        ],
+        "artifact-recovery": [
+          "codex",
+          "claude",
           "agy"
         ],
         "merge-recovery": [
           "codex",
           "claude",
-          "github-copilot",
           "agy"
         ]
       },
-      "_note": "Subscription usage targets are enforced by run-with-it-router.py. Overall default target reflects current subscriptions: Codex $200 plan gets 55%, Claude $100 plan gets 30%, GitHub Copilot 10%, Agy 5%. Role and band targets keep Codex primary while increasing direct Claude use for complexity, review, and hard recovery work."
+      "_note": "Subscription usage targets are enforced by run-with-it-router.py. Overall default target reflects current usable subscriptions: Codex 60%, Claude 35%, Agy 5%. GitHub Copilot is disabled because the current plan is exhausted. Complexity scoring intentionally routes about half of scoring work to Agy, with quite-easy scoring capped around 25% Agy. Implementation, review, and recovery keep Codex/Claude primary."
     },
     "provider_routing_rules": {
       "google": {
@@ -588,18 +549,17 @@
         "fallback_agents": [
           "agy"
         ],
-        "_note": "Google/Gemini models may be used for any complexity band, but must be executed via AGY only. Gemini models are not eligible on GitHub Copilot."
+        "_note": "Google/Gemini models may be used for any complexity band, but must be executed via AGY only."
       },
       "anthropic": {
         "automatic_routing": "all",
         "preferred_agents": [
-          "claude",
-          "github-copilot"
+          "claude"
         ],
         "fallback_agents": [
           "claude"
         ],
-        "_note": "Anthropic models route through any available agent, preferring direct Claude for the active Claude subscription. claude-opus-4-8 is min_band=holy-fuck and should not appear below that band. claude-opus-4.7 is disabled by default."
+        "_note": "Anthropic models route through any available agent, preferring direct Claude for the active Claude subscription. claude-opus-4-8 is min_band=holy-fuck and should not appear below that band. Opus routing uses only the 4.8 series."
       }
     },
     "hard_minimum_overrides": [
@@ -616,28 +576,18 @@
         "gpt-5.5",
         "claude-opus-4-8"
       ],
-      "_note": "These models are pinned into the pool regardless of subscription-neutral ranking. Ensures frontier options (GPT + Claude Opus 4.8) are always available at high complexity. Claude Opus is pinned only at holy-fuck; min_band=holy-fuck on catalog entries prevents it from routing into lower bands. Opus 4.7 is intentionally not pinned."
+      "_note": "These models are pinned into the pool regardless of subscription-neutral ranking. Ensures frontier options (GPT + Claude Opus 4.8) are always available at high complexity. Claude Opus is pinned only at holy-fuck; min_band=holy-fuck on catalog entries prevents it from routing into lower bands."
     },
-    "interchangeable_agent_groups": [
-      {
-        "agents": [
-          "codex",
-          "github-copilot"
-        ],
-        "selection": "random",
-        "_note": "Both run GPT models identically. Pick randomly between whichever are detected and not filtered."
-      }
-    ],
+    "interchangeable_agent_groups": [],
     "agent_preference_rules": [
       {
         "models": [
           "claude-opus-4-8"
         ],
         "preferred_agents": [
-          "claude",
-          "github-copilot"
+          "claude"
         ],
-        "_note": "When Opus is selected, prefer direct Claude agent first, then fall back to GitHub Copilot. Direct Claude runs the native Anthropic model without any intermediary."
+        "_note": "When Opus is selected, use direct Claude. Direct Claude runs the native Anthropic model without any intermediary."
       },
       {
         "models": [
@@ -645,20 +595,18 @@
           "claude-haiku-4-5"
         ],
         "preferred_agents": [
-          "github-copilot",
           "claude"
         ],
-        "_note": "If Haiku 4.5 is selected and both GitHub Copilot and Claude are available, choose GitHub Copilot before direct Claude. claude-haiku-4.5 = Copilot CLI ID; claude-haiku-4-5-20251001 = Claude CLI ID."
+        "_note": "If Haiku 4.5 is selected, use direct Claude while GitHub Copilot is disabled. claude-haiku-4.5 is retained as historical Copilot CLI metadata; claude-haiku-4-5-20251001 is the Claude CLI ID."
       },
       {
         "provider": "anthropic",
         "direct_agent": "claude",
         "automatic_routing": "all",
         "preferred_agents": [
-          "claude",
-          "github-copilot"
+          "claude"
         ],
-        "_note": "Direct Claude agent is preferred for Anthropic models under the current Claude subscription. claude-opus-4-8 is min_band=holy-fuck and excluded from lower bands automatically; claude-opus-4.7 is disabled by default."
+        "_note": "Direct Claude agent is preferred for Anthropic models under the current Claude subscription. claude-opus-4-8 is min_band=holy-fuck and excluded from lower bands automatically; Opus routing uses only the 4.8 series."
       }
     ]
   },
@@ -701,17 +649,14 @@
           "gpt-5.4-mini",
           "gpt-5.3-codex-spark"
         ],
-        "routing_disabled_models": [
-          "gpt-5.3-codex-spark"
-        ],
         "pricing_basis": "subscription",
         "metered_api_cost": false,
-        "_note": "Codex primary subscription models: gpt-5.5, gpt-5.4, and gpt-5.4-mini. gpt-5.3-codex-spark remains known but disabled for automatic routing while its weekly limit is hit."
+        "_note": "Codex primary subscription models: gpt-5.5, gpt-5.4, gpt-5.4-mini, and gpt-5.3-codex-spark. Spark is eligible again after the weekly limit reset."
       },
       "capability_band": "advanced",
       "fallback_order": [
-        "github-copilot",
-        "agy"
+        "agy",
+        "claude"
       ],
       "user_model_configuration": {
         "requires_user_model_config": false,
@@ -759,7 +704,6 @@
       },
       "capability_band": "advanced",
       "fallback_order": [
-        "github-copilot",
         "codex",
         "agy"
       ],
@@ -771,6 +715,8 @@
       }
     },
     "github-copilot": {
+      "routing_disabled": true,
+      "routing_disabled_reason": "GitHub Copilot plan is exhausted; keep blocked from automatic routing and direct run-agent use until explicitly re-enabled.",
       "display_name": "GitHub Copilot",
       "detection": {
         "command": "copilot",
@@ -809,10 +755,7 @@
         "_note": "gpt-5.3-codex-spark is not available through GitHub Copilot; Spark remains a Codex CLI model."
       },
       "capability_band": "balanced",
-      "fallback_order": [
-        "codex",
-        "agy"
-      ],
+      "fallback_order": [],
       "user_model_configuration": {
         "requires_user_model_config": false,
         "config_paths": [],
@@ -853,7 +796,6 @@
       },
       "capability_band": "balanced",
       "fallback_order": [
-        "github-copilot",
         "codex",
         "agy",
         "claude"
@@ -909,7 +851,6 @@
       },
       "capability_band": "advanced",
       "fallback_order": [
-        "github-copilot",
         "agy",
         "claude"
       ],
