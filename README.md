@@ -1,18 +1,18 @@
 # AI-Skills
 
-> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, cost-optimized model routing, and automatic merge recovery across 4 providers and 26 models.
+> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, live stage visibility, cost-optimized model routing, artifact recovery, and automatic merge recovery across 4 providers and 26 models.
 
-📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram &nbsp;·&nbsp;
+📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram
 
 ## Overview
 
-AI-Skills coordinates multiple AI coding agents (Codex, Claude, Gemini/Agy, OpenCode) through a two-layer orchestration runtime. It takes GitHub issues from "ready" to "merged PR" without human intervention — routing each task to the best agent/model based on complexity, managing parallel execution in isolated git worktrees, recovering from merge conflicts automatically, and opening a single final pull request. GitHub Copilot metadata is retained only for fail-fast blocking while the Copilot plan is exhausted.
+AI-Skills coordinates multiple AI coding agents (Codex, Claude, Gemini/Agy, OpenCode) through a multi-stage, two-layer orchestration runtime. It takes GitHub issues from "ready" to "merged PR" without human intervention — routing each task to the best agent/model based on complexity, managing parallel execution in isolated git worktrees, recovering worker artifacts and merge conflicts automatically, and opening a single final pull request. GitHub Copilot metadata is retained only for fail-fast blocking while the Copilot plan is exhausted.
 
 The system runs end-to-end:
 1. Analyze requirements and discover dependencies
 2. Generate a PRD and break it into implementation issues
 3. Route each issue to the right agent/model using real-time subscription-debt balancing
-4. Execute in parallel with isolated worktrees, review loops, and automatic merge recovery
+4. Execute in parallel with isolated worktrees, review loops, artifact/stall recovery, and automatic merge recovery
 5. Open a single PR with issue links, model usage summaries, and verification results
 
 ## Requirements
@@ -20,7 +20,7 @@ The system runs end-to-end:
 - **Git** — orchestration runs in isolated `git worktree`s (works without git too; it just skips commit-history context)
 - **Python 3** — the routing, state, artifact, and PR-body helpers are Python scripts
 - **GitHub CLI (`gh`)**, authenticated — for issue intake, comments, and the final PR (optional; falls back to local files when unavailable)
-- **At least one supported enabled coding agent** — Codex, Claude Code, Gemini/Antigravity, Agy, or OpenCode. GitHub Copilot is registry-disabled while the Copilot plan is exhausted.
+- **At least one enabled supported coding agent** — Codex, Claude Code, Gemini/Antigravity, Agy, or OpenCode. GitHub Copilot is registry-disabled while the Copilot plan is exhausted.
 
 ## Installation
 
@@ -74,6 +74,17 @@ If you already have labeled issues, skip straight to `run-with-it`. Tune the run
 PARALLEL_JOBS=1 ISSUE_LABEL=ready-for-agent  # then invoke run-with-it
 ```
 
+## What's New
+
+Recent `run-with-it` updates focus on keeping long multi-agent runs observable and recoverable:
+
+- **Live stage board** — the pool runner emits `STATUS|type=run-board|board=...` whenever issue stages change. You can print the same read-only view with `python3 assets/run-with-it-state.py status-board --state-file .run-with-it/main-state.json` or add `--oneline`.
+- **Artifact and stall recovery** — dispatchers now synthesize missing implementation/modification result artifacts from git ground truth, salvage stalled workers that left committed or dirty work behind, and escalate exhausted artifact failures to the Artifact Recovery Worker.
+- **Availability-aware routing** — auth, quota, and unsupported-model failures are emitted as `STATUS|type=agent-unavailable`, excluded from subsequent routing, and do not consume the capability fallback budget.
+- **Safer state repair** — `run-with-it-state.py requeue` quarantines stale terminal artifacts before a retry, and dependents blocked only by a newly completed issue are reset automatically.
+- **Safer branch refs** — issue branches use the flat `${RUN_FEATURE_BRANCH}-issue-<n>` form instead of nesting under the shared branch, avoiding Git ref path conflicts.
+- **Windows parity** — PowerShell runners now mirror the Bash dispatcher behavior for artifact synthesis, failure classification, and agent-unavailable reporting.
+
 ## Uninstall
 
 ```bash
@@ -107,9 +118,9 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 | File | What it does |
 |------|-------------|
-| `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Agy, and OpenCode behind a unified interface with status bus, telemetry, and GUI-safe permission downgrading; `github-copilot`/`copilot` fails fast while disabled. |
-| `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, and recovers missing result artifacts from git state. |
-| `run-with-it-pool.sh` / `run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, detects merge failures, and triggers recovery. |
+| `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Agy, and OpenCode behind a unified interface with status bus, telemetry, GUI-safe permission downgrading, and structured agent-unavailable reporting; `github-copilot`/`copilot` fails fast while disabled. |
+| `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, classifies failures as infrastructure vs. capability, and recovers missing result artifacts from git state. |
+| `run-with-it-pool.sh` / `run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, emits the live run-board, detects merge/sub-coordinator failures, and triggers recovery. |
 
 ### Prompts (agent instructions)
 
@@ -131,35 +142,46 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 |------|-------------|
 | `agent-registry.json` | Agent catalog — detection commands, invocation templates, 26-model catalog with complexity weights, routing rules, and subscription distribution targets. |
 | `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across usable providers with role-specific and complexity-band-specific targets (default: Codex 60%, Claude 35%, Agy 5%; GitHub Copilot is registry-disabled while the plan is exhausted). |
-| `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, and merge recovery state transitions. |
-| `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
+| `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, status-board rendering, requeue repair, auto-unblocking, and merge recovery transitions. |
+| `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs, classifies artifact failures, accepts verified no-ops, and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
 | `run-with-it-github-update.py` | GitHub terminal updater — posts issue comments with status/verification/token summaries and closes completed issues via `gh` CLI. |
 | `run-with-it-pr-body.py` | Final PR body renderer — generates markdown with closed issue links, per-issue model usage tables, and verification summaries. |
 | `worker-watch.sh` / `worker-watch.ps1` | Liveness watcher — checks PID existence, done sentinel presence, and log tail changes for background workers. |
 
 ## Runtime Architecture
 
-`run-with-it` uses a three-tier architecture designed to survive LLM context compression over multi-hour runs.
+`run-with-it` uses a multi-stage architecture designed to survive LLM context compression over multi-hour runs.
 
 ### Stage 1: Planning
 
-The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It creates a shared feature branch (`Maestro/<funny-action-animal>`, for example `Maestro/cunning-fox`) that will eventually hold all merged work. The execution plan and initial state are written to `.run-with-it/main-state.json`.
+The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It creates one shared run feature branch that will eventually hold all merged work. The execution plan and initial state are written to `.run-with-it/main-state.json`.
 
 ### Stage 2: Execution (Rolling Pool)
 
 The pool runner maintains up to `PARALLEL_JOBS` (default 4) concurrent Sub-Coordinators. Each Sub-Coordinator gets exactly one issue and follows this lifecycle:
 
-1. **Worktree bootstrap** — Creates an isolated issue branch and `git worktree` from the shared feature branch
+1. **Worktree bootstrap** — Creates an isolated issue branch and `git worktree` from the shared feature branch. Issue branches use `${RUN_FEATURE_BRANCH}-issue-<n>` so Git refs stay flat.
 2. **Complexity scoring** — Spawns a complexity agent to score the issue on 9 dimensions
 3. **Model routing** — `run-with-it-router.py` selects the best agent/model pair based on complexity band, role-specific usage targets, and current subscription debt
 4. **Implementation** — Worker agent writes code in the issue worktree, commits, and produces a result JSON with verification evidence
 5. **Review** — Review worker analyzes the diff and produces a verdict (approve/request-changes)
-6. **Modify** (if needed) — Modify worker addresses reviewer comments and re-verifies. Up to 8 review/modify cycles.
-7. **Merge** — Sub-Coordinator acquires the merge lock, fetches latest shared branch, merges the issue branch, verifies, and pushes
+6. **Modify** (if needed) — Modify worker addresses reviewer comments and re-verifies. Up to `MAX_ITERATIONS` review/modify cycles (default 20).
+7. **Merge** — Sub-Coordinator acquires the merge lock, merges in a fresh throwaway worktree, verifies, and pushes so a conflict cannot dirty the shared checkout
 
-After each Sub-Coordinator completes, the pool immediately fills the freed slot with the next ready issue. The Main Orchestrator reads only compact report JSONs — never raw logs — keeping its context window bounded regardless of run duration.
+After each Sub-Coordinator completes, the pool immediately fills the freed slot with the next ready issue. It also emits a compact run-board whenever stages change, for example `#12 impl(cyc1) | #13 blocked:12 | #14 done`. The Main Orchestrator reads only compact report JSONs — never raw logs — keeping its context window bounded regardless of run duration.
 
-### Stage 3: Merge Recovery
+### Stage 3: Worker Recovery
+
+Worker completion is artifact-driven: a role is complete only when the done sentinel and required JSON artifacts are valid. If a worker exits after committing work but before writing its artifact, the dispatcher can synthesize the missing result from git state. If a live worker stalls, the dispatcher first tries to salvage an advanced `HEAD` or dirty tree before terminating it.
+
+Failures are classified as:
+
+- `infrastructure` — account/auth, quota, or unsupported-model availability failures. The failed route is excluded and retried without consuming `MAX_AGENT_FALLBACKS`.
+- `capability` — a runner started but could not produce a valid artifact. These attempts consume the fallback budget.
+
+When implementation or modification artifact retries are exhausted, the Artifact Recovery Worker inspects the issue worktree, runs verification, commits salvage when safe, and returns `synthesized-result`, `requeue`, or `blocked`.
+
+### Stage 4: Merge Recovery
 
 When an issue branch conflicts with the shared feature branch, the Sub-Coordinator reports `outcome=merge_failed`. The pool runner transitions the issue to `merge_recovery` status and spawns a Merge Recovery Coordinator — a specialized agent that:
 
@@ -170,7 +192,7 @@ When an issue branch conflicts with the shared feature branch, the Sub-Coordinat
 
 Issues waiting on a `merge_recovery` issue remain blocked until recovery succeeds. Unrelated issues continue running in parallel.
 
-### Stage 4: Final PR
+### Stage 5: Final PR
 
 When all issues reach a terminal state (completed, failed, or blocked), the Main Orchestrator creates a single pull request from the shared feature branch. The PR body includes:
 
@@ -188,6 +210,7 @@ The system is built to survive LLM context compression — the Main Orchestrator
 - The Main Orchestrator never loads worker logs — only compact JSON reports
 - Sub-Coordinators never touch GitHub state — only the pool runner does
 - Worker completion requires both done sentinels and result artifacts; PID liveness alone is diagnostic
+- The live status bus is terminal-visible only: `.run-with-it/status/current.txt` is overwritten with the latest status, while `.run-with-it/status/events.log` is append-only
 
 ## Routing Controls
 
@@ -199,6 +222,8 @@ Override routing behavior with environment variables:
 | `MODEL` | Force a specific model |
 | `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
 | `AGENT_DENYLIST` | Comma-separated agent slugs to block |
+| `RUN_WITH_IT_MODEL_DENYLIST` | Comma-separated models or `agent:model` routes to exclude after availability failures |
+| `RUN_WITH_IT_MODEL_AVAILABILITY_FILE` | Persisted route-availability file used to avoid known unavailable routes |
 | `COMPLEXITY_LEVEL` | Force complexity band (quite-easy through holy-fuck) |
 | `COMPLEXITY_SCORE` | Force a numeric complexity score |
 | `AGENT_REGISTRY_FILE` | Override the path to `agent-registry.json` |
@@ -212,7 +237,15 @@ Control how `run-with-it` schedules and intakes work:
 | `PARALLEL_JOBS` | `4` | Rolling pool size — freed slots fill immediately. Set to `1` for sequential execution. |
 | `ISSUE_LABEL` | `ready-for-agent` | Label filter for issue intake |
 | `ISSUE_STATE` | `open` | Issue state filter |
+| `ISSUE_LIMIT` | `1000` | Maximum number of matching issues to fetch |
+| `SUB_COORD_AGENT` | `codex` | Agent used to run Sub-Coordinators |
+| `SUB_COORD_MODEL` | `gpt-5.5` | Model used to run Sub-Coordinators |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before a non-completing Sub-Coordinator raises a stall alert |
+| `STATUS_POLL_SECONDS` | `10` | Pool status polling cadence |
+| `MAX_AGENT_FALLBACKS` | `2` | Capability-failure retry budget per worker role |
+| `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` | `complexity,impl,modify` | Worker roles the dispatcher may terminate after stall detection |
+| `RUN_WITH_IT_WORKER_QUIET_SECONDS` | `120` | Seconds of worker silence before `quiet` status |
+| `RUN_WITH_IT_WORKER_STALL_SECONDS` | platform default | Seconds of worker silence before `stalled` status |
 
 ## Testing
 
@@ -227,7 +260,7 @@ bash tests/run-with-it-pool.test.sh
 bash tests/run-with-it-routing.test.sh
 ```
 
-The suite is contract-heavy — verifying exact string presence in output, skill boundaries, routing language, status events, done sentinels, and orchestration state transitions.
+The suite is contract-heavy — verifying exact string presence in output, skill boundaries, routing language, status events, done sentinels, artifact synthesis, failure classification, PowerShell parity, and orchestration state transitions.
 
 ## Troubleshooting
 
@@ -295,23 +328,19 @@ AI-Skills/
 │   ├── coordinator-rules.md               # Compact Sub-Coordinator rules
 │   └── main-orchestrator-rules.md         # Compact Main Orchestrator rules
 │
-├── tests/                                 # Contract test suite (22 files)
+├── tests/                                 # Contract test suite (24 files)
 │   ├── run-agent.test.sh                  # Runner behavior, dry-run, telemetry
 │   ├── run-with-it-dispatch.test.sh       # Dispatcher smoke tests, artifact recovery
 │   ├── run-with-it-pool.test.sh           # Pool scheduling, dependency awareness
 │   ├── run-with-it-routing.test.sh        # Router behavior, score-to-level mapping
 │   ├── install-assets-contract.test.sh    # Installer output verification
-│   └── ... (18 more)
+│   └── ... (19 more)
 │
 ├── docs/                                  # Design plans and specs
 │   └── superpowers/
 │       ├── plans/                         # Architecture decision documents
 │       └── specs/                         # Design specifications
 │
-├── apps/                                  # Optional companion applications
-│   └── control/                           # Agent control panel (Next.js)
-│
-├── .claude/                               # Claude Code plugin config
 ├── .claude-plugin/                        # Claude Code marketplace entry
 └── .agents/skills/                        # Duplicate skills for multi-agent discovery
 ```
