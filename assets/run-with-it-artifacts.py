@@ -39,6 +39,18 @@ COMPLEXITY_SCORE_KEYS = {
 }
 
 REVIEW_VERDICTS = {"approve", "revise", "reject"}
+
+# Required keys for a complete plan.json (see plan-prompt.md / sub-coordinator
+# Worker Done Files). The plan worker never commits, so there is no commit_sha.
+PLAN_REQUIRED_KEYS = {
+    "schema_version",
+    "issue",
+    "role",
+    "status",
+    "approach",
+    "complexity_level",
+    "slices",
+}
 REVIEW_SEVERITIES = {"info", "warning", "critical"}
 REVIEW_CATEGORIES = {
     "requirement",
@@ -275,6 +287,34 @@ def valid_complexity_payload(payload: Any) -> bool:
     return all(isinstance(scores[key], int) and 1 <= scores[key] <= 5 for key in COMPLEXITY_SCORE_KEYS)
 
 
+def valid_plan_payload(payload: Any) -> bool:
+    """Structural validity for plan.json. complexity_level must be a router band
+    and slices must be a non-empty ordered list; the plan never commits, so no
+    commit_sha is required. Issue-number matching is checked by the caller."""
+    if not isinstance(payload, dict):
+        return False
+    if not PLAN_REQUIRED_KEYS.issubset(payload):
+        return False
+    if payload.get("role") != "plan":
+        return False
+    if not isinstance(payload.get("schema_version"), int):
+        return False
+    # A self-reported failure is not a usable plan. Match the impl/modify
+    # convention (status must be exactly "success") so a failed planner cannot
+    # refine routing or be treated as a completed plan.
+    if payload.get("status") != "success":
+        return False
+    approach = payload.get("approach")
+    if not isinstance(approach, str) or not approach.strip():
+        return False
+    if payload.get("complexity_level") not in COMPLEXITY_LEVELS:
+        return False
+    slices = payload.get("slices")
+    if not isinstance(slices, list) or not slices:
+        return False
+    return True
+
+
 def complexity_payload_from_log(log_file: str) -> dict[str, Any] | None:
     if not log_file or not os.path.exists(log_file) or os.path.getsize(log_file) == 0:
         return None
@@ -430,6 +470,22 @@ def result_failure_reason(args: argparse.Namespace) -> str:
     if args.role == "complexity":
         if error or not valid_complexity_payload(payload):
             return "invalid-complexity-result-artifact"
+        return ""
+    if args.role == "plan":
+        if error or not valid_plan_payload(payload):
+            return "invalid-plan-result-artifact"
+        if str(payload.get("issue")) != str(args.issue):
+            return "invalid-plan-result-artifact"
+        # The human-readable plan.md is part of the required deliverable — the
+        # implementer/reviewer/modifier consume it via RUN_WITH_IT_PLAN_FILE. It
+        # lives at the conventional <issue-dir>/plan.md. Reject a plan.json that
+        # arrived without it so routing cannot refine while RUN_WITH_IT_PLAN_FILE
+        # is silently absent. (No issue-dir → can't locate plan.md, skip the check.)
+        issue_dir = getattr(args, "issue_dir", "") or ""
+        if issue_dir:
+            plan_file = os.path.join(issue_dir, "plan.md")
+            if not os.path.exists(plan_file) or os.path.getsize(plan_file) == 0:
+                return "missing-plan-file-artifact"
         return ""
     if args.role == "review":
         return review_result_reason(args, payload, error)

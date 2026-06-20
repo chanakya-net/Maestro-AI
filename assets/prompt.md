@@ -30,6 +30,7 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 - Assigned issue context and acceptance criteria.
 - Scope limits and constraints provided by the coordinator.
 - Relevant repository context discovered during local exploration.
+- `RUN_WITH_IT_PLAN_FILE` — the approach plan (`plan.md`) from the plan phase, when present. Its `slices[]` are your ordered tracer-bullet sequence. Absent for trivial issues (the plan phase is gated by complexity).
 - Check-in target metadata from the coordinator:
   - `RUN_WITH_IT_REPO_ROOT` — absolute path of the issue worktree where all edits, tests, staging, and commits must happen.
   - `RUN_WITH_IT_ISSUE_BRANCH` — issue-scoped branch that must receive the handoff commit.
@@ -50,6 +51,10 @@ Issue selection, dependency planning, runner selection, orchestration, reviewer 
 If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are already at maximum nesting depth. Do not use the Agent tool under any circumstances — skip any step that would require it and note the skip in your output report.
 
 ## Workflow
+
+**Step 0 — Consume the plan (when present).** If `RUN_WITH_IT_PLAN_FILE` is set and the file exists, read it **first**, before any other step. Treat its `slices[]` as your ordered tracer-bullet sequence — implement them in order, one `tdd-implementation` red-green-refactor loop per slice. Respect its `out_of_scope` list: do not do work the plan explicitly excludes.
+
+**Follow-but-may-deviate-and-report.** Follow the plan step by step. If the plan contradicts what you find in the code — a named file or helper does not exist, the chosen approach will not compile, a slice is wrong or out of order — **deviate to do the correct thing** AND record the deviation and its reason in your output report and in the `plan_deviations` array of the result artifact. Never follow a broken plan off a cliff; never silently discard the whole plan. When no plan is present, proceed from step 1 as usual.
 
 1. Read nearby code before editing.
 2. Reuse existing patterns, naming, and helpers.
@@ -164,6 +169,7 @@ Path contract:
 - Write the done sentinel exactly to `RUN_WITH_IT_DONE_FILE`.
 - Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
 - Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
+- When a plan was provided (`RUN_WITH_IT_PLAN_FILE`), populate `plan_deviations` with one entry per deviation — `{ "slice": "<order or name>", "reason": "why the plan was wrong here", "what_changed": "what you did instead" }`. Leave it `[]` when you followed the plan exactly or no plan was present.
 
 Path safety:
 - Never write implementation handoff JSON to SUB_COORD_REPORT_FILE.
@@ -192,6 +198,7 @@ payload = {
     "status": "success",
     "commit_sha": commit_sha,
     "files_committed": [item for item in files if item],
+    "plan_deviations": [],
     "verification": {
         "passed": True,
         "commands": ["REPLACE_WITH_EXACT_COMMANDS_RUN"],
@@ -213,6 +220,7 @@ $payload = @{
   status = "success"
   commit_sha = $implCommitSha
   files_committed = @($filesCommitted)
+  plan_deviations = @()
   verification = @{
     passed = $true
     commands = @("REPLACE_WITH_EXACT_COMMANDS_RUN")
@@ -235,6 +243,7 @@ Use this **only** when the acceptance criteria are already fully met upstream an
   "no_op": true,
   "commit_sha": "NONE",
   "files_committed": [],
+  "plan_deviations": [],
   "verification": {
     "passed": true,
     "commands": ["<exact verification commands run>"],

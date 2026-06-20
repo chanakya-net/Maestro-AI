@@ -65,12 +65,19 @@ Preferred upstream flow:
 **Sub-Coordinator** (spawned via `sub-coordinator-prompt.md`, runs in a child agent session):
 - Handles exactly ONE issue end-to-end
 - Creates an issue branch and issue worktree from the shared run feature branch
-- Runs complexity analysis, deterministic routing, implementation, review, and modification loops
+- Runs complexity analysis, deterministic routing, gated read-only planning, implementation, review, and modification loops
 - Runs child workers with `REPO_ROOT` pointing at the issue worktree while keeping logs/reports under the root `.run-with-it/`
 - Attempts the normal merge back into the shared feature branch under `.run-with-it/locks/merge.lock`
 - Writes a compact report JSON and full log file under `.run-with-it/issues/<n>/` when done
 - Spawns worker agents whose logs/results/done sentinels are written under `.run-with-it/issues/<n>/workers/<role>/`
 - Never touches GitHub; never updates `main-state.json`
+
+**Plan Worker** (spawned via `plan-prompt.md`, gated, runs after complexity and before implementation):
+- Reads the issue worktree **read-only** with a strong model and writes a concrete approach plan to `.run-with-it/issues/<n>/plan.md` plus a machine-readable `plan.json` under `workers/plan/`
+- Never edits or commits — it runs before the baseline SHA so it cannot corrupt the implementer's diff
+- Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification
+- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues skip planning
+- The implementer, reviewer, and modifier all consume `plan.md` via `RUN_WITH_IT_PLAN_FILE`
 
 **Merge Recovery Coordinator** (spawned via `merge-recovery-prompt.md`, runs only after `merge_failed`):
 - Handles one failed issue-branch merge
@@ -121,6 +128,8 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `ISSUE_STATE` | `open` | Issue state filter |
 | `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
 | `MAX_ITERATIONS` | `20` | Max review/modify cycles per Sub-Coordinator |
+| `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it |
+| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
 | `SUB_COORD_MODEL` | `gpt-5.5` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
@@ -159,6 +168,7 @@ Shared required files:
 - `review-prompt.md`
 - `modifier-prompt.md`
 - `complexity-prompt.md`
+- `plan-prompt.md`
 - `coordinator-rules.md`
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
@@ -200,12 +210,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\plan-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/plan-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -455,7 +465,7 @@ Execution-mode requirement (critical):
 
 ## Platform Dispatchers — Shared Role Launcher
 
-`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
+`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `plan`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -653,7 +663,7 @@ Emit parseable one-line status messages:
 - sub-coordinator pid-tracked: `STATUS|type=sub-coord-pid|issue=<n>|pid=<pid>|done_file=<path>|report_file=<path>`
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
 - live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
-- worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
+- worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|plan|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
 - sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|merge_failed|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
 - merge start: `STATUS|type=merge-start|issue=<n>|branch=<issue_branch>|target=<feature_branch>`
 - merge complete: `STATUS|type=merge-complete|issue=<n>|merge_sha=<sha>|pushed=<true|false>`

@@ -20,7 +20,7 @@ param(
     [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
     [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
     [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
-    [string]$AutoFailStalledRoles = $(if ($env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES) { $env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES } else { "complexity,impl,modify" }),
+    [string]$AutoFailStalledRoles = $(if ($env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES) { $env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES } else { "complexity,impl,modify,plan" }),
     [string]$DispatchOutFile = "",
     [switch]$Detach,
     [switch]$DetachedChild,

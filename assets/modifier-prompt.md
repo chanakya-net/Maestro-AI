@@ -36,6 +36,7 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - `REVIEW_HEAD_SHA` — the specific commit SHA of the implementation or last modification under review; do not substitute `HEAD`.
 - Fetch the full accumulated diff for this issue: `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — **never** `git diff <SHA>..HEAD`.
 - Complete reviewer JSON for the current review cycle (from `REVIEWER_INSTRUCTIONS_FILE`).
+- `RUN_WITH_IT_PLAN_FILE` — the original approach plan (`plan.md`) from the plan phase, when present. It carries the original intent (approach, ordered slices, `out_of_scope`) so on later cycles you do not re-derive intent from the diff alone. Absent for trivial issues (the plan phase is gated by complexity).
 - Required verification commands from the coordinator.
 - Check-in target metadata from the coordinator:
   - `RUN_WITH_IT_REPO_ROOT` — absolute path of the issue worktree where all edits, tests, staging, and commits must happen.
@@ -59,7 +60,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 ## Workflow
 
-1. Read the original issue context, latest diff, and complete reviewer JSON.
+1. Read the original issue context, latest diff, and complete reviewer JSON. **When `RUN_WITH_IT_PLAN_FILE` is present, read it too** — it carries the original intended approach, ordered slices, and `out_of_scope` list, giving you continuity across cycles instead of re-deriving intent from the diff. Honor that intent while addressing reviewer comments; if a reviewer comment requires departing from the plan, follow the reviewer (their feedback is current) and note the departure in your report.
 2. Identify every actionable reviewer comment, stable comment `id`, category, verification instruction, and blocking reason.
 3. Edit the working tree to address all reviewer comments that can be fixed safely.
 4. Run the required verification commands supplied by the coordinator.

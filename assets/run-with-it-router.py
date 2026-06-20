@@ -27,6 +27,20 @@ REVIEW_BUMP = {
     "complex": "holy-fuck",
     "holy-fuck": "holy-fuck",
 }
+# Planning is reasoning-bound: a vague plan makes weak executors worse, so the
+# planner must always be a high-ability model regardless of the issue's own
+# complexity. Shift the base band up two levels (capped at holy-fuck) so only
+# strong models qualify. Unlike review, plan routing does not depend on the
+# blind complexity score for capability — the gate already filters which issues
+# get a plan at all.
+PLAN_BUMP = {
+    "quite-easy": "medium",
+    "easy": "medium-hard",
+    "medium": "complex",
+    "medium-hard": "holy-fuck",
+    "complex": "holy-fuck",
+    "holy-fuck": "holy-fuck",
+}
 DEFAULT_AGENTS = ["codex", "agy", "claude"]
 PERMANENTLY_BLOCKED_AGENTS = {"github-copilot"}
 GLOBAL_DEBT_WEIGHT = 1.5
@@ -293,6 +307,8 @@ def min_band_allows(model_entry: dict[str, Any], level: str) -> bool:
 def routing_level(role: str, base_level: str) -> str:
     if role == "review":
         return REVIEW_BUMP.get(base_level, base_level)
+    if role == "plan":
+        return PLAN_BUMP.get(base_level, base_level)
     return base_level
 
 
@@ -622,7 +638,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--role",
         required=True,
-        choices=["complexity", "impl", "review", "modify", "artifact-recovery", "merge-recovery"],
+        choices=["complexity", "impl", "review", "modify", "artifact-recovery", "merge-recovery", "plan"],
     )
     parser.add_argument("--complexity-level", choices=BAND_ORDER)
     parser.add_argument("--complexity-score", type=int)
