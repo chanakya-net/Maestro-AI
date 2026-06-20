@@ -25,7 +25,7 @@ These rules apply for the entire lifetime of this session:
 
 ## Role
 
-You are a Sub-Coordinator. You handle **exactly ONE issue** assigned to you by the Main Orchestrator. The issue is fully provided in your context file. You run the full lifecycle for that issue: complexity analysis → routing → implementation → review → (modification if needed) → write compact report.
+You are a Sub-Coordinator. You handle **exactly ONE issue** assigned to you by the Main Orchestrator. The issue is fully provided in your context file. You run the full lifecycle for that issue: complexity analysis → routing → plan (gated) → implementation → review → (modification if needed) → write compact report.
 
 ## Input Contract
 
@@ -85,7 +85,7 @@ Resolve assets in this order:
 2. `$HOME/.ai-skill-collections/assets`.
 3. `./assets`.
 
-Shared required files: `prompt.md`, `agent-registry.json`, `run-with-it-router.py`, `run-with-it-artifacts.py`, `review-prompt.md`, `modifier-prompt.md`, `artifact-recovery-prompt.md`, `complexity-prompt.md`, `coordinator-rules.md`.
+Shared required files: `prompt.md`, `agent-registry.json`, `run-with-it-router.py`, `run-with-it-artifacts.py`, `review-prompt.md`, `modifier-prompt.md`, `artifact-recovery-prompt.md`, `complexity-prompt.md`, `plan-prompt.md`, `coordinator-rules.md`.
 
 Bash required helper files: `run-agent.sh`, `run-with-it-dispatch.sh`, `worker-watch.sh`.
 
@@ -123,6 +123,7 @@ cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 
 **Re-read `.run-with-it/coordinator-rules.md` before every major phase:**
 - before complexity sub-agent spawn
+- before plan sub-agent spawn
 - before routing
 - before each `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` invocation
 - before each review cycle step
@@ -164,7 +165,7 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 5. If a worker is still `running`, `quiet`, or `stalled` and lacks a valid result artifact, continue monitoring that worker instead of spawning another worker for the same role/cycle.
 6. If a worker has a valid result artifact, process that artifact and continue from the next phase. For example, a completed `modify` worker should update `modify_commit_sha` / `review_head_sha`, then continue into the next review cycle.
 7. If a worker failed without a valid artifact, apply the existing Worker Artifact Recovery Contract for that role/cycle, including the Artifact Recovery Worker before any terminal blocked report.
-8. Never rerun complexity, implementation, review, or modification phases that already have valid artifacts in the saved issue directory.
+8. Never rerun complexity, plan, implementation, review, or modification phases that already have valid artifacts in the saved issue directory. A valid `plan.json` (see *Worker Done Files*) plus its done file means the plan phase is complete — reuse `plan.md` and the stored `plan_complexity_level`; do not re-spawn the planner.
 9. Do not create a fresh issue worktree when saved `issue_branch` and `worktree_path` are present and valid. Reuse the saved worktree.
 
 ## Background Worker Monitoring Contract
@@ -297,7 +298,7 @@ Worker payloads must include `RUN_WITH_IT_RESULT_FILE=` at the top, followed by 
 ```text
 RUN_WITH_IT_RESULT_FILE=<absolute .run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json>
 RUN_WITH_IT_DONE_FILE=<absolute .run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done>
-RUN_WITH_IT_ROLE=<impl|review|modify|complexity>
+RUN_WITH_IT_ROLE=<impl|review|modify|complexity|plan>
 RUN_WITH_IT_ISSUE=<n>
 RUN_WITH_IT_REPO_ROOT=<absolute ISSUE_WORKTREE_PATH>
 RUN_WITH_IT_ISSUE_BRANCH=<issue branch name>
@@ -436,9 +437,10 @@ Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "STATUS|type=route-selected|iss
 
 Route helper inputs by phase:
 - complexity worker: `ROUTE_ROLE=complexity`, `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}` unless an explicit runtime override skips complexity entirely
-- implementer worker: `ROUTE_ROLE=impl`, use the scored complexity level from the complexity worker or fallback
-- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity level and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed
-- modifier worker: `ROUTE_ROLE=modify`, use the current implementation band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
+- plan worker: `ROUTE_ROLE=plan`, `ROUTE_COMPLEXITY_LEVEL=<blind scored complexity level>` — pass the blind band as-is; the router's `PLAN_BUMP` forces a strong band internally, so never pre-bump it here (see *Plan Sub-Agent Delegation*)
+- implementer worker: `ROUTE_ROLE=impl`, `ROUTE_COMPLEXITY_LEVEL=$EFFECTIVE_COMPLEXITY` — the plan's grounded re-score when a plan ran, otherwise the blind scored complexity level (see *Plan Sub-Agent Delegation*)
+- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed
+- modifier worker: `ROUTE_ROLE=modify`, use `$EFFECTIVE_COMPLEXITY` as the base band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
 If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
 
@@ -619,6 +621,150 @@ From `model_catalog` in `agent-registry.json`:
 
 Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
 
+### Plan Sub-Agent Delegation
+
+After complexity is scored (and before the baseline SHA is captured), optionally run a read-only **plan** sub-agent. A strong model reads the real code in the issue worktree and writes a concrete "how I'll build this" plan (`plan.md` + machine-readable `plan.json`) that the implementer, reviewer, and modifier all consume. The plan worker **never commits or edits** — it runs before `ISSUE_BASE_SHA` so it cannot corrupt the baseline diff.
+
+**Gate (reads the BLIND complexity level only).** The gate decides whether a plan is worth its cost. Refinement does not exist until a plan runs, so it can never feed back into its own gate.
+
+- `RUN_WITH_IT_PLAN_ENABLED` (default `1`) — master switch. When `0`, skip the phase entirely.
+- `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) — run a plan only when the blind complexity level is at or above this band.
+
+Resolve `EFFECTIVE_COMPLEXITY` once, right after this phase. It is the routing band for the `impl` spawn and **every later `modify` spawn**:
+- plan ran and `plan.json` has a valid `complexity_level` → `EFFECTIVE_COMPLEXITY = <plan complexity_level>` (the grounded re-score).
+- plan skipped (gate / disabled) or plan failed / invalid → `EFFECTIVE_COMPLEXITY = <blind complexity level>` (today's behavior, unchanged).
+
+Emit `STATUS|type=complexity-refined|issue=<n>|from=<blind>|to=<plan>` only when the override actually changes the band, so the routing decision is auditable.
+
+**Plan failure is non-blocking.** If the plan worker cannot produce a valid `plan.json` after the normal bounded artifact retries, treat the plan as skipped: emit `STATUS|type=plan-skipped|issue=<n>|reason=failed|...`, proceed to implementation with `EFFECTIVE_COMPLEXITY = <blind>` and no `RUN_WITH_IT_PLAN_FILE`. The plan is additive and gated — a failed or absent plan must never block the issue or degrade it below today's behavior. Do **not** spawn the Artifact Recovery Worker for a failed plan (it never commits, so there is no dirty work to salvage).
+
+Bash (gate + resolve; use the current tool's approved permission-escalation flow if dispatch is blocked by sandbox permissions):
+```bash
+band_rank() {
+  case "$1" in
+    quite-easy) echo 0 ;; easy) echo 1 ;; medium) echo 2 ;;
+    medium-hard) echo 3 ;; complex) echo 4 ;; holy-fuck) echo 5 ;;
+    *) echo -1 ;;
+  esac
+}
+PLAN_ENABLED="${RUN_WITH_IT_PLAN_ENABLED:-1}"
+PLAN_MIN_COMPLEXITY="${RUN_WITH_IT_PLAN_MIN_COMPLEXITY:-medium-hard}"
+BLIND_COMPLEXITY_LEVEL="$COMPLEXITY_LEVEL"          # scored blind band from the complexity worker / fallback / override
+EFFECTIVE_COMPLEXITY="$BLIND_COMPLEXITY_LEVEL"      # default; refined below only if a plan runs and re-scores
+PLAN_FILE="$RUN_WITH_IT_ISSUE_DIR/plan.md"          # top-level, reused across cycles
+PLAN_RAN=0
+
+if [ "$PLAN_ENABLED" != "1" ] || [ "$(band_rank "$BLIND_COMPLEXITY_LEVEL")" -lt "$(band_rank "$PLAN_MIN_COMPLEXITY")" ]; then
+  SKIP_REASON="below-threshold"; [ "$PLAN_ENABLED" != "1" ] && SKIP_REASON="disabled"
+  printf 'STATUS|type=plan-skipped|issue=%s|reason=%s|blind=%s|min=%s\n' \
+    "$SUB_COORD_ISSUE_NUMBER" "$SKIP_REASON" "$BLIND_COMPLEXITY_LEVEL" "$PLAN_MIN_COMPLEXITY" >> "$SUB_COORD_LOG_FILE"
+  # EFFECTIVE_COMPLEXITY stays = blind; proceed to baseline SHA capture + impl. Do NOT create workers/plan/.
+else
+  PLAN_RAN=1
+  # Route the plan worker: ROUTE_ROLE=plan, ROUTE_COMPLEXITY_LEVEL=<blind band>. The router's PLAN_BUMP forces a
+  # strong band internally, so pass the blind band as-is — never pre-bump it here.
+  PLAN_WORKER_DIR="$RUN_WITH_IT_ISSUE_DIR/workers/plan"
+  PLAN_LOG_FILE="$PLAN_WORKER_DIR/cycle-1.log"
+  PLAN_DONE_FILE="$PLAN_WORKER_DIR/cycle-1.done"
+  PLAN_RESULT_FILE="$PLAN_WORKER_DIR/cycle-1-result.json"   # == RUN_WITH_IT_PLAN_RESULT_FILE == RUN_WITH_IT_RESULT_FILE
+  PLAN_STATE_FILE="$PLAN_WORKER_DIR/cycle-1.state.json"
+  PLAN_CONTEXT_PAYLOAD_FILE="$PLAN_WORKER_DIR/cycle-1-context.md"
+  mkdir -p "$PLAN_WORKER_DIR"
+
+  # Assemble the plan payload: the real issue scope + acceptance criteria (the planner MUST know what to build),
+  # the blind complexity result, and the plan artifact paths. The plan worker reads the worktree itself.
+  {
+    printf 'Issue scope and acceptance criteria for issue #%s:\n' "$SUB_COORD_ISSUE_NUMBER"
+    # ... append the full slice requirements / acceptance criteria here ...
+    printf '\nBlind complexity: level=%s\n' "$BLIND_COMPLEXITY_LEVEL"
+    printf 'RUN_WITH_IT_PLAN_FILE=%s\n' "$PLAN_FILE"
+    printf 'RUN_WITH_IT_PLAN_RESULT_FILE=%s\n' "$PLAN_RESULT_FILE"
+  } > "$PLAN_CONTEXT_PAYLOAD_FILE"
+
+  # (route via the Deterministic Router Helper with ROUTE_ROLE=plan, ROUTE_COMPLEXITY_LEVEL="$BLIND_COMPLEXITY_LEVEL")
+  "$ASSET_ROOT/run-with-it-dispatch.sh" \
+    --asset-root "$ASSET_ROOT" \
+    --role plan \
+    --issue "$SUB_COORD_ISSUE_NUMBER" \
+    --cycle 1 \
+    --agent "$AGENT" \
+    --model "$MODEL" \
+    --context-file "$PLAN_CONTEXT_PAYLOAD_FILE" \
+    --prompt-file "$ASSET_ROOT/plan-prompt.md" \
+    --log-file "$PLAN_LOG_FILE" \
+    --done-file "$PLAN_DONE_FILE" \
+    --result-file "$PLAN_RESULT_FILE" \
+    --state-file "$PLAN_STATE_FILE" \
+    --repo-root "$ISSUE_WORKTREE_PATH" \
+    --issue-dir "$RUN_WITH_IT_ISSUE_DIR" \
+    --status-file "${RUN_WITH_IT_STATUS_FILE:-}" \
+    --events-log "${RUN_WITH_IT_EVENTS_LOG:-}" \
+    --quiet-seconds "${WORKER_QUIET_SECONDS:-120}" \
+    --stall-seconds "${WORKER_STALL_SECONDS:-300}" \
+    --detach
+  WORKER_PID="$(wait_for_worker_dispatcher_pid "$PLAN_STATE_FILE")"
+fi
+```
+
+**Plan dispatch rules** (differences from the impl spawn):
+- Pass `--repo-root "$ISSUE_WORKTREE_PATH"` so the planner can read real code. The plan is **not** an implementation role, so the dispatcher gives it read access without commit/check-in handling.
+- Do **not** set `CHECKIN_OWNER` / `CHECKIN_TARGET` in the payload — the plan worker never commits.
+- Pass `RUN_WITH_IT_PLAN_FILE` and `RUN_WITH_IT_PLAN_RESULT_FILE` into the context payload (the dispatcher also sets `RUN_WITH_IT_RESULT_FILE` from `--result-file`, which equals `PLAN_RESULT_FILE`).
+
+After the plan worker's done file and a valid `plan.json` are present (see *Worker Done Files* for plan completeness):
+1. Read `complexity_level` from `plan.json`. If `plan.json` is valid and its `complexity_level` is one of the router's bands, set `EFFECTIVE_COMPLEXITY` to it; otherwise keep `EFFECTIVE_COMPLEXITY = BLIND_COMPLEXITY_LEVEL`.
+2. If `EFFECTIVE_COMPLEXITY` differs from `BLIND_COMPLEXITY_LEVEL`, emit `STATUS|type=complexity-refined|issue=<n>|from=$BLIND_COMPLEXITY_LEVEL|to=$EFFECTIVE_COMPLEXITY`.
+3. Store `plan_file`, `plan_result_file`, a short `plan_summary` (the `approach` field), and `plan_complexity_level` into `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`.
+
+```bash
+if [ "$PLAN_RAN" = "1" ]; then
+  PLAN_COMPLEXITY_LEVEL="$("${PYTHON_BIN:-python3}" -c 'import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get("complexity_level","") if isinstance(d,dict) else "")
+except Exception:
+    print("")' "$PLAN_RESULT_FILE" 2>/dev/null || true)"
+  # Only refine when BOTH artifacts are complete: a valid band in plan.json AND a
+  # non-empty plan.md. Refining from a plan.json whose plan.md never landed would
+  # change routing while downstream workers get no plan to follow.
+  if [ -s "$PLAN_FILE" ] && [ -n "$PLAN_COMPLEXITY_LEVEL" ] && [ "$(band_rank "$PLAN_COMPLEXITY_LEVEL")" -ge 0 ]; then
+    EFFECTIVE_COMPLEXITY="$PLAN_COMPLEXITY_LEVEL"
+  fi
+  if [ "$EFFECTIVE_COMPLEXITY" != "$BLIND_COMPLEXITY_LEVEL" ]; then
+    printf 'STATUS|type=complexity-refined|issue=%s|from=%s|to=%s\n' \
+      "$SUB_COORD_ISSUE_NUMBER" "$BLIND_COMPLEXITY_LEVEL" "$EFFECTIVE_COMPLEXITY" >> "$SUB_COORD_LOG_FILE"
+  fi
+fi
+```
+
+PowerShell (dispatch shape — mirror the gate/resolve logic above using `band_rank` equivalents):
+```powershell
+$PLAN_WORKER_DIR = Join-Path (Join-Path $RUN_WITH_IT_ISSUE_DIR "workers") "plan"
+$PLAN_LOG_FILE = Join-Path $PLAN_WORKER_DIR "cycle-1.log"
+$PLAN_DONE_FILE = Join-Path $PLAN_WORKER_DIR "cycle-1.done"
+$PLAN_RESULT_FILE = Join-Path $PLAN_WORKER_DIR "cycle-1-result.json"
+$PLAN_STATE_FILE = Join-Path $PLAN_WORKER_DIR "cycle-1.state.json"
+New-Item -ItemType Directory -Force -Path $PLAN_WORKER_DIR | Out-Null
+& (Join-Path $ASSET_ROOT "run-with-it-dispatch.ps1") `
+  -AssetRoot $ASSET_ROOT `
+  -Role plan `
+  -Issue $env:SUB_COORD_ISSUE_NUMBER `
+  -Cycle 1 `
+  -Agent $AGENT `
+  -Model $MODEL `
+  -ContextFile $PLAN_CONTEXT_PAYLOAD_FILE `
+  -PromptFile (Join-Path $ASSET_ROOT "plan-prompt.md") `
+  -LogFile $PLAN_LOG_FILE `
+  -DoneFile $PLAN_DONE_FILE `
+  -ResultFile $PLAN_RESULT_FILE `
+  -StateFile $PLAN_STATE_FILE `
+  -RepoRoot $ISSUE_WORKTREE_PATH `
+  -IssueDir $RUN_WITH_IT_ISSUE_DIR `
+  -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
+  -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
+  -Detach
+```
+
 **Capture the issue baseline SHA before spawning the implementer.** This SHA anchors the reviewer's diff range and must never be `HEAD` at review time (other issues may commit in parallel).
 
 ```bash
@@ -636,6 +782,8 @@ RUN_WITH_IT_SHARED_FEATURE_BRANCH=$RUN_FEATURE_BRANCH
 CHECKIN_TARGET=issue-worktree
 CHECKIN_OWNER=impl-worker
 EOF
+# When the plan phase produced an approach plan, hand it to the implementer.
+[ -f "$PLAN_FILE" ] && printf 'RUN_WITH_IT_PLAN_FILE=%s\n' "$PLAN_FILE" >> "$CONTEXT_PAYLOAD_FILE"
 
 IMPL_WORKER_DIR="$RUN_WITH_IT_ISSUE_DIR/workers/impl"
 IMPL_LOG_FILE="$IMPL_WORKER_DIR/cycle-${CYCLE:-1}.log"
@@ -811,6 +959,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    - A per-file `+added/-deleted` summary only: `git diff --numstat <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — line counts, no diff text. **Do not read the full diff into this payload.**
    - The implementer (or modifier) verification results
    - The implementer telemetry stub
+   - When the plan phase produced an artifact, `RUN_WITH_IT_PLAN_FILE=$PLAN_FILE` (only when the file exists) so the reviewer can check the diff against the intended approach and out-of-scope list
    - Output paths (reviewer writes both files; Sub-Coordinator reads only the status file):
      - `REVIEWER_STATUS_FILE=$RUN_WITH_IT_ISSUE_DIR/workers/review/cycle-<n>-status.json`
      - `REVIEWER_INSTRUCTIONS_FILE=$RUN_WITH_IT_ISSUE_DIR/workers/review/cycle-<n>-instructions.json`
@@ -900,7 +1049,7 @@ The implementer (or modifier) has already committed all changes as part of its m
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, and `CHECKIN_OWNER=modify-worker`.
+   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, `CHECKIN_OWNER=modify-worker`, and `RUN_WITH_IT_PLAN_FILE=<PLAN_FILE>` when the plan artifact exists (the modifier reads it for original intent / cross-cycle continuity).
    - Run via this background-worker shape; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions:
 
      ```bash
@@ -911,6 +1060,8 @@ RUN_WITH_IT_SHARED_FEATURE_BRANCH=$RUN_FEATURE_BRANCH
 CHECKIN_TARGET=issue-worktree
 CHECKIN_OWNER=modify-worker
 EOF
+     # Hand the modifier the original approach plan for cross-cycle intent continuity.
+     [ -f "$PLAN_FILE" ] && printf 'RUN_WITH_IT_PLAN_FILE=%s\n' "$PLAN_FILE" >> "$MODIFIER_CONTEXT_PAYLOAD_FILE"
 
      MODIFY_WORKER_DIR="$RUN_WITH_IT_ISSUE_DIR/workers/modify"
      MODIFY_LOG_FILE="$MODIFY_WORKER_DIR/cycle-${CYCLE}.log"
@@ -1059,6 +1210,10 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
   "feature_branch": "Maestro/cunning-fox",
   "issue_branch": "Maestro/cunning-fox-issue-36",
   "worktree_path": ".run-with-it/worktrees/issue-36",
+  "plan_file": "<.run-with-it/issues/<n>/plan.md when the plan phase ran — null when skipped/disabled>",
+  "plan_result_file": "<workers/plan/cycle-1-result.json when the plan phase ran — null otherwise>",
+  "plan_summary": "<short approach from plan.json — null when no plan>",
+  "plan_complexity_level": "<grounded re-score from plan.json — null when no plan or invalid; drives EFFECTIVE_COMPLEXITY>",
   "queue": {
     "ready": [
       {
@@ -1104,6 +1259,8 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
 
 Write this file before every major phase transition:
 - Before complexity sub-agent spawn
+- Before plan sub-agent spawn (only when the gate runs it)
+- After plan done — store `plan_file`, `plan_result_file`, `plan_summary`, and `plan_complexity_level`, then resolve `EFFECTIVE_COMPLEXITY`
 - Before implementer spawn (capture and store `issue_base_sha` here)
 - After implementer done — store `impl_commit_sha` and set `review_head_sha = impl_commit_sha`
 - Before reviewer spawn
@@ -1221,6 +1378,7 @@ For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `comple
 Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specific sentinel under the issue folder:
 
 - `.run-with-it/issues/<n>/workers/complexity/cycle-1.done`
+- `.run-with-it/issues/<n>/workers/plan/cycle-1.done`
 - `.run-with-it/issues/<n>/workers/impl/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/review/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.done`
@@ -1229,6 +1387,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 The worker may write this file when its required artifacts are complete. The platform dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `run-agent.sh` / `run-agent.ps1`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
+- plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `run-with-it-artifacts.py failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
 - impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`)
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
@@ -1324,19 +1483,19 @@ Emit parseable status messages throughout execution. Every line below MUST be wr
 
 - `ROUTE|agent=<agent>|model=<model>|complexity_level=<level>|complexity_score=<score>|target_weight=<min>-<max>|model_weight=<n>|fallback_budget=<n>|allowlist=<value>|denylist=<value>|complexity_source=<sub-agent|fallback|override>`
 - `STATUS|type=spawn|agent=<name>|issue=#<n>|phase=assigned|scope=<owned-paths>`
-- `STATUS|type=agent-start|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>`
+- `STATUS|type=agent-start|issue=<n>|role=<complexity|plan|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>`
 - `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<missing-result-artifact|invalid-result-artifact|process-exited-missing-done-or-result|alive-but-silent>|action=<retry|artifact-recovery|blocked>`
 - `STATUS|type=worker-artifact-recovery|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|dirty=<true|false>|patch_file=<path-or-none>|status_file=<path-or-none>`
 - `STATUS|type=artifact-recovery-result|issue=<n>|failed_role=<impl|modify>|cycle=<n>|decision=<synthesized-result|requeue|blocked>|result_file=<path>`
-- `STATUS|type=agent-complete|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|status=<success|failed>`
+- `STATUS|type=agent-complete|issue=<n>|role=<complexity|plan|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|status=<success|failed>`
 - `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-degraded|task=<n>|reason=no-higher-band-agent`
 - `STATUS|type=complexity-skipped|reason=override`
 - `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
-- `STATUS|type=route-selected|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|reason=<selection-reason>`
-- `STATUS|type=route-helper-failed|issue=<n>|role=<complexity|impl|review|modify|artifact-recovery>|action=prompt-fallback`
+- `STATUS|type=route-selected|issue=<n>|role=<complexity|plan|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|reason=<selection-reason>`
+- `STATUS|type=route-helper-failed|issue=<n>|role=<complexity|plan|impl|review|modify|artifact-recovery>|action=prompt-fallback`
 - `STATUS|type=compact|action=user-required|state_file=<path>`
 - `STATUS|type=ledger|task=<task-id>|role=<impl|review|modify|artifact-recovery>|cycle=<n>|agent=<name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=<short-selection-reason>|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=<source>`
 

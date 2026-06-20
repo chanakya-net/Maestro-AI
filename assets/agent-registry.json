@@ -384,6 +384,11 @@
           "codex": 60,
           "claude": 40,
           "agy": 0
+        },
+        "plan": {
+          "claude": 70,
+          "codex": 30,
+          "agy": 0
         }
       },
       "role_band_target_percent": {
@@ -535,6 +540,11 @@
         "merge-recovery": [
           "codex",
           "claude",
+          "agy"
+        ],
+        "plan": [
+          "claude",
+          "codex",
           "agy"
         ]
       },

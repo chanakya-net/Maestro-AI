@@ -12,7 +12,7 @@ You are a **Sub-Coordinator**. You handle exactly ONE issue assigned to you in t
 - MUST write your compact report JSON to `$SUB_COORD_REPORT_FILE` before exiting. This is mandatory — the Main Orchestrator reads nothing else from you.
 - Your only terminal artifact is the report JSON at `$SUB_COORD_REPORT_FILE`. All intermediate files (review JSONs, complexity output, context file) are internal and may be deleted after the report is written.
 
-Re-read this file before every major phase: routing, implementation spawn, review spawn, modification spawn, result reading, and report writing.
+Re-read this file before every major phase: routing, plan spawn, implementation spawn, review spawn, modification spawn, result reading, and report writing.
 
 ## Execution Rules
 
@@ -20,7 +20,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Never run tests, build commands, or compile the project in this session. Only read result files from the worker-agent.
 - Never pause after routing to ask the user how to proceed. Spawn the worker-agent immediately.
 - Never store progress or agent output in memory. Read progress files line-by-line, write each STATUS line to `$SUB_COORD_LOG_FILE`, and forget each line.
-- Store all artifacts for this issue under `.run-with-it/issues/<n>/`. Store the Sub-Coordinator log at `.run-with-it/issues/<n>/sub-coordinator.log`. Store worker-agent artifacts under `.run-with-it/issues/<n>/workers/<role>/`, where `<role>` is `complexity`, `impl`, `review`, or `modify`.
+- Store all artifacts for this issue under `.run-with-it/issues/<n>/`. Store the Sub-Coordinator log at `.run-with-it/issues/<n>/sub-coordinator.log`. Store worker-agent artifacts under `.run-with-it/issues/<n>/workers/<role>/`, where `<role>` is `complexity`, `plan`, `impl`, `review`, or `modify`.
 - Store issue worktrees under `.run-with-it/worktrees/` and merge locks under `.run-with-it/locks/`.
 - Clear all in-memory issue state after writing the compact report JSON.
 - **Every STATUS, ROUTE, and COMPLEXITY line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
@@ -51,7 +51,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - Each worker-agent handles only its assigned role (impl, review, or modify) — not the full end-to-end flow.
 - Spawn every worker through the platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`), which wraps `run-agent.sh` / `run-agent.ps1` and applies the shared status, log, done-file, state-file, and monitoring contract through `worker-watch.sh` / `worker-watch.ps1`.
 - Launch worker dispatchers with `--detach` when invoking them from a short-lived shell/tool call. A raw background `&` job may receive shell job-control cleanup before it writes `dispatch-start`.
-- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_RESULT_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
+- Pass `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, `RUN_WITH_IT_LOG_FILE`, `RUN_WITH_IT_DONE_FILE`, `RUN_WITH_IT_RESULT_FILE`, `RUN_WITH_IT_STATE_FILE`, `RUN_WITH_IT_ISSUE`, and the correct `RUN_WITH_IT_ROLE` (`complexity`, `plan`, `impl`, `review`, or `modify`) through the dispatcher to every worker invocation.
 - Set each worker's `RUN_WITH_IT_LOG_FILE` to an issue-scoped path such as `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.log`.
 - Set each worker's `RUN_WITH_IT_DONE_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done`.
 - Set each worker's `RUN_WITH_IT_RESULT_FILE` to `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
@@ -88,7 +88,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 - After the final worker-agent (implementer or modifier) completes, read its output report.
 - Validate all required fields are present. Treat missing commits after a valid worker result, failed verification, reviewer `reject`, or valid `revise` verdict cycle-cap exhaustion as `failed-review`. Treat missing/malformed artifacts caused by worker handoff infrastructure as role-specific retry candidates first, then as Artifact Recovery Worker candidates, and as `blocked` only after artifact recovery declines or fails with a recovery handoff.
 - Do NOT post GitHub comments. Do NOT close the GitHub issue. Those are the Main Orchestrator's responsibility.
-- Include `model_usage` in the compact report. Normal Sub-Coordinators report only routed task roles `complexity`, `impl`, `review`, and `modify`; Merge Recovery Coordinator reports may contain `merge-recovery`. Add one entry per routed role with `role`, `cycle`, `agent`, `model`, and `selection_reason`. Do not read raw logs to reconstruct this; use the route decisions already selected and persisted in Sub-Coordinator state.
+- Include `model_usage` in the compact report. Normal Sub-Coordinators report only routed task roles `complexity`, `plan` (when the plan phase ran), `impl`, `review`, and `modify`; Merge Recovery Coordinator reports may contain `merge-recovery`. Add one entry per routed role with `role`, `cycle`, `agent`, `model`, and `selection_reason`. Do not read raw logs to reconstruct this; use the route decisions already selected and persisted in Sub-Coordinator state.
 - Write the compact report JSON to `$SUB_COORD_REPORT_FILE`. This is your only output artifact.
 - Clear all in-memory state after writing the report.
 
@@ -99,7 +99,7 @@ Re-read this file before every major phase: routing, implementation spawn, revie
 
 ## Resume Rules
 
-- On context compression, re-read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` to restore which phase you were in (complexity, routing, impl, review, modify).
+- On context compression, re-read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` to restore which phase you were in (complexity, routing, plan, impl, review, modify).
 - If an in-flight worker-agent has a result file, read the result and continue from the next phase.
 - If an in-flight worker-agent has no result file, re-spawn it from the beginning of that phase.
 - Never re-run a phase that already has a valid result file.

@@ -194,7 +194,7 @@ assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=impl`, `cycle=${CYCLE:
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=review`, `cycle`, reviewer agent/model, selected route `selection_reason`' "review sub-state write preserves selection reason"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`' "modifier sub-state write preserves selection reason"
 assert_file_contains "$COORDINATOR_RULES_FILE" 'model_usage' "coordinator rules require model usage in compact report"
-assert_file_contains "$COORDINATOR_RULES_FILE" 'Normal Sub-Coordinators report only routed task roles `complexity`, `impl`, `review`, and `modify`; Merge Recovery Coordinator reports may contain `merge-recovery`.' "coordinator rules split normal and merge-recovery model usage ownership"
+assert_file_contains "$COORDINATOR_RULES_FILE" 'Normal Sub-Coordinators report only routed task roles `complexity`, `plan` (when the plan phase ran), `impl`, `review`, and `modify`; Merge Recovery Coordinator reports may contain `merge-recovery`.' "coordinator rules split normal and merge-recovery model usage ownership"
 
 # Resume
 assert_contains 'Resume Flow' "documents resume flow"

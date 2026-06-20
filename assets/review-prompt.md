@@ -25,6 +25,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 - Fetch the diff: `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`.
 - Changed-file summary when available.
 - Verification evidence when available.
+- `RUN_WITH_IT_PLAN_FILE` — the approach plan (`plan.md`) from the plan phase, when present. It records the intended approach, the ordered slices, and an `out_of_scope` list. Absent for trivial issues (the plan phase is gated by complexity).
 - Required reviewer status output path: `REVIEWER_STATUS_FILE`.
 - Required reviewer instructions output path: `REVIEWER_INSTRUCTIONS_FILE`.
 
@@ -87,6 +88,7 @@ Populate `coverage_matrix` after completing these passes. Use `covered`, `issue_
 - `security`: complete the Threat Model Pass below.
 - `tests`: verification evidence and missing test coverage are checked.
 - `scope`: unrelated refactors, unrelated file churn, and ownership boundary violations are checked.
+- `plan_conformance`: **only when `RUN_WITH_IT_PLAN_FILE` is present** (otherwise `not_applicable`). Check the diff against the plan's intended approach and `out_of_scope` list. Flag **scope creep** (work beyond the plan, especially anything the plan explicitly excluded) and **unexplained deviations** (the diff departed from the plan without the implementer recording it in the result's `plan_deviations`). The plan is **intent, not law** — a deviation the implementer recorded with a sound reason is fine and must not be downgraded for departing from the plan alone. Treat this pass as advisory: raise findings at the severity the underlying correctness/scope issue warrants, not because the plan was not followed verbatim.
 - `maintainability`: risky complexity, brittle parsing, duplicated logic, and unclear contracts are checked.
 
 ### Threat Model Pass

@@ -46,6 +46,7 @@ assert_contains "${dry_run_output}" "sub-coordinator-prompt.md" "PowerShell dry-
 assert_contains "${dry_run_output}" "artifact-recovery-prompt.md" "PowerShell dry-run includes artifact recovery prompt asset"
 assert_contains "${dry_run_output}" "merge-recovery-prompt.md" "PowerShell dry-run includes merge recovery prompt asset"
 assert_contains "${dry_run_output}" "modifier-prompt.md" "PowerShell dry-run includes modifier prompt asset"
+assert_contains "${dry_run_output}" "plan-prompt.md" "PowerShell dry-run includes plan prompt asset"
 assert_contains "${dry_run_output}" "coordinator-rules.md" "PowerShell dry-run includes coordinator-rules asset"
 assert_contains "${dry_run_output}" "run-with-it-state.py" "PowerShell dry-run includes shared state helper asset"
 assert_contains "${dry_run_output}" "run-with-it-github-update.py" "PowerShell dry-run includes shared GitHub update helper asset"
