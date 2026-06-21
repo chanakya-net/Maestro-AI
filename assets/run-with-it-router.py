@@ -467,6 +467,7 @@ def select_pair(
     forced_agent: str | None,
     forced_model: str | None,
     exclude_model: str | None,
+    prefer_model: str | None = None,
 ) -> dict[str, Any]:
     level = routing_level(role, base_level)
     if forced_agent and forced_model:
@@ -545,7 +546,20 @@ def select_pair(
             pair["agent"],
         )
 
-    selected = sorted(pairs, key=sort_key)[0]
+    ordered = sorted(pairs, key=sort_key)
+    selected = ordered[0]
+    # Soft "sticky" preference: keep the same reviewer across an issue's review
+    # cycles so it converges on its own comments instead of a fresh model
+    # re-litigating the whole diff every cycle (issue 641). Unlike --forced-model
+    # this never fails the run: the preference applies only when the model
+    # survived every filter (band, exclusions, availability) and so appears among
+    # the live candidates. An excluded model (artifact retry) naturally drops out
+    # and we fall back to usage-share balancing.
+    if prefer_model and not forced_agent and not forced_model:
+        preferred = next((pair for pair in ordered if pair["model"] == prefer_model), None)
+        if preferred is not None:
+            selected = preferred
+            reason = "sticky-reviewer-preference"
     agent = selected["agent"]
     current_percent = (counts.get(agent, 0) / total * 100.0) if total else 0.0
     selected.update(
@@ -566,7 +580,7 @@ def select_pair(
             "target_percent": policy.get(pair["agent"], 0),
             "complexity_weight": pair["complexity_weight"],
         }
-        for pair in sorted(pairs, key=sort_key)[:8]
+        for pair in ordered[:8]
     ]
     selected["availability_exclusions"] = availability_summary(availability)
     return selected
@@ -648,6 +662,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forced-agent", default="")
     parser.add_argument("--forced-model", default="")
     parser.add_argument("--exclude-model", default="")
+    parser.add_argument("--prefer-model", default="")
     parser.add_argument("--model-denylist", default=os.environ.get("RUN_WITH_IT_MODEL_DENYLIST", ""))
     parser.add_argument("--availability-file", default=os.environ.get("RUN_WITH_IT_MODEL_AVAILABILITY_FILE", ""))
     parser.add_argument("--record", action="store_true")
@@ -673,6 +688,7 @@ def main() -> int:
     forced_agent = args.forced_agent or None
     forced_model = args.forced_model or None
     exclude_model = args.exclude_model or None
+    prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
 
     if args.record:
@@ -690,6 +706,7 @@ def main() -> int:
                 forced_agent,
                 forced_model,
                 exclude_model,
+                prefer_model,
             )
             ledger = append_decision(ledger, selection)
             write_json_atomic(ledger_file, ledger)
@@ -708,6 +725,7 @@ def main() -> int:
             forced_agent,
             forced_model,
             exclude_model,
+            prefer_model,
         )
         output = build_output(registry, ledger, ledger_file, selection, updated=False)
 

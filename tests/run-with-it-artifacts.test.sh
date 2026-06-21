@@ -142,6 +142,37 @@ set +e; synth_review; synth_rc=$?; set -e
 assert_eq "${synth_rc}" "1" "synthesize refuses to auto-approve when comment_count>0 with missing instructions"
 [[ ! -f "${WORK_DIR}/synth-instructions.json" ]] || fail "must not fabricate approve instructions when comments were reported"
 
+# --- issue 653: dispatcher repairs protected-category nitpicks instead of hard-blocking ---
+synth_review_reason() {
+  python3 "${ARTIFACT_HELPER}" failure-reason \
+    --role review \
+    --issue 653 \
+    --result-file "${WORK_DIR}/synth-status.json" \
+    --done-file "${WORK_DIR}/synth.done"
+}
+repairable_warning='{"id":"R001","file":"lib/services_controller.dart","line":115,"severity":"warning","category":"correctness","blocking":false,"fix":"Debounce the search refresh.","evidence":"Every keystroke races a refresh.","expected_change":"Add a 300ms debounce.","verification":"flutter test"}'
+test_nitpick='{"id":"R002","file":"test/services_repository_impl_test.dart","line":1,"severity":"info","category":"test","blocking":false,"fix":"[nitpick] Add a repository error-path test.","evidence":"Error mapping is untested.","expected_change":"Add the missing test.","verification":"flutter test"}'
+security_nitpick='{"id":"R003","file":"lib/app_router.dart","line":92,"severity":"info","category":"security","blocking":false,"fix":"[nitpick] Note: the route has no role guard; enforcement is menu-only.","evidence":"Menu hides it; server returns 403.","expected_change":"Confirm the pattern matches other routes.","verification":"Inspect sibling routes."}'
+
+# revise + protected-category nitpicks (test + security) → escalate to warnings, do NOT block.
+printf '%s\n' '{"verdict":"revise","comment_count":3,"nitpick_only":false}' > "${WORK_DIR}/synth-status.json"
+printf '%s\n' '{"verdict":"revise","summary":"Mixed warnings and protected-category nitpicks.","comments":['"${repairable_warning}"','"${test_nitpick}"','"${security_nitpick}"'],"blocking_reasons":[]}' > "${WORK_DIR}/synth-instructions.json"
+assert_eq "$(synth_review_reason)" "invalid-review-instructions-artifact" "protected-category nitpicks invalidate the raw revise artifact"
+set +e; synth_review; synth_rc=$?; set -e
+assert_eq "${synth_rc}" "0" "synthesize repairs a revise artifact whose only defect is protected-category nitpicks"
+assert_eq "$(synth_review_reason)" "" "repaired revise artifact validates after escalation"
+assert_file_contains "${WORK_DIR}/synth-instructions.json" 'dispatcher-repaired-protected-nitpick' "repaired instructions record the dispatcher repair source"
+grep -Fq -- '[nitpick]' "${WORK_DIR}/synth-instructions.json" && fail "repair must strip the [nitpick] prefix from escalated comments"
+python3 -c "import json,sys; d=json.load(open('${WORK_DIR}/synth-instructions.json')); sys.exit(0 if all(c['severity']=='warning' for c in d['comments']) else 1)" || fail "escalated comments must be warnings"
+python3 -c "import json,sys; d=json.load(open('${WORK_DIR}/synth-status.json')); sys.exit(0 if d['verdict']=='revise' and d['comment_count']==3 and d['nitpick_only'] is False else 1)" || fail "repaired status must stay consistent with the instructions"
+
+# approve + protected-category nitpick → must NOT be auto-repaired (the guardrail case).
+printf '%s\n' '{"verdict":"approve","comment_count":1,"nitpick_only":true}' > "${WORK_DIR}/synth-status.json"
+printf '%s\n' '{"verdict":"approve","summary":"Approve hiding a protected-category nitpick.","comments":['"${security_nitpick}"'],"blocking_reasons":[]}' > "${WORK_DIR}/synth-instructions.json"
+set +e; synth_review; synth_rc=$?; set -e
+assert_eq "${synth_rc}" "1" "synthesize does not silently rewrite an approve verdict carrying a protected-category nitpick"
+assert_file_contains "${WORK_DIR}/synth-instructions.json" '[nitpick]' "approve instructions are left untouched for reviewer retry"
+
 # --- Fix E: a verified no-op implementation is accepted as success ---
 impl_reason() {
   python3 "${ARTIFACT_HELPER}" failure-reason \

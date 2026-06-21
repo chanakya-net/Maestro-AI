@@ -15,6 +15,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 - Review the provided implementation diff and task context.
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree containing the issue branch under review.
 - Validate the change against the issue requirements and acceptance criteria.
+- **Acceptance criteria bound the scope.** Judge the diff against the issue's acceptance criteria *as written*. Do not raise `requirement` or blocking findings for capability beyond those criteria — a more complete or more ambitious implementation you can imagine is not a defect. A behavior that satisfies an acceptance criterion as written must not be downgraded because a fuller implementation is possible (e.g. if the criterion is "submit stays blocked when preview is missing," a disabled/no-op submit control satisfies it; wiring full submission is a *follow-up*, not a blocker). When no `RUN_WITH_IT_PLAN_FILE` is present there is no `out_of_scope` list, so this is your only scope anchor: record out-of-criteria suggestions as `info` follow-up comments, never as blocking.
 - Produce exactly two JSON files in the reviewer contract shape.
 
 ## Inputs Expected
@@ -26,6 +27,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 - Changed-file summary when available.
 - Verification evidence when available.
 - `RUN_WITH_IT_PLAN_FILE` — the approach plan (`plan.md`) from the plan phase, when present. It records the intended approach, the ordered slices, and an `out_of_scope` list. Absent for trivial issues (the plan phase is gated by complexity).
+- `PRIOR_REVIEW_LEDGER` — present on review cycle ≥ 2: newline-delimited `cycle=<k> instructions=<path> modify_result=<path>` lines pointing at earlier reviewer instructions and the modifier results that addressed them. See **Cross-Cycle Review Continuity**.
 - Required reviewer status output path: `REVIEWER_STATUS_FILE`.
 - Required reviewer instructions output path: `REVIEWER_INSTRUCTIONS_FILE`.
 
@@ -79,6 +81,14 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 - Prefer complete high-signal coverage over terse minimal output. It is acceptable for `comments` to contain many entries when the diff has many distinct issues.
 - Every actionable comment must have a stable `id` such as `R001`, `R002`, and so on. IDs must remain unique within the review artifact so the modifier can close each item exactly once.
 - Every actionable comment must include a category, concrete evidence, expected change, and verification guidance.
+
+## Cross-Cycle Review Continuity
+
+When `PRIOR_REVIEW_LEDGER` is present (review cycle ≥ 2), read each listed prior `instructions` file and its paired `modify_result` before reviewing the new diff. You are continuing the same review, not starting a new one.
+
+- **Confirm closure first.** For each prior comment, check whether the current diff resolves it. If resolved, do not re-raise it. If genuinely unresolved or incompletely fixed, re-raise it with the same intent and reference the prior `id` in your evidence.
+- **Do not re-litigate settled severity.** A finding a prior cycle accepted as a nitpick or non-blocking must not be promoted to blocking now unless the diff *changed* in a way that newly makes it blocking — state that change explicitly in the evidence. Stable standards across cycles are what let the loop converge.
+- **Drive toward approval.** Each cycle should reduce the open-finding set. Raise genuinely new issues only when they are concrete defects in the current diff — not a fresh stylistic pass over code that already passed earlier cycles. If the prior blocking findings are addressed and no new concrete defect exists, **approve**.
 
 ## Required Review Passes
 
@@ -211,6 +221,7 @@ The `comments` array must include every distinct actionable finding from the com
 - Both output files are internal artifacts — never shown to the end user directly.
 - The status file is the Sub-Coordinator's routing signal. Keep it small.
 - The instructions file is the modifier's working document. Make it complete and actionable.
+- **Pre-submit self-check (do this before writing the files):** scan every comment. If any has `"severity": "info"` with a `[nitpick]` `fix` **and** `category` in `{requirement, security, correctness, test, regression}`, it is malformed — a finding in those categories is never a nitpick. Fix it in place: raise `"severity"` to `"warning"`, remove the `[nitpick]` prefix from `fix`, and switch `verdict` to `"revise"` if it was `"approve"`. A whole artifact that contains even one such comment is rejected by the validator, so this single check is what keeps the review from being discarded.
 - Write both files before stopping.
 
 ## Completion Sentinel

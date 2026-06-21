@@ -402,6 +402,58 @@ def valid_review_instructions(payload: Any) -> bool:
     return True
 
 
+def repair_protected_nitpicks(payload: Any) -> Any | None:
+    """Salvage a revise/reject instructions artifact whose ONLY defect is one or
+    more protected-category nitpicks.
+
+    Reviewers (notably claude-sonnet-4-6) sometimes mark a genuinely low-priority
+    security/correctness/test/requirement/regression observation as an ``info``
+    ``[nitpick]``. The schema forbids that (those categories are never nitpicks),
+    so ``valid_review_comment`` rejects the comment and the whole artifact is
+    thrown out -- discarding every other valid finding and hard-blocking an
+    otherwise mergeable issue (issue 653, where two consecutive claude reviews
+    were lost this way). Rather than drop the feedback, escalate each offending
+    comment to a ``warning`` and strip the ``[nitpick]`` marker. Escalation is
+    fail-safe: it treats the finding as *more* important, the direction the
+    protected-category rule already wants.
+
+    Restricted to ``revise``/``reject`` verdicts, where every comment already
+    flows to the modifier. An ``approve`` carrying a protected-category nitpick is
+    the exact "real issue hidden as cosmetic" case the rule guards against, so it
+    is left to fail and retry rather than silently rewritten.
+
+    Returns a repaired copy, or ``None`` when the artifact is not repairable this
+    way (wrong shape, approve verdict, nothing to escalate, or some other
+    validation defect remains). Callers must re-check ``valid_review_instructions``
+    on the result before trusting it.
+    """
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("verdict") not in ("revise", "reject"):
+        return None
+    comments = payload.get("comments")
+    if not isinstance(comments, list):
+        return None
+    repaired_comments: list[Any] = []
+    changed = False
+    for comment in comments:
+        if (
+            isinstance(comment, dict)
+            and comment.get("category") in NON_NITPICK_CATEGORIES
+            and is_nitpick_comment(comment)
+        ):
+            comment = dict(comment)
+            comment["severity"] = "warning"
+            comment["fix"] = re.sub(r"^\s*\[nitpick\]\s*", "", comment.get("fix", ""))
+            changed = True
+        repaired_comments.append(comment)
+    if not changed:
+        return None
+    repaired = dict(payload)
+    repaired["comments"] = repaired_comments
+    return repaired
+
+
 def review_instructions_file(result_file: str) -> str:
     if result_file.endswith("-status.json"):
         return f"{result_file[:-len('-status.json')]}-instructions.json"
@@ -660,6 +712,36 @@ def synthesize_review(args: argparse.Namespace) -> bool:
             },
         )
         return result_failure_reason(args) == ""
+
+    # Repair protected-category nitpicks before giving up. A revise/reject
+    # instructions artifact that validates except for info+[nitpick] comments in a
+    # protected category (security, correctness, test, requirement, regression)
+    # must not hard-block the issue: escalate those comments to warnings so the
+    # reviewer's feedback reaches the modifier instead of being discarded. The
+    # status file is rewritten consistently (verdict/comment_count/nitpick_only)
+    # so the dispatcher's verdict and comment-count cross-checks still pass. An
+    # approve verdict is intentionally left to fail/retry (see issue 653).
+    if (
+        instructions_file
+        and instructions_payload is not None
+        and not instructions_error
+        and not valid_review_instructions(instructions_payload)
+    ):
+        repaired_instructions = repair_protected_nitpicks(instructions_payload)
+        if repaired_instructions is not None and valid_review_instructions(repaired_instructions):
+            repaired_instructions.setdefault("source", "dispatcher-repaired-protected-nitpick")
+            write_json_atomic(instructions_file, repaired_instructions)
+            repaired_comments = repaired_instructions["comments"]
+            write_json_atomic(
+                args.result_file,
+                {
+                    "verdict": repaired_instructions["verdict"],
+                    "comment_count": len(repaired_comments),
+                    "nitpick_only": nitpick_only(repaired_comments),
+                    "source": "dispatcher-repaired-protected-nitpick",
+                },
+            )
+            return result_failure_reason(args) == ""
 
     # Only synthesize an empty approve when the reviewer self-reported ZERO
     # comments. A status with comment_count > 0 but a missing/invalid

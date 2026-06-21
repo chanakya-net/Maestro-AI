@@ -297,6 +297,52 @@ assert_json_field "${forced_output}" 'payload["selection_reason"] == "forced-age
 
 echo "PASS: router honors explicit overrides"
 
+# --- sticky reviewer preference (issue 641): keep the same reviewer across cycles ---
+prefer_base="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/prefer-ledger.json" \
+  --role review \
+  --complexity-level medium \
+  --detected-agents codex,agy,claude)"
+# Pick a viable-but-not-default candidate to prove the preference changes the winner.
+prefer_target="$(python3 -c 'import json,sys; p=json.loads(sys.argv[1]); print(p["evaluated_candidates"][-1]["model"])' "${prefer_base}")"
+prefer_default="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["model"])' "${prefer_base}")"
+[[ "${prefer_target}" != "${prefer_default}" ]] || fail "test setup: need a non-default candidate to prefer"
+
+prefer_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/prefer-ledger.json" \
+  --role review \
+  --complexity-level medium \
+  --detected-agents codex,agy,claude \
+  --prefer-model "${prefer_target}")"
+assert_json_field "${prefer_output}" 'payload["model"] == "'"${prefer_target}"'"' "prefer-model is honored when the model is a live candidate"
+assert_json_field "${prefer_output}" 'payload["selection_reason"] == "sticky-reviewer-preference"' "router reports the sticky reviewer reason"
+
+# Excluding the preferred model (artifact retry) must override the preference and fall back.
+prefer_excluded="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/prefer-ledger.json" \
+  --role review \
+  --complexity-level medium \
+  --detected-agents codex,agy,claude \
+  --prefer-model "${prefer_target}" \
+  --exclude-model "${prefer_target}")"
+assert_json_field "${prefer_excluded}" 'payload["model"] != "'"${prefer_target}"'"' "excluded model overrides prefer-model"
+assert_json_field "${prefer_excluded}" 'payload["selection_reason"] != "sticky-reviewer-preference"' "router falls back when the preferred model is excluded"
+
+# A preference for a model that is not a viable candidate must fall back gracefully.
+prefer_missing="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/prefer-ledger.json" \
+  --role review \
+  --complexity-level medium \
+  --detected-agents codex,agy,claude \
+  --prefer-model definitely-not-a-real-model)"
+assert_json_field "${prefer_missing}" 'payload["selection_reason"] != "sticky-reviewer-preference"' "unknown preferred model falls back without error"
+
+echo "PASS: router honors sticky reviewer preference"
+
 record_output="$("${ROUTER_PATH}" \
   --registry-file "${REGISTRY_PATH}" \
   --ledger-file "${WORK_DIR}/record-ledger.json" \

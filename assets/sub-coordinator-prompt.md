@@ -397,6 +397,7 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --forced-agent "${FORCED_AGENT:-}" \
   --forced-model "${FORCED_MODEL:-}" \
   --exclude-model "${EXCLUDE_MODEL:-}" \
+  --prefer-model "${PREFER_MODEL:-}" \
   --model-denylist "${RUN_WITH_IT_MODEL_DENYLIST:-}" \
   --availability-file "${RUN_WITH_IT_MODEL_AVAILABILITY_FILE:-}" \
   --record)"
@@ -425,6 +426,7 @@ $routeJson = & $pythonBin $routerFile `
   --forced-agent $env:FORCED_AGENT `
   --forced-model $env:FORCED_MODEL `
   --exclude-model $env:EXCLUDE_MODEL `
+  --prefer-model $env:PREFER_MODEL `
   --model-denylist $env:RUN_WITH_IT_MODEL_DENYLIST `
   --availability-file $env:RUN_WITH_IT_MODEL_AVAILABILITY_FILE `
   --record
@@ -439,7 +441,7 @@ Route helper inputs by phase:
 - complexity worker: `ROUTE_ROLE=complexity`, `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}` unless an explicit runtime override skips complexity entirely
 - plan worker: `ROUTE_ROLE=plan`, `ROUTE_COMPLEXITY_LEVEL=<blind scored complexity level>` — pass the blind band as-is; the router's `PLAN_BUMP` forces a strong band internally, so never pre-bump it here (see *Plan Sub-Agent Delegation*)
 - implementer worker: `ROUTE_ROLE=impl`, `ROUTE_COMPLEXITY_LEVEL=$EFFECTIVE_COMPLEXITY` — the plan's grounded re-score when a plan ran, otherwise the blind scored complexity level (see *Plan Sub-Agent Delegation*)
-- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed
+- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). `EXCLUDE_MODEL` still wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion are unaffected; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles.
 - modifier worker: `ROUTE_ROLE=modify`, use `$EFFECTIVE_COMPLEXITY` as the base band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
 If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
@@ -885,6 +887,7 @@ Reviewer model selection rules:
 2. Reuse the main model-first algorithm.
 3. Exclude the current implementation `model_id` from the candidate pool.
 4. If the current implementation model is already at `holy-fuck`, stay at `holy-fuck` and pick a different model.
+5. **Sticky reviewer across cycles.** The model chosen on review cycle 1 is the issue reviewer. For review cycles ≥ 2, pass it as `PREFER_MODEL` so the same reviewer judges its own prior comments and can approve once they are addressed — this is what lets the review loop converge instead of each new model surfacing a fresh comment set (issue 641: 8 cycles, never approved, reviewer rotated almost every cycle). The preference is soft: `EXCLUDE_MODEL` (impl-model exclusion, artifact-retry exclusions) and availability still win, and a fallback selection does not overwrite the established issue reviewer for the next cycle.
 
 ### Degraded Fallback
 
@@ -960,6 +963,7 @@ Gather the `--numstat` data already collected via Appendix C after the implement
    - The implementer (or modifier) verification results
    - The implementer telemetry stub
    - When the plan phase produced an artifact, `RUN_WITH_IT_PLAN_FILE=$PLAN_FILE` (only when the file exists) so the reviewer can check the diff against the intended approach and out-of-scope list
+   - **Prior-review carry-forward (cycle ≥ 2 only).** Pass the prior review cycles' reviewer instructions and modifier results as a newline-delimited `PRIOR_REVIEW_LEDGER` of `cycle=<k> instructions=<path> modify_result=<path>` lines, one per completed cycle, pointing at `workers/review/cycle-<k>-instructions.json` and `workers/modify/cycle-<k>-result.json`. **Pass paths only — never read these files into the Sub-Coordinator context** (the budget rule in Appendix B forbids it; the reviewer reads them). This lets the reviewer see what was already raised and how the modifier closed each comment, so it confirms closure instead of re-deriving a fresh comment set or re-litigating severities it already accepted (issue 641).
    - Output paths (reviewer writes both files; Sub-Coordinator reads only the status file):
      - `REVIEWER_STATUS_FILE=$RUN_WITH_IT_ISSUE_DIR/workers/review/cycle-<n>-status.json`
      - `REVIEWER_INSTRUCTIONS_FILE=$RUN_WITH_IT_ISSUE_DIR/workers/review/cycle-<n>-instructions.json`
