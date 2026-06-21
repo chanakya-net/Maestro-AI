@@ -218,6 +218,16 @@ function Mark-MergeRecoveryDispatchFailed([string]$issue, [string]$reportFile) {
     Invoke-StateHelper @("mark-merge-recovery-dispatch-failed", "--state-file", $StateFile, "--issue", $issue, "--report-file", $reportFile) | Out-Null
 }
 
+# Archive any stale sub-coordinator terminal markers before a (re)dispatch so the
+# fresh runner never reuses a poisoned report and no-ops into a phantom "recovery
+# dispatcher failed". Preserves sub-state.json / workers/ for resume.
+function Quarantine-SubCoordMarkers([string]$issue, [string]$issueDir) {
+    $archived = ([string](Invoke-StateHelper @("quarantine-sub-coord-markers", "--issue-dir", $issueDir))).Trim()
+    if ($archived) {
+        Write-Status "STATUS|type=sub-coord-markers-quarantined|issue=$issue|archive_dir=$archived"
+    }
+}
+
 function Update-GitHubIssue([string]$issue, [string]$outcome, [string]$reportFile) {
     $lines = & $PythonExe $GitHubUpdateHelper update --state-file $StateFile --run-root $RunRoot --issue $issue --outcome $outcome --report-file $reportFile
     if ($LASTEXITCODE -ne 0) { Fail "GitHub update helper failed for issue $issue" }
@@ -281,6 +291,7 @@ function Spawn-Issue([string]$issue) {
     $doneFile = Join-Path $issueDir "sub-coordinator.done"
     $reportFile = Join-Path $issueDir "report.json"
     New-Item -ItemType Directory -Force -Path $issueDir | Out-Null
+    Quarantine-SubCoordMarkers $issue $issueDir
     $args = Get-DispatchArgs $issue $contextFile $issueDir $logFile $doneFile $reportFile $PromptFile
     $stdoutFile = Join-Path $issueDir "sub-coordinator.dispatch.stdout.tmp"
     $stderrFile = Join-Path $issueDir "sub-coordinator.dispatch.stderr.tmp"
@@ -299,6 +310,7 @@ function Spawn-RecoveryIssue([string]$issue, $decision, $oldEntry) {
     $doneFile = Join-Path $issueDir "sub-coordinator-recovery-$attempt.done"
     $reportFile = Join-Path $issueDir "report.json"
     New-Item -ItemType Directory -Force -Path $issueDir | Out-Null
+    Quarantine-SubCoordMarkers $issue $issueDir
     Write-SubCoordRecoveryContext $issue $contextFile $attempt $reason
     Mark-SubCoordRecoveryStarted $issue $attempt $reason $contextFile
     if ($oldEntry) { Remove-ProcessCapture $oldEntry }

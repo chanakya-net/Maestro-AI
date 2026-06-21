@@ -215,6 +215,18 @@ mark_merge_recovery_dispatch_failed() {
     --report-file "$2"
 }
 
+# Archive any stale sub-coordinator terminal markers (report.json, done, dispatcher
+# state, dispatch.out) before a (re)dispatch so the fresh runner never reuses a
+# poisoned report and no-ops into a phantom "recovery dispatcher failed". Preserves
+# sub-state.json / workers/ so recovery dispatches still resume from saved artifacts.
+quarantine_sub_coord_markers() {
+  local issue="$1" issue_dir="$2" archived
+  archived="$("$PYTHON_BIN" "$STATE_HELPER" quarantine-sub-coord-markers --issue-dir "$issue_dir" 2>/dev/null || true)"
+  if [ -n "$archived" ]; then
+    write_status "STATUS|type=sub-coord-markers-quarantined|issue=${issue}|archive_dir=${archived}"
+  fi
+}
+
 update_github_issue() {
   local line output
   if ! output="$(
@@ -363,6 +375,7 @@ spawn_issue() {
   report_file="${issue_dir}/report.json"
   state_file="${issue_dir}/sub-coordinator.state.json"
   mkdir -p "$issue_dir"
+  quarantine_sub_coord_markers "$issue" "$issue_dir"
   if ! launch_sub_coord_dispatcher "$issue" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir" "$state_file"; then
     write_status "STATUS|type=sub-coord-dispatch-bootstrap-failed|issue=${issue}|state_file=${state_file}|report_file=${report_file}"
     return 1
@@ -391,6 +404,7 @@ spawn_recovery_issue() {
   done_file="${issue_dir}/sub-coordinator-recovery-${attempt}.done"
   state_file="${issue_dir}/sub-coordinator-recovery-${attempt}.state.json"
   mkdir -p "$issue_dir"
+  quarantine_sub_coord_markers "$issue" "$issue_dir"
   write_sub_coord_recovery_context "$issue" "$context_file" "$attempt" "$reason"
   mark_sub_coord_recovery_started "$issue" "$attempt" "$reason" "$context_file"
   if ! launch_sub_coord_dispatcher "$issue" "$context_file" "$log_file" "$done_file" "$report_file" "$issue_dir" "$state_file"; then

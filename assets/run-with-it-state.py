@@ -264,6 +264,26 @@ def stale_terminal_artifact_paths(entry: dict[str, Any], issue_dir: str) -> list
     return paths
 
 
+# Sub-coordinator terminal markers whose *stale* presence makes a re-dispatched
+# sub-coordinator no-op: the fresh runner finds a prior report/done/alive state,
+# refuses to relaunch "duplicate" work, times out, and the control plane stamps a
+# phantom "sub-coordinator recovery dispatcher failed". Deliberately EXCLUDES
+# sub-state.json and workers/ -- those are resume state a recovery dispatch must
+# keep so it continues from saved artifacts instead of restarting from scratch.
+SUB_COORD_TERMINAL_MARKERS = (
+    "report.json",
+    "sub-coordinator.done",
+    "sub-coordinator.state.json",
+    "sub-coordinator.dispatch.out",
+)
+
+
+def sub_coord_terminal_marker_paths(issue_dir: str) -> list[str]:
+    if not issue_dir:
+        return []
+    return [os.path.join(issue_dir, name) for name in SUB_COORD_TERMINAL_MARKERS]
+
+
 def auto_unblock_dependents(
     state: dict[str, Any], completed_issue: str, completed: set[int], timestamp: str
 ) -> list[dict[str, Any]]:
@@ -755,6 +775,20 @@ def requeue_issue(args: argparse.Namespace) -> int:
     return 0
 
 
+def quarantine_sub_coord_markers(args: argparse.Namespace) -> int:
+    """Move any pre-existing sub-coordinator terminal markers aside before a
+    (re)dispatch so the fresh runner can never reuse a poisoned report and no-op.
+    Runs at the dispatch chokepoint, so it is correct no matter how the issue was
+    requeued (programmatic `requeue`, manual reset, or auto recovery). Idempotent:
+    prints the archive dir when something moved, or an empty line when already clean."""
+    label = args.label or f"predispatch-{utc_stamp()}"
+    archived = quarantine_artifacts(
+        args.issue_dir, sub_coord_terminal_marker_paths(args.issue_dir), label
+    )
+    print(archived or "")
+    return 0
+
+
 def issue_stage(entry: dict[str, Any], completed: set[int]) -> str:
     """Compact, human-readable current stage for an issue (no detail)."""
     status = entry.get("status")
@@ -905,6 +939,11 @@ def build_parser() -> argparse.ArgumentParser:
     requeue.add_argument("--issue", required=True)
     requeue.add_argument("--reason", default="")
     requeue.set_defaults(func=requeue_issue)
+
+    quarantine_markers = subparsers.add_parser("quarantine-sub-coord-markers")
+    quarantine_markers.add_argument("--issue-dir", required=True)
+    quarantine_markers.add_argument("--label", default="")
+    quarantine_markers.set_defaults(func=quarantine_sub_coord_markers)
 
     board = subparsers.add_parser("status-board")
     add_state_file(board)

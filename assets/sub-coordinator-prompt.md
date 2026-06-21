@@ -156,6 +156,8 @@ State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_
 
 If `SUB_COORD_RECOVERY_MODE=1` is present, this is a replacement Sub-Coordinator for an issue whose previous Sub-Coordinator process failed before writing the compact report.
 
+The control plane quarantines stale terminal markers (`report.json`, `sub-coordinator.done`, `sub-coordinator.state.json`, `sub-coordinator.dispatch.out`) before it launches you, so any such marker you observe at startup belongs to THIS dispatch. Never treat a pre-existing report, done file, or an apparently-alive prior runner PID as evidence that the work is already complete or that another instance is active — you are the sole runner for this dispatch. Resume from `sub-state.json`, do the outstanding work, and always write a fresh compact report; never no-op against found state.
+
 Before any worktree bootstrap, routing, worker spawn, merge attempt, or report write:
 
 1. Read `SUB_COORD_STATE_FILE` if provided; otherwise read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`.

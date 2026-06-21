@@ -328,7 +328,7 @@ AI-Skills/
 │   ├── coordinator-rules.md               # Compact Sub-Coordinator rules
 │   └── main-orchestrator-rules.md         # Compact Main Orchestrator rules
 │
-├── tests/                                 # Contract test suite (24 files)
+├── tests/                                 # Contract test suite (26 files)
 │   ├── run-agent.test.sh                  # Runner behavior, dry-run, telemetry
 │   ├── run-with-it-dispatch.test.sh       # Dispatcher smoke tests, artifact recovery
 │   ├── run-with-it-pool.test.sh           # Pool scheduling, dependency awareness
