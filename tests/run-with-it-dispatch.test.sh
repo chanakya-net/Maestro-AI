@@ -107,6 +107,7 @@ assert_contains "${dry_output}" "RUN_WITH_IT_DONE_FILE=${DONE_FILE}" "dry-run se
 assert_contains "${dry_output}" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run sets result file"
 assert_contains "${dry_output}" "RUN_WITH_IT_STATE_FILE=${STATE_FILE}" "dry-run sets watchdog state file"
 assert_contains "${dry_output}" "RUN_WITH_IT_ISSUE_DIR=${ISSUE_DIR}" "dry-run sets issue-scoped artifact folder"
+assert_contains "${dry_output}" "RUN_WITH_IT_ARTIFACT_HELPER=${ROOT_DIR}/assets/run-with-it-artifacts.py" "dry-run exposes artifact helper to workers"
 
 validate_output="$("${DISPATCHER}" \
   --validate-only \

@@ -66,8 +66,9 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 7. Complete the required coverage_matrix and Threat Model Pass before choosing a verdict.
 8. Write the status file to `REVIEWER_STATUS_FILE`.
 9. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
-10. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
-11. Stop.
+10. If `RUN_WITH_IT_ARTIFACT_HELPER` is present, validate the review artifacts with it and fix any reported reason before continuing.
+11. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
+12. Stop.
 
 ## Review Completeness
 
@@ -111,6 +112,7 @@ Write exactly **two** JSON files.
 Path contract:
 - `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `run-with-it-dispatch.sh`.
 - Write the full actionable review JSON exactly to `REVIEWER_INSTRUCTIONS_FILE`.
+- When `RUN_WITH_IT_ARTIFACT_HELPER` is set, run it before the done sentinel and treat any non-empty failure reason as invalid output to fix, not as a warning to ignore.
 - Write `RUN_WITH_IT_DONE_FILE` only after both JSON files exist and parse as valid JSON.
 - Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.
 
@@ -192,6 +194,8 @@ The `comments` array must include every distinct actionable finding from the com
 
 - A **nitpick** is a style, naming, or cosmetic preference that has no impact on correctness, security, or maintainability.
 - Mark nitpick comments with `"severity": "info"` and prefix the `fix` field with `[nitpick]`.
+- Nitpick comments may use only `category="maintainability"`, `category="performance"`, or `category="scope"`.
+- Requirement, security, correctness, test, and regression findings are never nitpicks. If one of those categories applies, use `"severity": "warning"` or `"severity": "critical"` and do not prefix `fix` with `[nitpick]`.
 - If the **only** issues found are nitpicks, set `verdict` to `"approve"`. Do not block or downgrade to `"revise"` for nitpicks alone.
 - Do not invent nitpicks. Only raise them when a genuine preference exists and the improvement is unambiguous.
 
@@ -214,8 +218,20 @@ The `comments` array must include every distinct actionable finding from the com
 If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after both JSON files are valid and fully flushed to disk:
 
 ```bash
+if [ -n "${RUN_WITH_IT_ARTIFACT_HELPER:-}" ]; then
+  artifact_reason="$(python3 "$RUN_WITH_IT_ARTIFACT_HELPER" failure-reason \
+    --role review \
+    --issue "${RUN_WITH_IT_ISSUE:-unknown}" \
+    --result-file "$REVIEWER_STATUS_FILE" \
+    --done-file "${RUN_WITH_IT_DONE_FILE:-}")"
+  if [ -n "$artifact_reason" ]; then
+    printf 'Review artifact invalid: %s\n' "$artifact_reason" >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
 printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
 ```
 
-Do not write the done file before `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` both exist and parse as valid JSON.
+Do not write the done file before `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` both exist, parse as valid JSON, and pass `RUN_WITH_IT_ARTIFACT_HELPER` validation when that helper is available.

@@ -206,6 +206,7 @@ dry_output="$("$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -EventsLog "$EVENTS_LOG")"
 assert_contains "$dry_output" "RUN_WITH_IT_STATE_FILE=${STATE_FILE}" "dry-run sets state file"
 assert_contains "$dry_output" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run sets result file"
+assert_contains "$dry_output" "RUN_WITH_IT_ARTIFACT_HELPER=${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py" "dry-run exposes artifact helper to workers"
 assert_contains "$dry_output" "run-agent.ps1" "dry-run wraps run-agent.ps1"
 
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \

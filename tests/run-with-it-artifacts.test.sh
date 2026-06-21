@@ -17,6 +17,13 @@ assert_eq() {
   [[ "${actual}" == "${expected}" ]] || fail "${message} (expected: ${expected}, got: ${actual})"
 }
 
+assert_file_contains() {
+  local file="$1"
+  local needle="$2"
+  local message="$3"
+  grep -Fq -- "${needle}" "${file}" || fail "${message} (missing: ${needle})"
+}
+
 WORK_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "${WORK_DIR}"
@@ -61,6 +68,17 @@ write_review_artifacts \
   '{"verdict":"approve","comment_count":1,"nitpick_only":false}' \
   '{"verdict":"approve","summary":"Only a nitpick remains.","comments":['"${nitpick_comment}"'],"blocking_reasons":[]}'
 assert_eq "$(review_reason)" "review-nitpick-only-mismatch" "review status nitpick_only must match comment details"
+
+protected_category_nitpick='{"id":"R004","file":"assets/review-prompt.md","line":103,"severity":"info","category":"test","blocking":false,"fix":"[nitpick] Prefer a more specific regression test name.","evidence":"The suggestion is cosmetic even though it is about a test file.","expected_change":"Rename the test only if it improves clarity.","verification":"Run the existing test suite."}'
+write_review_artifacts \
+  '{"verdict":"approve","comment_count":1,"nitpick_only":true}' \
+  '{"verdict":"approve","summary":"Protected-category nitpick must be invalid.","comments":['"${protected_category_nitpick}"'],"blocking_reasons":[]}'
+assert_eq "$(review_reason)" "invalid-review-instructions-artifact" "nitpicks are not valid in protected review categories"
+
+assert_file_contains \
+  "${ROOT_DIR}/assets/review-prompt.md" \
+  'Nitpick comments may use only `category="maintainability"`, `category="performance"`, or `category="scope"`.' \
+  "review prompt documents validator-compatible nitpick categories"
 
 approval_warning_comment='{"id":"R003","file":"assets/prompt.md","line":60,"severity":"warning","category":"correctness","blocking":false,"fix":"Handle the missing acceptance criterion.","evidence":"The diff does not implement the required status field.","expected_change":"Add the missing field.","verification":"Run the acceptance test."}'
 write_review_artifacts \
