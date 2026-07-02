@@ -1,7 +1,7 @@
 # ai-skill-collections — smart multi-agent installer for Windows (v2)
 #
 # One line:
-#   irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.ps1 | iex
 #
 # Detects which AI coding agents are on your machine and installs the skills
 # for each one. Skips agents that aren't installed. Safe to re-run.
@@ -15,7 +15,7 @@ param(
     [switch]$Help
 )
 
-$REPO         = "chanakya-net/AI-Skills"
+$REPO         = "chanakya-net/Maestro-AI"
 $ASSETS_REF   = if ($env:ASSETS_REF)  { $env:ASSETS_REF }  else { "main" }
 $ASSETS_DEST  = if ($env:ASSETS_DEST) { $env:ASSETS_DEST } else { "$env:USERPROFILE\.ai-skill-collections\assets" }
 
@@ -29,7 +29,7 @@ ai-skill-collections installer (Windows)
 
 USAGE
   install.ps1 [flags]
-  irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.ps1 | iex
 
 FLAGS
   -DryRun           Print what would run, do nothing.

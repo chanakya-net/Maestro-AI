@@ -27,13 +27,13 @@ The system runs end-to-end:
 **macOS / Linux / Git Bash:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.sh | bash
 ```
 
 **Windows PowerShell:**
 
 ```powershell
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.ps1 | iex
 ```
 
 The installer detects which coding agents you have (Codex, Claude, Gemini, Agy, OpenCode; Copilot metadata remains blocked) and installs skills + shared assets for each. Assets go to `~/.ai-skill-collections/assets` (macOS/Linux) or `%USERPROFILE%\.ai-skill-collections\assets` (Windows).
@@ -41,11 +41,11 @@ The installer detects which coding agents you have (Codex, Claude, Gemini, Agy, 
 **Per-agent install (without shared assets):**
 
 ```bash
-claude plugin install github:chanakya-net/AI-Skills              # Claude Code
-gemini extensions install github.com/chanakya-net/AI-Skills       # Gemini CLI
-npx -y skills add chanakya-net/AI-Skills -a codex                # Codex
-npx -y skills add chanakya-net/AI-Skills -a github-copilot        # GitHub Copilot skill target; runtime use remains blocked while exhausted
-npx -y skills add chanakya-net/AI-Skills -a antigravity           # Antigravity
+claude plugin install github:chanakya-net/Maestro-AI              # Claude Code
+gemini extensions install github.com/chanakya-net/Maestro-AI       # Gemini CLI
+npx -y skills add chanakya-net/Maestro-AI -a codex                # Codex
+npx -y skills add chanakya-net/Maestro-AI -a github-copilot        # GitHub Copilot skill target; runtime use remains blocked while exhausted
+npx -y skills add chanakya-net/Maestro-AI -a antigravity           # Antigravity
 ```
 
 Override the asset destination or the git ref the installer pulls from:
@@ -89,10 +89,10 @@ Recent `run-with-it` updates focus on keeping long multi-agent runs observable a
 
 ```bash
 # macOS / Linux / Git Bash
-curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/uninstall.sh | bash
 
 # Windows PowerShell
-irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
+irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/uninstall.ps1 | iex
 ```
 
 Preview before removing: use `--dry-run` (bash) or `-DryRun` (PowerShell).

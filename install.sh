@@ -2,17 +2,17 @@
 # ai-skill-collections — smart multi-agent installer (v2)
 #
 # One line (macOS / Linux / Git Bash):
-#   curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.sh | bash
 #
 # Windows (PowerShell) — use install.ps1 instead:
-#   irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.ps1 | iex
 #
 # Detects which AI coding agents are on your machine and installs the skills
 # for each one. Skips agents that aren't installed. Safe to re-run.
 
 set -euo pipefail
 
-REPO="chanakya-net/AI-Skills"
+REPO="chanakya-net/Maestro-AI"
 ASSETS_REF="${ASSETS_REF:-main}"
 ASSETS_DEST="${ASSETS_DEST:-$HOME/.ai-skill-collections/assets}"
 
@@ -35,7 +35,7 @@ ai-skill-collections installer
 
 USAGE
   install.sh [flags]
-  curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/install.sh | bash
 
 FLAGS
   --dry-run         Print what would run, do nothing.

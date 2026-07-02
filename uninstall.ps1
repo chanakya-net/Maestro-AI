@@ -1,7 +1,7 @@
 # ai-skill-collections — full uninstaller for Windows
 #
 # One line:
-#   irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
+#   irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/uninstall.ps1 | iex
 #
 # Removes agent registrations and shared assets so the next install starts clean.
 
@@ -14,7 +14,7 @@ param(
     [switch]$Help
 )
 
-$REPO = "chanakya-net/AI-Skills"
+$REPO = "chanakya-net/Maestro-AI"
 $ASSETS_DEST = if ($env:ASSETS_DEST) { $env:ASSETS_DEST } else { "$env:USERPROFILE\.ai-skill-collections\assets" }
 $DEFAULT_ASSETS_ROOT = "$env:USERPROFILE\.ai-skill-collections"
 $SKILL_NAMES = @("break-req", "create-git-issue", "help-me-debug", "run-with-it", "save-tokens", "tdd-implementation")
@@ -30,7 +30,7 @@ ai-skill-collections uninstaller (Windows)
 
 USAGE
   uninstall.ps1 [flags]
-  irm https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.ps1 | iex
+  irm https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/uninstall.ps1 | iex
 
 FLAGS
   -DryRun           Print what would run, do nothing.

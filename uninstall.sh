@@ -2,13 +2,13 @@
 # ai-skill-collections — full uninstaller
 #
 # One line (macOS / Linux / Git Bash):
-#   curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/uninstall.sh | bash
 #
 # Removes agent registrations and shared assets so the next install starts clean.
 
 set -euo pipefail
 
-REPO="chanakya-net/AI-Skills"
+REPO="chanakya-net/Maestro-AI"
 ASSETS_DEST="${ASSETS_DEST:-$HOME/.ai-skill-collections/assets}"
 DEFAULT_ASSETS_ROOT="$HOME/.ai-skill-collections"
 SKILL_NAMES=("break-req" "create-git-issue" "help-me-debug" "run-with-it" "save-tokens" "tdd-implementation")
@@ -30,7 +30,7 @@ ai-skill-collections uninstaller
 
 USAGE
   uninstall.sh [flags]
-  curl -fsSL https://raw.githubusercontent.com/chanakya-net/AI-Skills/main/uninstall.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/chanakya-net/Maestro-AI/main/uninstall.sh | bash
 
 FLAGS
   --dry-run         Print what would run, do nothing.
