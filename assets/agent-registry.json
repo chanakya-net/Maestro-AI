@@ -688,6 +688,7 @@
           "{{permission_mode}}",
           "{{model_flag}}",
           "{{extra_args}}",
+          "{{model_settings}}",
           "{{prompt}}"
         ],
         "prompt_argument_template": "{{prompt}}"

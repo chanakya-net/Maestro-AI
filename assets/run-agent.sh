@@ -434,6 +434,7 @@ with open(path, "r", encoding="utf-8") as handle:
 
 agents = registry.get("agents", {})
 aliases = registry.get("aliases", {})
+model_catalog = registry.get("model_catalog", {})
 
 def agent_id(value):
     return aliases.get(value, value)
@@ -473,6 +474,8 @@ elif action == "default_model":
     print(agent(arg).get("model", {}).get("default", ""))
 elif action == "model_flag_template":
     print(agent(arg).get("model", {}).get("flag_template", ""))
+elif action == "model_reasoning_effort":
+    print(model_catalog.get(arg, {}).get("reasoning_effort", ""))
 elif action == "known_models":
     for item in agent(arg).get("model", {}).get("known_models", []):
         print(item)
@@ -509,6 +512,7 @@ json_value() {
       default_permission) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].permission_modes.default // ""' ;;
       default_model) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].model.default // ""' ;;
       model_flag_template) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].model.flag_template // ""' ;;
+      model_reasoning_effort) json_jq --arg m "${arg}" '.model_catalog[$m].reasoning_effort // ""' ;;
       known_models) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | .agents[$id].model.known_models[]?' ;;
       requires_config) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | if (.agents[$id].user_model_configuration.requires_user_model_config // false) then "true" else "false" end' ;;
       skip_unconfigured) json_jq --arg a "${arg}" '(.aliases[$a] // $a) as $id | if (.agents[$id].user_model_configuration.skip_when_unconfigured // false) then "true" else "false" end' ;;
@@ -711,6 +715,11 @@ if [[ -n "${MODEL}" ]]; then
   model_flag="${model_flag_template//\{\{model\}\}/${MODEL}}"
 fi
 
+model_reasoning_effort=""
+if [[ -n "${MODEL}" ]]; then
+  model_reasoning_effort="$(json_value model_reasoning_effort "${MODEL}")"
+fi
+
 cmd=("${invoke_command}")
 while IFS= read -r template_arg; do
   case "${template_arg}" in
@@ -736,6 +745,11 @@ while IFS= read -r template_arg; do
       if [[ -n "${AGENT_EXTRA_ARGS}" ]]; then
         read -r -a extra_parts <<< "${AGENT_EXTRA_ARGS}"
         cmd+=("${extra_parts[@]}")
+      fi
+      ;;
+    "{{model_settings}}")
+      if [[ -n "${model_reasoning_effort}" ]]; then
+        cmd+=("-c" "model_reasoning_effort=${model_reasoning_effort}")
       fi
       ;;
     *)

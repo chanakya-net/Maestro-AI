@@ -536,6 +536,14 @@ try {
         if ($flagTpl) { $modelFlag = $flagTpl -replace '\{\{model\}\}', $MODEL }
     }
 
+    $modelReasoningEffort = ""
+    if ($MODEL -and $registry.model_catalog -and $registry.model_catalog.PSObject.Properties[$MODEL]) {
+        $modelEntry = $registry.model_catalog.PSObject.Properties[$MODEL].Value
+        if ($modelEntry.reasoning_effort) {
+            $modelReasoningEffort = [string]$modelEntry.reasoning_effort
+        }
+    }
+
     # ── Build command from args_template ──────────────────────────────────────
     $invokeCmd = $agentDef.invocation.command
     if (-not $invokeCmd) { Fail "agent has no invocation command: $AGENT" }
@@ -562,6 +570,12 @@ try {
                 if ($AGENT_EXTRA_ARGS) {
                     $AGENT_EXTRA_ARGS.Split(' ', [System.StringSplitOptions]::RemoveEmptyEntries) |
                         ForEach-Object { $cmdArgs.Add($_) }
+                }
+            }
+            "{{model_settings}}" {
+                if ($modelReasoningEffort) {
+                    $cmdArgs.Add("-c")
+                    $cmdArgs.Add("model_reasoning_effort=$modelReasoningEffort")
                 }
             }
             default {

@@ -624,6 +624,40 @@ assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dr
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
 
+for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
+  output="$("${RUNNER_PATH}" \
+    --agent codex \
+    --model "${model}" \
+    --context-file "${CONTEXT_FILE}" \
+    --prompt-file "${PROMPT_FILE}" \
+    --dry-run \
+    --unattended)"
+  assert_contains "${output}" "--model ${model}" "Codex dry-run uses canonical ${model} ID"
+  assert_contains "${output}" "-c model_reasoning_effort=high" "Codex dry-run applies high reasoning to ${model}"
+done
+
+precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
+  "${RUNNER_PATH}" \
+  --agent codex \
+  --model gpt-5.6-sol \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+case "${precedence_output}" in
+  *"model_reasoning_effort=medium"*"model_reasoning_effort=high"*) ;;
+  *) fail "registry high reasoning must follow caller extra arguments" ;;
+esac
+
+legacy_output="$("${RUNNER_PATH}" \
+  --agent codex \
+  --model gpt-5.4 \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+assert_not_contains "${legacy_output}" "model_reasoning_effort=high" "legacy Codex models do not inherit high reasoning"
+
 set +e
 copilot_dry_run_error="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended 2>&1 >/dev/null)"
 copilot_dry_run_status=$?
