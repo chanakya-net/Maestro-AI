@@ -149,8 +149,8 @@ router = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(router)
 
-def automatic(level):
-    return router.candidate_model_ids(registry, "impl", level, None, None)
+def automatic(level, role="impl"):
+    return router.candidate_model_ids(registry, role, level, None, None)
 
 assert "gpt-5.6-luna" not in automatic("quite-easy")
 assert "gpt-5.6-luna" in automatic("easy")
@@ -162,7 +162,20 @@ assert "gpt-5.6-sol" in automatic("complex")
 assert "gpt-5.6-sol" in automatic("holy-fuck")
 for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
     assert "gpt-5.5" not in automatic(level)
+
+automatic_bands = {
+    "gpt-5.6-luna": ["easy"],
+    "gpt-5.6-terra": ["medium"],
+    "gpt-5.6-sol": ["medium-hard", "complex", "holy-fuck"],
+}
+for model_id, expected_bands in automatic_bands.items():
+    assert catalog[model_id].get("routing_bands") == expected_bands
+    for role in ("impl", "complexity"):
+        for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
+            assert (model_id in automatic(level, role)) == (level in expected_bands)
+
 assert router.candidate_model_ids(registry, "impl", "complex", "gpt-5.5", None) == ["gpt-5.5"]
+assert router.candidate_model_ids(registry, "complexity", "complex", "gpt-5.6-luna", None) == ["gpt-5.6-luna"]
 PY
 
 echo "PASS: registry declares subscription usage distribution"

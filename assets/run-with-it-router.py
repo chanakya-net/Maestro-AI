@@ -304,6 +304,12 @@ def min_band_allows(model_entry: dict[str, Any], level: str) -> bool:
     return BAND_ORDER.index(level) >= BAND_ORDER.index(min_band)
 
 
+def automatic_band_allows(model_entry: dict[str, Any], level: str) -> bool:
+    if "routing_bands" in model_entry:
+        return level in model_entry["routing_bands"]
+    return min_band_allows(model_entry, level)
+
+
 def routing_level(role: str, base_level: str) -> str:
     if role == "review":
         return REVIEW_BUMP.get(base_level, base_level)
@@ -389,6 +395,10 @@ def candidate_model_ids(
             continue
         if role == "complexity" and entry.get("exclude_from_complexity") is True:
             continue
+        if "routing_bands" in entry:
+            if automatic_band_allows(entry, level):
+                candidates.append(model_id)
+            continue
         if not min_band_allows(entry, level):
             continue
         weight = int(entry.get("complexity_weight", 99))
@@ -401,7 +411,7 @@ def candidate_model_ids(
             model_id != exclude_model
             and model_id in catalog
             and entry.get("explicit_only") is not True
-            and min_band_allows(entry, level)
+            and automatic_band_allows(entry, level)
         ):
             if model_id not in candidates:
                 candidates.append(model_id)
@@ -416,6 +426,8 @@ def candidate_model_ids(
             if entry.get("explicit_only") is True:
                 continue
             if role == "complexity" and entry.get("exclude_from_complexity") is True:
+                continue
+            if "routing_bands" in entry:
                 continue
             if not min_band_allows(entry, level):
                 continue

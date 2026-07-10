@@ -124,6 +124,9 @@
       "ability": "balanced",
       "complexity_weight": 3,
       "min_band": "easy",
+      "routing_bands": [
+        "easy"
+      ],
       "context_window": 372000,
       "reasoning_effort": "high",
       "strengths": [
@@ -137,6 +140,9 @@
       "ability": "advanced",
       "complexity_weight": 5,
       "min_band": "medium",
+      "routing_bands": [
+        "medium"
+      ],
       "context_window": 372000,
       "reasoning_effort": "high",
       "strengths": [
@@ -150,6 +156,11 @@
       "ability": "frontier",
       "complexity_weight": 7,
       "min_band": "medium-hard",
+      "routing_bands": [
+        "medium-hard",
+        "complex",
+        "holy-fuck"
+      ],
       "context_window": 372000,
       "reasoning_effort": "high",
       "strengths": [
