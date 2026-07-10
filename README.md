@@ -239,7 +239,7 @@ Control how `run-with-it` schedules and intakes work:
 | `ISSUE_STATE` | `open` | Issue state filter |
 | `ISSUE_LIMIT` | `1000` | Maximum number of matching issues to fetch |
 | `SUB_COORD_AGENT` | `codex` | Agent used to run Sub-Coordinators |
-| `SUB_COORD_MODEL` | `gpt-5.5` | Model used to run Sub-Coordinators |
+| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model used to run Sub-Coordinators |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before a non-completing Sub-Coordinator raises a stall alert |
 | `STATUS_POLL_SECONDS` | `10` | Pool status polling cadence |
 | `MAX_AGENT_FALLBACKS` | `2` | Capability-failure retry budget per worker role |

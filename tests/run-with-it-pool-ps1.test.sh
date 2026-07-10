@@ -35,6 +35,7 @@ assert_json_file() {
 assert_file_contains "$POOL" "Analyze-SubCoordFailure" "PowerShell pool includes sub-coordinator failure analysis"
 assert_file_contains "$POOL" "sub-coord-recovery-wait" "PowerShell pool can wait for in-flight workers before recovery"
 assert_file_contains "$POOL" "sub-coord-recovery-spawn" "PowerShell pool can spawn recovery sub-coordinators"
+assert_file_contains "$POOL" 'else { "gpt-5.6-sol" }' "PowerShell pool defaults Sub-Coordinators to Sol"
 
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"
