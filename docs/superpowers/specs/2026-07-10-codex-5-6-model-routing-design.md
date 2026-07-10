@@ -68,10 +68,7 @@ Automatic candidate construction skips `explicit_only` models. Forced model sele
 
 Remove GPT-5.5 from the complex and `holy-fuck` required-model lists. Change the implicit Sub-Coordinator default in the Bash runner, PowerShell runner, skill documentation, and README from GPT-5.5 to `gpt-5.6-sol`; otherwise an ordinary run would still select GPT-5.5 without an explicit request.
 
-The two maintained router copies must receive identical explicit-only filtering behavior:
-
-- `assets/run-with-it-router.py`
-- `assets/python/run-with-it-router.py`
+The maintained router at `assets/run-with-it-router.py` receives the explicit-only filtering behavior. No packaged duplicate exists in the current tree.
 
 ## Data Flow
 
