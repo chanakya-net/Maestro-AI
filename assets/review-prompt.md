@@ -125,6 +125,7 @@ Path contract:
 - When `RUN_WITH_IT_ARTIFACT_HELPER` is set, run it before the done sentinel and treat any non-empty failure reason as invalid output to fix, not as a warning to ignore.
 - Write `RUN_WITH_IT_DONE_FILE` only after both JSON files exist and parse as valid JSON.
 - Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.
+- Build each JSON payload in a temporary file, then install it atomically with `python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json`: use `--role review` for the status payload and `--role review-instructions` for the instructions payload. Pass `--issue "$RUN_WITH_IT_ISSUE"`, the temporary `--payload-file`, and the final `--result-file`. Never generate Python source strings to quote JSON into place.
 
 ### Status File — write to `REVIEWER_STATUS_FILE`
 

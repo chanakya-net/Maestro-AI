@@ -49,6 +49,14 @@ GLOBAL_DEBT_WEIGHT = 1.5
 Availability = dict[str, set[Any]]
 
 
+def normalize_model_exclusions(value: set[str] | str | None) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return set(split_csv(value))
+    return {str(model) for model in value if str(model)}
+
+
 def fail(message: str) -> None:
     print(f"run-with-it-router: {message}", file=sys.stderr)
     raise SystemExit(2)
@@ -190,6 +198,8 @@ def env_model_denylist_availability(value: str | None) -> Availability:
 def availability_from_file(path: Path | None) -> Availability:
     availability = empty_availability()
     if not path:
+        return availability
+    if not path.exists():
         return availability
 
     payload = read_json_file(path)
@@ -373,8 +383,9 @@ def candidate_model_ids(
     role: str,
     level: str,
     forced_model: str | None,
-    exclude_model: str | None,
+    exclude_models: set[str] | str | None,
 ) -> list[str]:
+    exclude_models = normalize_model_exclusions(exclude_models)
     catalog = registry.get("model_catalog", {})
     if forced_model:
         if forced_model not in catalog:
@@ -389,7 +400,7 @@ def candidate_model_ids(
 
     candidates: list[str] = []
     for model_id, entry in catalog.items():
-        if model_id == exclude_model:
+        if model_id in exclude_models:
             continue
         if entry.get("explicit_only") is True:
             continue
@@ -408,7 +419,7 @@ def candidate_model_ids(
     for model_id in routing.get("band_required_models", {}).get(level, []):
         entry = catalog.get(model_id, {})
         if (
-            model_id != exclude_model
+            model_id not in exclude_models
             and model_id in catalog
             and entry.get("explicit_only") is not True
             and automatic_band_allows(entry, level)
@@ -421,7 +432,7 @@ def candidate_model_ids(
             break
         expanded_max = weight_max + expansion
         for model_id, entry in catalog.items():
-            if model_id == exclude_model:
+            if model_id in exclude_models:
                 continue
             if entry.get("explicit_only") is True:
                 continue
@@ -448,10 +459,10 @@ def candidate_pairs(
     availability: Availability,
     forced_agent: str | None,
     forced_model: str | None,
-    exclude_model: str | None,
+    exclude_models: set[str],
 ) -> list[dict[str, Any]]:
     catalog = registry.get("model_catalog", {})
-    model_ids = candidate_model_ids(registry, role, level, forced_model, exclude_model)
+    model_ids = candidate_model_ids(registry, role, level, forced_model, exclude_models)
     pairs: list[dict[str, Any]] = []
     for model_id in model_ids:
         for agent_id in compatible_agents_for_model(
@@ -488,9 +499,10 @@ def select_pair(
     availability: Availability,
     forced_agent: str | None,
     forced_model: str | None,
-    exclude_model: str | None,
+    exclude_models: set[str] | str | None,
     prefer_model: str | None = None,
 ) -> dict[str, Any]:
+    exclude_models = normalize_model_exclusions(exclude_models)
     level = routing_level(role, base_level)
     if forced_agent and forced_model:
         reason = "forced-agent-and-model"
@@ -511,7 +523,7 @@ def select_pair(
         availability,
         forced_agent,
         forced_model,
-        exclude_model,
+        exclude_models,
     )
     if not pairs:
         fail(
@@ -605,6 +617,7 @@ def select_pair(
         for pair in ordered[:8]
     ]
     selected["availability_exclusions"] = availability_summary(availability)
+    selected["model_exclusions"] = sorted(exclude_models)
     return selected
 
 
@@ -663,6 +676,7 @@ def build_output(
         },
         "evaluated_candidates": selection.get("evaluated_candidates", []),
         "availability_exclusions": selection.get("availability_exclusions", {}),
+        "model_exclusions": selection.get("model_exclusions", []),
     }
     return output
 
@@ -683,7 +697,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--denylist", default="")
     parser.add_argument("--forced-agent", default="")
     parser.add_argument("--forced-model", default="")
-    parser.add_argument("--exclude-model", default="")
+    parser.add_argument("--exclude-model", action="append", default=[])
     parser.add_argument("--prefer-model", default="")
     parser.add_argument("--model-denylist", default=os.environ.get("RUN_WITH_IT_MODEL_DENYLIST", ""))
     parser.add_argument("--availability-file", default=os.environ.get("RUN_WITH_IT_MODEL_AVAILABILITY_FILE", ""))
@@ -709,7 +723,11 @@ def main() -> int:
     denylist = set(split_csv(args.denylist))
     forced_agent = args.forced_agent or None
     forced_model = args.forced_model or None
-    exclude_model = args.exclude_model or None
+    exclude_models = {
+        model
+        for value in args.exclude_model
+        for model in split_csv(value)
+    }
     prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
 
@@ -727,7 +745,7 @@ def main() -> int:
                 availability,
                 forced_agent,
                 forced_model,
-                exclude_model,
+                exclude_models,
                 prefer_model,
             )
             ledger = append_decision(ledger, selection)
@@ -746,7 +764,7 @@ def main() -> int:
             availability,
             forced_agent,
             forced_model,
-            exclude_model,
+            exclude_models,
             prefer_model,
         )
         output = build_output(registry, ledger, ledger_file, selection, updated=False)

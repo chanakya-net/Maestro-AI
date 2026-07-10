@@ -72,6 +72,17 @@ printf '{"outcome":"completed"}\n' > "${RESULT_FILE}"
 
 [[ -f "${DISPATCHER}" ]] || fail "run-with-it-dispatch.sh exists"
 assert_executable "${DISPATCHER}"
+
+hard_limit_completion_checks="$(python3 - "$DISPATCHER" <<'PY'
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+start = text.index('if [ "$HARD_LIMIT_SECONDS" != "0" ]')
+end = text.index('if [ "$state" = "stalled" ]', start)
+print(text[start:end].count('if completion_ready; then'))
+PY
+)"
+assert_eq "$hard_limit_completion_checks" "2" "hard-limit path checks completion before and after synthesis"
 assert_file_contains "${DISPATCHER}" "start_new_session=True" "detached dispatcher starts in a new session"
 assert_file_contains "${DISPATCHER}" 'RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity,impl,modify' "dispatcher auto-fails stalled implementation and modification workers by default"
 
@@ -133,6 +144,59 @@ assert_file_contains "${STATUS_FILE}" "STATUS|type=dispatch-ready|issue=42|role=
 assert_file_contains "${EVENTS_LOG}" "STATUS|type=dispatch-ready|issue=42|role=impl|cycle=1" "validate-only appends events log"
 assert_json_file "${STATE_FILE}" "validate-only writes watchdog state JSON"
 assert_file_contains "${STATE_FILE}" '"state": "ready"' "validate-only records ready state"
+
+DEFAULT_LIMIT_STATE="${WORK_DIR}/default-sub-coord.state.json"
+DEFAULT_LIMIT_LOG="${WORK_DIR}/default-sub-coord.log"
+DEFAULT_LIMIT_DONE="${WORK_DIR}/default-sub-coord.done"
+DEFAULT_LIMIT_RESULT="${WORK_DIR}/default-sub-coord-result.json"
+"${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role sub-coord \
+  --issue 420 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${DEFAULT_LIMIT_LOG}" \
+  --done-file "${DEFAULT_LIMIT_DONE}" \
+  --result-file "${DEFAULT_LIMIT_RESULT}" \
+  --state-file "${DEFAULT_LIMIT_STATE}" >/dev/null
+assert_file_contains "${DEFAULT_LIMIT_STATE}" '"hard_limit_seconds": 0' "sub-coordinator defaults to no hard limit"
+
+EXPLICIT_LIMIT_STATE="${WORK_DIR}/explicit-sub-coord.state.json"
+"${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role sub-coord \
+  --issue 421 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${WORK_DIR}/explicit-sub-coord.log" \
+  --done-file "${WORK_DIR}/explicit-sub-coord.done" \
+  --result-file "${WORK_DIR}/explicit-sub-coord-result.json" \
+  --state-file "${EXPLICIT_LIMIT_STATE}" \
+  --hard-limit-seconds 2 >/dev/null
+assert_file_contains "${EXPLICIT_LIMIT_STATE}" '"hard_limit_seconds": 2' "explicit sub-coordinator hard limit remains authoritative"
+
+INVALID_LIMIT_STATE="${WORK_DIR}/invalid-limit.state.json"
+RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS=invalid "${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role impl \
+  --issue 422 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${WORK_DIR}/invalid-limit.log" \
+  --done-file "${WORK_DIR}/invalid-limit.done" \
+  --result-file "${WORK_DIR}/invalid-limit-result.json" \
+  --state-file "${INVALID_LIMIT_STATE}" >/dev/null
+assert_json_file "${INVALID_LIMIT_STATE}" "malformed Bash hard limit still writes valid watchdog JSON"
+assert_file_contains "${INVALID_LIMIT_STATE}" '"hard_limit_seconds": 7200' "malformed Bash hard limit uses documented default"
 assert_file_contains "${STATE_FILE}" '"log_file":' "watchdog state records role log path"
 
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"
@@ -406,11 +470,17 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 prompt_payload="$2"
-# Stay alive past the stall window producing NOTHING — no output, no commit, no
-# dirty tree. This is the genuinely-silent worker the stall path must terminate
-# and fail. (Stall salvage only rescues a worker that left committed-or-dirty git
-# work; a worker with no git progress, like this one, must still fail.)
-sleep 30
+# Stay quiet past the stdout stall window, then finish valid work. Wrapper-owned
+# heartbeats must keep this non-streaming worker alive.
+repo_root="$1"
+sleep 4
+printf 'quiet worker completed\n' > "$repo_root/silent.txt"
+git -C "$repo_root" add silent.txt
+git -C "$repo_root" commit -m "impl silent marker" >/dev/null
+commit_sha="$(git -C "$repo_root" rev-parse HEAD)"
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
+printf '{"schema_version":1,"issue":"%s","role":"%s","status":"success","commit_sha":"%s","files_committed":["silent.txt"],"verification":{"passed":true,"commands":["fake"]}}\n' \
+  "$RUN_WITH_IT_ISSUE" "$RUN_WITH_IT_ROLE" "$commit_sha" > "$RUN_WITH_IT_RESULT_FILE"
 SH
 chmod +x "${SMOKE_BIN}/silent-agent"
 
@@ -458,7 +528,7 @@ git -C "${SMOKE_REPO_ROOT}" add README.md
 git -C "${SMOKE_REPO_ROOT}" commit -m "baseline" >/dev/null
 
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
   --issue 43 \
@@ -483,13 +553,38 @@ silent_dispatch_pid="$!"
 wait "${silent_dispatch_pid}"
 silent_dispatch_status="$?"
 set -e
-[[ "${silent_dispatch_status}" != "0" ]] || fail "stalled impl worker must fail instead of completing after silence"
+[[ "${silent_dispatch_status}" == "0" ]] || fail "heartbeat-alive quiet impl worker must complete"
 assert_json_file "${SILENT_STATE}" "silent worker final watchdog state JSON is valid"
-assert_file_contains "${SILENT_STATE}" '"state": "failed"' "silent worker records failed state after stall timeout"
-assert_file_contains "${SILENT_STATE}" '"stall_reason": "alive-but-silent"' "silent worker records precise stall reason"
-assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled status"
-assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stall-timeout|issue=43|role=impl|cycle=1" "silent worker emits stall timeout status"
-assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-failed|issue=43|role=impl|cycle=1" "silent worker exits dispatcher as failed"
+assert_file_contains "${SILENT_STATE}" '"state": "completed"' "heartbeat-alive quiet worker completes"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=wrapper-heartbeat|issue=43|role=impl" "runner emits wrapper heartbeat while model output is quiet"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-complete|issue=43|role=impl|cycle=1" "quiet worker exits dispatcher successfully"
+
+HARD_RESULT="${SILENT_ISSUE_DIR}/workers/impl/hard-result.json"
+HARD_LOG="${SILENT_ISSUE_DIR}/workers/impl/hard.log"
+HARD_DONE="${SILENT_ISSUE_DIR}/workers/impl/hard.done"
+HARD_STATE="${SILENT_ISSUE_DIR}/workers/impl/hard.state.json"
+HARD_REPO="${WORK_DIR}/hard-limit-repo"
+mkdir -p "${HARD_REPO}"
+git -C "${HARD_REPO}" init -q
+git -C "${HARD_REPO}" config user.email "test@example.com"
+git -C "${HARD_REPO}" config user.name "Test User"
+printf 'baseline\n' > "${HARD_REPO}/README.md"
+git -C "${HARD_REPO}" add README.md
+git -C "${HARD_REPO}" commit -m "baseline" >/dev/null
+set +e
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl --issue 431 --cycle 1 --agent silent --model fake-model \
+  --context-file "${SILENT_CONTEXT}" --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${HARD_LOG}" --done-file "${HARD_DONE}" --result-file "${HARD_RESULT}" \
+  --state-file "${HARD_STATE}" --repo-root "${HARD_REPO}" --issue-dir "${SILENT_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 --quiet-seconds 1 --stall-seconds 10 --hard-limit-seconds 2 >/dev/null
+hard_status="$?"
+set -e
+assert_eq "${hard_status}" "124" "hard limit bounds a heartbeat-alive worker with no progress"
+assert_file_contains "${HARD_STATE}" '"stall_reason": "hard-limit-exceeded"' "hard limit records precise reason"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-hard-limit|issue=431|role=impl|cycle=1" "hard limit emits structured status"
 
 cat > "${SMOKE_BIN}/noarg-commit-agent" <<'SH'
 #!/usr/bin/env bash
@@ -704,6 +799,7 @@ RECOVER_DONE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.done"
 RECOVER_STATE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 printf '# recover missing result\n' > "${RECOVER_CONTEXT}"
 
+set +e
 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
@@ -722,15 +818,19 @@ PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --status-file "${SMOKE_STATUS}" \
   --events-log "${SMOKE_EVENTS}" \
   --poll-seconds 1 >/dev/null
+recover_status="$?"
+set -e
 
+assert_eq "${recover_status}" "75" "unverified committed work requests artifact recovery"
 assert_json_file "${RECOVER_RESULT}" "missing implementation result is synthesized from committed work"
 assert_file_contains "${RECOVER_RESULT}" '"issue": "45"' "synthesized result records issue"
 assert_file_contains "${RECOVER_RESULT}" '"role": "impl"' "synthesized result records role"
-assert_file_contains "${RECOVER_RESULT}" '"status": "success"' "synthesized result validates as successful handoff"
+assert_file_contains "${RECOVER_RESULT}" '"status": "artifact_recovery_required"' "synthesized result cannot claim normal success"
 assert_file_contains "${RECOVER_RESULT}" '"recovered.txt"' "synthesized result records committed file"
 assert_file_contains "${RECOVER_RESULT}" '"source": "dispatcher-synthesized"' "synthesized result is auditable"
-assert_file_contains "${RECOVER_STATE}" '"state": "completed"' "recoverable missing result completes"
+assert_file_contains "${RECOVER_STATE}" '"state": "artifact-recovery-required"' "recoverable missing result enters typed recovery"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=45|role=impl|cycle=1" "recovery emits synthesis status"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-recovery-required|issue=45|role=impl|cycle=1" "recovery emits typed dispatcher status"
 
 # --- #2: committed work is synthesized even when the worker exits NONZERO ---
 # (e.g. a provider auth/quota failure that kills the agent mid-run after it committed).
@@ -788,6 +888,7 @@ NONZERO_DONE="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.done"
 NONZERO_STATE="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 printf '# nonzero exit synthesis\n' > "${NONZERO_CONTEXT}"
 
+set +e
 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
@@ -806,11 +907,14 @@ PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --status-file "${SMOKE_STATUS}" \
   --events-log "${SMOKE_EVENTS}" \
   --poll-seconds 1 >/dev/null
+nonzero_status="$?"
+set -e
 
+assert_eq "${nonzero_status}" "75" "crashed worker with committed work requests artifact recovery"
 assert_json_file "${NONZERO_RESULT}" "committed work is synthesized even when the worker exits nonzero"
 assert_file_contains "${NONZERO_RESULT}" '"crashed.txt"' "nonzero-exit synthesis records the committed file"
 assert_file_contains "${NONZERO_RESULT}" '"source": "dispatcher-synthesized"' "nonzero-exit synthesis is auditable"
-assert_file_contains "${NONZERO_STATE}" '"state": "completed"' "nonzero-exit worker with committed work completes"
+assert_file_contains "${NONZERO_STATE}" '"state": "artifact-recovery-required"' "nonzero-exit committed work enters typed recovery"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=46|role=impl|cycle=1" "nonzero-exit synthesis emits status"
 
 # --- #1: an agent-unavailable (auth/quota) failure with no committed work is classified
@@ -821,6 +925,12 @@ set -euo pipefail
 if [[ "${1:-}" == "--version" ]]; then
   printf 'unavailable-agent 1.0\n'
   exit 0
+fi
+if [[ -n "${HARD_LIMIT_HANG_SECONDS:-}" ]]; then
+  printf 'STATUS|type=agent-unavailable|issue=%s|role=%s|agent=unavailable|model=fake-model|reason=auth|action=exclude-route\n' \
+    "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}"
+  sleep "${HARD_LIMIT_HANG_SECONDS}"
+  exit 1
 fi
 printf 'API error: 401 authentication failed for this account\n' >&2
 exit 1
@@ -890,6 +1000,25 @@ set -e
 assert_file_contains "${UNAVAIL_LOG}" "STATUS|type=agent-unavailable" "runner records agent-unavailable from auth error"
 assert_file_contains "${UNAVAIL_OUTPUT}" "failure_class=infrastructure" "dispatch-failed classifies availability loss as infrastructure"
 assert_file_contains "${UNAVAIL_STATE}" '"failure_class": "infrastructure"' "state JSON records infrastructure failure class"
+
+HARD_UNAVAIL_DIR="${SMOKE_PROJECT}/.run-with-it/issues/471"
+HARD_UNAVAIL_LOG="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1.log"
+HARD_UNAVAIL_DONE="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1.done"
+HARD_UNAVAIL_RESULT="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1-result.json"
+HARD_UNAVAIL_STATE="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1.state.json"
+set +e
+HARD_LIMIT_HANG_SECONDS=4 RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role plan --issue 471 --cycle 1 --agent unavailable --model fake-model \
+  --context-file "${UNAVAIL_CONTEXT}" --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${HARD_UNAVAIL_LOG}" --done-file "${HARD_UNAVAIL_DONE}" --result-file "${HARD_UNAVAIL_RESULT}" \
+  --state-file "${HARD_UNAVAIL_STATE}" --repo-root "${SMOKE_REPO_ROOT}" --issue-dir "${HARD_UNAVAIL_DIR}" \
+  --status-file "${SMOKE_STATUS}" --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 --quiet-seconds 1 --stall-seconds 10 --hard-limit-seconds 2 >/dev/null
+hard_unavail_status="$?"
+set -e
+assert_eq "${hard_unavail_status}" "124" "hard-limit unavailable worker exits 124"
+assert_file_contains "${HARD_UNAVAIL_STATE}" '"failure_class": "infrastructure"' "hard-limit failure uses artifact classifier"
 
 cat > "${SMOKE_BIN}/wrong-path-modifier-agent" <<'SH'
 #!/usr/bin/env bash
@@ -1139,6 +1268,9 @@ COMPLEXITY|score=14|level=easy|d1=2|d2=1|d3=2|d4=1|d5=2|d6=1|d7=2|d8=1|d9=2
 }
 JSON
 printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+if [[ -n "${HARD_LIMIT_HANG_SECONDS:-}" ]]; then
+  sleep "${HARD_LIMIT_HANG_SECONDS}"
+fi
 SH
 chmod +x "${SMOKE_BIN}/stdout-complexity-agent"
 
@@ -1363,6 +1495,27 @@ assert_json_file "${COMPLEXITY_STDOUT_RESULT}" "valid complexity stdout JSON is 
 assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"level": "easy"' "synthesized complexity artifact preserves level"
 assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"source": "dispatcher-synthesized-from-log"' "synthesized complexity artifact is auditable"
 assert_file_contains "${COMPLEXITY_STDOUT_STATE}" '"state": "completed"' "complexity stdout-only worker completes after result synthesis"
+
+HARD_COMPLEXITY_DIR="${SMOKE_PROJECT}/.run-with-it/issues/501"
+HARD_COMPLEXITY_RESULT="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1-result.json"
+HARD_COMPLEXITY_LOG="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.log"
+HARD_COMPLEXITY_DONE="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.done"
+HARD_COMPLEXITY_STATE="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.state.json"
+set +e
+HARD_LIMIT_HANG_SECONDS=4 RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity --issue 501 --cycle 1 --agent stdout-complexity --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${HARD_COMPLEXITY_LOG}" --done-file "${HARD_COMPLEXITY_DONE}" --result-file "${HARD_COMPLEXITY_RESULT}" \
+  --state-file "${HARD_COMPLEXITY_STATE}" --repo-root "${SMOKE_REPO_ROOT}" --issue-dir "${HARD_COMPLEXITY_DIR}" \
+  --status-file "${SMOKE_STATUS}" --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 --quiet-seconds 1 --stall-seconds 10 --hard-limit-seconds 2 >/dev/null
+hard_complexity_status="$?"
+set -e
+assert_eq "${hard_complexity_status}" "0" "hard-limit accepts synthesized complexity artifact"
+assert_json_file "${HARD_COMPLEXITY_RESULT}" "hard-limit complexity synthesis writes valid JSON"
+assert_file_contains "${HARD_COMPLEXITY_STATE}" '"state": "completed"' "hard-limit complexity synthesis records completion"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-hard-limit|issue=501|role=complexity|cycle=1" "hard-limit complexity synthesis records salvage decision"
 
 COMPLEXITY_HANG_DIR="${SMOKE_PROJECT}/.run-with-it/issues/53"
 COMPLEXITY_HANG_RESULT="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1-result.json"

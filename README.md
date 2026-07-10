@@ -154,13 +154,13 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 ### Stage 1: Planning
 
-The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It creates one shared run feature branch that will eventually hold all merged work. The execution plan and initial state are written to `.run-with-it/main-state.json`.
+The Main Orchestrator fetches all issues labeled `ready-for-agent` from GitHub (or local files), parses `## Blocked by` sections to build a dependency graph, detects cycles, and computes a topological execution order. It preserves each issue's `parallel_safe` and normalized `ownership_scope` metadata, creates one shared run feature branch that will eventually hold all merged work, and writes the execution plan and initial state to `.run-with-it/main-state.json`.
 
 ### Stage 2: Execution (Rolling Pool)
 
 The pool runner maintains up to `PARALLEL_JOBS` (default 4) concurrent Sub-Coordinators. Each Sub-Coordinator gets exactly one issue and follows this lifecycle:
 
-1. **Worktree bootstrap** — Creates an isolated issue branch and `git worktree` from the shared feature branch. Issue branches use `${RUN_FEATURE_BRANCH}-issue-<n>` so Git refs stay flat.
+1. **Worktree bootstrap** — Fetches the shared branch and creates an isolated issue branch/worktree from `origin/$RUN_FEATURE_BRANCH` when available, with an explicit local fallback. The selected `issue_base_sha` and source are persisted. Issue branches use `${RUN_FEATURE_BRANCH}-issue-<n>` so Git refs stay flat.
 2. **Complexity scoring** — Spawns a complexity agent to score the issue on 9 dimensions
 3. **Model routing** — `run-with-it-router.py` selects the best agent/model pair based on complexity band, role-specific usage targets, and current subscription debt
 4. **Implementation** — Worker agent writes code in the issue worktree, commits, and produces a result JSON with verification evidence
@@ -168,11 +168,11 @@ The pool runner maintains up to `PARALLEL_JOBS` (default 4) concurrent Sub-Coord
 6. **Modify** (if needed) — Modify worker addresses reviewer comments and re-verifies. Up to `MAX_ITERATIONS` review/modify cycles (default 20).
 7. **Merge** — Sub-Coordinator acquires the merge lock, merges in a fresh throwaway worktree, verifies, and pushes so a conflict cannot dirty the shared checkout
 
-After each Sub-Coordinator completes, the pool immediately fills the freed slot with the next ready issue. It also emits a compact run-board whenever stages change, for example `#12 impl(cyc1) | #13 blocked:12 | #14 done`. The Main Orchestrator reads only compact report JSONs — never raw logs — keeping its context window bounded regardless of run duration.
+After each Sub-Coordinator completes, the pool immediately fills the freed slot with the next compatible ready issue. `parallel_safe=false` or missing concurrency metadata runs exclusively; explicitly safe issues share the pool only when ownership scopes are non-overlapping. It also emits a compact run-board whenever stages change, for example `#12 impl(cyc1) | #13 blocked:12 | #14 done`. The Main Orchestrator reads only compact report JSONs — never raw logs — keeping its context window bounded regardless of run duration.
 
 ### Stage 3: Worker Recovery
 
-Worker completion is artifact-driven: a role is complete only when the done sentinel and required JSON artifacts are valid. If a worker exits after committing work but before writing its artifact, the dispatcher can synthesize the missing result from git state. If a live worker stalls, the dispatcher first tries to salvage an advanced `HEAD` or dirty tree before terminating it.
+Worker completion is artifact-driven: a role is complete only when the done sentinel and required JSON artifacts are valid and implementation/modification verification passed. Result commits are canonicalized before comparison, so unique abbreviated SHAs are accepted safely. If a worker exits after committing work but before writing its artifact, the dispatcher preserves it as `artifact-recovery-required`; unverified synthesized work never advances as normal success. Wrapper-owned heartbeats keep non-streaming CLIs alive, while a separate hard limit bounds truly stuck workers.
 
 Failures are classified as:
 
@@ -223,7 +223,7 @@ Override routing behavior with environment variables:
 | `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
 | `AGENT_DENYLIST` | Comma-separated agent slugs to block |
 | `RUN_WITH_IT_MODEL_DENYLIST` | Comma-separated models or `agent:model` routes to exclude after availability failures |
-| `RUN_WITH_IT_MODEL_AVAILABILITY_FILE` | Persisted route-availability file used to avoid known unavailable routes |
+| `RUN_WITH_IT_MODEL_AVAILABILITY_FILE` | Optional persisted route-availability file. A missing file is empty state; a present malformed file is an error. |
 | `COMPLEXITY_LEVEL` | Force complexity band (quite-easy through holy-fuck) |
 | `COMPLEXITY_SCORE` | Force a numeric complexity score |
 | `AGENT_REGISTRY_FILE` | Override the path to `agent-registry.json` |
@@ -246,6 +246,8 @@ Control how `run-with-it` schedules and intakes work:
 | `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` | `complexity,impl,modify` | Worker roles the dispatcher may terminate after stall detection |
 | `RUN_WITH_IT_WORKER_QUIET_SECONDS` | `120` | Seconds of worker silence before `quiet` status |
 | `RUN_WITH_IT_WORKER_STALL_SECONDS` | platform default | Seconds of worker silence before `stalled` status |
+| `RUN_WITH_IT_HEARTBEAT_SECONDS` | `30` | Runner-owned heartbeat cadence, independent of model stdout |
+| `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` | `7200` | Hard elapsed worker bound; `0` disables it |
 
 ## Testing
 

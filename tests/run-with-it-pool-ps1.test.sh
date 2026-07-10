@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL="${ROOT_DIR}/assets/run-with-it-pool.ps1"
+COORDINATOR_RULES="${ROOT_DIR}/assets/coordinator-rules.md"
+SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
 PS_CMD="${PWSH:-}"
 if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
@@ -36,6 +38,8 @@ assert_file_contains "$POOL" "Analyze-SubCoordFailure" "PowerShell pool includes
 assert_file_contains "$POOL" "sub-coord-recovery-wait" "PowerShell pool can wait for in-flight workers before recovery"
 assert_file_contains "$POOL" "sub-coord-recovery-spawn" "PowerShell pool can spawn recovery sub-coordinators"
 assert_file_contains "$POOL" 'else { "gpt-5.6-sol" }' "PowerShell pool defaults Sub-Coordinators to Sol"
+assert_file_contains "$COORDINATOR_RULES" "hard-limit-exceeded" "PowerShell coordinator rules classify hard-limit handoff failures"
+assert_file_contains "$SUB_PROMPT" "hard-limit-exceeded" "PowerShell sub-coordinator retries hard-limit handoff failures"
 
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"
@@ -132,12 +136,16 @@ cat > "$STATE_FILE" <<JSON
       "status": "pending",
       "deps": [],
       "title": "First smoke issue",
+      "parallel_safe": true,
+      "ownership_scope": ["src/issue-101"],
       "context_file": "${SMOKE_PROJECT}/.run-with-it/contexts/issue-101.md"
     },
     "102": {
       "status": "pending",
       "deps": [],
       "title": "Second smoke issue",
+      "parallel_safe": true,
+      "ownership_scope": ["src/issue-102"],
       "context_file": "${SMOKE_PROJECT}/.run-with-it/contexts/issue-102.md"
     }
   },

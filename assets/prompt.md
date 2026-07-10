@@ -127,6 +127,8 @@ If a full-suite run is prohibitively slow, run the narrowest passing scope, docu
 
 **Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 
+Before running each required command, record `verification_applicability` as `applicable`, `not_applicable`, or `failed`. `not_applicable` is allowed only when a concrete lifecycle precondition is absent (for example, a breaking-change baseline has no module on the base ref because this issue introduces the first module); record the inspected ref/path evidence. An applicable command that exits nonzero is `failed`, never `not_applicable`.
+
 ## Mandatory Commit Before Handoff
 
 **Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit on the issue worktree branch, the reviewer cannot isolate your changes.
@@ -179,7 +181,8 @@ Path safety:
 Bash:
 ```bash
 mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
-python3 - "$RUN_WITH_IT_RESULT_FILE" "$RUN_WITH_IT_ISSUE" "$IMPL_COMMIT_SHA" <<'PY'
+IMPL_PAYLOAD_FILE="${RUN_WITH_IT_RESULT_FILE}.payload.$$"
+python3 - "$IMPL_PAYLOAD_FILE" "$RUN_WITH_IT_ISSUE" "$IMPL_COMMIT_SHA" <<'PY'
 import json
 import os
 import subprocess
@@ -208,6 +211,12 @@ with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
+python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
+  --role impl --issue "$RUN_WITH_IT_ISSUE" \
+  --payload-file "$IMPL_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
+  --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
+  --pre-spawn-head "${ISSUE_BASE_SHA:-}" || { rm -f "$IMPL_PAYLOAD_FILE"; exit 1; }
+rm -f "$IMPL_PAYLOAD_FILE"
 ```
 
 PowerShell:
@@ -227,7 +236,11 @@ $payload = @{
   }
 }
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
-$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $env:RUN_WITH_IT_RESULT_FILE
+$payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
+$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
+& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role impl --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:ISSUE_BASE_SHA"
+if ($LASTEXITCODE -ne 0) { throw "implementation artifact validation failed" }
+Remove-Item -Force $payloadFile
 ```
 
 ### Verified no-op variant

@@ -693,6 +693,10 @@
         ],
         "prompt_argument_template": "{{prompt}}"
       },
+      "liveness": {
+        "streaming_output": true,
+        "wrapper_heartbeat_required": true
+      },
       "permission_modes": {
         "default": "--dangerously-bypass-approvals-and-sandbox",
         "available": [
@@ -747,6 +751,10 @@
           "{{prompt}}"
         ],
         "prompt_argument_template": "{{prompt}}"
+      },
+      "liveness": {
+        "streaming_output": false,
+        "wrapper_heartbeat_required": true
       },
       "permission_modes": {
         "default": "--dangerously-skip-permissions",
@@ -893,6 +901,10 @@
           "{{prompt}}"
         ],
         "prompt_argument_template": "{{prompt}}"
+      },
+      "liveness": {
+        "streaming_output": false,
+        "wrapper_heartbeat_required": true
       },
       "permission_modes": {
         "default": "--dangerously-skip-permissions",

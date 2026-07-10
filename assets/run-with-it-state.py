@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import posixpath
+import re
 import sys
 import time
 from pathlib import Path
@@ -19,7 +21,7 @@ from typing import Any
 
 TERMINAL_OUTCOMES = {"completed", "failed-review", "blocked", "merge_failed", "failed-merge"}
 LIVE_WORKER_STATES = {"ready", "starting", "running", "quiet", "stalled"}
-FINISHED_WORKER_STATES = {"completed", "failed"}
+FINISHED_WORKER_STATES = {"completed", "failed", "artifact-recovery-required"}
 
 
 def load_json(path: str) -> dict[str, Any]:
@@ -206,6 +208,47 @@ def issue_dependencies_completed(info: dict[str, Any], completed: set[int]) -> b
     return all(int(dep) in completed for dep in info.get("deps", []))
 
 
+def normalized_ownership_scope(entry: dict[str, Any]) -> tuple[str, ...]:
+    raw = entry.get("ownership_scope", [])
+    if not isinstance(raw, list):
+        return ()
+    scopes: set[str] = set()
+    for value in raw:
+        if not isinstance(value, str):
+            continue
+        scope = value.strip().replace("\\", "/")
+        while scope.startswith("./"):
+            scope = scope[2:]
+        scope = posixpath.normpath(scope).strip("/")
+        if scope and scope != ".":
+            scopes.add(scope)
+    return tuple(sorted(scopes))
+
+
+def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
+    for left_scope in left:
+        for right_scope in right:
+            left_key = left_scope.casefold()
+            right_key = right_scope.casefold()
+            if any(char in left_key or char in right_key for char in "*?["):
+                return True
+            if left_key == right_key:
+                return True
+            if left_key.startswith(f"{right_key}/") or right_key.startswith(f"{left_key}/"):
+                return True
+    return False
+
+
+def issues_can_run_together(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if left.get("parallel_safe") is not True or right.get("parallel_safe") is not True:
+        return False
+    left_scope = normalized_ownership_scope(left)
+    right_scope = normalized_ownership_scope(right)
+    if not left_scope or not right_scope:
+        return False
+    return not ownership_scopes_overlap(left_scope, right_scope)
+
+
 def utc_stamp() -> str:
     return time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 
@@ -220,6 +263,24 @@ def is_dependency_blocking_reason(reason: Any, deps: list[Any]) -> bool:
         return True
     for dep in deps:
         if f"#{dep}" in reason or f"issue-{dep}" in reason or f"issue {dep}" in reason:
+            return True
+    return False
+
+
+def is_stale_base_dependency_reason(reason: Any, deps: list[Any]) -> bool:
+    """True only when a reason names one of this issue's dependencies exactly.
+
+    Automatic stale-base requeue is intentionally stricter than the legacy
+    auto-unblock matcher above: generic "blocked by" text and partial issue IDs
+    are not evidence that a completed dependency was missing from the base.
+    """
+    if not isinstance(reason, str):
+        return False
+    for dep in deps:
+        dep_id = re.escape(str(dep))
+        if re.search(rf"#{dep_id}(?!\d)", reason):
+            return True
+        if re.search(rf"\bissue(?:-| ){dep_id}\b", reason, re.IGNORECASE):
             return True
     return False
 
@@ -331,8 +392,20 @@ def auto_unblock_dependents(
 def ready_issues(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     registry = state.get("issue_registry", {})
+    for entry in registry.values():
+        if not isinstance(entry, dict):
+            continue
+        entry["parallel_safe"] = entry.get("parallel_safe") is True
+        entry["ownership_scope"] = list(normalized_ownership_scope(entry))
     completed = completed_issue_numbers(state)
     ready: list[str] = []
+    active_entries: list[tuple[str, dict[str, Any]]] = []
+    for active_issue in state.get("active_pool_issues", []):
+        active_info = registry.get(str(active_issue), {})
+        if isinstance(active_info, dict) and active_info.get("status") == "in_progress":
+            active_entries.append((str(active_issue), active_info))
+    selected_entries: list[tuple[str, dict[str, Any]]] = []
+    deferrals: dict[str, str] = {}
     for issue in state.get("execution_plan", {}).get("topo_order", []):
         if len(ready) >= args.limit:
             break
@@ -344,8 +417,24 @@ def ready_issues(args: argparse.Namespace) -> int:
         if not issue_dependencies_completed(info, completed):
             continue
         context_file = info.get("context_file") or info.get("sub_coord_context_file")
-        if context_file:
-            ready.append(str(issue))
+        if not context_file:
+            continue
+        conflicts = active_entries + selected_entries
+        incompatible = next(
+            (
+                other_issue
+                for other_issue, other_info in conflicts
+                if not issues_can_run_together(info, other_info)
+            ),
+            None,
+        )
+        if incompatible is not None:
+            deferrals[str(issue)] = f"concurrency-conflict-with-{incompatible}"
+            continue
+        ready.append(str(issue))
+        selected_entries.append((str(issue), info))
+    state["last_admission_deferrals"] = deferrals
+    save_json(args.state_file, state)
     print(" ".join(ready))
     return 0
 
@@ -426,6 +515,53 @@ def finalize_issue(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     entry = issue_entry(state, args.issue)
     entry["status"] = status
+    report_blocking_reasons = report.get("blocking_reasons", [])
+    if not isinstance(report_blocking_reasons, list):
+        report_blocking_reasons = []
+    if status == "blocked":
+        entry["blocking_reasons"] = unique(entry.get("blocking_reasons", []) + report_blocking_reasons)
+        deps = entry.get("deps", []) or []
+        completed = completed_issue_numbers(state)
+        reasons = entry.get("blocking_reasons", [])
+        stale_base_requeue_attempts = entry.get("stale_base_requeue_attempts", 0)
+        if not isinstance(stale_base_requeue_attempts, int) or stale_base_requeue_attempts < 0:
+            stale_base_requeue_attempts = 0
+        if (
+            deps
+            and issue_dependencies_completed(entry, completed)
+            and reasons
+            and all(is_stale_base_dependency_reason(reason, deps) for reason in reasons)
+            and stale_base_requeue_attempts < 1
+        ):
+            issue_dir = entry.get("issue_dir", "") or ""
+            archived = quarantine_artifacts(
+                issue_dir,
+                stale_terminal_artifact_paths(entry, issue_dir),
+                f"stale-base-{utc_stamp()}",
+            )
+            entry["status"] = "pending"
+            entry["blocking_reasons"] = []
+            entry["stale_base_requeued_at"] = utc_stamp()
+            entry["stale_base_report_file"] = args.report_file
+            entry["stale_base_requeue_attempts"] = stale_base_requeue_attempts + 1
+            entry["sub_coord_recovery_attempts"] = 0
+            if archived:
+                entry["stale_base_archive_dir"] = archived
+            state["active_pool_issues"] = [
+                value for value in state.get("active_pool_issues", []) if str(value) != str(args.issue)
+            ]
+            state.setdefault("auto_repairs", []).append(
+                {
+                    "at": entry["stale_base_requeued_at"],
+                    "kind": f"stale-base-requeue-issue-{args.issue}",
+                    "issue": int(args.issue),
+                    "report_file": args.report_file,
+                    "archive_dir": archived,
+                }
+            )
+            save_json(args.state_file, state)
+            print("pending")
+            return 0
     if outcome == "merge_failed":
         entry["failed_merge_report_file"] = args.report_file
         entry["blocking_reasons"] = unique(entry.get("blocking_reasons", []) + ["merge recovery required"])
@@ -549,7 +685,10 @@ def analyze_sub_coord_failure(args: argparse.Namespace) -> int:
     for worker, worker_state, done_present, result_present in worker_decisions:
         state_name = worker_state.get("state")
         if state_name in FINISHED_WORKER_STATES or done_present or result_present:
-            reason = "in-flight-worker-finished" if state_name == "completed" or result_present else "in-flight-worker-failed"
+            if state_name == "artifact-recovery-required":
+                reason = "artifact-recovery-required"
+            else:
+                reason = "in-flight-worker-finished" if state_name == "completed" or result_present else "in-flight-worker-failed"
             decision = compact_worker_decision(
                 action="spawn_recovery",
                 reason=reason,
@@ -754,6 +893,7 @@ def requeue_issue(args: argparse.Namespace) -> int:
     entry["status"] = "pending"
     entry["blocking_reasons"] = []
     entry["requeued_at"] = timestamp
+    entry["sub_coord_recovery_attempts"] = 0
     if getattr(args, "reason", ""):
         entry["manual_requeue_reason"] = args.reason
     if archived:

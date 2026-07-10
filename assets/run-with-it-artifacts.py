@@ -164,6 +164,17 @@ def commit_exists(repo_root: str, commit_sha: str) -> bool:
     return git_success(repo_root, "cat-file", "-e", f"{commit_sha}^{{commit}}")
 
 
+def resolve_commit(repo_root: str, revision: str) -> str | None:
+    """Resolve one revision to its canonical commit object ID."""
+    if not revision or revision == "NONE":
+        return None
+    try:
+        resolved = git_output(repo_root, "rev-parse", "--verify", f"{revision}^{{commit}}")
+    except Exception:
+        return None
+    return resolved if re.fullmatch(r"[0-9a-fA-F]{40}", resolved) else None
+
+
 def is_ancestor(repo_root: str, ancestor: str, descendant: str) -> bool:
     return git_success(repo_root, "merge-base", "--is-ancestor", ancestor, descendant)
 
@@ -224,6 +235,8 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
         return "invalid-result-artifact"
     if payload.get("role") != args.role:
         return "invalid-result-artifact"
+    if payload.get("status") == "artifact_recovery_required":
+        return "artifact-recovery-required"
     if payload.get("status") != "success":
         return "invalid-result-artifact"
 
@@ -253,8 +266,11 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
     files_committed = payload.get("files_committed")
     if not isinstance(files_committed, list) or not files_committed:
         return "invalid-result-artifact"
-    if not isinstance(payload.get("verification"), dict):
+    verification = payload.get("verification")
+    if not isinstance(verification, dict):
         return "invalid-result-artifact"
+    if verification.get("passed") is not True:
+        return "implementation-verification-failed"
 
     if not args.repo_root or not repo_available(args.repo_root):
         return "implementation-repo-unavailable"
@@ -262,11 +278,19 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
         head = current_head(args.repo_root)
     except Exception:
         return "implementation-repo-unavailable"
-    if head != commit_sha:
-        if recover_wrong_worktree_commit(args, payload, head, commit_sha):
+    canonical_commit = resolve_commit(args.repo_root, commit_sha)
+    if canonical_commit is None:
+        return "invalid-implementation-commit"
+    if canonical_commit != commit_sha:
+        canonical_payload = dict(payload)
+        canonical_payload["commit_sha"] = canonical_commit
+        write_json_atomic(args.result_file, canonical_payload)
+        payload = canonical_payload
+    if head != canonical_commit:
+        if recover_wrong_worktree_commit(args, payload, head, canonical_commit):
             return ""
         return "commit-outside-issue-worktree"
-    if args.pre_spawn_head and commit_sha == args.pre_spawn_head:
+    if args.pre_spawn_head and canonical_commit == resolve_commit(args.repo_root, args.pre_spawn_head):
         return "missing-implementation-commit"
     return ""
 
@@ -648,7 +672,7 @@ def synthesize_implementation(args: argparse.Namespace) -> bool:
             "schema_version": 1,
             "issue": str(args.issue),
             "role": args.role,
-            "status": "success",
+            "status": "artifact_recovery_required",
             "commit_sha": head,
             "files_committed": files,
             "verification": {
@@ -660,7 +684,7 @@ def synthesize_implementation(args: argparse.Namespace) -> bool:
             "source": "dispatcher-synthesized",
         },
     )
-    return result_failure_reason(args) == ""
+    return result_failure_reason(args) == "artifact-recovery-required"
 
 
 def synthesize_review(args: argparse.Namespace) -> bool:
@@ -807,6 +831,45 @@ def failure_reason(args: argparse.Namespace) -> int:
     return 0
 
 
+def write_json(args: argparse.Namespace) -> int:
+    payload, error = load_json(args.payload_file)
+    if error or not isinstance(payload, dict):
+        print(f"invalid payload JSON: {error or 'expected-object'}", file=sys.stderr)
+        return 1
+    target = Path(args.result_file)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    validated_path = target.with_name(f"{target.name}.validated.{os.getpid()}")
+    validation_args = argparse.Namespace(**vars(args))
+    validation_args.result_file = str(validated_path)
+    validation_args.done_file = ""
+    validation_args.log_file = ""
+    validation_args.issue_dir = getattr(args, "issue_dir", "")
+    validation_args.from_stall = False
+    try:
+        write_json_atomic(str(validated_path), payload)
+        reason = ""
+        if args.role in {"impl", "modify"}:
+            reason = implementation_result_reason(validation_args, payload)
+        elif args.role == "complexity" and not valid_complexity_payload(payload):
+            reason = "invalid-complexity-result-artifact"
+        elif args.role == "plan" and not valid_plan_payload(payload):
+            reason = "invalid-plan-result-artifact"
+        elif args.role == "review" and not valid_review_status(payload):
+            reason = "invalid-review-status-artifact"
+        elif args.role == "review-instructions" and not valid_review_instructions(payload):
+            reason = "invalid-review-instructions-artifact"
+        if reason:
+            print(reason, file=sys.stderr)
+            return 1
+        os.replace(validated_path, target)
+        return 0
+    finally:
+        try:
+            validated_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -821,6 +884,27 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--repo-root", default="")
         sub.add_argument("--pre-spawn-head", default="")
         sub.add_argument("--from-stall", action="store_true", default=False)
+    writer = subparsers.add_parser("write-json")
+    writer.add_argument(
+        "--role",
+        required=True,
+        choices=[
+            "impl",
+            "modify",
+            "complexity",
+            "plan",
+            "review",
+            "review-instructions",
+            "artifact-recovery",
+            "merge-recovery",
+        ],
+    )
+    writer.add_argument("--issue", required=True)
+    writer.add_argument("--payload-file", required=True)
+    writer.add_argument("--result-file", required=True)
+    writer.add_argument("--issue-dir", default="")
+    writer.add_argument("--repo-root", default="")
+    writer.add_argument("--pre-spawn-head", default="")
     return parser
 
 
@@ -833,6 +917,8 @@ def main(argv: list[str] | None = None) -> int:
         return failure_class(args)
     if args.command == "synthesize":
         return synthesize(args)
+    if args.command == "write-json":
+        return write_json(args)
     parser.error(f"unknown command: {args.command}")
 
 

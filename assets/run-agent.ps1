@@ -307,6 +307,14 @@ function Invoke-AgentCommandWithCapture([string]$filePath, [System.Collections.G
     $stderrOffset = 0
     $stdoutPartial = ""
     $stderrPartial = ""
+    $heartbeatSeconds = 30
+    $parsedHeartbeatSeconds = 0
+    if ($env:RUN_WITH_IT_HEARTBEAT_SECONDS -and
+        [int]::TryParse($env:RUN_WITH_IT_HEARTBEAT_SECONDS, [ref]$parsedHeartbeatSeconds) -and
+        $parsedHeartbeatSeconds -ge 0) {
+        $heartbeatSeconds = $parsedHeartbeatSeconds
+    }
+    $nextHeartbeatAt = [DateTime]::UtcNow.AddSeconds($heartbeatSeconds)
 
     try {
         $argumentString = Join-ProcessArguments $arguments.ToArray()
@@ -321,6 +329,10 @@ function Invoke-AgentCommandWithCapture([string]$filePath, [System.Collections.G
         while (-not $process.HasExited) {
             Forward-CaptureFile -Path $stdoutCapture -Stream "stdout" -Offset ([ref]$stdoutOffset) -Partial ([ref]$stdoutPartial) -FlushPartial:$false
             Forward-CaptureFile -Path $stderrCapture -Stream "stderr" -Offset ([ref]$stderrOffset) -Partial ([ref]$stderrPartial) -FlushPartial:$false
+            if ($heartbeatSeconds -gt 0 -and [DateTime]::UtcNow -ge $nextHeartbeatAt) {
+                Write-RunStatus "wrapper-heartbeat" "alive"
+                $nextHeartbeatAt = [DateTime]::UtcNow.AddSeconds($heartbeatSeconds)
+            }
             Start-Sleep -Milliseconds 200
             $process.Refresh()
         }
