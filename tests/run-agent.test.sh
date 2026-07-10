@@ -91,7 +91,7 @@ assert_not_contains "${runner_preamble}" "set -euo pipefail" "run-agent avoids n
 assert_not_contains "${runner_preamble}" "set -u" "run-agent avoids nounset shorthand"
 assert_not_contains "${runner_preamble}" "set -o nounset" "run-agent avoids nounset long form"
 
-python3 - "${REGISTRY_PATH}" "${ROUTER_PATH}" <<'PY'
+PYTHONDONTWRITEBYTECODE=1 python3 - "${REGISTRY_PATH}" "${ROUTER_PATH}" <<'PY'
 import importlib.util
 import json
 import sys

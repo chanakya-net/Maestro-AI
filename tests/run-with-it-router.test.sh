@@ -50,7 +50,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 - "${REGISTRY_PATH}" "${ROUTER_PATH}" <<'PY'
+PYTHONDONTWRITEBYTECODE=1 python3 - "${REGISTRY_PATH}" "${ROUTER_PATH}" <<'PY'
 import importlib.util
 import json
 import sys
