@@ -689,16 +689,18 @@ stop_wrapper_heartbeat() {
 
 start_wrapper_heartbeat() {
   local wrapper_parent_pid="${BASHPID:-$$}"
+  local heartbeat_seconds
   case "${RUN_WITH_IT_HEARTBEAT_SECONDS}" in
     ''|*[!0-9]*) return 0 ;;
-    0) return 0 ;;
   esac
+  heartbeat_seconds=$((10#${RUN_WITH_IT_HEARTBEAT_SECONDS}))
+  [[ "${heartbeat_seconds}" -gt 0 ]] || return 0
   if [[ -z "${RUN_WITH_IT_STATUS_FILE}" && -z "${RUN_WITH_IT_EVENTS_LOG}" && -z "${RUN_WITH_IT_LOG_FILE}" ]]; then
     return 0
   fi
   (
     while kill -0 "${wrapper_parent_pid}" 2>/dev/null; do
-      sleep "${RUN_WITH_IT_HEARTBEAT_SECONDS}"
+      sleep "${heartbeat_seconds}"
       kill -0 "${wrapper_parent_pid}" 2>/dev/null || exit 0
       emit_run_status "wrapper-heartbeat" "alive"
     done

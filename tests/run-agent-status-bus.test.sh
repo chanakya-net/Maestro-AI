@@ -158,6 +158,7 @@ fi
 runner_source="$(<"${RUNNER_PATH}")"
 assert_contains "${runner_source}" 'wait "${stdout_forward_pid}"' "runner waits for stdout forwarder by explicit pid"
 assert_contains "${runner_source}" 'wait "${stderr_forward_pid}"' "runner waits for stderr forwarder by explicit pid"
+assert_contains "${runner_source}" 'heartbeat_seconds=$((10#${RUN_WITH_IT_HEARTBEAT_SECONDS}))' "runner normalizes zero-padded heartbeat values"
 if [[ "${runner_source}" == *'wait  # drain forward_status_stream subshells before writing final status'* ]]; then
   fail "runner must not use bare wait in status bus path"
 fi

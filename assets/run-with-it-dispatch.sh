@@ -27,7 +27,13 @@ POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
 QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
 STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-600}"
 TIMEOUT_SECONDS="${RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS:-0}"
-HARD_LIMIT_SECONDS="${RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS:-7200}"
+if [ "${RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS+x}" = "x" ] && [ -n "${RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS}" ]; then
+  HARD_LIMIT_SECONDS="${RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS}"
+  HARD_LIMIT_EXPLICIT=1
+else
+  HARD_LIMIT_SECONDS=7200
+  HARD_LIMIT_EXPLICIT=0
+fi
 DETACH_BOOTSTRAP_SECONDS="${RUN_WITH_IT_DETACH_BOOTSTRAP_SECONDS:-3}"
 AUTO_FAIL_STALLED_ROLES="${RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity,impl,modify,plan}"
 DRY_RUN=0
@@ -78,7 +84,7 @@ while [ "$#" -gt 0 ]; do
     --quiet-seconds) QUIET_SECONDS="${2:-}"; shift 2 ;;
     --stall-seconds) STALL_SECONDS="${2:-}"; shift 2 ;;
     --timeout-seconds) TIMEOUT_SECONDS="${2:-}"; shift 2 ;;
-    --hard-limit-seconds) HARD_LIMIT_SECONDS="${2:-}"; shift 2 ;;
+    --hard-limit-seconds) HARD_LIMIT_SECONDS="${2:-}"; HARD_LIMIT_EXPLICIT=1; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --validate-only) VALIDATE_ONLY=1; shift ;;
     --detach) DETACH=1; shift ;;
@@ -111,6 +117,13 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 [ -n "$LOG_FILE" ] || fail "--log-file is required"
 [ -n "$DONE_FILE" ] || fail "--done-file is required"
 [ -n "$RESULT_FILE" ] || fail "--result-file is required"
+
+if [ "$HARD_LIMIT_EXPLICIT" = 0 ]; then
+  case "$ROLE" in
+    complexity|impl|modify|review) HARD_LIMIT_SECONDS=7200 ;;
+    *) HARD_LIMIT_SECONDS=0 ;;
+  esac
+fi
 
 [ -x "$RUN_AGENT" ] || fail "runner not executable: $RUN_AGENT"
 [ -x "$WORKER_WATCH" ] || fail "worker watcher not executable: $WORKER_WATCH"

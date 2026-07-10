@@ -133,6 +133,42 @@ assert_file_contains "${STATUS_FILE}" "STATUS|type=dispatch-ready|issue=42|role=
 assert_file_contains "${EVENTS_LOG}" "STATUS|type=dispatch-ready|issue=42|role=impl|cycle=1" "validate-only appends events log"
 assert_json_file "${STATE_FILE}" "validate-only writes watchdog state JSON"
 assert_file_contains "${STATE_FILE}" '"state": "ready"' "validate-only records ready state"
+
+DEFAULT_LIMIT_STATE="${WORK_DIR}/default-sub-coord.state.json"
+DEFAULT_LIMIT_LOG="${WORK_DIR}/default-sub-coord.log"
+DEFAULT_LIMIT_DONE="${WORK_DIR}/default-sub-coord.done"
+DEFAULT_LIMIT_RESULT="${WORK_DIR}/default-sub-coord-result.json"
+"${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role sub-coord \
+  --issue 420 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${DEFAULT_LIMIT_LOG}" \
+  --done-file "${DEFAULT_LIMIT_DONE}" \
+  --result-file "${DEFAULT_LIMIT_RESULT}" \
+  --state-file "${DEFAULT_LIMIT_STATE}" >/dev/null
+assert_file_contains "${DEFAULT_LIMIT_STATE}" '"hard_limit_seconds": 0' "sub-coordinator defaults to no hard limit"
+
+EXPLICIT_LIMIT_STATE="${WORK_DIR}/explicit-sub-coord.state.json"
+"${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role sub-coord \
+  --issue 421 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${WORK_DIR}/explicit-sub-coord.log" \
+  --done-file "${WORK_DIR}/explicit-sub-coord.done" \
+  --result-file "${WORK_DIR}/explicit-sub-coord-result.json" \
+  --state-file "${EXPLICIT_LIMIT_STATE}" \
+  --hard-limit-seconds 2 >/dev/null
+assert_file_contains "${EXPLICIT_LIMIT_STATE}" '"hard_limit_seconds": 2' "explicit sub-coordinator hard limit remains authoritative"
 assert_file_contains "${STATE_FILE}" '"log_file":' "watchdog state records role log path"
 
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"

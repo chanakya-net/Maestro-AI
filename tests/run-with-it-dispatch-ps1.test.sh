@@ -251,6 +251,59 @@ assert_contains "$dry_output" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run 
 assert_contains "$dry_output" "RUN_WITH_IT_ARTIFACT_HELPER=${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py" "dry-run exposes artifact helper to workers"
 assert_contains "$dry_output" "run-agent.ps1" "dry-run wraps run-agent.ps1"
 
+PS_DEFAULT_LIMIT_STATE="${WORK_DIR}/default-sub-coord.state.json"
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -ValidateOnly \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role sub-coord \
+  -Issue 420 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "${WORK_DIR}/default-sub-coord.log" \
+  -DoneFile "${WORK_DIR}/default-sub-coord.done" \
+  -ResultFile "${WORK_DIR}/default-sub-coord-result.json" \
+  -StateFile "$PS_DEFAULT_LIMIT_STATE" >/dev/null
+assert_file_contains "$PS_DEFAULT_LIMIT_STATE" '"hard_limit_seconds": 0' "PowerShell sub-coordinator defaults to no hard limit"
+
+PS_EXPLICIT_LIMIT_STATE="${WORK_DIR}/explicit-sub-coord.state.json"
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -ValidateOnly \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role sub-coord \
+  -Issue 421 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "${WORK_DIR}/explicit-sub-coord.log" \
+  -DoneFile "${WORK_DIR}/explicit-sub-coord.done" \
+  -ResultFile "${WORK_DIR}/explicit-sub-coord-result.json" \
+  -StateFile "$PS_EXPLICIT_LIMIT_STATE" \
+  -HardLimitSeconds 2 >/dev/null
+assert_file_contains "$PS_EXPLICIT_LIMIT_STATE" '"hard_limit_seconds": 2' "PowerShell explicit sub-coordinator hard limit remains authoritative"
+
+PS_INVALID_LIMIT_STATE="${WORK_DIR}/invalid-limit.state.json"
+set +e
+RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS=invalid "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -ValidateOnly \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role impl \
+  -Issue 422 \
+  -Agent fake \
+  -Model fake-model \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "${WORK_DIR}/invalid-limit.log" \
+  -DoneFile "${WORK_DIR}/invalid-limit.done" \
+  -ResultFile "${WORK_DIR}/invalid-limit-result.json" \
+  -StateFile "$PS_INVALID_LIMIT_STATE" >/dev/null 2>&1
+invalid_limit_status="$?"
+set -e
+[[ "$invalid_limit_status" == "0" ]] || fail "PowerShell malformed hard limit must fall back instead of terminating"
+assert_file_contains "$PS_INVALID_LIMIT_STATE" '"hard_limit_seconds": 7200' "PowerShell malformed hard limit uses documented default"
+
 RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \

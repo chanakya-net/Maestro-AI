@@ -20,7 +20,7 @@ param(
     [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
     [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
     [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
-    [int]$HardLimitSeconds = $(if ($env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS } else { 7200 }),
+    [object]$HardLimitSeconds = $(if ($env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS) { $env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS } else { 7200 }),
     [string]$AutoFailStalledRoles = $(if ($env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES) { $env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES } else { "complexity,impl,modify,plan" }),
     [string]$DispatchOutFile = "",
     [switch]$Detach,
@@ -30,6 +30,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+$hardLimitExplicit = $PSBoundParameters.ContainsKey("HardLimitSeconds") -or [bool]$env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS
+$parsedHardLimitSeconds = 0
+if (-not [int]::TryParse([string]$HardLimitSeconds, [ref]$parsedHardLimitSeconds) -or $parsedHardLimitSeconds -lt 0) {
+    $parsedHardLimitSeconds = 7200
+    $hardLimitExplicit = $false
+}
+if (-not $hardLimitExplicit -and $Role -notin @("complexity", "impl", "modify", "review")) {
+    $parsedHardLimitSeconds = 0
+}
+$HardLimitSeconds = $parsedHardLimitSeconds
 
 function Fail([string]$message) {
     [Console]::Error.WriteLine("run-with-it-dispatch.ps1: $message")

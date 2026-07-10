@@ -307,7 +307,13 @@ function Invoke-AgentCommandWithCapture([string]$filePath, [System.Collections.G
     $stderrOffset = 0
     $stdoutPartial = ""
     $stderrPartial = ""
-    $heartbeatSeconds = if ($env:RUN_WITH_IT_HEARTBEAT_SECONDS) { [int]$env:RUN_WITH_IT_HEARTBEAT_SECONDS } else { 30 }
+    $heartbeatSeconds = 30
+    $parsedHeartbeatSeconds = 0
+    if ($env:RUN_WITH_IT_HEARTBEAT_SECONDS -and
+        [int]::TryParse($env:RUN_WITH_IT_HEARTBEAT_SECONDS, [ref]$parsedHeartbeatSeconds) -and
+        $parsedHeartbeatSeconds -ge 0) {
+        $heartbeatSeconds = $parsedHeartbeatSeconds
+    }
     $nextHeartbeatAt = [DateTime]::UtcNow.AddSeconds($heartbeatSeconds)
 
     try {

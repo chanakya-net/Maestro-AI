@@ -169,6 +169,29 @@ wrapper_heartbeat_count="$(grep -Fc 'STATUS|type=wrapper-heartbeat|' "$QUIET_EVE
 quiet_last_event="$(tail -n 1 "$QUIET_EVENTS_LOG" | tr -d '\r')"
 assert_contains "$quiet_last_event" 'STATUS|type=agent-complete|' "PowerShell wrapper heartbeat stops before terminal event"
 
+INVALID_HEARTBEAT_EVENTS_LOG="${WORK_DIR}/invalid-heartbeat/events.log"
+INVALID_HEARTBEAT_ROLE_LOG="${WORK_DIR}/invalid-heartbeat/role.log"
+INVALID_HEARTBEAT_DONE_FILE="${WORK_DIR}/invalid-heartbeat/done"
+set +e
+AGENT_REGISTRY_FILE="$CUSTOM_REGISTRY" \
+  AGENT=fake \
+  CONTEXT_PAYLOAD_FILE="$CONTEXT_FILE" \
+  PROMPT_FILE="$PROMPT_FILE" \
+  RUN_WITH_IT_EVENTS_LOG="$INVALID_HEARTBEAT_EVENTS_LOG" \
+  RUN_WITH_IT_LOG_FILE="$INVALID_HEARTBEAT_ROLE_LOG" \
+  RUN_WITH_IT_DONE_FILE="$INVALID_HEARTBEAT_DONE_FILE" \
+  RUN_WITH_IT_ROLE=impl \
+  RUN_WITH_IT_ISSUE=42 \
+  RUN_WITH_IT_HEARTBEAT_SECONDS=invalid \
+  FAKE_AGENT_SLEEP_SECONDS=1 \
+  UNATTENDED=1 \
+  "$PS_CMD" -NoProfile -File "$RUNNER_PATH" >/dev/null 2>/dev/null
+invalid_heartbeat_status="$?"
+set -e
+assert_equals "0" "$invalid_heartbeat_status" "PowerShell malformed heartbeat value falls back instead of terminating"
+invalid_heartbeat_last_event="$(tail -n 1 "$INVALID_HEARTBEAT_EVENTS_LOG" | tr -d '\r')"
+assert_contains "$invalid_heartbeat_last_event" 'STATUS|type=agent-complete|' "PowerShell malformed heartbeat fallback still completes the agent"
+
 for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
   output="$(REPO_ROOT="${ROOT_DIR}" \
     "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
