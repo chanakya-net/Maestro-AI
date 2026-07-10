@@ -119,6 +119,56 @@
         "hardest-problems"
       ]
     },
+    "gpt-5.6-luna": {
+      "provider": "openai",
+      "ability": "balanced",
+      "complexity_weight": 3,
+      "min_band": "easy",
+      "routing_bands": [
+        "easy"
+      ],
+      "context_window": 372000,
+      "reasoning_effort": "high",
+      "strengths": [
+        "clear-repeatable-work",
+        "high-throughput",
+        "cost-efficient"
+      ]
+    },
+    "gpt-5.6-terra": {
+      "provider": "openai",
+      "ability": "advanced",
+      "complexity_weight": 5,
+      "min_band": "medium",
+      "routing_bands": [
+        "medium"
+      ],
+      "context_window": 372000,
+      "reasoning_effort": "high",
+      "strengths": [
+        "everyday-work",
+        "reasoning",
+        "tool-use"
+      ]
+    },
+    "gpt-5.6-sol": {
+      "provider": "openai",
+      "ability": "frontier",
+      "complexity_weight": 7,
+      "min_band": "medium-hard",
+      "routing_bands": [
+        "medium-hard",
+        "complex",
+        "holy-fuck"
+      ],
+      "context_window": 372000,
+      "reasoning_effort": "high",
+      "strengths": [
+        "complex-open-ended-work",
+        "agentic-coding",
+        "polish"
+      ]
+    },
     "gpt-5.4-mini": {
       "provider": "openai",
       "ability": "balanced",
@@ -175,6 +225,7 @@
       "ability": "frontier",
       "complexity_weight": 9,
       "context_window": 922000,
+      "explicit_only": true,
       "strengths": [
         "best-coding",
         "swe-bench-88.7pct",
@@ -182,7 +233,8 @@
         "computer-use",
         "MCP",
         "frontier"
-      ]
+      ],
+      "_note": "GPT-5.5 is available only through an explicit forced-model override and is excluded from automatic routing."
     },
     "gemini-3-flash-preview": {
       "provider": "google",
@@ -579,14 +631,12 @@
       "explicit user request for deep/complex → weight_min=9"
     ],
     "band_required_models": {
-      "complex": [
-        "gpt-5.5"
-      ],
+      "complex": [],
       "holy-fuck": [
-        "gpt-5.5",
+        "gpt-5.6-sol",
         "claude-opus-4-8"
       ],
-      "_note": "These models are pinned into the pool regardless of subscription-neutral ranking. Ensures frontier options (GPT + Claude Opus 4.8) are always available at high complexity. Claude Opus is pinned only at holy-fuck; min_band=holy-fuck on catalog entries prevents it from routing into lower bands."
+      "_note": "GPT-5.6 Sol and Claude Opus 4.8 are pinned into the holy-fuck pool regardless of subscription-neutral ranking. GPT-5.5 remains available only through an explicit forced-model override."
     },
     "interchangeable_agent_groups": [],
     "agent_preference_rules": [
@@ -638,6 +688,7 @@
           "{{permission_mode}}",
           "{{model_flag}}",
           "{{extra_args}}",
+          "{{model_settings}}",
           "{{prompt}}"
         ],
         "prompt_argument_template": "{{prompt}}"
@@ -654,6 +705,9 @@
         "default": "",
         "flag_template": "--model {{model}}",
         "known_models": [
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-5.6-luna",
           "gpt-5.5",
           "gpt-5.4",
           "gpt-5.4-mini",
@@ -661,7 +715,7 @@
         ],
         "pricing_basis": "subscription",
         "metered_api_cost": false,
-        "_note": "Codex primary subscription models: gpt-5.5, gpt-5.4, gpt-5.4-mini, and gpt-5.3-codex-spark. Spark is eligible again after the weekly limit reset."
+        "_note": "Codex automatically routes GPT-5.6 Luna, Terra, and Sol by complexity band. GPT-5.5 is explicit-only; GPT-5.4, GPT-5.4-mini, and GPT-5.3-codex-spark remain available for automatic routing."
       },
       "capability_band": "advanced",
       "fallback_order": [

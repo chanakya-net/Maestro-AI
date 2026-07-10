@@ -50,7 +50,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-python3 - "${REGISTRY_PATH}" <<'PY'
+PYTHONDONTWRITEBYTECODE=1 python3 - "${REGISTRY_PATH}" "${ROUTER_PATH}" <<'PY'
+import importlib.util
 import json
 import sys
 
@@ -101,7 +102,16 @@ for role, preference in distribution.get("role_agent_preference", {}).items():
         raise SystemExit(f"GitHub Copilot remains in {role} role preference")
 
 codex_model = registry["agents"]["codex"]["model"]
-if codex_model.get("known_models") != ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]:
+expected_codex_models = [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex-spark",
+]
+if codex_model.get("known_models") != expected_codex_models:
     raise SystemExit(f"codex known models mismatch: {codex_model.get('known_models')!r}")
 if "gpt-5.3-codex-spark" in codex_model.get("routing_disabled_models", []):
     raise SystemExit("codex registry must not disable Spark after the weekly limit reset")
@@ -110,12 +120,62 @@ claude_model = registry["agents"]["claude"]["model"]
 if claude_model.get("known_models") != ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]:
     raise SystemExit(f"claude known models mismatch: {claude_model.get('known_models')!r}")
 catalog = registry["model_catalog"]
+expected_gpt56 = {
+    "gpt-5.6-luna": ("balanced", 3, "easy"),
+    "gpt-5.6-terra": ("advanced", 5, "medium"),
+    "gpt-5.6-sol": ("frontier", 7, "medium-hard"),
+}
+for model_id, (ability, weight, min_band) in expected_gpt56.items():
+    entry = catalog[model_id]
+    assert entry["ability"] == ability
+    assert entry["complexity_weight"] == weight
+    assert entry["min_band"] == min_band
+    assert entry["context_window"] == 372000
+    assert entry["reasoning_effort"] == "high"
+
+assert catalog["gpt-5.5"]["explicit_only"] is True
+assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["complex"]
+assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["holy-fuck"]
+assert "gpt-5.6-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
 if "claude-opus-4.7" in catalog:
     raise SystemExit("Opus 4.7 must be removed from the model catalog; use only Opus 4.8 series")
 if "claude-opus-4-8" not in catalog:
     raise SystemExit("Opus 4.8 must remain in the model catalog")
 if catalog["gpt-5.3-codex-spark"].get("routing_disabled") is True:
     raise SystemExit("Codex Spark must be routable after the weekly limit reset")
+
+spec = importlib.util.spec_from_file_location("run_with_it_router", sys.argv[2])
+router = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(router)
+
+def automatic(level, role="impl"):
+    return router.candidate_model_ids(registry, role, level, None, None)
+
+assert "gpt-5.6-luna" not in automatic("quite-easy")
+assert "gpt-5.6-luna" in automatic("easy")
+assert "gpt-5.6-luna" not in automatic("medium")
+assert "gpt-5.6-terra" in automatic("medium")
+assert "gpt-5.6-terra" not in automatic("medium-hard")
+assert "gpt-5.6-sol" in automatic("medium-hard")
+assert "gpt-5.6-sol" in automatic("complex")
+assert "gpt-5.6-sol" in automatic("holy-fuck")
+for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
+    assert "gpt-5.5" not in automatic(level)
+
+automatic_bands = {
+    "gpt-5.6-luna": ["easy"],
+    "gpt-5.6-terra": ["medium"],
+    "gpt-5.6-sol": ["medium-hard", "complex", "holy-fuck"],
+}
+for model_id, expected_bands in automatic_bands.items():
+    assert catalog[model_id].get("routing_bands") == expected_bands
+    for role in ("impl", "complexity"):
+        for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
+            assert (model_id in automatic(level, role)) == (level in expected_bands)
+
+assert router.candidate_model_ids(registry, "impl", "complex", "gpt-5.5", None) == ["gpt-5.5"]
+assert router.candidate_model_ids(registry, "complexity", "complex", "gpt-5.6-luna", None) == ["gpt-5.6-luna"]
 PY
 
 echo "PASS: registry declares subscription usage distribution"

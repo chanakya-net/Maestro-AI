@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY_PATH="${ROOT_DIR}/assets/agent-registry.json"
 RUNNER_PATH="${ROOT_DIR}/assets/run-agent.sh"
+ROUTER_PATH="${ROOT_DIR}/assets/run-with-it-router.py"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -90,7 +91,8 @@ assert_not_contains "${runner_preamble}" "set -euo pipefail" "run-agent avoids n
 assert_not_contains "${runner_preamble}" "set -u" "run-agent avoids nounset shorthand"
 assert_not_contains "${runner_preamble}" "set -o nounset" "run-agent avoids nounset long form"
 
-python3 - "${REGISTRY_PATH}" <<'PY'
+PYTHONDONTWRITEBYTECODE=1 python3 - "${REGISTRY_PATH}" "${ROUTER_PATH}" <<'PY'
+import importlib.util
 import json
 import sys
 
@@ -155,6 +157,9 @@ for model_id, catalog_entry in model_catalog.items():
         check(removed_key not in catalog_entry, f"{model_id} omits {removed_key} under subscription routing")
 
 expected_codex_models = [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
     "gpt-5.5",
     "gpt-5.4",
     "gpt-5.4-mini",
@@ -166,8 +171,58 @@ check(codex_model.get("pricing_basis") == "subscription", "codex declares subscr
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
 for model_id in expected_codex_models:
     check(model_id in model_catalog, f"codex model catalog includes {model_id}")
+expected_gpt56 = {
+    "gpt-5.6-luna": ("balanced", 3, "easy"),
+    "gpt-5.6-terra": ("advanced", 5, "medium"),
+    "gpt-5.6-sol": ("frontier", 7, "medium-hard"),
+}
+for model_id, (ability, weight, min_band) in expected_gpt56.items():
+    entry = model_catalog[model_id]
+    assert entry["ability"] == ability
+    assert entry["complexity_weight"] == weight
+    assert entry["min_band"] == min_band
+    assert entry["context_window"] == 372000
+    assert entry["reasoning_effort"] == "high"
+
+assert model_catalog["gpt-5.5"]["explicit_only"] is True
+assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["complex"]
+assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["holy-fuck"]
+assert "gpt-5.6-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
 check(model_catalog["gpt-5.3-codex-spark"].get("routing_disabled") is not True, "Codex Spark is enabled in the model catalog")
 check("routing_cost_overrides" not in codex_model, "codex model metadata omits cost overrides")
+
+spec = importlib.util.spec_from_file_location("run_with_it_router", sys.argv[2])
+router = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(router)
+
+def automatic(level, role="impl"):
+    return router.candidate_model_ids(registry, role, level, None, None)
+
+assert "gpt-5.6-luna" not in automatic("quite-easy")
+assert "gpt-5.6-luna" in automatic("easy")
+assert "gpt-5.6-luna" not in automatic("medium")
+assert "gpt-5.6-terra" in automatic("medium")
+assert "gpt-5.6-terra" not in automatic("medium-hard")
+assert "gpt-5.6-sol" in automatic("medium-hard")
+assert "gpt-5.6-sol" in automatic("complex")
+assert "gpt-5.6-sol" in automatic("holy-fuck")
+for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
+    assert "gpt-5.5" not in automatic(level)
+
+automatic_bands = {
+    "gpt-5.6-luna": ["easy"],
+    "gpt-5.6-terra": ["medium"],
+    "gpt-5.6-sol": ["medium-hard", "complex", "holy-fuck"],
+}
+for model_id, expected_bands in automatic_bands.items():
+    assert model_catalog[model_id].get("routing_bands") == expected_bands
+    for role in ("impl", "complexity"):
+        for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
+            assert (model_id in automatic(level, role)) == (level in expected_bands)
+
+assert router.candidate_model_ids(registry, "impl", "complex", "gpt-5.5", None) == ["gpt-5.5"]
+assert router.candidate_model_ids(registry, "complexity", "complex", "gpt-5.6-luna", None) == ["gpt-5.6-luna"]
 
 claude_model = agents["claude"]["model"]
 expected_claude_models = [
@@ -568,6 +623,40 @@ assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dr
 
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
+
+for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
+  output="$("${RUNNER_PATH}" \
+    --agent codex \
+    --model "${model}" \
+    --context-file "${CONTEXT_FILE}" \
+    --prompt-file "${PROMPT_FILE}" \
+    --dry-run \
+    --unattended)"
+  assert_contains "${output}" "--model ${model}" "Codex dry-run uses canonical ${model} ID"
+  assert_contains "${output}" "-c model_reasoning_effort=high" "Codex dry-run applies high reasoning to ${model}"
+done
+
+precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
+  "${RUNNER_PATH}" \
+  --agent codex \
+  --model gpt-5.6-sol \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+case "${precedence_output}" in
+  *"model_reasoning_effort=medium"*"model_reasoning_effort=high"*) ;;
+  *) fail "registry high reasoning must follow caller extra arguments" ;;
+esac
+
+legacy_output="$("${RUNNER_PATH}" \
+  --agent codex \
+  --model gpt-5.4 \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+assert_not_contains "${legacy_output}" "model_reasoning_effort=high" "legacy Codex models do not inherit high reasoning"
 
 set +e
 copilot_dry_run_error="$("${RUNNER_PATH}" --agent github-copilot --model gpt-5.5 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended 2>&1 >/dev/null)"

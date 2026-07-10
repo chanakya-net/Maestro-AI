@@ -147,4 +147,31 @@ if [[ "$done_signal" == *"stale done file"* ]]; then
   fail "runner must remove stale done sentinel before starting"
 fi
 
+for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
+  output="$(REPO_ROOT="${ROOT_DIR}" \
+    "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
+    --agent codex \
+    --model "$model" \
+    --context-file "$CONTEXT_FILE" \
+    --prompt-file "$PROMPT_FILE" \
+    --dry-run \
+    --unattended)"
+  assert_contains "$output" "'--model' '$model'" "PowerShell runner uses canonical $model ID"
+  assert_contains "$output" "'-c' 'model_reasoning_effort=high'" "PowerShell runner applies high reasoning to $model"
+done
+
+precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
+  REPO_ROOT="${ROOT_DIR}" \
+  "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
+  --agent codex \
+  --model gpt-5.6-sol \
+  --context-file "$CONTEXT_FILE" \
+  --prompt-file "$PROMPT_FILE" \
+  --dry-run \
+  --unattended)"
+case "$precedence_output" in
+  *"model_reasoning_effort=medium"*"model_reasoning_effort=high"*) ;;
+  *) fail "PowerShell registry high reasoning must follow caller extra arguments" ;;
+esac
+
 echo "PASS: run-agent.ps1 status bus contract"

@@ -3,7 +3,7 @@ param(
     [string]$StateFile = (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main-state.json"),
     [int]$ParallelJobs = 0,
     [string]$Agent = $(if ($env:SUB_COORD_AGENT) { $env:SUB_COORD_AGENT } else { "codex" }),
-    [string]$Model = $(if ($env:SUB_COORD_MODEL) { $env:SUB_COORD_MODEL } else { "gpt-5.5" }),
+    [string]$Model = $(if ($env:SUB_COORD_MODEL) { $env:SUB_COORD_MODEL } else { "gpt-5.6-sol" }),
     [string]$StatusFile = $(if ($env:RUN_WITH_IT_STATUS_FILE) { $env:RUN_WITH_IT_STATUS_FILE } else { Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "status") "current.txt" }),
     [string]$EventsLog = $(if ($env:RUN_WITH_IT_EVENTS_LOG) { $env:RUN_WITH_IT_EVENTS_LOG } else { Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "status") "events.log" }),
     [string]$MainLog = (Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main") "main.log"),

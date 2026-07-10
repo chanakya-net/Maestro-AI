@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL_RUNNER="${ROOT_DIR}/assets/run-with-it-pool.sh"
 MAIN_RULES="${ROOT_DIR}/assets/main-orchestrator-rules.md"
 SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
+RUN_WITH_IT_SKILL="${ROOT_DIR}/skills/run-with-it/SKILL.md"
+README="${ROOT_DIR}/README.md"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -77,6 +79,8 @@ assert_file_contains "${MAIN_RULES}" "sub-state.json" "main rules permit structu
 assert_file_contains "${SUB_PROMPT}" "SUB_COORD_RECOVERY_MODE=1" "sub-coordinator prompt documents recovery mode"
 assert_file_contains "${SUB_PROMPT}" "artifact-recovery-prompt.md" "sub-coordinator prompt documents artifact recovery worker prompt"
 assert_file_contains "${SUB_PROMPT}" "STATUS|type=artifact-recovery-result" "sub-coordinator prompt documents artifact recovery result status"
+assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "skill documents Sol Sub-Coordinator default"
+assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "README documents Sol Sub-Coordinator default"
 
 validate_output="$("${POOL_RUNNER}" \
   --validate-only \
@@ -99,7 +103,6 @@ dry_output="$("${POOL_RUNNER}" \
   --state-file "${STATE_FILE}" \
   --parallel-jobs 2 \
   --agent codex \
-  --model gpt-5.5 \
   --status-file "${STATUS_FILE}" \
   --events-log "${EVENTS_LOG}" \
   --main-log "${MAIN_LOG}")"
@@ -114,6 +117,7 @@ assert_contains "${dry_output}" "--log-file ${WORK_DIR_REAL}/.run-with-it/issues
 assert_contains "${dry_output}" "--result-file ${WORK_DIR_REAL}/.run-with-it/issues/101/report.json" "dry-run places compact report in issue folder"
 assert_contains "${dry_output}" "--state-file ${WORK_DIR_REAL}/.run-with-it/issues/101/sub-coordinator.state.json" "dry-run passes sub-coordinator dispatcher state file"
 assert_contains "${dry_output}" "--detach" "dry-run launches sub-coordinator dispatcher in detached mode"
+assert_contains "${dry_output}" "--model gpt-5.6-sol" "pool defaults Sub-Coordinators to Sol"
 
 printf '# issue 201 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-201.md"
 printf '# issue 202 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-202.md"
@@ -167,6 +171,7 @@ dependency_output="$("${POOL_RUNNER}" \
   --main-log "${MAIN_LOG}")"
 
 assert_contains "${dependency_output}" "--issue 204" "dry-run queues issue whose dependency is completed"
+assert_contains "${dependency_output}" "--model gpt-5.5" "explicit GPT-5.5 Sub-Coordinator override remains valid"
 if [[ "${dependency_output}" == *"--issue 203"* ]]; then
   fail "dry-run must not queue issue whose dependency is in merge_recovery"
 fi
