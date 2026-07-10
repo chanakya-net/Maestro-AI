@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import posixpath
+import re
 import sys
 import time
 from pathlib import Path
@@ -266,6 +267,24 @@ def is_dependency_blocking_reason(reason: Any, deps: list[Any]) -> bool:
     return False
 
 
+def is_stale_base_dependency_reason(reason: Any, deps: list[Any]) -> bool:
+    """True only when a reason names one of this issue's dependencies exactly.
+
+    Automatic stale-base requeue is intentionally stricter than the legacy
+    auto-unblock matcher above: generic "blocked by" text and partial issue IDs
+    are not evidence that a completed dependency was missing from the base.
+    """
+    if not isinstance(reason, str):
+        return False
+    for dep in deps:
+        dep_id = re.escape(str(dep))
+        if re.search(rf"#{dep_id}(?!\d)", reason):
+            return True
+        if re.search(rf"\bissue(?:-| ){dep_id}\b", reason, re.IGNORECASE):
+            return True
+    return False
+
+
 def quarantine_artifacts(issue_dir: str, paths: list[str], label: str) -> str | None:
     """Move stale terminal artifacts (report.json / done / sub-state) aside so a
     requeued issue is re-run fresh instead of reusing poisoned state. Returns the
@@ -504,11 +523,15 @@ def finalize_issue(args: argparse.Namespace) -> int:
         deps = entry.get("deps", []) or []
         completed = completed_issue_numbers(state)
         reasons = entry.get("blocking_reasons", [])
+        stale_base_requeue_attempts = entry.get("stale_base_requeue_attempts", 0)
+        if not isinstance(stale_base_requeue_attempts, int) or stale_base_requeue_attempts < 0:
+            stale_base_requeue_attempts = 0
         if (
             deps
             and issue_dependencies_completed(entry, completed)
             and reasons
-            and all(is_dependency_blocking_reason(reason, deps) for reason in reasons)
+            and all(is_stale_base_dependency_reason(reason, deps) for reason in reasons)
+            and stale_base_requeue_attempts < 1
         ):
             issue_dir = entry.get("issue_dir", "") or ""
             archived = quarantine_artifacts(
@@ -520,6 +543,8 @@ def finalize_issue(args: argparse.Namespace) -> int:
             entry["blocking_reasons"] = []
             entry["stale_base_requeued_at"] = utc_stamp()
             entry["stale_base_report_file"] = args.report_file
+            entry["stale_base_requeue_attempts"] = stale_base_requeue_attempts + 1
+            entry["sub_coord_recovery_attempts"] = 0
             if archived:
                 entry["stale_base_archive_dir"] = archived
             state["active_pool_issues"] = [
@@ -868,6 +893,7 @@ def requeue_issue(args: argparse.Namespace) -> int:
     entry["status"] = "pending"
     entry["blocking_reasons"] = []
     entry["requeued_at"] = timestamp
+    entry["sub_coord_recovery_attempts"] = 0
     if getattr(args, "reason", ""):
         entry["manual_requeue_reason"] = args.reason
     if archived:

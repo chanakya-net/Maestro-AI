@@ -39,7 +39,7 @@ cat > "${STATE_FILE}" <<JSON
   "issue_registry": {
     "600": {"status": "completed", "deps": []},
     "701": {"status": "in_progress", "deps": [], "issue_dir": "${WORK_DIR}/issues/701"},
-    "700": {"status": "blocked", "deps": [701], "blocking_reasons": ["blocked-by-issue-701"],
+    "700": {"status": "blocked", "deps": [701], "blocking_reasons": ["blocked-by-issue-701"], "sub_coord_recovery_attempts": 3,
             "issue_dir": "${ISSUE_DIR_700}", "report_file": "${ISSUE_DIR_700}/report.json"},
     "633": {"status": "pending", "deps": [700]}
   }
@@ -56,6 +56,8 @@ assert_contains "${board}" "#633 blocked:700" "board shows pending issue gated o
 python3 "${STATE_HELPER}" requeue --issue 700 --reason "force fresh retry" --state-file "${STATE_FILE}" >/dev/null
 status_700="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_registry"]["700"]["status"])' "${STATE_FILE}")"
 assert_eq "${status_700}" "pending" "requeue resets the issue to pending"
+recovery_attempts_700="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_registry"]["700"]["sub_coord_recovery_attempts"])' "${STATE_FILE}")"
+assert_eq "${recovery_attempts_700}" "0" "manual requeue resets the sub-coordinator recovery budget"
 [[ ! -f "${ISSUE_DIR_700}/report.json" ]] || fail "requeue should quarantine the stale report.json"
 ls "${ISSUE_DIR_700}/recovery/"requeue-* >/dev/null 2>&1 || fail "requeue should create a recovery archive dir"
 
@@ -146,7 +148,7 @@ cat > "${STALE_STATE}" <<'JSON'
   "active_pool_issues": [11],
   "issue_registry": {
     "10": {"status": "completed", "deps": []},
-    "11": {"status": "in_progress", "deps": [10], "context_file": "11.md"}
+    "11": {"status": "in_progress", "deps": [10], "context_file": "11.md", "sub_coord_recovery_attempts": 3}
   }
 }
 JSON
@@ -155,5 +157,51 @@ stale_outcome="$(python3 "${STATE_HELPER}" finalize-issue --issue 11 --report-fi
 assert_eq "${stale_outcome}" "pending" "completed dependency missing report becomes stale-base requeue"
 stale_status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_registry"]["11"]["status"])' "${STALE_STATE}")"
 assert_eq "${stale_status}" "pending" "stale-base issue is eligible for a fresh handoff"
+stale_recovery_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_registry"]["11"]["sub_coord_recovery_attempts"])' "${STALE_STATE}")"
+assert_eq "${stale_recovery_attempts}" "0" "automatic stale-base requeue resets the recovery budget"
+
+python3 - "${STALE_STATE}" <<'PY'
+import json, sys
+
+path = sys.argv[1]
+state = json.load(open(path))
+state["issue_registry"]["11"]["status"] = "in_progress"
+state["active_pool_issues"] = [11]
+json.dump(state, open(path, "w"), indent=2)
+PY
+second_stale_outcome="$(python3 "${STATE_HELPER}" finalize-issue --issue 11 --report-file "${WORK_DIR}/stale-report.json" --state-file "${STALE_STATE}")"
+assert_eq "${second_stale_outcome}" "blocked" "stale-base automatic requeue is capped at one attempt"
+
+SUBSTRING_STATE="${WORK_DIR}/substring-state.json"
+cat > "${SUBSTRING_STATE}" <<'JSON'
+{
+  "schema_version": 4,
+  "execution_plan": {"topo_order": [61, 62], "parallel_jobs": 1},
+  "active_pool_issues": [62],
+  "issue_registry": {
+    "61": {"status": "completed", "deps": []},
+    "62": {"status": "in_progress", "deps": [61], "context_file": "62.md"}
+  }
+}
+JSON
+printf '%s\n' '{"outcome":"blocked","blocking_reasons":["dependency #618 missing from worktree"]}' > "${WORK_DIR}/substring-report.json"
+substring_outcome="$(python3 "${STATE_HELPER}" finalize-issue --issue 62 --report-file "${WORK_DIR}/substring-report.json" --state-file "${SUBSTRING_STATE}")"
+assert_eq "${substring_outcome}" "blocked" "dependency 61 does not match issue #618"
+
+GENERIC_BLOCK_STATE="${WORK_DIR}/generic-block-state.json"
+cat > "${GENERIC_BLOCK_STATE}" <<'JSON'
+{
+  "schema_version": 4,
+  "execution_plan": {"topo_order": [70, 71], "parallel_jobs": 1},
+  "active_pool_issues": [71],
+  "issue_registry": {
+    "70": {"status": "completed", "deps": []},
+    "71": {"status": "in_progress", "deps": [70], "context_file": "71.md"}
+  }
+}
+JSON
+printf '%s\n' '{"outcome":"blocked","blocking_reasons":["blocked by missing STRIPE_API_KEY"]}' > "${WORK_DIR}/generic-block-report.json"
+generic_block_outcome="$(python3 "${STATE_HELPER}" finalize-issue --issue 71 --report-file "${WORK_DIR}/generic-block-report.json" --state-file "${GENERIC_BLOCK_STATE}")"
+assert_eq "${generic_block_outcome}" "blocked" "generic blocked-by text is not stale dependency evidence"
 
 echo "PASS: run-with-it state requeue/auto-unblock/status-board"
