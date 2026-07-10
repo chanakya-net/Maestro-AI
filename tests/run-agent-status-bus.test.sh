@@ -64,6 +64,9 @@ mkdir -p "$(dirname "${DONE_FILE}")"
 printf 'stale done file\n' > "${DONE_FILE}"
 cat > "${FAKE_BIN}/fake-agent" <<'SH'
 #!/usr/bin/env bash
+if [[ -n "${FAKE_AGENT_PID_FILE:-}" ]]; then
+  printf '%s\n' "$$" > "${FAKE_AGENT_PID_FILE}"
+fi
 if [[ -n "${FAKE_AGENT_SLEEP_SECONDS:-}" ]]; then
   sleep "${FAKE_AGENT_SLEEP_SECONDS}"
 fi
@@ -182,5 +185,49 @@ wrapper_heartbeat_count="$(grep -Fc 'STATUS|type=wrapper-heartbeat|' "${QUIET_EV
 [[ "${wrapper_heartbeat_count}" -ge 2 ]] || fail "quiet child should receive periodic wrapper heartbeats"
 quiet_last_event="$(tail -n 1 "${QUIET_EVENTS_LOG}")"
 assert_contains "${quiet_last_event}" 'STATUS|type=agent-complete|' "wrapper heartbeat stops before terminal event"
+
+# SIGKILL bypasses the runner EXIT trap. The heartbeat child must notice that
+# its parent disappeared instead of appending false liveness forever.
+ORPHAN_EVENTS_LOG="${WORK_DIR}/orphan/events.log"
+ORPHAN_ROLE_LOG="${WORK_DIR}/orphan/role.log"
+ORPHAN_DONE_FILE="${WORK_DIR}/orphan/done"
+ORPHAN_AGENT_PID_FILE="${WORK_DIR}/orphan/agent.pid"
+FAKE_AGENT_SLEEP_SECONDS=10 \
+  FAKE_AGENT_PID_FILE="${ORPHAN_AGENT_PID_FILE}" \
+  RUN_WITH_IT_HEARTBEAT_SECONDS=1 \
+  PATH="${FAKE_BIN}:${PATH}" \
+  AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" \
+  AGENT=fake \
+  CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" \
+  PROMPT_FILE="${PROMPT_FILE}" \
+  RUN_WITH_IT_EVENTS_LOG="${ORPHAN_EVENTS_LOG}" \
+  RUN_WITH_IT_LOG_FILE="${ORPHAN_ROLE_LOG}" \
+  RUN_WITH_IT_DONE_FILE="${ORPHAN_DONE_FILE}" \
+  RUN_WITH_IT_ROLE=impl \
+  RUN_WITH_IT_ISSUE=42 \
+  UNATTENDED=1 \
+  "${RUNNER_PATH}" >/dev/null 2>/dev/null &
+orphan_runner_pid="$!"
+for _ in {1..20}; do
+  if [[ -f "${ORPHAN_EVENTS_LOG}" ]] && grep -Fq 'STATUS|type=wrapper-heartbeat|' "${ORPHAN_EVENTS_LOG}"; then
+    break
+  fi
+  sleep 0.25
+done
+grep -Fq 'STATUS|type=wrapper-heartbeat|' "${ORPHAN_EVENTS_LOG}" || fail "orphan test runner did not emit its initial heartbeat"
+orphan_children="$(pgrep -P "${orphan_runner_pid}" || true)"
+kill -9 "${orphan_runner_pid}" 2>/dev/null || true
+wait "${orphan_runner_pid}" 2>/dev/null || true
+sleep 2
+orphan_count_before="$(grep -Fc 'STATUS|type=wrapper-heartbeat|' "${ORPHAN_EVENTS_LOG}" || true)"
+sleep 2
+orphan_count_after="$(grep -Fc 'STATUS|type=wrapper-heartbeat|' "${ORPHAN_EVENTS_LOG}" || true)"
+for child in ${orphan_children}; do
+  kill "${child}" 2>/dev/null || true
+done
+if [[ -f "${ORPHAN_AGENT_PID_FILE}" ]]; then
+  kill "$(<"${ORPHAN_AGENT_PID_FILE}")" 2>/dev/null || true
+fi
+assert_equals "${orphan_count_before}" "${orphan_count_after}" "wrapper heartbeat stops when its parent is SIGKILLed"
 
 echo "PASS: run-agent status bus contract"

@@ -577,6 +577,13 @@ while ($true) {
                 exit 75
             }
         }
+        if (Test-CompletionReady) {
+            Write-Status "STATUS|type=worker-stall-timeout|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|action=salvage-and-terminate"
+            try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-WorkerState "completed" $false 0 "salvaged-from-stall"
+            Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+            exit 0
+        }
         Write-Status "STATUS|type=worker-stall-timeout|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|action=terminate-runner"
         try {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue

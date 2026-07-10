@@ -122,6 +122,34 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=review|status=success|source=agent" -Encoding UTF8
 PS1
 
+STALL_COMPLEXITY_AGENT="${WORK_DIR}/stall-complexity-agent.ps1"
+cat > "$STALL_COMPLEXITY_AGENT" <<'PS1'
+param([string]$RepoRoot, [string]$Prompt)
+if ($Prompt -eq "--version") {
+  Write-Output "stall-complexity-agent 1.0"
+  exit 0
+}
+$scores = @{
+  dependency_complexity = 1
+  ownership_overlap_risk = 1
+  architecture_risk = 1
+  orchestration_burden = 1
+  verification_risk = 1
+  ambiguity_of_requirements = 1
+  integration_surface_breadth = 1
+  rollback_recovery_risk = 1
+  blast_radius = 1
+}
+$rationale = @{}
+foreach ($key in $scores.Keys) { $rationale[$key] = "fixture" }
+@{ total = 9; level = "quite-easy"; scores = $scores; rationale = $rationale } |
+  ConvertTo-Json -Depth 5 |
+  Write-Output
+New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
+Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=complexity|status=success|source=agent" -Encoding UTF8
+Start-Sleep -Seconds 4
+PS1
+
 cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<JSON
 {
   "schema_version": 1,
@@ -161,6 +189,20 @@ cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<JSON
       "invocation": {
         "command": "${PS_CMD}",
         "args_template": ["-NoProfile", "-File", "${REVIEW_INSTRUCTIONS_ONLY_AGENT}", "{{repo_root}}", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": { "default": "", "available": [""] },
+      "model": { "default": "fake-model", "flag_template": "", "known_models": ["fake-model"] },
+      "capability_band": "balanced",
+      "fallback_order": [],
+      "user_model_configuration": { "requires_user_model_config": false, "config_paths": [], "skip_when_unconfigured": false, "skip_message": "" }
+    },
+    "stall-complexity": {
+      "display_name": "Stall Complexity",
+      "detection": { "command": "${PS_CMD}", "args": ["-NoProfile", "-File", "${STALL_COMPLEXITY_AGENT}", "unused", "--version"] },
+      "invocation": {
+        "command": "${PS_CMD}",
+        "args_template": ["-NoProfile", "-File", "${STALL_COMPLEXITY_AGENT}", "{{repo_root}}", "{{prompt}}"],
         "prompt_argument_template": "{{prompt}}"
       },
       "permission_modes": { "default": "", "available": [""] },
@@ -366,6 +408,29 @@ REVIEW_STATE="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.state.json"
 assert_json_file "$REVIEW_RESULT" "PowerShell dispatcher synthesizes missing review status from instructions"
 assert_file_contains "$REVIEW_RESULT" '"source": "dispatcher-synthesized"' "PowerShell synthesized review status is auditable"
 assert_file_contains "$REVIEW_STATE" '"state": "completed"' "PowerShell review instructions-only worker completes"
+
+# A stalled complexity worker may have emitted valid JSON and the done sentinel
+# before hanging. Synthesis turns that log output into a complete result artifact;
+# PowerShell must accept it exactly as the Bash dispatcher does.
+STALL_COMPLEXITY_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/48"
+STALL_COMPLEXITY_LOG="${STALL_COMPLEXITY_ISSUE_DIR}/workers/complexity/cycle-1.log"
+STALL_COMPLEXITY_DONE="${STALL_COMPLEXITY_ISSUE_DIR}/workers/complexity/cycle-1.done"
+STALL_COMPLEXITY_RESULT="${STALL_COMPLEXITY_ISSUE_DIR}/workers/complexity/cycle-1-result.json"
+STALL_COMPLEXITY_STATE="${STALL_COMPLEXITY_ISSUE_DIR}/workers/complexity/cycle-1.state.json"
+set +e
+RUN_WITH_IT_HEARTBEAT_SECONDS=0 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" -Role complexity -Issue 48 -Cycle 1 \
+  -Agent stall-complexity -Model fake-model -ContextFile "$CONTEXT_FILE" -PromptFile "$PROMPT_FILE" \
+  -LogFile "$STALL_COMPLEXITY_LOG" -DoneFile "$STALL_COMPLEXITY_DONE" -ResultFile "$STALL_COMPLEXITY_RESULT" -StateFile "$STALL_COMPLEXITY_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" -IssueDir "$STALL_COMPLEXITY_ISSUE_DIR" -StatusFile "$STATUS_FILE" -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 -QuietSeconds 1 -StallSeconds 2 >/dev/null
+stall_complexity_status="$?"
+set -e
+[[ "$stall_complexity_status" == "0" ]] || fail "PowerShell dispatcher must complete a valid complexity artifact synthesized at stall"
+assert_json_file "$STALL_COMPLEXITY_RESULT" "PowerShell stall synthesis writes valid complexity JSON"
+assert_file_contains "$STALL_COMPLEXITY_STATE" '"state": "completed"' "PowerShell synthesized complexity stall records completion"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-stall-timeout|issue=48|role=complexity|cycle=1" "PowerShell synthesized complexity stall emits timeout decision"
+assert_file_contains "$EVENTS_LOG" "action=salvage-and-terminate" "PowerShell synthesized complexity stall records successful salvage"
 
 # --- #2: committed work is synthesized even when the worker exits NONZERO (parity with Bash) ---
 COMMIT_FAIL_AGENT="${WORK_DIR}/commit-then-fail-agent.ps1"

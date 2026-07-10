@@ -82,6 +82,33 @@ assert_file_line_contains() {
   fi
 }
 
+assert_bash_artifact_failure_stops_block() {
+  local prompt_file="$1"
+  local payload_var="$2"
+  local block
+  local status
+
+  block="$(awk '
+    /^python3 "\$RUN_WITH_IT_ARTIFACT_HELPER" write-json/ { in_block = 1 }
+    in_block { print }
+    in_block && /^rm -f / { exit }
+  ' "$prompt_file")"
+  [[ -n "$block" ]] || fail "missing Bash artifact writer block in $prompt_file"
+
+  set +e
+  BLOCK="$block" PAYLOAD_VAR="$payload_var" bash -c '
+    python3() { return 7; }
+    export RUN_WITH_IT_ARTIFACT_HELPER=helper.py RUN_WITH_IT_ISSUE=42 RUN_WITH_IT_RESULT_FILE=result.json REPO_ROOT=repo
+    temp=$(mktemp)
+    printf -v "$PAYLOAD_VAR" %s "$temp"
+    export "$PAYLOAD_VAR"
+    eval "$BLOCK"
+  '
+  status=$?
+  set -e
+  [[ "$status" -ne 0 ]] || fail "Bash artifact writer failure is masked by cleanup in $prompt_file"
+}
+
 assert_not_present_in_active_files() {
   local needle="$1"
   local message="$2"
@@ -304,6 +331,7 @@ assert_file_contains "$IMPLEMENTER_PROMPT_FILE" 'RUN_WITH_IT_DONE_FILE' "impleme
 assert_file_contains "$IMPLEMENTER_PROMPT_FILE" 'issue worktree' "implementer prompt documents worktree execution"
 assert_file_contains "$IMPLEMENTER_PROMPT_FILE" 'DONE|issue=' "implementer prompt documents done sentinel line"
 assert_file_contains "$IMPLEMENTER_PROMPT_FILE" 'write-json' "implementer uses atomic artifact writer"
+assert_bash_artifact_failure_stops_block "$IMPLEMENTER_PROMPT_FILE" "IMPL_PAYLOAD_FILE"
 assert_file_contains "$IMPLEMENTER_PROMPT_FILE" 'not_applicable' "implementer records lifecycle-aware verification preflight"
 assert_file_contains "$REVIEW_PROMPT_FILE" 'RUN_WITH_IT_DONE_FILE' "review prompt documents done file"
 assert_file_contains "$REVIEW_PROMPT_FILE" 'issue worktree' "review prompt documents worktree diff context"
@@ -336,6 +364,7 @@ assert_file_contains "$MODIFIER_PROMPT_FILE" 'addressed | declined | blocked' "m
 assert_file_contains "$MODIFIER_PROMPT_FILE" 'Do not finish until every reviewer comment `id` has a closure entry' "modifier prompt requires every review ID to be closed"
 assert_file_contains "$MODIFIER_PROMPT_FILE" 'pre-existing or infrastructure failures' "modifier prompt distinguishes unrelated verification failures"
 assert_file_contains "$MODIFIER_PROMPT_FILE" 'write-json' "modifier uses atomic artifact writer"
+assert_bash_artifact_failure_stops_block "$MODIFIER_PROMPT_FILE" "MODIFY_PAYLOAD_FILE"
 assert_file_contains "$MODIFIER_PROMPT_FILE" 'not_applicable' "modifier records lifecycle-aware verification preflight"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'verification_applicability' "sub-coordinator persists verification preflight classification"
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'Do not generate Python source strings to write JSON artifacts' "sub-coordinator forbids brittle ad hoc artifact quoting"

@@ -316,6 +316,7 @@ multi_exclusion_output="$("${ROUTER_PATH}" \
   --exclude-model claude-opus-4-8)"
 
 assert_json_field "${multi_exclusion_output}" 'payload["model"] not in {"gpt-5.5", "claude-opus-4-8"}' "review routing honors every model exclusion"
+assert_json_field "${multi_exclusion_output}" 'payload["model_exclusions"] == ["claude-opus-4-8", "gpt-5.5"]' "router output records every applied model exclusion"
 
 echo "PASS: router honors cumulative model exclusions"
 

@@ -676,6 +676,7 @@ def build_output(
         },
         "evaluated_candidates": selection.get("evaluated_candidates", []),
         "availability_exclusions": selection.get("availability_exclusions", {}),
+        "model_exclusions": selection.get("model_exclusions", []),
     }
     return output
 

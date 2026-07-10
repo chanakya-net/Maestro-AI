@@ -227,11 +227,13 @@ def normalized_ownership_scope(entry: dict[str, Any]) -> tuple[str, ...]:
 def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
     for left_scope in left:
         for right_scope in right:
-            if any(char in left_scope or char in right_scope for char in "*?["):
+            left_key = left_scope.casefold()
+            right_key = right_scope.casefold()
+            if any(char in left_key or char in right_key for char in "*?["):
                 return True
-            if left_scope == right_scope:
+            if left_key == right_key:
                 return True
-            if left_scope.startswith(f"{right_scope}/") or right_scope.startswith(f"{left_scope}/"):
+            if left_key.startswith(f"{right_key}/") or right_key.startswith(f"{left_key}/"):
                 return True
     return False
 

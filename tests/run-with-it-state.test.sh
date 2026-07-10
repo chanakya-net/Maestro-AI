@@ -102,6 +102,22 @@ python3 - "${ADMISSION_STATE}" <<'PY'
 import json, sys
 path = sys.argv[1]
 state = json.load(open(path))
+state["active_pool_issues"] = [8]
+state["execution_plan"]["topo_order"] = [8, 9, 10]
+state["issue_registry"] = {
+    "8": {"status": "in_progress", "deps": [], "parallel_safe": True, "ownership_scope": ["DOCS"], "context_file": "8.md"},
+    "9": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["docs/api"], "context_file": "9.md"},
+    "10": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["src"], "context_file": "10.md"},
+}
+json.dump(state, open(path, "w"), indent=2)
+PY
+ready_casefold="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_casefold}" "10" "ownership admission is conservative on case-insensitive filesystems"
+
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
 state["active_pool_issues"] = []
 state["execution_plan"]["topo_order"] = [6, 7]
 state["issue_registry"] = {

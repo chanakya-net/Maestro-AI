@@ -220,7 +220,7 @@ python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
   --role modify --issue "$RUN_WITH_IT_ISSUE" \
   --payload-file "$MODIFY_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
   --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
-  --pre-spawn-head "${ISSUE_BASE_SHA:-}"
+  --pre-spawn-head "${ISSUE_BASE_SHA:-}" || { rm -f "$MODIFY_PAYLOAD_FILE"; exit 1; }
 rm -f "$MODIFY_PAYLOAD_FILE"
 ```
 
