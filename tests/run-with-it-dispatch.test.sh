@@ -180,6 +180,23 @@ EXPLICIT_LIMIT_STATE="${WORK_DIR}/explicit-sub-coord.state.json"
   --state-file "${EXPLICIT_LIMIT_STATE}" \
   --hard-limit-seconds 2 >/dev/null
 assert_file_contains "${EXPLICIT_LIMIT_STATE}" '"hard_limit_seconds": 2' "explicit sub-coordinator hard limit remains authoritative"
+
+INVALID_LIMIT_STATE="${WORK_DIR}/invalid-limit.state.json"
+RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS=invalid "${DISPATCHER}" \
+  --validate-only \
+  --asset-root "${ROOT_DIR}/assets" \
+  --role impl \
+  --issue 422 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --log-file "${WORK_DIR}/invalid-limit.log" \
+  --done-file "${WORK_DIR}/invalid-limit.done" \
+  --result-file "${WORK_DIR}/invalid-limit-result.json" \
+  --state-file "${INVALID_LIMIT_STATE}" >/dev/null
+assert_json_file "${INVALID_LIMIT_STATE}" "malformed Bash hard limit still writes valid watchdog JSON"
+assert_file_contains "${INVALID_LIMIT_STATE}" '"hard_limit_seconds": 7200' "malformed Bash hard limit uses documented default"
 assert_file_contains "${STATE_FILE}" '"log_file":' "watchdog state records role log path"
 
 SMOKE_ASSET_ROOT="${WORK_DIR}/assets"

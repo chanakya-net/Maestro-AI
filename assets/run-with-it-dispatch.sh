@@ -118,6 +118,16 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 [ -n "$DONE_FILE" ] || fail "--done-file is required"
 [ -n "$RESULT_FILE" ] || fail "--result-file is required"
 
+case "$HARD_LIMIT_SECONDS" in
+  ''|*[!0-9]*)
+    HARD_LIMIT_SECONDS=7200
+    HARD_LIMIT_EXPLICIT=0
+    ;;
+  *)
+    HARD_LIMIT_SECONDS=$((10#$HARD_LIMIT_SECONDS))
+    ;;
+esac
+
 if [ "$HARD_LIMIT_EXPLICIT" = 0 ]; then
   case "$ROLE" in
     complexity|impl|modify|review) HARD_LIMIT_SECONDS=7200 ;;
