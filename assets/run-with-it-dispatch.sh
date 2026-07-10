@@ -714,6 +714,11 @@ while true; do
 
   elapsed=$((now - started_at))
   if [ "$HARD_LIMIT_SECONDS" != "0" ] && [ "$elapsed" -ge "$HARD_LIMIT_SECONDS" ]; then
+    if completion_ready; then
+      write_worker_state "completed" "true"
+      write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+      exit 0
+    fi
     if synthesize_stalled_result_if_possible; then
       artifact_reason="$(result_artifact_failure_reason)"
       if [ "$artifact_reason" = "artifact-recovery-required" ]; then
@@ -726,9 +731,19 @@ while true; do
         exit 75
       fi
     fi
+    if completion_ready; then
+      write_status "STATUS|type=worker-hard-limit|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|elapsed=${elapsed}|action=salvage-and-terminate"
+      write_worker_state "completed" "false" "0" "salvaged-at-hard-limit"
+      write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
+      set +e
+      terminate_runner_tree "$pid" >/dev/null 2>&1
+      set -e
+      exit 0
+    fi
     write_status "STATUS|type=worker-hard-limit|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|elapsed=${elapsed}|action=terminate-runner"
-    write_worker_state "failed" "false" "124" "hard-limit-exceeded" "capability"
-    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=hard-limit-exceeded|failure_class=capability|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+    failure_class="$(result_artifact_failure_class)"
+    write_worker_state "failed" "false" "124" "hard-limit-exceeded" "$failure_class"
+    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=hard-limit-exceeded|failure_class=${failure_class}|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
     set +e
     terminate_runner_tree "$pid" >/dev/null 2>&1
     set -e

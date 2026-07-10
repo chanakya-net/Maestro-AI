@@ -72,6 +72,17 @@ printf '{"outcome":"completed"}\n' > "${RESULT_FILE}"
 
 [[ -f "${DISPATCHER}" ]] || fail "run-with-it-dispatch.sh exists"
 assert_executable "${DISPATCHER}"
+
+hard_limit_completion_checks="$(python3 - "$DISPATCHER" <<'PY'
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+start = text.index('if [ "$HARD_LIMIT_SECONDS" != "0" ]')
+end = text.index('if [ "$state" = "stalled" ]', start)
+print(text[start:end].count('if completion_ready; then'))
+PY
+)"
+assert_eq "$hard_limit_completion_checks" "2" "hard-limit path checks completion before and after synthesis"
 assert_file_contains "${DISPATCHER}" "start_new_session=True" "detached dispatcher starts in a new session"
 assert_file_contains "${DISPATCHER}" 'RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity,impl,modify' "dispatcher auto-fails stalled implementation and modification workers by default"
 
@@ -898,6 +909,12 @@ if [[ "${1:-}" == "--version" ]]; then
   printf 'unavailable-agent 1.0\n'
   exit 0
 fi
+if [[ -n "${HARD_LIMIT_HANG_SECONDS:-}" ]]; then
+  printf 'STATUS|type=agent-unavailable|issue=%s|role=%s|agent=unavailable|model=fake-model|reason=auth|action=exclude-route\n' \
+    "${RUN_WITH_IT_ISSUE:-unknown}" "${RUN_WITH_IT_ROLE:-unknown}"
+  sleep "${HARD_LIMIT_HANG_SECONDS}"
+  exit 1
+fi
 printf 'API error: 401 authentication failed for this account\n' >&2
 exit 1
 SH
@@ -966,6 +983,25 @@ set -e
 assert_file_contains "${UNAVAIL_LOG}" "STATUS|type=agent-unavailable" "runner records agent-unavailable from auth error"
 assert_file_contains "${UNAVAIL_OUTPUT}" "failure_class=infrastructure" "dispatch-failed classifies availability loss as infrastructure"
 assert_file_contains "${UNAVAIL_STATE}" '"failure_class": "infrastructure"' "state JSON records infrastructure failure class"
+
+HARD_UNAVAIL_DIR="${SMOKE_PROJECT}/.run-with-it/issues/471"
+HARD_UNAVAIL_LOG="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1.log"
+HARD_UNAVAIL_DONE="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1.done"
+HARD_UNAVAIL_RESULT="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1-result.json"
+HARD_UNAVAIL_STATE="${HARD_UNAVAIL_DIR}/workers/plan/cycle-1.state.json"
+set +e
+HARD_LIMIT_HANG_SECONDS=4 RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role plan --issue 471 --cycle 1 --agent unavailable --model fake-model \
+  --context-file "${UNAVAIL_CONTEXT}" --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${HARD_UNAVAIL_LOG}" --done-file "${HARD_UNAVAIL_DONE}" --result-file "${HARD_UNAVAIL_RESULT}" \
+  --state-file "${HARD_UNAVAIL_STATE}" --repo-root "${SMOKE_REPO_ROOT}" --issue-dir "${HARD_UNAVAIL_DIR}" \
+  --status-file "${SMOKE_STATUS}" --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 --quiet-seconds 1 --stall-seconds 10 --hard-limit-seconds 2 >/dev/null
+hard_unavail_status="$?"
+set -e
+assert_eq "${hard_unavail_status}" "124" "hard-limit unavailable worker exits 124"
+assert_file_contains "${HARD_UNAVAIL_STATE}" '"failure_class": "infrastructure"' "hard-limit failure uses artifact classifier"
 
 cat > "${SMOKE_BIN}/wrong-path-modifier-agent" <<'SH'
 #!/usr/bin/env bash
@@ -1215,6 +1251,9 @@ COMPLEXITY|score=14|level=easy|d1=2|d2=1|d3=2|d4=1|d5=2|d6=1|d7=2|d8=1|d9=2
 }
 JSON
 printf 'DONE|issue=%s|role=complexity|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+if [[ -n "${HARD_LIMIT_HANG_SECONDS:-}" ]]; then
+  sleep "${HARD_LIMIT_HANG_SECONDS}"
+fi
 SH
 chmod +x "${SMOKE_BIN}/stdout-complexity-agent"
 
@@ -1439,6 +1478,27 @@ assert_json_file "${COMPLEXITY_STDOUT_RESULT}" "valid complexity stdout JSON is 
 assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"level": "easy"' "synthesized complexity artifact preserves level"
 assert_file_contains "${COMPLEXITY_STDOUT_RESULT}" '"source": "dispatcher-synthesized-from-log"' "synthesized complexity artifact is auditable"
 assert_file_contains "${COMPLEXITY_STDOUT_STATE}" '"state": "completed"' "complexity stdout-only worker completes after result synthesis"
+
+HARD_COMPLEXITY_DIR="${SMOKE_PROJECT}/.run-with-it/issues/501"
+HARD_COMPLEXITY_RESULT="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1-result.json"
+HARD_COMPLEXITY_LOG="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.log"
+HARD_COMPLEXITY_DONE="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.done"
+HARD_COMPLEXITY_STATE="${HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.state.json"
+set +e
+HARD_LIMIT_HANG_SECONDS=4 RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role complexity --issue 501 --cycle 1 --agent stdout-complexity --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${HARD_COMPLEXITY_LOG}" --done-file "${HARD_COMPLEXITY_DONE}" --result-file "${HARD_COMPLEXITY_RESULT}" \
+  --state-file "${HARD_COMPLEXITY_STATE}" --repo-root "${SMOKE_REPO_ROOT}" --issue-dir "${HARD_COMPLEXITY_DIR}" \
+  --status-file "${SMOKE_STATUS}" --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 --quiet-seconds 1 --stall-seconds 10 --hard-limit-seconds 2 >/dev/null
+hard_complexity_status="$?"
+set -e
+assert_eq "${hard_complexity_status}" "0" "hard-limit accepts synthesized complexity artifact"
+assert_json_file "${HARD_COMPLEXITY_RESULT}" "hard-limit complexity synthesis writes valid JSON"
+assert_file_contains "${HARD_COMPLEXITY_STATE}" '"state": "completed"' "hard-limit complexity synthesis records completion"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-hard-limit|issue=501|role=complexity|cycle=1" "hard-limit complexity synthesis records salvage decision"
 
 COMPLEXITY_HANG_DIR="${SMOKE_PROJECT}/.run-with-it/issues/53"
 COMPLEXITY_HANG_RESULT="${COMPLEXITY_HANG_DIR}/workers/complexity/cycle-1-result.json"

@@ -559,6 +559,11 @@ while ($true) {
 
     $elapsed = $now - $script:startedAt
     if ($HardLimitSeconds -ne 0 -and $elapsed -ge $HardLimitSeconds) {
+        if (Test-CompletionReady) {
+            Write-WorkerState "completed" $true 0
+            Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+            exit 0
+        }
         if (Try-SynthesizeResultArtifact -FromStall) {
             $artifactReason = Get-ResultArtifactFailureReason
             if ($artifactReason -eq "artifact-recovery-required") {
@@ -569,10 +574,18 @@ while ($true) {
                 exit 75
             }
         }
+        if (Test-CompletionReady) {
+            Write-Status "STATUS|type=worker-hard-limit|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|elapsed=$elapsed|action=salvage-and-terminate"
+            try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+            Write-WorkerState "completed" $false 0 "salvaged-at-hard-limit"
+            Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
+            exit 0
+        }
         Write-Status "STATUS|type=worker-hard-limit|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|elapsed=$elapsed|action=terminate-runner"
         try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
-        Write-WorkerState "failed" $false 124 "hard-limit-exceeded" "capability"
-        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=hard-limit-exceeded|failure_class=capability|done_file=$DoneFile|result_file=$ResultFile"
+        $failureClass = Get-ResultArtifactFailureClass
+        Write-WorkerState "failed" $false 124 "hard-limit-exceeded" $failureClass
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=hard-limit-exceeded|failure_class=$failureClass|done_file=$DoneFile|result_file=$ResultFile"
         exit 124
     }
 

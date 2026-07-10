@@ -42,6 +42,16 @@ assert_json_file() {
 assert_file_contains "$DISPATCHER" '[switch]$Detach' "PowerShell dispatcher exposes detach switch"
 assert_file_contains "$DISPATCHER" 'STATUS|type=dispatch-detached' "PowerShell dispatcher reports detached launch"
 assert_file_contains "$DISPATCHER" 'complexity,impl,modify' "PowerShell dispatcher auto-fails stalled implementation and modification workers by default"
+ps_hard_limit_completion_checks="$(python3 - "$DISPATCHER" <<'PY'
+import sys
+
+text = open(sys.argv[1], encoding="utf-8").read()
+start = text.index('if ($HardLimitSeconds -ne 0')
+end = text.index('if (($state -eq "stalled")', start)
+print(text[start:end].count('if (Test-CompletionReady)'))
+PY
+)"
+[[ "$ps_hard_limit_completion_checks" == "2" ]] || fail "PowerShell hard-limit path must check completion before and after synthesis"
 
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"
@@ -433,6 +443,25 @@ set -e
 assert_file_contains "$HARD_STATE" '"stall_reason": "hard-limit-exceeded"' "PowerShell hard limit records precise reason"
 assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-hard-limit|issue=431|role=impl|cycle=1" "PowerShell hard limit emits structured status"
 
+PS_HARD_COMPLEXITY_DIR="${SMOKE_PROJECT}/.run-with-it/issues/481"
+PS_HARD_COMPLEXITY_LOG="${PS_HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.log"
+PS_HARD_COMPLEXITY_DONE="${PS_HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.done"
+PS_HARD_COMPLEXITY_RESULT="${PS_HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1-result.json"
+PS_HARD_COMPLEXITY_STATE="${PS_HARD_COMPLEXITY_DIR}/workers/complexity/cycle-1.state.json"
+set +e
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" -Role complexity -Issue 481 -Cycle 1 \
+  -Agent stall-complexity -Model fake-model -ContextFile "$CONTEXT_FILE" -PromptFile "$PROMPT_FILE" \
+  -LogFile "$PS_HARD_COMPLEXITY_LOG" -DoneFile "$PS_HARD_COMPLEXITY_DONE" -ResultFile "$PS_HARD_COMPLEXITY_RESULT" -StateFile "$PS_HARD_COMPLEXITY_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" -IssueDir "$PS_HARD_COMPLEXITY_DIR" -StatusFile "$STATUS_FILE" -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 -QuietSeconds 1 -StallSeconds 10 -HardLimitSeconds 2 >/dev/null
+ps_hard_complexity_status="$?"
+set -e
+[[ "$ps_hard_complexity_status" == "0" ]] || fail "PowerShell hard-limit accepts synthesized complexity artifact"
+assert_json_file "$PS_HARD_COMPLEXITY_RESULT" "PowerShell hard-limit complexity synthesis writes valid JSON"
+assert_file_contains "$PS_HARD_COMPLEXITY_STATE" '"state": "completed"' "PowerShell hard-limit complexity synthesis records completion"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-hard-limit|issue=481|role=complexity|cycle=1" "PowerShell hard-limit complexity synthesis records salvage decision"
+
 REVIEW_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/44"
 REVIEW_LOG="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.log"
 REVIEW_DONE="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.done"
@@ -510,6 +539,11 @@ param([string]$RepoRoot, [string]$Prompt)
 if ($Prompt -eq "--version") {
   Write-Output "unavailable-agent 1.0"
   exit 0
+}
+if ($env:HARD_LIMIT_HANG_SECONDS) {
+  Write-Output "STATUS|type=agent-unavailable|issue=$env:RUN_WITH_IT_ISSUE|role=$env:RUN_WITH_IT_ROLE|agent=unavailable|model=fake-model|reason=auth|action=exclude-route"
+  Start-Sleep -Seconds ([int]$env:HARD_LIMIT_HANG_SECONDS)
+  exit 1
 }
 [Console]::Error.WriteLine("API error: 401 authentication failed for this account")
 exit 1
@@ -620,5 +654,22 @@ set -e
 assert_file_contains "$UNAVAIL_LOG" "STATUS|type=agent-unavailable" "PowerShell runner records agent-unavailable from auth error"
 assert_file_contains "$EVENTS_LOG" "|reason=missing-result-artifact|failure_class=infrastructure|" "PowerShell dispatch-failed classifies availability loss as infrastructure"
 assert_file_contains "$UNAVAIL_STATE" '"failure_class": "infrastructure"' "PowerShell state JSON records infrastructure failure class"
+
+PS_HARD_UNAVAIL_DIR="${SMOKE_PROJECT}/.run-with-it/issues/471"
+PS_HARD_UNAVAIL_LOG="${PS_HARD_UNAVAIL_DIR}/workers/plan/cycle-1.log"
+PS_HARD_UNAVAIL_DONE="${PS_HARD_UNAVAIL_DIR}/workers/plan/cycle-1.done"
+PS_HARD_UNAVAIL_RESULT="${PS_HARD_UNAVAIL_DIR}/workers/plan/cycle-1-result.json"
+PS_HARD_UNAVAIL_STATE="${PS_HARD_UNAVAIL_DIR}/workers/plan/cycle-1.state.json"
+set +e
+HARD_LIMIT_HANG_SECONDS=4 RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" -Role plan -Issue 471 -Cycle 1 \
+  -Agent unavailable -Model fake-model -ContextFile "$UNAVAIL_CONTEXT" -PromptFile "$PROMPT_FILE" \
+  -LogFile "$PS_HARD_UNAVAIL_LOG" -DoneFile "$PS_HARD_UNAVAIL_DONE" -ResultFile "$PS_HARD_UNAVAIL_RESULT" -StateFile "$PS_HARD_UNAVAIL_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" -IssueDir "$PS_HARD_UNAVAIL_DIR" -StatusFile "$STATUS_FILE" -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 -QuietSeconds 1 -StallSeconds 10 -HardLimitSeconds 2 >/dev/null
+ps_hard_unavail_status="$?"
+set -e
+[[ "$ps_hard_unavail_status" == "124" ]] || fail "PowerShell hard-limit unavailable worker exits 124"
+assert_file_contains "$PS_HARD_UNAVAIL_STATE" '"failure_class": "infrastructure"' "PowerShell hard-limit failure uses artifact classifier"
 
 echo "PASS: run-with-it-dispatch.ps1 contract"
