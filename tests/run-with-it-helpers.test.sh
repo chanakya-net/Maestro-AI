@@ -312,6 +312,24 @@ assert payload["worker_state"] == "completed", payload
 assert payload["worker_result_file"] == sys.argv[2], payload
 PY
 
+python3 - "$WORK_DIR/issues/5/workers/modify/cycle-1.state.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+payload = json.load(open(path))
+payload["state"] = "artifact-recovery-required"
+payload["done"] = False
+json.dump(payload, open(path, "w"), indent=2)
+PY
+rm -f "$WORK_DIR/issues/5/workers/modify/cycle-1.done"
+analysis_recovery="$(python3 "$STATE_HELPER" analyze-sub-coord-failure --state-file "$SUB_RECOVERY_STATE_FILE" --issue 5 --report-file "$WORK_DIR/issues/5/report.json")"
+python3 - "$analysis_recovery" <<'PY'
+import json, sys
+payload = json.loads(sys.argv[1])
+assert payload["action"] == "spawn_recovery", payload
+assert payload["reason"] == "artifact-recovery-required", payload
+assert payload["worker_state"] == "artifact-recovery-required", payload
+PY
+
 python3 "$STATE_HELPER" write-sub-coord-recovery-context \
   --state-file "$SUB_RECOVERY_STATE_FILE" \
   --issue 5 \

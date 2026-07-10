@@ -302,7 +302,7 @@ After fetching all issues:
 5. Detect cycles and unresolved dependencies among executable issues only; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
 6. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
 7. Issues whose executable dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
-8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
+8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`, `parallel_safe`, and normalized `ownership_scope`. Missing concurrency metadata must default conservatively to exclusive execution.
 9. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 10. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
@@ -479,7 +479,7 @@ Execution-mode requirement (critical):
 
 ## Platform Dispatchers — Shared Role Launcher
 
-`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `plan`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
+`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `plan`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Model-emitted heartbeats remain advisory; the runner-owned `wrapper-heartbeat` and dispatcher state are the liveness authority, independent of model stdout.
 
 When a Sub-Coordinator launches worker dispatchers from a short-lived shell/tool call, use `--detach` on Bash or `-Detach` on native PowerShell, then read the dispatcher PID from the dispatcher-owned state file. Do not rely on a raw shell background job and `WORKER_PID=$!` for worker dispatches.
 
@@ -514,9 +514,9 @@ PowerShell uses the same field names with PowerShell-style parameters, for examp
 
 Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--validate-only` / `-ValidateOnly` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
 
-Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` means the runner is alive but the captured role log has been silent beyond the quiet threshold. `state="stalled"` with `stall_reason="alive-but-silent"` means the worker is alive, incomplete, and silent beyond the stall threshold. Completion still requires the done sentinel and valid role-specific result artifacts.
+Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` and `state="stalled"` describe model-output health while runner-owned wrapper heartbeats track process liveness. `state="artifact-recovery-required"` means Git progress was preserved without machine-readable passing verification and must enter artifact recovery. Completion still requires the done sentinel, valid role-specific result artifacts, and passing implementation/modification verification.
 
-On Bash, stalled roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` auto-fail in the dispatcher. The default is `complexity,impl,modify,plan`, so a silent complexity scorer or planner (and stalled implementers/modifiers) is terminated and surfaced as `dispatch-failed` instead of blocking the rolling pool indefinitely.
+`RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` is a compatibility fallback for older runners without wrapper heartbeats. Current runners are not terminated for quiet stdout alone; `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` bounds elapsed execution, preserving Git progress for recovery before termination.
 
 ## Final PR Creation
 
@@ -635,12 +635,16 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
       "title": "issue title",
       "deps": [],
       "dependency_proof": "Blocked by: None",
+      "parallel_safe": true,
+      "ownership_scope": ["src/orders"],
       "issue_dir": ".run-with-it/issues/36",
       "report_file": ".run-with-it/issues/36/report.json",
       "merge_recovery_report_file": ".run-with-it/issues/36/merge-recovery-report.json",
       "log_file": ".run-with-it/issues/36/sub-coordinator.log",
       "issue_branch": "Maestro/cunning-fox-issue-36",
       "worktree_path": ".run-with-it/worktrees/issue-36",
+      "issue_base_sha": "abc1234",
+      "issue_base_source": "remote-tracking | local-fallback",
       "commit_sha": "abc1234"
     }
   },

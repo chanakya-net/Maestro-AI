@@ -27,6 +27,7 @@ POLL_SECONDS="${WORKER_POLL_SECONDS:-20}"
 QUIET_SECONDS="${RUN_WITH_IT_WORKER_QUIET_SECONDS:-120}"
 STALL_SECONDS="${RUN_WITH_IT_WORKER_STALL_SECONDS:-600}"
 TIMEOUT_SECONDS="${RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS:-0}"
+HARD_LIMIT_SECONDS="${RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS:-7200}"
 DETACH_BOOTSTRAP_SECONDS="${RUN_WITH_IT_DETACH_BOOTSTRAP_SECONDS:-3}"
 AUTO_FAIL_STALLED_ROLES="${RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES:-complexity,impl,modify,plan}"
 DRY_RUN=0
@@ -77,6 +78,7 @@ while [ "$#" -gt 0 ]; do
     --quiet-seconds) QUIET_SECONDS="${2:-}"; shift 2 ;;
     --stall-seconds) STALL_SECONDS="${2:-}"; shift 2 ;;
     --timeout-seconds) TIMEOUT_SECONDS="${2:-}"; shift 2 ;;
+    --hard-limit-seconds) HARD_LIMIT_SECONDS="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --validate-only) VALIDATE_ONLY=1; shift ;;
     --detach) DETACH=1; shift ;;
@@ -318,7 +320,7 @@ log_signature() {
 
 latest_heartbeat_line() {
   if [ -s "$LOG_FILE" ]; then
-    grep -E '(^|[^A-Z])STATUS\|type=heartbeat\|' "$LOG_FILE" 2>/dev/null | tail -n 1 || true
+    grep -E '(^|[^A-Z])STATUS\|type=(wrapper-)?heartbeat\|' "$LOG_FILE" 2>/dev/null | tail -n 1 || true
   fi
 }
 
@@ -391,6 +393,7 @@ write_worker_state() {
   "log_mtime_epoch": ${log_mtime},
   "quiet_seconds": ${QUIET_SECONDS},
   "stall_seconds": ${STALL_SECONDS},
+  "hard_limit_seconds": ${HARD_LIMIT_SECONDS},
   "seconds_since_last_output": ${seconds_since_output},
   "seconds_since_last_heartbeat": ${seconds_since_heartbeat},
   "started_at": $(json_string "$started_iso"),
@@ -504,7 +507,7 @@ try:
         data = json.load(handle)
 except Exception:
     raise SystemExit(1)
-if data.get("runner_pid") or data.get("state") in {"completed", "failed"}:
+if data.get("runner_pid") or data.get("state") in {"completed", "failed", "artifact-recovery-required"}:
     raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -525,7 +528,7 @@ try:
         data = json.load(handle)
 except Exception:
     raise SystemExit(1)
-if data.get("runner_pid") or data.get("state") in {"completed", "failed"}:
+if data.get("runner_pid") or data.get("state") in {"completed", "failed", "artifact-recovery-required"}:
     raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -652,6 +655,12 @@ while true; do
       write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|exit_code=${exit_code}|result_file=${RESULT_FILE}"
       last_log_signature="$(log_signature)"
     fi
+    artifact_reason="$(result_artifact_failure_reason)"
+    if [ "$artifact_reason" = "artifact-recovery-required" ]; then
+      write_worker_state "artifact-recovery-required" "false" "$exit_code" "$artifact_reason" "capability"
+      write_status "STATUS|type=dispatch-recovery-required|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${artifact_reason}|result_file=${RESULT_FILE}"
+      exit 75
+    fi
     if completion_ready; then
       write_worker_state "completed" "false" "$exit_code"
       write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
@@ -690,14 +699,49 @@ while true; do
     last_state="$state"
   fi
 
+  elapsed=$((now - started_at))
+  if [ "$HARD_LIMIT_SECONDS" != "0" ] && [ "$elapsed" -ge "$HARD_LIMIT_SECONDS" ]; then
+    if synthesize_stalled_result_if_possible; then
+      artifact_reason="$(result_artifact_failure_reason)"
+      if [ "$artifact_reason" = "artifact-recovery-required" ]; then
+        write_status "STATUS|type=worker-hard-limit|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|elapsed=${elapsed}|action=preserve-for-recovery"
+        write_worker_state "artifact-recovery-required" "false" "75" "$artifact_reason" "capability"
+        write_status "STATUS|type=dispatch-recovery-required|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${artifact_reason}|result_file=${RESULT_FILE}"
+        set +e
+        terminate_runner_tree "$pid" >/dev/null 2>&1
+        set -e
+        exit 75
+      fi
+    fi
+    write_status "STATUS|type=worker-hard-limit|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|elapsed=${elapsed}|action=terminate-runner"
+    write_worker_state "failed" "false" "124" "hard-limit-exceeded" "capability"
+    write_status "STATUS|type=dispatch-failed|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=hard-limit-exceeded|failure_class=capability|done_file=${DONE_FILE}|result_file=${RESULT_FILE}"
+    set +e
+    terminate_runner_tree "$pid" >/dev/null 2>&1
+    set -e
+    exit 124
+  fi
+
   if [ "$state" = "stalled" ] && should_auto_fail_stalled_role; then
     # Before killing a silent-but-alive runner, salvage any work it left behind:
     # a committed-but-unreported HEAD advance, or an uncommitted dirty tree
     # (the helper commits it). Only when there is genuinely no git progress do we
     # fail the worker (alive-but-silent stalls: issues 601/602/616/617/618).
-    if synthesize_stalled_result_if_possible && completion_ready; then
+    if synthesize_stalled_result_if_possible; then
+      artifact_reason="$(result_artifact_failure_reason)"
+      if [ "$artifact_reason" = "artifact-recovery-required" ]; then
+        write_status "STATUS|type=worker-stall-timeout|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|action=preserve-for-recovery"
+        write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=stall-salvage|result_file=${RESULT_FILE}"
+        write_worker_state "artifact-recovery-required" "false" "75" "$artifact_reason" "capability"
+        write_status "STATUS|type=dispatch-recovery-required|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=${artifact_reason}|result_file=${RESULT_FILE}"
+        set +e
+        terminate_runner_tree "$pid" >/dev/null 2>&1
+        set -e
+        exit 75
+      fi
+    fi
+    if completion_ready; then
       write_status "STATUS|type=worker-stall-timeout|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=alive-but-silent|action=salvage-and-terminate"
-      write_status "STATUS|type=result-artifact-synthesized|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|reason=stall-salvage|result_file=${RESULT_FILE}"
       write_worker_state "completed" "false" "0" "salvaged-from-stall"
       write_status "STATUS|type=dispatch-complete|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|result_file=${RESULT_FILE}"
       set +e
@@ -716,7 +760,6 @@ while true; do
   fi
 
   if [ "$TIMEOUT_SECONDS" != "0" ]; then
-    elapsed=$((now - started_at))
     if [ "$elapsed" -ge "$TIMEOUT_SECONDS" ]; then
       write_status "STATUS|type=dispatch-stall|issue=${ISSUE}|role=${ROLE}${cycle_field}|pid=${pid}|elapsed=${elapsed}|action=alert-user"
       last_log_signature="$(log_signature)"

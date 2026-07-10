@@ -209,7 +209,7 @@ assert_contains "$dry_output" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run 
 assert_contains "$dry_output" "RUN_WITH_IT_ARTIFACT_HELPER=${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py" "dry-run exposes artifact helper to workers"
 assert_contains "$dry_output" "run-agent.ps1" "dry-run wraps run-agent.ps1"
 
-"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
   -Issue 42 \
@@ -290,7 +290,7 @@ mkdir -p "$(dirname "$SILENT_RESULT")"
 printf 'RESULT_FILE=%s\n' "$SILENT_RESULT" > "$SILENT_CONTEXT"
 
 set +e
-"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
   -Issue 43 \
@@ -315,13 +315,28 @@ silent_pid="$!"
 wait "$silent_pid"
 silent_status="$?"
 set -e
-[[ "$silent_status" != "0" ]] || fail "stalled PowerShell impl worker must fail instead of completing after silence"
+[[ "$silent_status" == "0" ]] || fail "heartbeat-alive quiet PowerShell impl worker must complete"
 assert_json_file "$SILENT_STATE" "silent final state JSON is valid"
-assert_file_contains "$SILENT_STATE" '"state": "failed"' "silent PowerShell worker records failed state after stall timeout"
-assert_file_contains "$SILENT_STATE" '"stall_reason": "alive-but-silent"' "silent PowerShell worker records precise stall reason"
-assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled event"
-assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-stall-timeout|issue=43|role=impl|cycle=1" "silent PowerShell worker emits stall timeout event"
-assert_file_contains "$EVENTS_LOG" "STATUS|type=dispatch-failed|issue=43|role=impl|cycle=1" "silent PowerShell worker exits dispatcher as failed"
+assert_file_contains "$SILENT_STATE" '"state": "completed"' "heartbeat-alive quiet PowerShell worker completes"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=wrapper-heartbeat|issue=43|role=impl" "PowerShell runner emits wrapper heartbeat while model output is quiet"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=dispatch-complete|issue=43|role=impl|cycle=1" "quiet PowerShell worker exits dispatcher successfully"
+
+HARD_LOG="${SILENT_ISSUE_DIR}/workers/impl/hard.log"
+HARD_DONE="${SILENT_ISSUE_DIR}/workers/impl/hard.done"
+HARD_RESULT="${SILENT_ISSUE_DIR}/workers/impl/hard-result.json"
+HARD_STATE="${SILENT_ISSUE_DIR}/workers/impl/hard.state.json"
+set +e
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -AssetRoot "$SMOKE_ASSET_ROOT" -Role impl -Issue 431 -Cycle 1 \
+  -Agent silent -Model fake-model -ContextFile "$SILENT_CONTEXT" -PromptFile "$PROMPT_FILE" \
+  -LogFile "$HARD_LOG" -DoneFile "$HARD_DONE" -ResultFile "$HARD_RESULT" -StateFile "$HARD_STATE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" -IssueDir "$SILENT_ISSUE_DIR" -StatusFile "$STATUS_FILE" -EventsLog "$EVENTS_LOG" \
+  -PollSeconds 1 -QuietSeconds 1 -StallSeconds 10 -HardLimitSeconds 2 >/dev/null
+hard_status="$?"
+set -e
+[[ "$hard_status" == "124" ]] || fail "PowerShell hard limit must bound a heartbeat-alive worker with no progress"
+assert_file_contains "$HARD_STATE" '"stall_reason": "hard-limit-exceeded"' "PowerShell hard limit records precise reason"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=worker-hard-limit|issue=431|role=impl|cycle=1" "PowerShell hard limit emits structured status"
 
 REVIEW_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/44"
 REVIEW_LOG="${REVIEW_ISSUE_DIR}/workers/review/cycle-2.log"
@@ -422,6 +437,7 @@ PSFAIL_STATE="${PSFAIL_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 mkdir -p "$(dirname "$PSFAIL_RESULT")"
 printf 'RESULT_FILE=%s\n' "$PSFAIL_RESULT" > "$PSFAIL_CONTEXT"
 
+set +e
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
@@ -440,12 +456,16 @@ printf 'RESULT_FILE=%s\n' "$PSFAIL_RESULT" > "$PSFAIL_CONTEXT"
   -StatusFile "$STATUS_FILE" \
   -EventsLog "$EVENTS_LOG" \
   -PollSeconds 1 >/dev/null
+psfail_status="$?"
+set -e
 
+[[ "$psfail_status" == "75" ]] || fail "PowerShell committed crash must request artifact recovery"
 assert_json_file "$PSFAIL_RESULT" "PowerShell synthesizes committed work even when the worker exits nonzero"
 assert_file_contains "$PSFAIL_RESULT" '"crashed.txt"' "PowerShell nonzero-exit synthesis records the committed file"
 assert_file_contains "$PSFAIL_RESULT" '"source": "dispatcher-synthesized"' "PowerShell nonzero-exit synthesis is auditable"
-assert_file_contains "$PSFAIL_STATE" '"state": "completed"' "PowerShell nonzero-exit worker with committed work completes"
+assert_file_contains "$PSFAIL_STATE" '"state": "artifact-recovery-required"' "PowerShell nonzero-exit committed work enters typed recovery"
 assert_file_contains "$EVENTS_LOG" "STATUS|type=result-artifact-synthesized|issue=46|role=impl|cycle=1" "PowerShell nonzero-exit synthesis emits status"
+assert_file_contains "$EVENTS_LOG" "STATUS|type=dispatch-recovery-required|issue=46|role=impl|cycle=1" "PowerShell nonzero-exit synthesis requests recovery"
 
 UNAVAIL_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/47"
 UNAVAIL_CONTEXT="${SMOKE_PROJECT}/unavail-context.md"

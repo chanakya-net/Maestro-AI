@@ -54,11 +54,15 @@ cat > "${STATE_FILE}" <<JSON
     "101": {
       "status": "pending",
       "deps": [],
+      "parallel_safe": true,
+      "ownership_scope": ["src/issue-101"],
       "context_file": "${WORK_DIR}/.run-with-it/contexts/sub-101.md"
     },
     "102": {
       "status": "pending",
       "deps": [],
+      "parallel_safe": true,
+      "ownership_scope": ["src/issue-102"],
       "context_file": "${WORK_DIR}/.run-with-it/contexts/sub-102.md"
     }
   },

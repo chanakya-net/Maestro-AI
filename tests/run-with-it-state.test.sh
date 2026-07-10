@@ -79,4 +79,65 @@ assert_eq "${status_700b}" "pending" "completing dependency 701 auto-unblocks de
 reasons_700="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_registry"]["700"]["blocking_reasons"])' "${STATE_FILE}")"
 assert_eq "${reasons_700}" "[]" "auto-unblock clears the dependency blocking reason"
 
+# --- Safe parallel admission uses explicit metadata and active ownership locks ---
+ADMISSION_STATE="${WORK_DIR}/admission-state.json"
+cat > "${ADMISSION_STATE}" <<'JSON'
+{
+  "schema_version": 4,
+  "execution_plan": {"topo_order": [1, 2, 3, 4, 5], "parallel_jobs": 4},
+  "active_pool_issues": [1],
+  "issue_registry": {
+    "1": {"status": "in_progress", "deps": [], "parallel_safe": true, "ownership_scope": ["src/api"], "context_file": "1.md"},
+    "2": {"status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/api/users"], "context_file": "2.md"},
+    "3": {"status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["docs"], "context_file": "3.md"},
+    "4": {"status": "pending", "deps": [], "parallel_safe": false, "ownership_scope": ["tools"], "context_file": "4.md"},
+    "5": {"status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["tests"], "context_file": "5.md"}
+  }
+}
+JSON
+ready_safe="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_safe}" "3 5" "ready selection admits only disjoint explicitly safe issues"
+
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["active_pool_issues"] = []
+state["execution_plan"]["topo_order"] = [6, 7]
+state["issue_registry"] = {
+    "6": {"status": "pending", "deps": [], "context_file": "6.md"},
+    "7": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["docs"], "context_file": "7.md"},
+}
+json.dump(state, open(path, "w"), indent=2)
+PY
+ready_conservative="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_conservative}" "6" "missing concurrency metadata defaults to exclusive"
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+assert state["issue_registry"]["6"]["parallel_safe"] is False
+assert state["issue_registry"]["6"]["ownership_scope"] == []
+assert state["issue_registry"]["7"]["ownership_scope"] == ["docs"]
+PY
+
+# A blocked handoff that cites a dependency already completed is stale-base
+# evidence and must be requeued instead of becoming durably blocked.
+STALE_STATE="${WORK_DIR}/stale-state.json"
+cat > "${STALE_STATE}" <<'JSON'
+{
+  "schema_version": 4,
+  "execution_plan": {"topo_order": [10, 11], "parallel_jobs": 2},
+  "active_pool_issues": [11],
+  "issue_registry": {
+    "10": {"status": "completed", "deps": []},
+    "11": {"status": "in_progress", "deps": [10], "context_file": "11.md"}
+  }
+}
+JSON
+printf '%s\n' '{"outcome":"blocked","summary":"dependency missing","blocking_reasons":["dependency issue 10 missing from worktree"]}' > "${WORK_DIR}/stale-report.json"
+stale_outcome="$(python3 "${STATE_HELPER}" finalize-issue --issue 11 --report-file "${WORK_DIR}/stale-report.json" --state-file "${STALE_STATE}")"
+assert_eq "${stale_outcome}" "pending" "completed dependency missing report becomes stale-base requeue"
+stale_status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["issue_registry"]["11"]["status"])' "${STALE_STATE}")"
+assert_eq "${stale_status}" "pending" "stale-base issue is eligible for a fresh handoff"
+
 echo "PASS: run-with-it state requeue/auto-unblock/status-board"

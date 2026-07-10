@@ -34,6 +34,13 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "$message (missing: $needle in $file)"
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local message="$3"
+  [[ "$haystack" != *"$needle"* ]] || fail "$message (unexpected: $needle)"
+}
+
 assert_json_status() {
   local state_file="$1"
   local issue="$2"
@@ -253,9 +260,9 @@ cat > "$SUCCESS_PROJECT/.run-with-it/main-state.json" <<JSON
   "schema_version": 4,
   "execution_plan": { "parallel_jobs": 2, "topo_order": [10, 11, 12] },
   "issue_registry": {
-    "10": { "status": "pending", "deps": [], "context_file": "$SUCCESS_PROJECT/.run-with-it/contexts/sub-10.md" },
-    "11": { "status": "pending", "deps": [], "context_file": "$SUCCESS_PROJECT/.run-with-it/contexts/sub-11.md" },
-    "12": { "status": "pending", "deps": [10], "context_file": "$SUCCESS_PROJECT/.run-with-it/contexts/sub-12.md" }
+    "10": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-10"], "context_file": "$SUCCESS_PROJECT/.run-with-it/contexts/sub-10.md" },
+    "11": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-11"], "context_file": "$SUCCESS_PROJECT/.run-with-it/contexts/sub-11.md" },
+    "12": { "status": "pending", "deps": [10], "parallel_safe": true, "ownership_scope": ["src/issue-12"], "context_file": "$SUCCESS_PROJECT/.run-with-it/contexts/sub-12.md" }
   },
   "active_pool_issues": [],
   "completed_summaries": [],
@@ -277,6 +284,81 @@ assert_file_contains "$SUCCESS_PROJECT/.run-with-it/status/events.log" "STATUS|t
 assert_json_github_update "$SUCCESS_PROJECT/.run-with-it/main-state.json" 10 skipped
 assert_file_contains "$SUCCESS_PROJECT/.run-with-it/main/main.log" "STATUS|type=pool-empty" "main log records pool empty"
 
+SCHED_ROOT="$WORK_DIR/scheduling"
+make_fixture "$SCHED_ROOT"
+SCHED_PROJECT="$SCHED_ROOT/project"
+write_context "$SCHED_PROJECT" 31 completed
+write_context "$SCHED_PROJECT" 32 completed
+write_context "$SCHED_PROJECT" 33 completed
+cat > "$SCHED_PROJECT/.run-with-it/main-state.json" <<JSON
+{
+  "schema_version": 4,
+  "execution_plan": { "parallel_jobs": 2, "topo_order": [31, 32, 33] },
+  "issue_registry": {
+    "31": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/shared"], "context_file": "$SCHED_PROJECT/.run-with-it/contexts/sub-31.md" },
+    "32": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/shared/child"], "context_file": "$SCHED_PROJECT/.run-with-it/contexts/sub-32.md" },
+    "33": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["docs"], "context_file": "$SCHED_PROJECT/.run-with-it/contexts/sub-33.md" }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [],
+  "ledger_rows": []
+}
+JSON
+run_pool "$SCHED_ROOT" 2
+sched_events="$SCHED_PROJECT/.run-with-it/status/events.log"
+spawn_31_line="$(grep -n 'STATUS|type=sub-coord-spawn|issue=31|' "$sched_events" | head -1 | cut -d: -f1)"
+spawn_32_line="$(grep -n 'STATUS|type=sub-coord-spawn|issue=32|' "$sched_events" | head -1 | cut -d: -f1)"
+spawn_33_line="$(grep -n 'STATUS|type=sub-coord-spawn|issue=33|' "$sched_events" | head -1 | cut -d: -f1)"
+complete_31_line="$(grep -n 'STATUS|type=sub-coord-complete|issue=31|' "$sched_events" | head -1 | cut -d: -f1)"
+[[ "$spawn_33_line" -lt "$complete_31_line" ]] || fail "disjoint safe issue 33 should run beside issue 31"
+[[ "$spawn_32_line" -gt "$complete_31_line" ]] || fail "overlapping issue 32 must wait for issue 31"
+assert_json_status "$SCHED_PROJECT/.run-with-it/main-state.json" 31 completed
+assert_json_status "$SCHED_PROJECT/.run-with-it/main-state.json" 32 completed
+assert_json_status "$SCHED_PROJECT/.run-with-it/main-state.json" 33 completed
+
+SIM_ROOT="$WORK_DIR/simulation-25"
+make_fixture "$SIM_ROOT"
+SIM_PROJECT="$SIM_ROOT/project"
+for sim_issue in $(seq 101 125); do
+  write_context "$SIM_PROJECT" "$sim_issue" completed
+done
+python3 - "$SIM_PROJECT" <<'PY'
+import json, pathlib, sys
+project = pathlib.Path(sys.argv[1])
+issues = list(range(101, 126))
+state = {
+    "schema_version": 4,
+    "execution_plan": {"parallel_jobs": 4, "topo_order": issues},
+    "issue_registry": {
+        str(issue): {
+            "status": "pending",
+            "deps": [],
+            "parallel_safe": True,
+            "ownership_scope": [f"src/issue-{issue}"],
+            "context_file": str(project / ".run-with-it" / "contexts" / f"sub-{issue}.md"),
+        }
+        for issue in issues
+    },
+    "active_pool_issues": [],
+    "completed_summaries": [],
+    "merge_recovery_summaries": [],
+    "ledger_rows": [],
+}
+(project / ".run-with-it" / "main-state.json").write_text(json.dumps(state, indent=2) + "\n")
+PY
+run_pool "$SIM_ROOT" 4
+python3 - "$SIM_PROJECT/.run-with-it/main-state.json" <<'PY'
+import json, sys
+state = json.load(open(sys.argv[1]))
+registry = state["issue_registry"]
+assert len(registry) == 25
+assert all(entry["status"] == "completed" for entry in registry.values())
+assert len(state.get("completed_summaries", [])) == 25
+assert state.get("merge_recovery_summaries", []) == []
+assert state.get("manual_requeues", []) == []
+PY
+assert_not_contains "$(cat "$SIM_PROJECT/.run-with-it/status/events.log")" "STATUS|type=dispatch-recovery-required" "25-issue simulation has no recovery handoffs"
+
 MIXED_ROOT="$WORK_DIR/mixed"
 make_fixture "$MIXED_ROOT"
 MIXED_PROJECT="$MIXED_ROOT/project"
@@ -290,10 +372,10 @@ cat > "$MIXED_PROJECT/.run-with-it/main-state.json" <<JSON
   "schema_version": 4,
   "execution_plan": { "parallel_jobs": 2, "topo_order": [1, 2, 3, 4] },
   "issue_registry": {
-    "1": { "status": "pending", "deps": [], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-1.md" },
-    "2": { "status": "pending", "deps": [1], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-2.md" },
-    "3": { "status": "pending", "deps": [], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-3.md" },
-    "4": { "status": "pending", "deps": [], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-4.md" }
+    "1": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-1"], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-1.md" },
+    "2": { "status": "pending", "deps": [1], "parallel_safe": true, "ownership_scope": ["src/issue-2"], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-2.md" },
+    "3": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-3"], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-3.md" },
+    "4": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-4"], "context_file": "$MIXED_PROJECT/.run-with-it/contexts/sub-4.md" }
   },
   "active_pool_issues": [],
   "completed_summaries": [],

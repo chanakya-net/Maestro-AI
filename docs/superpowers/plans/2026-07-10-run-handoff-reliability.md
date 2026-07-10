@@ -1,6 +1,6 @@
 # Run Handoff Reliability Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Eliminate stale-base, false artifact failure, unsafe stall salvage, quiet-worker termination, reviewer-reuse, cache bootstrap, and overlapping-schedule failures documented by the run diagnosis.
 
@@ -31,7 +31,7 @@
 - Produces: canonical full `commit_sha`; precise validation reasons; typed
   `artifact-recovery-required` synthesis result.
 
-- [ ] **Step 1: Write failing artifact regression cases**
+- [x] **Step 1: Write failing artifact regression cases**
 
 Add cases that create a real commit and assert:
 
@@ -57,14 +57,14 @@ assert_json_field "$result" \
 
 Also assert unknown and non-commit object IDs are rejected.
 
-- [ ] **Step 2: Run the focused test and confirm the expected failures**
+- [x] **Step 2: Run the focused test and confirm the expected failures**
 
 Run: `bash tests/run-with-it-artifacts.test.sh`
 
 Expected: FAIL because short SHAs are compared as raw strings, failed
 verification is accepted, and synthesis writes `status=success`.
 
-- [ ] **Step 3: Implement canonical commit resolution and recovery status**
+- [x] **Step 3: Implement canonical commit resolution and recovery status**
 
 Add and use helpers with these contracts:
 
@@ -93,7 +93,7 @@ the baseline commit, and atomically rewrite an accepted abbreviation.
 
 The validator must return `artifact-recovery-required` for this typed handoff.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run: `bash tests/run-with-it-artifacts.test.sh`
 
@@ -112,7 +112,7 @@ Expected: PASS.
   JSON path.
 - Produces: deterministic excluded-model set and an independent selected route.
 
-- [ ] **Step 1: Write failing router and prompt tests**
+- [x] **Step 1: Write failing router and prompt tests**
 
 Add assertions equivalent to:
 
@@ -130,7 +130,7 @@ printf '{bad json' > "$work/invalid.json"
 The prompt contract must show the implementation model and all failed reviewer
 models being passed as repeated exclusions before every review dispatch.
 
-- [ ] **Step 2: Run focused tests and confirm failure**
+- [x] **Step 2: Run focused tests and confirm failure**
 
 Run:
 
@@ -142,7 +142,7 @@ bash tests/run-with-it-routing.test.sh
 Expected: FAIL because argparse accepts one exclusion, a missing cache raises,
 and the prompt retains only one exclusion.
 
-- [ ] **Step 3: Implement set-based exclusions and missing-file semantics**
+- [x] **Step 3: Implement set-based exclusions and missing-file semantics**
 
 Use:
 
@@ -157,7 +157,7 @@ JSON/type failures for present files. Update Bash and PowerShell prompt examples
 to build repeated exclusion arguments from the implementation model plus the
 failed-reviewer set and validate the selected reviewer before launch.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the two commands from Step 2. Expected: PASS.
 
@@ -174,7 +174,7 @@ Run the two commands from Step 2. Expected: PASS.
 - Produces: `issue_base_sha`, `issue_base_source`, and a worktree whose `HEAD`
   equals the selected base.
 
-- [ ] **Step 1: Add a failing diverged-ref integration test**
+- [x] **Step 1: Add a failing diverged-ref integration test**
 
 Create a bare remote, leave the local shared ref one commit behind its
 remote-tracking ref, run the documented bootstrap, and assert:
@@ -190,7 +190,7 @@ assert_json_field "$sub_state" \
 
 Add contract assertions for local fallback and the dirty-resume recovery guard.
 
-- [ ] **Step 2: Run focused tests and confirm failure**
+- [x] **Step 2: Run focused tests and confirm failure**
 
 Run:
 
@@ -202,7 +202,7 @@ bash tests/run-with-it-routing.test.sh
 Expected: FAIL because bootstrap uses `$RUN_FEATURE_BRANCH` directly and does
 not persist the source.
 
-- [ ] **Step 3: Update bootstrap and resume contracts**
+- [x] **Step 3: Update bootstrap and resume contracts**
 
 Document and exercise this Bash 3.2-compatible selection:
 
@@ -223,7 +223,7 @@ Persist both fields atomically. Refresh only when the saved worktree is clean,
 `HEAD == issue_base_sha`, and no implementation/modification commit is saved;
 otherwise retain it and enter recovery.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the commands from Step 2. Expected: PASS.
 
@@ -242,7 +242,7 @@ Run the commands from Step 2. Expected: PASS.
 - Consumes: issue metadata, active issue IDs, completed dependencies.
 - Produces: a compatible ready set and structured admission deferral reasons.
 
-- [ ] **Step 1: Add failing state and pool admission tests**
+- [x] **Step 1: Add failing state and pool admission tests**
 
 Create fixtures proving:
 
@@ -257,7 +257,7 @@ blocked result naming an already-completed dependency => pending stale-base requ
 Assert Bash and PowerShell pools pass active issue IDs to `ready-issues` and
 preserve rolling refill capacity for compatible candidates.
 
-- [ ] **Step 2: Run focused tests and confirm failure**
+- [x] **Step 2: Run focused tests and confirm failure**
 
 Run:
 
@@ -270,7 +270,7 @@ bash tests/run-with-it-pool-actual-flow.test.sh
 
 Expected: FAIL because ready selection checks dependencies only.
 
-- [ ] **Step 3: Implement normalized ownership admission**
+- [x] **Step 3: Implement normalized ownership admission**
 
 Add helpers with exact contracts:
 
@@ -292,7 +292,7 @@ pass their active issue sets. During finalization, turn a dependency-missing
 block into a pending stale-base requeue when all named dependencies are already
 complete.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the four commands from Step 2. Expected: PASS.
 
@@ -315,7 +315,7 @@ Run the four commands from Step 2. Expected: PASS.
 - Produces: wrapper heartbeats, non-terminal recovery handoff, bounded terminal
   failure when there is no progress.
 
-- [ ] **Step 1: Add failing quiet-worker and recovery tests**
+- [x] **Step 1: Add failing quiet-worker and recovery tests**
 
 Add fake agents that remain silent longer than the stall threshold. Assert a
 wrapper heartbeat appears periodically, the dispatcher does not terminate the
@@ -324,7 +324,7 @@ hard-limit dirty-worker case expecting `artifact-recovery-required`, plus a
 hard-limit no-progress case expecting a bounded capability failure. Mirror the
 contracts in PowerShell tests.
 
-- [ ] **Step 2: Run focused tests and confirm failure**
+- [x] **Step 2: Run focused tests and confirm failure**
 
 Run:
 
@@ -338,7 +338,7 @@ bash tests/run-with-it-dispatch-ps1.test.sh
 Expected: FAIL because runners emit no wrapper heartbeat and dispatchers
 auto-fail on output silence.
 
-- [ ] **Step 3: Implement wrapper heartbeat lifecycle**
+- [x] **Step 3: Implement wrapper heartbeat lifecycle**
 
 Use `RUN_WITH_IT_HEARTBEAT_SECONDS` with a small positive default. Bash starts a
 background loop that calls the existing status emitter while the child PID is
@@ -347,7 +347,7 @@ with equivalent cleanup. Heartbeat payloads use
 `type=wrapper-heartbeat|source=run-agent` so they cannot be confused with model
 output.
 
-- [ ] **Step 4: Update dispatcher state machine**
+- [x] **Step 4: Update dispatcher state machine**
 
 Track wrapper heartbeat age separately from output silence. Quiet/stalled
 stdout may emit status but must not terminate a heartbeat-alive child. Use a
@@ -357,7 +357,7 @@ the child safely, and return a distinct non-success code/reason without writing
 a success sentinel. No-progress hard-limit remains terminal failure. Mirror in
 PowerShell.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run the commands from Step 2. Expected: PASS.
 
@@ -379,7 +379,7 @@ Run the commands from Step 2. Expected: PASS.
 - Produces: atomic artifact file; explicit applicable, inapplicable, or failed
   verification evidence.
 
-- [ ] **Step 1: Add failing writer and prompt contract tests**
+- [x] **Step 1: Add failing writer and prompt contract tests**
 
 Test a new helper command:
 
@@ -393,7 +393,7 @@ payload leaves any existing target untouched. Prompt tests must forbid generated
 Python string quoting and require preflight classification of verification as
 `applicable`, `not_applicable` with evidence, or `failed`.
 
-- [ ] **Step 2: Run focused tests and confirm failure**
+- [x] **Step 2: Run focused tests and confirm failure**
 
 Run:
 
@@ -406,7 +406,7 @@ bash tests/run-with-it-routing.test.sh
 Expected: FAIL because no general atomic writer command or lifecycle preflight
 contract exists.
 
-- [ ] **Step 3: Implement the writer and prompt contract**
+- [x] **Step 3: Implement the writer and prompt contract**
 
 Add a `write-json` subcommand that loads the payload file, validates it for the
 requested role/schema, and calls `write_json_atomic()`. Document exact command
@@ -415,7 +415,7 @@ required check: it records a greenfield baseline absence as `not_applicable`
 with the inspected ref/path evidence and continues only when the issue contract
 allows bootstrap; real command failures remain failures.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run the commands from Step 2. Expected: PASS.
 
@@ -431,13 +431,13 @@ Run the commands from Step 2. Expected: PASS.
 - Consumes: completed runtime behavior.
 - Produces: user-facing configuration/status documentation and verified PR scope.
 
-- [ ] **Step 1: Update documentation**
+- [x] **Step 1: Update documentation**
 
 Document the remote-base invariant, `issue_base_sha/source`, safe ownership
 admission, repeated model exclusions, missing-cache semantics, wrapper heartbeat
 interval/hard limit, typed artifact recovery, and lifecycle-aware verification.
 
-- [ ] **Step 2: Run focused documentation contracts**
+- [x] **Step 2: Run focused documentation contracts**
 
 Run:
 
@@ -450,7 +450,7 @@ bash tests/install-assets-powershell-contract.test.sh
 
 Expected: PASS.
 
-- [ ] **Step 3: Run the full suite**
+- [x] **Step 3: Run the full suite**
 
 Run:
 
@@ -462,7 +462,7 @@ done
 
 Expected: every suite exits zero.
 
-- [ ] **Step 4: Verify PR scope**
+- [x] **Step 4: Verify PR scope**
 
 Run:
 

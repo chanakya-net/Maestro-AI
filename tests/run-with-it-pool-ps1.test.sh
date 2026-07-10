@@ -132,12 +132,16 @@ cat > "$STATE_FILE" <<JSON
       "status": "pending",
       "deps": [],
       "title": "First smoke issue",
+      "parallel_safe": true,
+      "ownership_scope": ["src/issue-101"],
       "context_file": "${SMOKE_PROJECT}/.run-with-it/contexts/issue-101.md"
     },
     "102": {
       "status": "pending",
       "deps": [],
       "title": "Second smoke issue",
+      "parallel_safe": true,
+      "ownership_scope": ["src/issue-102"],
       "context_file": "${SMOKE_PROJECT}/.run-with-it/contexts/issue-102.md"
     }
   },

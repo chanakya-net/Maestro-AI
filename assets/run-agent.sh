@@ -47,6 +47,7 @@ RUN_WITH_IT_ROLE="${RUN_WITH_IT_ROLE:-agent}"
 RUN_WITH_IT_ISSUE="${RUN_WITH_IT_ISSUE:-unknown}"
 RUN_WITH_IT_STATE_FILE="${RUN_WITH_IT_STATE_FILE:-}"
 RUN_WITH_IT_ISSUE_DIR="${RUN_WITH_IT_ISSUE_DIR:-}"
+RUN_WITH_IT_HEARTBEAT_SECONDS="${RUN_WITH_IT_HEARTBEAT_SECONDS:-30}"
 export REPO_ROOT
 export RUN_WITH_IT_STATUS_FILE
 export RUN_WITH_IT_EVENTS_LOG
@@ -677,7 +678,34 @@ fi
 
 PAYLOAD_FILE="$(mktemp -t ai-skills-prompt.XXXXXX)"
 status_stream_dir=""
+wrapper_heartbeat_pid=""
+stop_wrapper_heartbeat() {
+  if [[ -n "${wrapper_heartbeat_pid}" ]]; then
+    kill "${wrapper_heartbeat_pid}" 2>/dev/null || true
+    wait "${wrapper_heartbeat_pid}" 2>/dev/null || true
+    wrapper_heartbeat_pid=""
+  fi
+}
+
+start_wrapper_heartbeat() {
+  case "${RUN_WITH_IT_HEARTBEAT_SECONDS}" in
+    ''|*[!0-9]*) return 0 ;;
+    0) return 0 ;;
+  esac
+  if [[ -z "${RUN_WITH_IT_STATUS_FILE}" && -z "${RUN_WITH_IT_EVENTS_LOG}" && -z "${RUN_WITH_IT_LOG_FILE}" ]]; then
+    return 0
+  fi
+  (
+    while true; do
+      sleep "${RUN_WITH_IT_HEARTBEAT_SECONDS}"
+      emit_run_status "wrapper-heartbeat" "alive"
+    done
+  ) &
+  wrapper_heartbeat_pid=$!
+}
+
 cleanup_payload() {
+  stop_wrapper_heartbeat
   rm -f "${PAYLOAD_FILE}"
   if [[ -n "${status_stream_dir}" ]]; then
     rm -rf "${status_stream_dir}"
@@ -779,6 +807,7 @@ fi
 set +e
 prepare_done_file
 emit_run_status "agent-start"
+start_wrapper_heartbeat
 if [[ -n "${RUN_WITH_IT_STATUS_FILE}" || -n "${RUN_WITH_IT_EVENTS_LOG}" || -n "${RUN_WITH_IT_LOG_FILE}" ]]; then
   status_stream_dir="$(mktemp -d -t run-agent-status.XXXXXX)"
   stdout_fifo="${status_stream_dir}/stdout"
@@ -800,6 +829,7 @@ else
   command_status=$?
 fi
 set -e
+stop_wrapper_heartbeat
 
 if [[ -d "${REPO_ROOT}/.codegraph" ]] && command -v codegraph >/dev/null 2>&1; then
   (cd "${REPO_ROOT}" && codegraph mark-dirty >/dev/null 2>&1) || true

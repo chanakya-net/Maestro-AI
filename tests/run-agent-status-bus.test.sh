@@ -64,6 +64,9 @@ mkdir -p "$(dirname "${DONE_FILE}")"
 printf 'stale done file\n' > "${DONE_FILE}"
 cat > "${FAKE_BIN}/fake-agent" <<'SH'
 #!/usr/bin/env bash
+if [[ -n "${FAKE_AGENT_SLEEP_SECONDS:-}" ]]; then
+  sleep "${FAKE_AGENT_SLEEP_SECONDS}"
+fi
 printf 'STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests\n'
 printf 'fake-agent done\n'
 printf 'partial stdout without newline'
@@ -155,5 +158,29 @@ assert_contains "${runner_source}" 'wait "${stderr_forward_pid}"' "runner waits 
 if [[ "${runner_source}" == *'wait  # drain forward_status_stream subshells before writing final status'* ]]; then
   fail "runner must not use bare wait in status bus path"
 fi
+
+# A quiet non-streaming child receives wrapper-owned liveness heartbeats that
+# stop before the terminal event is written.
+QUIET_EVENTS_LOG="${WORK_DIR}/quiet/events.log"
+QUIET_ROLE_LOG="${WORK_DIR}/quiet/role.log"
+QUIET_DONE_FILE="${WORK_DIR}/quiet/done"
+FAKE_AGENT_SLEEP_SECONDS=3 \
+  RUN_WITH_IT_HEARTBEAT_SECONDS=1 \
+  PATH="${FAKE_BIN}:${PATH}" \
+  AGENT_REGISTRY_FILE="${CUSTOM_REGISTRY}" \
+  AGENT=fake \
+  CONTEXT_PAYLOAD_FILE="${CONTEXT_FILE}" \
+  PROMPT_FILE="${PROMPT_FILE}" \
+  RUN_WITH_IT_EVENTS_LOG="${QUIET_EVENTS_LOG}" \
+  RUN_WITH_IT_LOG_FILE="${QUIET_ROLE_LOG}" \
+  RUN_WITH_IT_DONE_FILE="${QUIET_DONE_FILE}" \
+  RUN_WITH_IT_ROLE=impl \
+  RUN_WITH_IT_ISSUE=42 \
+  UNATTENDED=1 \
+  "${RUNNER_PATH}" >/dev/null 2>/dev/null
+wrapper_heartbeat_count="$(grep -Fc 'STATUS|type=wrapper-heartbeat|' "${QUIET_EVENTS_LOG}" || true)"
+[[ "${wrapper_heartbeat_count}" -ge 2 ]] || fail "quiet child should receive periodic wrapper heartbeats"
+quiet_last_event="$(tail -n 1 "${QUIET_EVENTS_LOG}")"
+assert_contains "${quiet_last_event}" 'STATUS|type=agent-complete|' "wrapper heartbeat stops before terminal event"
 
 echo "PASS: run-agent status bus contract"

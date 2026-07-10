@@ -73,6 +73,7 @@ printf 'stale done file\n' > "$DONE_FILE"
 
 cat > "$FAKE_AGENT" <<'PS1'
 param([string]$Model, [string]$Prompt)
+if ($env:FAKE_AGENT_SLEEP_SECONDS) { Start-Sleep -Seconds ([int]$env:FAKE_AGENT_SLEEP_SECONDS) }
 Write-Output "STATUS|type=heartbeat|issue=42|role=impl|phase=testing|progress=running focused tests"
 Write-Output "fake-agent stdout"
 [Console]::Error.WriteLine("fake-agent stderr")
@@ -146,6 +147,27 @@ assert_contains "$done_signal" "DONE|issue=42|role=impl|agent=fake|model=fake-de
 if [[ "$done_signal" == *"stale done file"* ]]; then
   fail "runner must remove stale done sentinel before starting"
 fi
+
+QUIET_EVENTS_LOG="${WORK_DIR}/quiet/events.log"
+QUIET_ROLE_LOG="${WORK_DIR}/quiet/role.log"
+QUIET_DONE_FILE="${WORK_DIR}/quiet/done"
+AGENT_REGISTRY_FILE="$CUSTOM_REGISTRY" \
+  AGENT=fake \
+  CONTEXT_PAYLOAD_FILE="$CONTEXT_FILE" \
+  PROMPT_FILE="$PROMPT_FILE" \
+  RUN_WITH_IT_EVENTS_LOG="$QUIET_EVENTS_LOG" \
+  RUN_WITH_IT_LOG_FILE="$QUIET_ROLE_LOG" \
+  RUN_WITH_IT_DONE_FILE="$QUIET_DONE_FILE" \
+  RUN_WITH_IT_ROLE=impl \
+  RUN_WITH_IT_ISSUE=42 \
+  RUN_WITH_IT_HEARTBEAT_SECONDS=1 \
+  FAKE_AGENT_SLEEP_SECONDS=3 \
+  UNATTENDED=1 \
+  "$PS_CMD" -NoProfile -File "$RUNNER_PATH" >/dev/null 2>/dev/null
+wrapper_heartbeat_count="$(grep -Fc 'STATUS|type=wrapper-heartbeat|' "$QUIET_EVENTS_LOG" || true)"
+[[ "$wrapper_heartbeat_count" -ge 2 ]] || fail "PowerShell quiet child should receive periodic wrapper heartbeats"
+quiet_last_event="$(tail -n 1 "$QUIET_EVENTS_LOG" | tr -d '\r')"
+assert_contains "$quiet_last_event" 'STATUS|type=agent-complete|' "PowerShell wrapper heartbeat stops before terminal event"
 
 for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
   output="$(REPO_ROOT="${ROOT_DIR}" \

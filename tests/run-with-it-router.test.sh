@@ -306,6 +306,19 @@ assert_json_field "${review_output}" 'payload["agent"] in {"codex", "claude"}' "
 
 echo "PASS: router selects independent review model"
 
+multi_exclusion_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/multi-exclusion-ledger.json" \
+  --role review \
+  --complexity-level medium-hard \
+  --detected-agents codex,claude \
+  --exclude-model gpt-5.5 \
+  --exclude-model claude-opus-4-8)"
+
+assert_json_field "${multi_exclusion_output}" 'payload["model"] not in {"gpt-5.5", "claude-opus-4-8"}' "review routing honors every model exclusion"
+
+echo "PASS: router honors cumulative model exclusions"
+
 model_denylist_output="$(RUN_WITH_IT_MODEL_DENYLIST="codex/gpt-5.5,codex/gpt-5.3-codex,codex/gpt-5.3-codex-spark" "${ROUTER_PATH}" \
   --registry-file "${REGISTRY_PATH}" \
   --ledger-file "${WORK_DIR}/model-denylist-ledger.json" \
@@ -339,6 +352,29 @@ availability_output="$("${ROUTER_PATH}" \
   --availability-file "${WORK_DIR}/availability-cache.json")"
 
 assert_json_field "${availability_output}" 'payload["model"] != "gpt-5.5"' "availability cache excludes unavailable agent/model pair"
+
+missing_availability_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/missing-availability-ledger.json" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex,claude \
+  --availability-file "${WORK_DIR}/not-created.json")"
+assert_json_field "${missing_availability_output}" 'payload["model"] is not None' "missing optional availability cache is treated as empty"
+
+printf '{invalid json\n' > "${WORK_DIR}/invalid-availability.json"
+set +e
+invalid_availability_output="$("${ROUTER_PATH}" \
+  --registry-file "${REGISTRY_PATH}" \
+  --ledger-file "${WORK_DIR}/invalid-availability-ledger.json" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex,claude \
+  --availability-file "${WORK_DIR}/invalid-availability.json" 2>&1)"
+invalid_availability_rc=$?
+set -e
+[[ "${invalid_availability_rc}" -ne 0 ]] || fail "existing invalid availability cache must fail"
+assert_contains "${invalid_availability_output}" "invalid JSON" "invalid availability cache reports parse failure"
 
 echo "PASS: router honors model availability cache"
 

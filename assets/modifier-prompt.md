@@ -99,6 +99,7 @@ Reviewer instructions may include stable comment IDs such as `R001`, `R002`, and
 - Use `blocked` only when external state or missing information prevents a safe fix; include the exact blocker and the smallest next action.
 - Keep one closure entry per review comment ID. Do not merge unrelated reviewer comments into one entry.
 - Re-run reviewer-provided verification commands when present; if a command cannot run, record the concrete reason in the closure entry and in the result artifact.
+- For every required command, record `verification_applicability` as `applicable`, `not_applicable`, or `failed`. Use `not_applicable` only when a concrete lifecycle precondition is absent and include the inspected ref/path evidence; a nonzero applicable command is `failed`.
 
 ## Progress Visibility
 
@@ -177,7 +178,8 @@ Path safety:
 Bash:
 ```bash
 mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
-python3 - "$RUN_WITH_IT_RESULT_FILE" "$RUN_WITH_IT_ISSUE" "$MODIFY_COMMIT_SHA" <<'PY'
+MODIFY_PAYLOAD_FILE="${RUN_WITH_IT_RESULT_FILE}.payload.$$"
+python3 - "$MODIFY_PAYLOAD_FILE" "$RUN_WITH_IT_ISSUE" "$MODIFY_COMMIT_SHA" <<'PY'
 import json
 import os
 import subprocess
@@ -214,6 +216,12 @@ with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2)
     handle.write("\n")
 PY
+python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
+  --role modify --issue "$RUN_WITH_IT_ISSUE" \
+  --payload-file "$MODIFY_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
+  --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
+  --pre-spawn-head "${ISSUE_BASE_SHA:-}"
+rm -f "$MODIFY_PAYLOAD_FILE"
 ```
 
 PowerShell:
@@ -242,7 +250,11 @@ $payload = @{
   }
 }
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
-$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $env:RUN_WITH_IT_RESULT_FILE
+$payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
+$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
+& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head $env:ISSUE_BASE_SHA
+if ($LASTEXITCODE -ne 0) { throw "modification artifact validation failed" }
+Remove-Item -Force $payloadFile
 ```
 
 ## Completion Sentinel

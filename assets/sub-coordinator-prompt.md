@@ -103,9 +103,80 @@ Bash:
 ```bash
 ISSUE_BRANCH="${ISSUE_BRANCH:-${RUN_FEATURE_BRANCH}-issue-${SUB_COORD_ISSUE_NUMBER}}"
 ISSUE_WORKTREE_PATH="${ISSUE_WORKTREE_PATH:-$(pwd -P)/.run-with-it/worktrees/issue-${SUB_COORD_ISSUE_NUMBER}}"
-git fetch --all --prune 2>/dev/null || true
-git worktree add -B "$ISSUE_BRANCH" "$ISSUE_WORKTREE_PATH" "$RUN_FEATURE_BRANCH"
+git fetch origin "$RUN_FEATURE_BRANCH" 2>/dev/null || git fetch --all --prune 2>/dev/null || true
+ISSUE_BASE_REF="origin/${RUN_FEATURE_BRANCH}"
+ISSUE_BASE_SOURCE="remote-tracking"
+if ! git rev-parse --verify "${ISSUE_BASE_REF}^{commit}" >/dev/null 2>&1; then
+  ISSUE_BASE_REF="$RUN_FEATURE_BRANCH"
+  ISSUE_BASE_SOURCE="local-fallback"
+fi
+ISSUE_BASE_SHA="$(git rev-parse --verify "${ISSUE_BASE_REF}^{commit}")"
+git worktree add -B "$ISSUE_BRANCH" "$ISSUE_WORKTREE_PATH" "$ISSUE_BASE_SHA"
+test "$(git -C "$ISSUE_WORKTREE_PATH" rev-parse HEAD)" = "$ISSUE_BASE_SHA"
 REPO_ROOT="$ISSUE_WORKTREE_PATH"
+
+mkdir -p "$RUN_WITH_IT_ISSUE_DIR"
+SUB_COORD_STATE_FILE="${SUB_COORD_STATE_FILE:-$RUN_WITH_IT_ISSUE_DIR/sub-state.json}"
+SUB_COORD_STATE_TMP="${SUB_COORD_STATE_FILE}.tmp.$$"
+cat > "$SUB_COORD_STATE_TMP" <<JSON
+{
+  "schema_version": 1,
+  "issue_number": $SUB_COORD_ISSUE_NUMBER,
+  "phase": "starting",
+  "feature_branch": "$RUN_FEATURE_BRANCH",
+  "issue_branch": "$ISSUE_BRANCH",
+  "worktree_path": "$ISSUE_WORKTREE_PATH",
+  "issue_dir": "$RUN_WITH_IT_ISSUE_DIR",
+  "issue_base_sha": "$ISSUE_BASE_SHA",
+  "issue_base_source": "$ISSUE_BASE_SOURCE",
+  "in_flight_agents": [],
+  "review_history": [],
+  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+JSON
+mv "$SUB_COORD_STATE_TMP" "$SUB_COORD_STATE_FILE"
+```
+
+PowerShell:
+```powershell
+$ISSUE_BRANCH = if ($env:ISSUE_BRANCH) { $env:ISSUE_BRANCH } else { "$env:RUN_FEATURE_BRANCH-issue-$env:SUB_COORD_ISSUE_NUMBER" }
+$ISSUE_WORKTREE_PATH = if ($env:ISSUE_WORKTREE_PATH) { $env:ISSUE_WORKTREE_PATH } else { Join-Path (Get-Location).Path ".run-with-it\worktrees\issue-$env:SUB_COORD_ISSUE_NUMBER" }
+& git fetch origin $env:RUN_FEATURE_BRANCH 2>$null
+$ISSUE_BASE_REF = "origin/$env:RUN_FEATURE_BRANCH"
+$ISSUE_BASE_SOURCE = "remote-tracking"
+& git rev-parse --verify "$($ISSUE_BASE_REF)^{commit}" *> $null
+if ($LASTEXITCODE -ne 0) {
+  $ISSUE_BASE_REF = $env:RUN_FEATURE_BRANCH
+  $ISSUE_BASE_SOURCE = "local-fallback"
+}
+$ISSUE_BASE_SHA = (& git rev-parse --verify "$($ISSUE_BASE_REF)^{commit}").Trim()
+& git worktree add -B $ISSUE_BRANCH $ISSUE_WORKTREE_PATH $ISSUE_BASE_SHA
+if ((& git -C $ISSUE_WORKTREE_PATH rev-parse HEAD).Trim() -ne $ISSUE_BASE_SHA) { throw "issue worktree base mismatch" }
+$REPO_ROOT = $ISSUE_WORKTREE_PATH
+
+New-Item -ItemType Directory -Force -Path $env:RUN_WITH_IT_ISSUE_DIR | Out-Null
+$SUB_COORD_STATE_FILE = if ($env:SUB_COORD_STATE_FILE) { $env:SUB_COORD_STATE_FILE } else { Join-Path $env:RUN_WITH_IT_ISSUE_DIR "sub-state.json" }
+$state = [ordered]@{
+  schema_version = 1
+  issue_number = [int]$env:SUB_COORD_ISSUE_NUMBER
+  phase = "starting"
+  feature_branch = $env:RUN_FEATURE_BRANCH
+  issue_branch = $ISSUE_BRANCH
+  worktree_path = $ISSUE_WORKTREE_PATH
+  issue_dir = $env:RUN_WITH_IT_ISSUE_DIR
+  issue_base_sha = $ISSUE_BASE_SHA
+  issue_base_source = $ISSUE_BASE_SOURCE
+  in_flight_agents = @()
+  review_history = @()
+  updated_at = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+}
+$stateTemp = "$SUB_COORD_STATE_FILE.tmp.$PID"
+$state | ConvertTo-Json -Depth 8 | Set-Content -Path $stateTemp -Encoding UTF8
+Move-Item -Force $stateTemp $SUB_COORD_STATE_FILE
+
+$resumeDirty = @(& git -C $ISSUE_WORKTREE_PATH status --porcelain)
+# If $resumeDirty is nonempty or implementation progress is saved, preserve the
+# worktree for artifact recovery; never reset it to refresh the base.
 ```
 
 Artifact paths (`RUN_WITH_IT_ISSUE_DIR`, `SUB_COORD_REPORT_FILE`, `SUB_COORD_LOG_FILE`, `RUN_WITH_IT_STATUS_FILE`, `RUN_WITH_IT_EVENTS_LOG`, role logs, review JSON, and done sentinels) must remain absolute paths under the root checkout's `.run-with-it/`, not inside the issue worktree. The Sub-Coordinator creates `$RUN_WITH_IT_ISSUE_DIR` and all worker logs/results/done files must live under that folder.
@@ -169,6 +240,7 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 7. If a worker failed without a valid artifact, apply the existing Worker Artifact Recovery Contract for that role/cycle, including the Artifact Recovery Worker before any terminal blocked report.
 8. Never rerun complexity, plan, implementation, review, or modification phases that already have valid artifacts in the saved issue directory. A valid `plan.json` (see *Worker Done Files*) plus its done file means the plan phase is complete — reuse `plan.md` and the stored `plan_complexity_level`; do not re-spawn the planner.
 9. Do not create a fresh issue worktree when saved `issue_branch` and `worktree_path` are present and valid. Reuse the saved worktree.
+10. Before refreshing a reused worktree, fetch the shared branch and inspect both `git status --porcelain` and saved `impl_commit_sha` / `modify_commit_sha`. Refresh to the selected remote base only when the worktree is clean, `HEAD` still equals the saved `issue_base_sha`, and no implementation progress is recorded. If the worktree is dirty or has implementation progress, never reset it; preserve it and enter artifact recovery with the saved base and current `HEAD`.
 
 ## Background Worker Monitoring Contract
 
@@ -315,7 +387,7 @@ For implementation and modification workers, the check-in metadata is mandatory.
 
 Every `WORKER_POLL_SECONDS` seconds, poll the dispatcher state file. Read `WORKER_STATE_FILE`, not the raw worker log. The dispatcher updates that state file from objective PID, done/result, and captured log activity. PID liveness is diagnostic only. Completion requires both the done file and valid artifacts.
 
-Worker heartbeats are legacy progress hints only. A worker can be busy, blocked, looping, or produce no heartbeat output. Treat `state="quiet"` as suspicious and `state="stalled"` / `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for `WORKER_STALL_SECONDS`.
+Model-emitted heartbeats are advisory progress hints only. Runner-owned `wrapper-heartbeat` events prove process liveness independently of model stdout. Treat `state="quiet"` and `state="stalled"` as output-health signals; do not terminate a wrapper-heartbeat-alive worker solely for quiet output. `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` is the bounded termination guard.
 
 Every `WORKER_LOG_SUMMARY_SECONDS` seconds, if the worker log tail changed, read only the newest `${WORKER_LOG_TAIL_LINES:-5}` lines, write a concise `STATUS|type=worker-log-tail|...` summary to `$SUB_COORD_LOG_FILE`, update `$RUN_WITH_IT_STATUS_FILE`, and append `$RUN_WITH_IT_EVENTS_LOG`. Do not store the raw log tail in memory or in the state file.
 
@@ -325,14 +397,17 @@ If the PID is dead, inspect only the done file and required artifacts. If done f
 
 Implementation and modification worker artifact failures are infrastructure/handoff failures before they are issue failures. Do not terminal-block on the first missing or malformed implementation/modification result artifact.
 
-For any `impl` or `modify` worker state with `state="failed"` and `stall_reason` in this set:
+For any `impl` or `modify` worker state with `state="failed"` or `state="artifact-recovery-required"` and `stall_reason` in this set:
 - `missing-result-artifact`
 - `invalid-result-artifact`
+- `implementation-verification-failed`
+- `artifact-recovery-required`
 - `process-exited-missing-done-or-result`
 - `alive-but-silent`
 - done file exists but the result JSON is absent or invalid
 
 apply this exact policy:
+0. A typed `artifact-recovery-required` result goes directly to the Artifact Recovery Worker; never treat it as normal success and do not spend a same-role retry on already-preserved work.
 1. Read only the dispatcher state JSON and cheap git status metadata. Do not read the raw worker log into context.
 2. Emit `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
 3. If `git -C "$ISSUE_WORKTREE_PATH" status --short` is non-empty, preserve the dirty work before retrying:
@@ -369,6 +444,8 @@ apply this exact policy:
 
 This recovery contract covers `impl`, `review`, and `modify` together with the separate Review Artifact Guardrail below. Artifact infrastructure failures must not be reported as `failed-review` unless a valid worker result exists and the failure is actual verification failure, missing handoff commit, reviewer `reject`, or valid `revise` cycle-cap exhaustion.
 
+All workers must use `run-with-it-artifacts.py write-json` to validate and atomically install role artifacts. Do not generate Python source strings to write JSON artifacts. Required verification commands must carry a `verification_applicability` classification (`applicable`, `not_applicable`, or `failed`) plus concrete evidence; a missing greenfield baseline may be `not_applicable`, while a nonzero applicable command remains `failed`.
+
 ## Appendix A: Routing Contract
 
 ### Deterministic Router Helper (Mandatory)
@@ -388,6 +465,11 @@ ROUTER_FILE="$ASSET_ROOT/run-with-it-router.py"
 ROUTER_LEDGER_FILE="${RUN_WITH_IT_USAGE_LEDGER_FILE:-.run-with-it/usage-ledger.json}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DETECTED_AGENTS="$("$ASSET_ROOT/run-agent.sh" --list-agents --detected-only | cut -f1 | paste -sd, -)"
+ROUTER_EXCLUDE_ARGS=()
+IFS=',' read -r -a ROUTER_EXCLUDES <<< "${REVIEW_EXCLUDE_MODELS:-${EXCLUDE_MODEL:-}}"
+for excluded_model in "${ROUTER_EXCLUDES[@]}"; do
+  [ -n "$excluded_model" ] && ROUTER_EXCLUDE_ARGS+=(--exclude-model "$excluded_model")
+done
 ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --registry-file "$ASSET_ROOT/agent-registry.json" \
   --ledger-file "$ROUTER_LEDGER_FILE" \
@@ -398,7 +480,7 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --denylist "${AGENT_DENYLIST:-}" \
   --forced-agent "${FORCED_AGENT:-}" \
   --forced-model "${FORCED_MODEL:-}" \
-  --exclude-model "${EXCLUDE_MODEL:-}" \
+  "${ROUTER_EXCLUDE_ARGS[@]}" \
   --prefer-model "${PREFER_MODEL:-}" \
   --model-denylist "${RUN_WITH_IT_MODEL_DENYLIST:-}" \
   --availability-file "${RUN_WITH_IT_MODEL_AVAILABILITY_FILE:-}" \
@@ -417,6 +499,11 @@ $routerFile = Join-Path $ASSET_ROOT "run-with-it-router.py"
 $routerLedgerFile = if ($env:RUN_WITH_IT_USAGE_LEDGER_FILE) { $env:RUN_WITH_IT_USAGE_LEDGER_FILE } else { ".run-with-it/usage-ledger.json" }
 $pythonBin = if ($env:PYTHON_BIN) { $env:PYTHON_BIN } else { "python3" }
 $detectedAgents = (& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only | ForEach-Object { ($_ -split "`t")[0] }) -join ","
+$reviewExcludeModels = if ($env:REVIEW_EXCLUDE_MODELS) { $env:REVIEW_EXCLUDE_MODELS } else { $env:EXCLUDE_MODEL }
+$routerExcludeArgs = @()
+foreach ($excludedModel in ($reviewExcludeModels -split ',' | Where-Object { $_ })) {
+  $routerExcludeArgs += @("--exclude-model", $excludedModel)
+}
 $routeJson = & $pythonBin $routerFile `
   --registry-file (Join-Path $ASSET_ROOT "agent-registry.json") `
   --ledger-file $routerLedgerFile `
@@ -427,7 +514,7 @@ $routeJson = & $pythonBin $routerFile `
   --denylist $env:AGENT_DENYLIST `
   --forced-agent $env:FORCED_AGENT `
   --forced-model $env:FORCED_MODEL `
-  --exclude-model $env:EXCLUDE_MODEL `
+  @routerExcludeArgs `
   --prefer-model $env:PREFER_MODEL `
   --model-denylist $env:RUN_WITH_IT_MODEL_DENYLIST `
   --availability-file $env:RUN_WITH_IT_MODEL_AVAILABILITY_FILE `
@@ -443,7 +530,7 @@ Route helper inputs by phase:
 - complexity worker: `ROUTE_ROLE=complexity`, `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}` unless an explicit runtime override skips complexity entirely
 - plan worker: `ROUTE_ROLE=plan`, `ROUTE_COMPLEXITY_LEVEL=<blind scored complexity level>` — pass the blind band as-is; the router's `PLAN_BUMP` forces a strong band internally, so never pre-bump it here (see *Plan Sub-Agent Delegation*)
 - implementer worker: `ROUTE_ROLE=impl`, `ROUTE_COMPLEXITY_LEVEL=$EFFECTIVE_COMPLEXITY` — the plan's grounded re-score when a plan ran, otherwise the blind scored complexity level (see *Plan Sub-Agent Delegation*)
-- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `EXCLUDE_MODEL` to the implementation/modification model being reviewed. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). `EXCLUDE_MODEL` still wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion are unaffected; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles.
+- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `REVIEW_EXCLUDE_MODELS` to a comma-separated union of the implementation/modification model plus every failed reviewer model from this cycle. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). Every repeated `--exclude-model` wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion remain cumulative; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles. Before launch, assert the selected reviewer model is absent from `REVIEW_EXCLUDE_MODELS`; otherwise reject the route and retry selection.
 - modifier worker: `ROUTE_ROLE=modify`, use `$EFFECTIVE_COMPLEXITY` as the base band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
 If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
@@ -1034,7 +1121,7 @@ For any review worker state with `state="failed"` and `stall_reason` in this set
 
 apply this exact policy:
 1. Emit `STATUS|type=review-artifact-failed|issue=<n>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
-2. Retry the **same review cycle** up to `MAX_REVIEW_ARTIFACT_RETRIES` attempts (default `2`) with a different reviewer model when available. Re-run routing with the previous reviewer model in `EXCLUDE_MODEL`; if the same agent is selected with a different model, that is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-status.json` and `cycle-${CYCLE}-attempt-${ATTEMPT}-instructions.json` so stale partial JSON cannot satisfy the retry. When you use attempt-specific paths, regenerate the reviewer context payload so its `RUN_WITH_IT_RESULT_FILE`, `REVIEWER_STATUS_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` entries exactly match the dispatcher `--result-file` and sibling instructions path for that attempt.
+2. Retry the **same review cycle** up to `MAX_REVIEW_ARTIFACT_RETRIES` attempts (default `2`) with a different reviewer model when available. Append the failed reviewer model to `REVIEW_EXCLUDE_MODELS` without removing the implementation/modification model or earlier failed reviewers, then re-run routing with one repeated `--exclude-model` per value. If the same agent is selected with a different model, that is acceptable. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-status.json` and `cycle-${CYCLE}-attempt-${ATTEMPT}-instructions.json` so stale partial JSON cannot satisfy the retry. When you use attempt-specific paths, regenerate the reviewer context payload so its `RUN_WITH_IT_RESULT_FILE`, `REVIEWER_STATUS_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` entries exactly match the dispatcher `--result-file` and sibling instructions path for that attempt.
 3. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not reviewer verdicts.
 4. If a retry produces valid review artifacts, continue normal verdict routing for the original cycle.
 5. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["reviewer-missing-result-artifact"]` plus the final dispatcher `stall_reason`, `REVIEW_STATE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` paths in the summary/evidence. Do not report `failed-review`, do not spawn a modifier, and do not merge.
@@ -1375,7 +1462,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.state.json`
 - `.run-with-it/issues/<n>/workers/artifact-recovery/cycle-<cycle>-<role>-recovery.state.json`
 
-The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `failed`, or `completed`. A `stalled` state with `stall_reason="alive-but-silent"` means the worker process is still alive but has produced no captured stdout/stderr for the configured stall threshold. Worker heartbeats are legacy advisory hints; log activity observed by the dispatcher is the liveness signal.
+The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `artifact-recovery-required`, `failed`, or `completed`. A `stalled` state describes quiet model output, not process death. Runner-owned `wrapper-heartbeat` events are independent liveness evidence, and the hard elapsed limit is the final bound.
 
 For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Treat this as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
 

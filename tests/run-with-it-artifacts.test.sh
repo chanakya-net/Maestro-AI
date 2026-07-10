@@ -186,6 +186,42 @@ assert_eq "$(impl_reason)" "" "verified no-op with passing verification is accep
 printf '%s\n' '{"schema_version":1,"issue":"88","role":"impl","status":"success","no_op":true,"commit_sha":"NONE","files_committed":[],"verification":{"passed":false}}' > "${WORK_DIR}/impl-result.json"
 assert_eq "$(impl_reason)" "verified-no-op-requires-passing-verification" "no-op requires passing verification"
 
+# --- Run handoff reliability: canonical commits and mandatory verification ---
+IMPL_REPO="${WORK_DIR}/impl-repo"
+mkdir -p "${IMPL_REPO}"
+git -C "${IMPL_REPO}" init -q
+git -C "${IMPL_REPO}" config user.email t@t.t
+git -C "${IMPL_REPO}" config user.name t
+printf 'base\n' > "${IMPL_REPO}/base.txt"
+git -C "${IMPL_REPO}" add -A
+git -C "${IMPL_REPO}" commit -q -m base
+IMPL_BASE="$(git -C "${IMPL_REPO}" rev-parse HEAD)"
+printf 'feature\n' > "${IMPL_REPO}/feature.txt"
+git -C "${IMPL_REPO}" add -A
+git -C "${IMPL_REPO}" commit -q -m feature
+IMPL_HEAD="$(git -C "${IMPL_REPO}" rev-parse HEAD)"
+IMPL_SHORT="$(git -C "${IMPL_REPO}" rev-parse --short=12 HEAD)"
+
+repo_impl_reason() {
+  python3 "${ARTIFACT_HELPER}" failure-reason \
+    --role impl \
+    --issue 89 \
+    --result-file "${WORK_DIR}/repo-impl-result.json" \
+    --repo-root "${IMPL_REPO}" \
+    --pre-spawn-head "${IMPL_BASE}"
+}
+
+printf '%s\n' '{"schema_version":1,"issue":"89","role":"impl","status":"success","commit_sha":"'"${IMPL_SHORT}"'","files_committed":["feature.txt"],"verification":{"passed":true,"commands":["test"]}}' > "${WORK_DIR}/repo-impl-result.json"
+assert_eq "$(repo_impl_reason)" "" "unique abbreviated commit is accepted"
+canonical_result_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit_sha"])' "${WORK_DIR}/repo-impl-result.json")"
+assert_eq "${canonical_result_sha}" "${IMPL_HEAD}" "accepted abbreviated commit is rewritten canonically"
+
+printf '%s\n' '{"schema_version":1,"issue":"89","role":"impl","status":"success","commit_sha":"'"${IMPL_HEAD}"'","files_committed":["feature.txt"],"verification":{"passed":false,"commands":["test"]}}' > "${WORK_DIR}/repo-impl-result.json"
+assert_eq "$(repo_impl_reason)" "implementation-verification-failed" "ordinary implementation success requires passing verification"
+
+printf '%s\n' '{"schema_version":1,"issue":"89","role":"impl","status":"success","commit_sha":"deadbeef","files_committed":["feature.txt"],"verification":{"passed":true,"commands":["test"]}}' > "${WORK_DIR}/repo-impl-result.json"
+assert_eq "$(repo_impl_reason)" "invalid-implementation-commit" "unknown commit is rejected precisely"
+
 # --- Fix B: stall salvage commits a dirty tree only with --from-stall ---
 SALVAGE_REPO="${WORK_DIR}/salvage-repo"
 mkdir -p "${SALVAGE_REPO}"
@@ -214,11 +250,41 @@ rm -f "${WORK_DIR}/salvage.done"
 set +e; salvage ""; salvage_rc=$?; set -e
 assert_eq "${salvage_rc}" "1" "clean-exit synthesize does not salvage a dirty tree without a done sentinel"
 
-# With --from-stall → commit the dirty tree and synthesize a success result.
+# With --from-stall → commit the dirty tree and synthesize a typed recovery result.
 set +e; salvage "--from-stall"; salvage_rc=$?; set -e
 assert_eq "${salvage_rc}" "0" "stall salvage commits the dirty tree and writes a result"
 git -C "${SALVAGE_REPO}" diff --quiet && git -C "${SALVAGE_REPO}" diff --cached --quiet || fail "stall salvage should leave a clean tree after committing"
 salvaged_head="$(git -C "${SALVAGE_REPO}" rev-parse HEAD)"
 [[ "${salvaged_head}" != "${SALVAGE_BASE}" ]] || fail "stall salvage should advance HEAD with a new commit"
+salvage_status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "${WORK_DIR}/salvage-result.json")"
+assert_eq "${salvage_status}" "artifact_recovery_required" "unverified stall salvage cannot claim normal success"
+salvage_reason="$(python3 "${ARTIFACT_HELPER}" failure-reason --role impl --issue 99 --result-file "${WORK_DIR}/salvage-result.json" --repo-root "${SALVAGE_REPO}" --pre-spawn-head "${SALVAGE_BASE}")"
+assert_eq "${salvage_reason}" "artifact-recovery-required" "typed salvage routes through artifact recovery"
+
+# --- Atomic writer validates before replacing the destination ---
+WRITER_PAYLOAD="${WORK_DIR}/writer-payload.json"
+WRITER_RESULT="${WORK_DIR}/writer-result.json"
+printf '%s\n' '{"schema_version":1,"issue":"89","role":"impl","status":"success","commit_sha":"'"${IMPL_HEAD}"'","files_committed":["feature.txt"],"verification":{"passed":true,"commands":["test"]}}' > "${WRITER_PAYLOAD}"
+python3 "${ARTIFACT_HELPER}" write-json \
+  --role impl --issue 89 \
+  --payload-file "${WRITER_PAYLOAD}" \
+  --result-file "${WRITER_RESULT}" \
+  --repo-root "${IMPL_REPO}" \
+  --pre-spawn-head "${IMPL_BASE}"
+assert_file_contains "${WRITER_RESULT}" '"status": "success"' "atomic writer installs a valid implementation artifact"
+writer_before="$(shasum -a 256 "${WRITER_RESULT}" | cut -d' ' -f1)"
+printf '%s\n' '{"schema_version":1,"issue":"89","role":"impl","status":"success"}' > "${WRITER_PAYLOAD}"
+set +e
+python3 "${ARTIFACT_HELPER}" write-json \
+  --role impl --issue 89 \
+  --payload-file "${WRITER_PAYLOAD}" \
+  --result-file "${WRITER_RESULT}" \
+  --repo-root "${IMPL_REPO}" \
+  --pre-spawn-head "${IMPL_BASE}" >/dev/null 2>&1
+writer_invalid_rc=$?
+set -e
+[[ "${writer_invalid_rc}" -ne 0 ]] || fail "atomic writer must reject an invalid payload"
+writer_after="$(shasum -a 256 "${WRITER_RESULT}" | cut -d' ' -f1)"
+assert_eq "${writer_after}" "${writer_before}" "invalid payload leaves existing artifact untouched"
 
 echo "PASS: run-with-it artifact validation"

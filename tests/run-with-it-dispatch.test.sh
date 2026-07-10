@@ -406,11 +406,17 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 prompt_payload="$2"
-# Stay alive past the stall window producing NOTHING — no output, no commit, no
-# dirty tree. This is the genuinely-silent worker the stall path must terminate
-# and fail. (Stall salvage only rescues a worker that left committed-or-dirty git
-# work; a worker with no git progress, like this one, must still fail.)
-sleep 30
+# Stay quiet past the stdout stall window, then finish valid work. Wrapper-owned
+# heartbeats must keep this non-streaming worker alive.
+repo_root="$1"
+sleep 4
+printf 'quiet worker completed\n' > "$repo_root/silent.txt"
+git -C "$repo_root" add silent.txt
+git -C "$repo_root" commit -m "impl silent marker" >/dev/null
+commit_sha="$(git -C "$repo_root" rev-parse HEAD)"
+mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
+printf '{"schema_version":1,"issue":"%s","role":"%s","status":"success","commit_sha":"%s","files_committed":["silent.txt"],"verification":{"passed":true,"commands":["fake"]}}\n' \
+  "$RUN_WITH_IT_ISSUE" "$RUN_WITH_IT_ROLE" "$commit_sha" > "$RUN_WITH_IT_RESULT_FILE"
 SH
 chmod +x "${SMOKE_BIN}/silent-agent"
 
@@ -458,7 +464,7 @@ git -C "${SMOKE_REPO_ROOT}" add README.md
 git -C "${SMOKE_REPO_ROOT}" commit -m "baseline" >/dev/null
 
 set +e
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
   --issue 43 \
@@ -483,13 +489,38 @@ silent_dispatch_pid="$!"
 wait "${silent_dispatch_pid}"
 silent_dispatch_status="$?"
 set -e
-[[ "${silent_dispatch_status}" != "0" ]] || fail "stalled impl worker must fail instead of completing after silence"
+[[ "${silent_dispatch_status}" == "0" ]] || fail "heartbeat-alive quiet impl worker must complete"
 assert_json_file "${SILENT_STATE}" "silent worker final watchdog state JSON is valid"
-assert_file_contains "${SILENT_STATE}" '"state": "failed"' "silent worker records failed state after stall timeout"
-assert_file_contains "${SILENT_STATE}" '"stall_reason": "alive-but-silent"' "silent worker records precise stall reason"
-assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stalled|issue=43|role=impl|cycle=1|reason=alive-but-silent" "silent worker emits stalled status"
-assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-stall-timeout|issue=43|role=impl|cycle=1" "silent worker emits stall timeout status"
-assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-failed|issue=43|role=impl|cycle=1" "silent worker exits dispatcher as failed"
+assert_file_contains "${SILENT_STATE}" '"state": "completed"' "heartbeat-alive quiet worker completes"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=wrapper-heartbeat|issue=43|role=impl" "runner emits wrapper heartbeat while model output is quiet"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-complete|issue=43|role=impl|cycle=1" "quiet worker exits dispatcher successfully"
+
+HARD_RESULT="${SILENT_ISSUE_DIR}/workers/impl/hard-result.json"
+HARD_LOG="${SILENT_ISSUE_DIR}/workers/impl/hard.log"
+HARD_DONE="${SILENT_ISSUE_DIR}/workers/impl/hard.done"
+HARD_STATE="${SILENT_ISSUE_DIR}/workers/impl/hard.state.json"
+HARD_REPO="${WORK_DIR}/hard-limit-repo"
+mkdir -p "${HARD_REPO}"
+git -C "${HARD_REPO}" init -q
+git -C "${HARD_REPO}" config user.email "test@example.com"
+git -C "${HARD_REPO}" config user.name "Test User"
+printf 'baseline\n' > "${HARD_REPO}/README.md"
+git -C "${HARD_REPO}" add README.md
+git -C "${HARD_REPO}" commit -m "baseline" >/dev/null
+set +e
+RUN_WITH_IT_HEARTBEAT_SECONDS=1 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role impl --issue 431 --cycle 1 --agent silent --model fake-model \
+  --context-file "${SILENT_CONTEXT}" --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${HARD_LOG}" --done-file "${HARD_DONE}" --result-file "${HARD_RESULT}" \
+  --state-file "${HARD_STATE}" --repo-root "${HARD_REPO}" --issue-dir "${SILENT_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 --quiet-seconds 1 --stall-seconds 10 --hard-limit-seconds 2 >/dev/null
+hard_status="$?"
+set -e
+assert_eq "${hard_status}" "124" "hard limit bounds a heartbeat-alive worker with no progress"
+assert_file_contains "${HARD_STATE}" '"stall_reason": "hard-limit-exceeded"' "hard limit records precise reason"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=worker-hard-limit|issue=431|role=impl|cycle=1" "hard limit emits structured status"
 
 cat > "${SMOKE_BIN}/noarg-commit-agent" <<'SH'
 #!/usr/bin/env bash
@@ -704,6 +735,7 @@ RECOVER_DONE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.done"
 RECOVER_STATE="${RECOVER_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 printf '# recover missing result\n' > "${RECOVER_CONTEXT}"
 
+set +e
 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
@@ -722,15 +754,19 @@ PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --status-file "${SMOKE_STATUS}" \
   --events-log "${SMOKE_EVENTS}" \
   --poll-seconds 1 >/dev/null
+recover_status="$?"
+set -e
 
+assert_eq "${recover_status}" "75" "unverified committed work requests artifact recovery"
 assert_json_file "${RECOVER_RESULT}" "missing implementation result is synthesized from committed work"
 assert_file_contains "${RECOVER_RESULT}" '"issue": "45"' "synthesized result records issue"
 assert_file_contains "${RECOVER_RESULT}" '"role": "impl"' "synthesized result records role"
-assert_file_contains "${RECOVER_RESULT}" '"status": "success"' "synthesized result validates as successful handoff"
+assert_file_contains "${RECOVER_RESULT}" '"status": "artifact_recovery_required"' "synthesized result cannot claim normal success"
 assert_file_contains "${RECOVER_RESULT}" '"recovered.txt"' "synthesized result records committed file"
 assert_file_contains "${RECOVER_RESULT}" '"source": "dispatcher-synthesized"' "synthesized result is auditable"
-assert_file_contains "${RECOVER_STATE}" '"state": "completed"' "recoverable missing result completes"
+assert_file_contains "${RECOVER_STATE}" '"state": "artifact-recovery-required"' "recoverable missing result enters typed recovery"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=45|role=impl|cycle=1" "recovery emits synthesis status"
+assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=dispatch-recovery-required|issue=45|role=impl|cycle=1" "recovery emits typed dispatcher status"
 
 # --- #2: committed work is synthesized even when the worker exits NONZERO ---
 # (e.g. a provider auth/quota failure that kills the agent mid-run after it committed).
@@ -788,6 +824,7 @@ NONZERO_DONE="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.done"
 NONZERO_STATE="${NONZERO_ISSUE_DIR}/workers/impl/cycle-1.state.json"
 printf '# nonzero exit synthesis\n' > "${NONZERO_CONTEXT}"
 
+set +e
 PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role impl \
@@ -806,11 +843,14 @@ PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --status-file "${SMOKE_STATUS}" \
   --events-log "${SMOKE_EVENTS}" \
   --poll-seconds 1 >/dev/null
+nonzero_status="$?"
+set -e
 
+assert_eq "${nonzero_status}" "75" "crashed worker with committed work requests artifact recovery"
 assert_json_file "${NONZERO_RESULT}" "committed work is synthesized even when the worker exits nonzero"
 assert_file_contains "${NONZERO_RESULT}" '"crashed.txt"' "nonzero-exit synthesis records the committed file"
 assert_file_contains "${NONZERO_RESULT}" '"source": "dispatcher-synthesized"' "nonzero-exit synthesis is auditable"
-assert_file_contains "${NONZERO_STATE}" '"state": "completed"' "nonzero-exit worker with committed work completes"
+assert_file_contains "${NONZERO_STATE}" '"state": "artifact-recovery-required"' "nonzero-exit committed work enters typed recovery"
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=result-artifact-synthesized|issue=46|role=impl|cycle=1" "nonzero-exit synthesis emits status"
 
 # --- #1: an agent-unavailable (auth/quota) failure with no committed work is classified

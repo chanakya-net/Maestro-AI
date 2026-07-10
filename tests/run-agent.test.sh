@@ -50,6 +50,16 @@ if [[ ! -x "${RUNNER_PATH}" ]]; then
   fail "run-agent.sh exists and is executable"
 fi
 
+python3 - "${REGISTRY_PATH}" <<'PY'
+import json, sys
+registry = json.load(open(sys.argv[1]))["agents"]
+expected = {"codex": True, "claude": False, "agy": False}
+for agent, streaming in expected.items():
+    actual = registry[agent].get("liveness", {}).get("streaming_output")
+    if actual is not streaming:
+        raise SystemExit(f"{agent} streaming_output: expected {streaming}, got {actual}")
+PY
+
 prompt_contract="$(<"${ROOT_DIR}/assets/prompt.md")"
 assert_contains "${prompt_contract}" "## Progress Visibility" "implementation prompt documents progress visibility"
 assert_contains "${prompt_contract}" "Do not emit periodic heartbeat or status-check lines while working." "implementation prompt keeps workers focused"

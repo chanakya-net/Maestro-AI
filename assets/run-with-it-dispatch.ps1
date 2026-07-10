@@ -20,6 +20,7 @@ param(
     [int]$QuietSeconds = $(if ($env:RUN_WITH_IT_WORKER_QUIET_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_QUIET_SECONDS } else { 120 }),
     [int]$StallSeconds = $(if ($env:RUN_WITH_IT_WORKER_STALL_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_STALL_SECONDS } else { 300 }),
     [int]$TimeoutSeconds = $(if ($env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS) { [int]$env:RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS } else { 0 }),
+    [int]$HardLimitSeconds = $(if ($env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS) { [int]$env:RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS } else { 7200 }),
     [string]$AutoFailStalledRoles = $(if ($env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES) { $env:RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES } else { "complexity,impl,modify,plan" }),
     [string]$DispatchOutFile = "",
     [switch]$Detach,
@@ -118,7 +119,7 @@ function Get-LogSignature {
 
 function Get-LatestHeartbeatLine {
     if (-not (Test-Path $LogFile)) { return "" }
-    $match = Select-String -Path $LogFile -Pattern '^STATUS\|type=heartbeat\|' -ErrorAction SilentlyContinue | Select-Object -Last 1
+    $match = Select-String -Path $LogFile -Pattern '^STATUS\|type=(wrapper-)?heartbeat\|' -ErrorAction SilentlyContinue | Select-Object -Last 1
     if ($match) { return $match.Line }
     return ""
 }
@@ -189,6 +190,7 @@ function Write-WorkerState(
         log_mtime_epoch = Get-FileMtimeEpoch $LogFile
         quiet_seconds = $QuietSeconds
         stall_seconds = $StallSeconds
+        hard_limit_seconds = $HardLimitSeconds
         seconds_since_last_output = $secondsSinceOutput
         seconds_since_last_heartbeat = $secondsSinceHeartbeat
         started_at = $script:startedIso
@@ -223,18 +225,22 @@ function Get-RepoRootForWorker {
     return (Get-Location).Path
 }
 
-function Invoke-ArtifactHelper([string]$command) {
+function Invoke-ArtifactHelper([string]$command, [switch]$FromStall) {
     $repoRootValue = Get-RepoRootForWorker
     $preSpawnHead = if ($script:preSpawnHead) { $script:preSpawnHead } else { "" }
-    & $script:PythonExe $script:ArtifactHelper $command `
-        --role $Role `
-        --issue $Issue `
-        --result-file $ResultFile `
-        --done-file $DoneFile `
-        --log-file $LogFile `
-        --issue-dir $IssueDir `
-        --repo-root $repoRootValue `
-        --pre-spawn-head $preSpawnHead
+    $helperArgs = @(
+        $script:ArtifactHelper, $command,
+        "--role", $Role,
+        "--issue", $Issue,
+        "--result-file", $ResultFile,
+        "--done-file", $DoneFile,
+        "--log-file", $LogFile,
+        "--issue-dir", $IssueDir,
+        "--repo-root", $repoRootValue,
+        "--pre-spawn-head", $preSpawnHead
+    )
+    if ($FromStall) { $helperArgs += "--from-stall" }
+    & $script:PythonExe @helperArgs
 }
 
 function Get-ResultArtifactFailureReason {
@@ -245,8 +251,8 @@ function Get-ResultArtifactFailureReason {
     return (($output -join "`n").Trim())
 }
 
-function Try-SynthesizeResultArtifact {
-    Invoke-ArtifactHelper "synthesize" *> $null
+function Try-SynthesizeResultArtifact([switch]$FromStall) {
+    Invoke-ArtifactHelper "synthesize" -FromStall:$FromStall *> $null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -365,6 +371,7 @@ if ($Detach -and -not $DetachedChild -and -not $ValidateOnly) {
         "-QuietSeconds", $QuietSeconds,
         "-StallSeconds", $StallSeconds,
         "-TimeoutSeconds", $TimeoutSeconds,
+        "-HardLimitSeconds", $HardLimitSeconds,
         "-AutoFailStalledRoles", $AutoFailStalledRoles,
         "-DispatchOutFile", $DispatchOutFile,
         "-Detach",
@@ -499,6 +506,12 @@ while ($true) {
         if (Try-SynthesizeResultArtifact) {
             Write-Status "STATUS|type=result-artifact-synthesized|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|exit_code=$exitCode|result_file=$ResultFile"
         }
+        $artifactReason = Get-ResultArtifactFailureReason
+        if ($artifactReason -eq "artifact-recovery-required") {
+            Write-WorkerState "artifact-recovery-required" $false $exitCode $artifactReason "capability"
+            Write-Status "STATUS|type=dispatch-recovery-required|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$artifactReason|result_file=$ResultFile"
+            exit 75
+        }
         if (Test-CompletionReady) {
             Write-WorkerState "completed" $false $exitCode
             Write-Status "STATUS|type=dispatch-complete|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|result_file=$ResultFile"
@@ -533,7 +546,37 @@ while ($true) {
         $script:lastState = $state
     }
 
+    $elapsed = $now - $script:startedAt
+    if ($HardLimitSeconds -ne 0 -and $elapsed -ge $HardLimitSeconds) {
+        if (Try-SynthesizeResultArtifact -FromStall) {
+            $artifactReason = Get-ResultArtifactFailureReason
+            if ($artifactReason -eq "artifact-recovery-required") {
+                Write-Status "STATUS|type=worker-hard-limit|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|elapsed=$elapsed|action=preserve-for-recovery"
+                try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+                Write-WorkerState "artifact-recovery-required" $false 75 $artifactReason "capability"
+                Write-Status "STATUS|type=dispatch-recovery-required|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$artifactReason|result_file=$ResultFile"
+                exit 75
+            }
+        }
+        Write-Status "STATUS|type=worker-hard-limit|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|elapsed=$elapsed|action=terminate-runner"
+        try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+        Write-WorkerState "failed" $false 124 "hard-limit-exceeded" "capability"
+        Write-Status "STATUS|type=dispatch-failed|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=hard-limit-exceeded|failure_class=capability|done_file=$DoneFile|result_file=$ResultFile"
+        exit 124
+    }
+
     if (($state -eq "stalled") -and (Test-AutoFailStalledRole)) {
+        if (Try-SynthesizeResultArtifact -FromStall) {
+            $artifactReason = Get-ResultArtifactFailureReason
+            if ($artifactReason -eq "artifact-recovery-required") {
+                Write-Status "STATUS|type=worker-stall-timeout|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|action=preserve-for-recovery"
+                Write-Status "STATUS|type=result-artifact-synthesized|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=stall-salvage|result_file=$ResultFile"
+                try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+                Write-WorkerState "artifact-recovery-required" $false 75 $artifactReason "capability"
+                Write-Status "STATUS|type=dispatch-recovery-required|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=$artifactReason|result_file=$ResultFile"
+                exit 75
+            }
+        }
         Write-Status "STATUS|type=worker-stall-timeout|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|reason=alive-but-silent|action=terminate-runner"
         try {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
@@ -545,7 +588,6 @@ while ($true) {
     }
 
     if ($TimeoutSeconds -ne 0) {
-        $elapsed = $now - $script:startedAt
         if ($elapsed -ge $TimeoutSeconds) {
             Write-Status "STATUS|type=dispatch-stall|issue=$Issue|role=$Role$cycleField|pid=$($process.Id)|elapsed=$elapsed|action=alert-user"
             $TimeoutSeconds = 0
