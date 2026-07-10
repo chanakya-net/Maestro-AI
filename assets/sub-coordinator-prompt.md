@@ -404,6 +404,7 @@ For any `impl` or `modify` worker state with `state="failed"` or `state="artifac
 - `artifact-recovery-required`
 - `process-exited-missing-done-or-result`
 - `alive-but-silent`
+- `hard-limit-exceeded`
 - done file exists but the result JSON is absent or invalid
 
 apply this exact policy:
@@ -1118,6 +1119,7 @@ For any review worker state with `state="failed"` and `stall_reason` in this set
 - `review-artifact-verdict-mismatch`
 - `review-comment-count-mismatch`
 - `review-nitpick-only-mismatch`
+- `hard-limit-exceeded`
 
 apply this exact policy:
 1. Emit `STATUS|type=review-artifact-failed|issue=<n>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
@@ -1126,7 +1128,7 @@ apply this exact policy:
 4. If a retry produces valid review artifacts, continue normal verdict routing for the original cycle.
 5. If retries are exhausted, write the compact report with `outcome="blocked"` and include `blocking_reasons=["reviewer-missing-result-artifact"]` plus the final dispatcher `stall_reason`, `REVIEW_STATE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEWER_INSTRUCTIONS_FILE` paths in the summary/evidence. Do not report `failed-review`, do not spawn a modifier, and do not merge.
 
-Artifact infrastructure failures must never be reported as `failed-review`. `failed-review` is reserved for actual review verdicts (`reject`), review-cycle cap exhaustion after valid `revise` verdicts, failed verification, or missing implementation/modification commits.
+A `hard-limit-exceeded` dispatcher result is infrastructure/artifact loss, not a product review verdict. Artifact infrastructure failures must never be reported as `failed-review`. `failed-review` is reserved for actual review verdicts (`reject`), review-cycle cap exhaustion after valid `revise` verdicts, failed verification, or missing implementation/modification commits.
 
 ### Verdict Routing
 

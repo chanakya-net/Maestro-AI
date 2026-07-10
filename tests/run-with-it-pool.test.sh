@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL_RUNNER="${ROOT_DIR}/assets/run-with-it-pool.sh"
 MAIN_RULES="${ROOT_DIR}/assets/main-orchestrator-rules.md"
 SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
+COORDINATOR_RULES="${ROOT_DIR}/assets/coordinator-rules.md"
 RUN_WITH_IT_SKILL="${ROOT_DIR}/skills/run-with-it/SKILL.md"
 README="${ROOT_DIR}/README.md"
 
@@ -83,6 +84,8 @@ assert_file_contains "${MAIN_RULES}" "sub-state.json" "main rules permit structu
 assert_file_contains "${SUB_PROMPT}" "SUB_COORD_RECOVERY_MODE=1" "sub-coordinator prompt documents recovery mode"
 assert_file_contains "${SUB_PROMPT}" "artifact-recovery-prompt.md" "sub-coordinator prompt documents artifact recovery worker prompt"
 assert_file_contains "${SUB_PROMPT}" "STATUS|type=artifact-recovery-result" "sub-coordinator prompt documents artifact recovery result status"
+assert_file_contains "${COORDINATOR_RULES}" "hard-limit-exceeded" "coordinator rules classify hard-limit handoff failures"
+assert_file_contains "${SUB_PROMPT}" "hard-limit-exceeded" "sub-coordinator retries hard-limit handoff failures"
 assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "skill documents Sol Sub-Coordinator default"
 assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "README documents Sol Sub-Coordinator default"
 
