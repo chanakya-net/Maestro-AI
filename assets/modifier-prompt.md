@@ -252,7 +252,7 @@ $payload = @{
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
 $payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
 $payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
-& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head $env:ISSUE_BASE_SHA
+& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:ISSUE_BASE_SHA"
 if ($LASTEXITCODE -ne 0) { throw "modification artifact validation failed" }
 Remove-Item -Force $payloadFile
 ```
