@@ -657,6 +657,36 @@ for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
   assert_contains "${output}" "-c model_reasoning_effort=high" "Codex dry-run applies high reasoning to ${model}"
 done
 
+codex_xhigh_output="$(${RUNNER_PATH} \
+  --agent codex \
+  --model gpt-5.6-sol \
+  --effort xhigh \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+assert_contains "${codex_xhigh_output}" "-c model_reasoning_effort=xhigh" "Codex renders routed xhigh effort"
+
+claude_medium_output="$(${RUNNER_PATH} \
+  --agent claude \
+  --model claude-sonnet-5 \
+  --effort medium \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+assert_contains "${claude_medium_output}" "--model claude-sonnet-5" "Claude renders Sonnet 5"
+assert_contains "${claude_medium_output}" "--effort medium" "Claude renders routed medium effort"
+
+claude_default_output="$(${RUNNER_PATH} \
+  --agent claude \
+  --model claude-haiku-4-5 \
+  --context-file "${CONTEXT_FILE}" \
+  --prompt-file "${PROMPT_FILE}" \
+  --dry-run \
+  --unattended)"
+assert_not_contains "${claude_default_output}" "--effort" "Haiku uses provider-default effort"
+
 precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
   "${RUNNER_PATH}" \
   --agent codex \

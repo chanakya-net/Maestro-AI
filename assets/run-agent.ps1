@@ -1,12 +1,12 @@
 # run-agent.ps1 — Windows PowerShell unified agent runner (mirrors run-agent.sh)
 #
 # Usage:
-#   run-agent.ps1 --agent <agent> [--model <model>] --context-file <file> --prompt-file <file> [--dry-run] [--unattended]
+#   run-agent.ps1 --agent <agent> [--model <model>] [--effort <level>] --context-file <file> --prompt-file <file> [--dry-run] [--unattended]
 #   run-agent.ps1 --list-agents [--detected-only]
 #   run-agent.ps1 --list-models <agent>
 #
 # Environment equivalents:
-#   AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT,
+#   AGENT, MODEL, MODEL_EFFORT, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT,
 #   AGENT_PERMISSION_MODE, AGENT_EXTRA_ARGS, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
 #   RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE, RUN_WITH_IT_RESULT_FILE, RUN_WITH_IT_STATE_FILE
 
@@ -36,6 +36,7 @@ if ((Test-Path (Join-Path $REPO_ROOT ".codegraph")) -and (Get-Command codegraph 
 }
 $AGENT             = $env:AGENT
 $MODEL             = $env:MODEL
+$MODEL_EFFORT      = $env:MODEL_EFFORT
 $CONTEXT_FILE      = $env:CONTEXT_PAYLOAD_FILE
 $PROMPT_FILE_VAL   = $env:PROMPT_FILE
 $PRINT_PROMPT      = if ($env:PRINT_PROMPT) { $env:PRINT_PROMPT } else { "0" }
@@ -70,6 +71,8 @@ while ($i -lt $args.Count) {
         $AGENT = $args[++$i]
     } elseif ($arg -eq "--model") {
         $MODEL = $args[++$i]
+    } elseif ($arg -eq "--effort") {
+        $MODEL_EFFORT = $args[++$i]
     } elseif ($arg -in "--context-file", "--context-payload-file") {
         $CONTEXT_FILE = $args[++$i]
     } elseif ($arg -eq "--prompt-file") {
@@ -92,12 +95,12 @@ while ($i -lt $args.Count) {
     } elseif ($arg -in "-h", "--help") {
         Write-Host @"
 Usage:
-  run-agent.ps1 --agent <agent> [--model <model>] --context-file <file> --prompt-file <file> [--dry-run] [--unattended]
+  run-agent.ps1 --agent <agent> [--model <model>] [--effort <level>] --context-file <file> --prompt-file <file> [--dry-run] [--unattended]
   run-agent.ps1 --list-agents [--detected-only]
   run-agent.ps1 --list-models <agent>
 
 Environment equivalents:
-  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
+  AGENT, MODEL, MODEL_EFFORT, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED, GUI_MODE,
   RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE, RUN_WITH_IT_RESULT_FILE, RUN_WITH_IT_STATE_FILE
 "@
         exit 0
@@ -548,11 +551,11 @@ try {
         if ($flagTpl) { $modelFlag = $flagTpl -replace '\{\{model\}\}', $MODEL }
     }
 
-    $modelReasoningEffort = ""
-    if ($MODEL -and $registry.model_catalog -and $registry.model_catalog.PSObject.Properties[$MODEL]) {
+    $modelEffort = if ($MODEL_EFFORT) { [string]$MODEL_EFFORT } else { "" }
+    if (-not $modelEffort -and $MODEL -and $registry.model_catalog -and $registry.model_catalog.PSObject.Properties[$MODEL]) {
         $modelEntry = $registry.model_catalog.PSObject.Properties[$MODEL].Value
         if ($modelEntry.reasoning_effort) {
-            $modelReasoningEffort = [string]$modelEntry.reasoning_effort
+            $modelEffort = [string]$modelEntry.reasoning_effort
         }
     }
 
@@ -585,9 +588,14 @@ try {
                 }
             }
             "{{model_settings}}" {
-                if ($modelReasoningEffort) {
-                    $cmdArgs.Add("-c")
-                    $cmdArgs.Add("model_reasoning_effort=$modelReasoningEffort")
+                if ($modelEffort) {
+                    if ($AGENT -eq "codex") {
+                        $cmdArgs.Add("-c")
+                        $cmdArgs.Add("model_reasoning_effort=$modelEffort")
+                    } elseif ($AGENT -eq "claude") {
+                        $cmdArgs.Add("--effort")
+                        $cmdArgs.Add($modelEffort)
+                    }
                 }
             }
             default {

@@ -745,7 +745,7 @@
         ],
         "pricing_basis": "subscription",
         "metered_api_cost": false,
-        "_note": "Codex automatically routes GPT-5.6 Luna, Terra, and Sol by complexity band. GPT-5.5 is explicit-only; GPT-5.4, GPT-5.4-mini, and GPT-5.3-codex-spark remain available for automatic routing."
+        "_note": "Codex automatic routing follows model_routing.non_complexity_band_policy. GPT-5.5 is medium-hard only; GPT-5.4 is limited to simple work."
       },
       "capability_band": "advanced",
       "fallback_order": [
@@ -772,6 +772,7 @@
         "args_template": [
           "{{permission_mode}}",
           "{{model_flag}}",
+          "{{model_settings}}",
           "{{extra_args}}",
           "--print",
           "{{prompt}}"

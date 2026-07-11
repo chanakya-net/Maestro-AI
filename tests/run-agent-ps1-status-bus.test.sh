@@ -205,6 +205,28 @@ for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
   assert_contains "$output" "'-c' 'model_reasoning_effort=high'" "PowerShell runner applies high reasoning to $model"
 done
 
+codex_xhigh_output="$(REPO_ROOT="${ROOT_DIR}" \
+  "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
+  --agent codex \
+  --model gpt-5.6-sol \
+  --effort xhigh \
+  --context-file "$CONTEXT_FILE" \
+  --prompt-file "$PROMPT_FILE" \
+  --dry-run \
+  --unattended)"
+assert_contains "$codex_xhigh_output" "'model_reasoning_effort=xhigh'" "PowerShell Codex runner renders xhigh effort"
+
+claude_xhigh_output="$(REPO_ROOT="${ROOT_DIR}" \
+  "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
+  --agent claude \
+  --model claude-opus-4-8 \
+  --effort xhigh \
+  --context-file "$CONTEXT_FILE" \
+  --prompt-file "$PROMPT_FILE" \
+  --dry-run \
+  --unattended)"
+assert_contains "$claude_xhigh_output" "'--effort' 'xhigh'" "PowerShell Claude runner renders xhigh effort"
+
 precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
   REPO_ROOT="${ROOT_DIR}" \
   "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
