@@ -153,6 +153,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `FORCED_MODEL` | — | Canonical explicit child-worker model override passed through to Sub-Coordinators |
 | `AGENT` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`; ambient `AGENT` runner telemetry is ignored |
 | `MODEL` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`; ambient `MODEL` runner telemetry is ignored |
+| `RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES` | — | Comma-separated provenance marker containing `AGENT`, `MODEL`, or both, only for deprecated aliases explicitly supplied by the user; consumed at the dispatcher boundary |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
 | `COMPLEXITY_SCORE` | — | Routing override passed through to Sub-Coordinators |
 | `AGENT_ALLOWLIST` | — | Comma-separated; passed through to Sub-Coordinators |
@@ -391,9 +392,15 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
      MAX_AGENT_FALLBACKS=<value>
 
   Normalize deprecated `AGENT` and `MODEL` aliases only when the user explicitly
-  supplied them; never read ambient process values. `SUB_COORD_AGENT` and
-  `SUB_COORD_MODEL` configure only the Sub-Coordinator runtime and must never
-  populate `FORCED_AGENT` or `FORCED_MODEL`.
+  supplied them; never read ambient process values. Record that provenance as
+  `RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT`,
+  `RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=MODEL`, or
+  `RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL` on the pool/dispatcher
+  invocation. The dispatcher copies only each marked, non-empty alias into its
+  matching `FORCED_*` variable when that canonical variable is unset, then
+  removes `AGENT`, `MODEL`, and the marker before launching `run-agent`.
+  `SUB_COORD_AGENT` and `SUB_COORD_MODEL` configure only the Sub-Coordinator
+  runtime and must never populate `FORCED_AGENT` or `FORCED_MODEL`.
 
   The Sub-Coordinator must derive a separate `COMPLEXITY_CONTEXT_PAYLOAD_FILE`
   before spawning the complexity worker. That file is a sanitized scoring brief,

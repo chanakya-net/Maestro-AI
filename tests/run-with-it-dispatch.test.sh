@@ -248,7 +248,8 @@ printf 'fake-agent stdout is captured\n'
 printf 'fake-agent stderr is captured\n' >&2
 mkdir -p "$repo_root" "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
 printf 'seen\n' > "$repo_root/marker.txt"
-printf '{"outcome":"completed","repo_root_seen":"%s"}\n' "$repo_root" > "$RUN_WITH_IT_RESULT_FILE"
+printf '{"outcome":"completed","repo_root_seen":"%s","agent_env":"%s","model_env":"%s","forced_agent_env":"%s","forced_model_env":"%s"}\n' \
+  "$repo_root" "${AGENT-}" "${MODEL-}" "${FORCED_AGENT-}" "${FORCED_MODEL-}" > "$RUN_WITH_IT_RESULT_FILE"
 SH
 chmod +x "${SMOKE_BIN}/fake-agent"
 
@@ -265,7 +266,7 @@ mkdir -p "$(dirname "${SMOKE_RESULT}")"
 printf 'RESULT_FILE=%s\n' "${SMOKE_RESULT}" > "${SMOKE_CONTEXT}"
 printf '# Prompt\n' > "${SMOKE_PROMPT}"
 
-PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+AGENT=ambient-agent MODEL=ambient-model PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role merge-recovery \
   --issue 42 \
@@ -289,11 +290,45 @@ assert_file_contains "${SMOKE_LOG}" "fake-agent stderr is captured" "actual disp
 assert_file_contains "${SMOKE_EVENTS}" "STATUS|type=heartbeat|issue=42|role=merge-recovery|phase=testing|progress=repo-root" "actual dispatch appends child heartbeat to events log"
 assert_file_contains "${SMOKE_DONE}" "DONE|issue=42|role=merge-recovery" "actual dispatch writes done sentinel"
 assert_file_contains "${SMOKE_RESULT}" "\"repo_root_seen\":\"${SMOKE_REPO_ROOT}\"" "actual dispatch forwards repo root to child agent"
+assert_file_contains "${SMOKE_RESULT}" '"agent_env":""' "actual dispatch scrubs ambient AGENT before child launch"
+assert_file_contains "${SMOKE_RESULT}" '"model_env":""' "actual dispatch scrubs ambient MODEL before child launch"
+assert_file_contains "${SMOKE_RESULT}" '"forced_agent_env":""' "unmarked ambient AGENT does not become a forced override"
+assert_file_contains "${SMOKE_RESULT}" '"forced_model_env":""' "unmarked ambient MODEL does not become a forced override"
 assert_json_file "${SMOKE_STATE}" "actual dispatch writes final watchdog state JSON"
 assert_file_contains "${SMOKE_STATE}" '"state": "completed"' "actual dispatch records completed state"
 assert_file_contains "${SMOKE_STATE}" '"result_present": true' "actual dispatch records result artifact presence"
 heartbeat_count="$(grep -Fc "STATUS|type=heartbeat|issue=42|role=merge-recovery|phase=testing|progress=repo-root" "${SMOKE_LOG}")"
 assert_contains "${heartbeat_count}" "1" "actual dispatch does not duplicate child heartbeat in role log"
+
+LEGACY_RESULT="${SMOKE_ISSUE_DIR}/legacy-report.json"
+LEGACY_LOG="${SMOKE_ISSUE_DIR}/legacy.log"
+LEGACY_DONE="${SMOKE_ISSUE_DIR}/legacy.done"
+LEGACY_STATE="${SMOKE_ISSUE_DIR}/legacy.state.json"
+printf 'RESULT_FILE=%s\n' "${LEGACY_RESULT}" > "${SMOKE_CONTEXT}"
+AGENT=legacy-agent MODEL=legacy-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+  PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  --asset-root "${SMOKE_ASSET_ROOT}" \
+  --role merge-recovery \
+  --issue 43 \
+  --agent fake \
+  --model fake-model \
+  --context-file "${SMOKE_CONTEXT}" \
+  --prompt-file "${SMOKE_PROMPT}" \
+  --log-file "${LEGACY_LOG}" \
+  --done-file "${LEGACY_DONE}" \
+  --result-file "${LEGACY_RESULT}" \
+  --state-file "${LEGACY_STATE}" \
+  --repo-root "${SMOKE_REPO_ROOT}" \
+  --issue-dir "${SMOKE_ISSUE_DIR}" \
+  --status-file "${SMOKE_STATUS}" \
+  --events-log "${SMOKE_EVENTS}" \
+  --poll-seconds 1 >/dev/null
+
+assert_file_contains "${LEGACY_RESULT}" '"agent_env":""' "marked legacy AGENT is still scrubbed before child launch"
+assert_file_contains "${LEGACY_RESULT}" '"model_env":""' "marked legacy MODEL is still scrubbed before child launch"
+assert_file_contains "${LEGACY_RESULT}" '"forced_agent_env":"legacy-agent"' "marked legacy AGENT normalizes to FORCED_AGENT"
+assert_file_contains "${LEGACY_RESULT}" '"forced_model_env":"legacy-model"' "marked legacy MODEL normalizes to FORCED_MODEL"
+printf 'RESULT_FILE=%s\n' "${SMOKE_RESULT}" > "${SMOKE_CONTEXT}"
 
 RECOVERY_PARENT="${WORK_DIR}/recovery-parent"
 RECOVERY_ISSUE="${WORK_DIR}/recovery-issue"

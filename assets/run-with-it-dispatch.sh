@@ -146,6 +146,23 @@ if [ -n "$REPO_ROOT_OVERRIDE" ]; then
 fi
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
 
+legacy_override_markers="$(printf '%s' "${RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES:-}" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+case ",${legacy_override_markers}," in
+  *,AGENT,*)
+    if [ -z "${FORCED_AGENT:-}" ] && [ -n "${AGENT:-}" ]; then
+      export FORCED_AGENT="$AGENT"
+    fi
+    ;;
+esac
+case ",${legacy_override_markers}," in
+  *,MODEL,*)
+    if [ -z "${FORCED_MODEL:-}" ] && [ -n "${MODEL:-}" ]; then
+      export FORCED_MODEL="$MODEL"
+    fi
+    ;;
+esac
+unset AGENT MODEL RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES
+
 if [ -z "$STATE_FILE" ]; then
   log_name="$(basename "$LOG_FILE")"
   if [[ "$log_name" == *.log ]]; then
