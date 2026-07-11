@@ -13,6 +13,8 @@ MODIFIER_PROMPT_FILE="${ROOT_DIR}/assets/modifier-prompt.md"
 COMPLEXITY_PROMPT_FILE="${ROOT_DIR}/assets/complexity-prompt.md"
 ARTIFACT_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/artifact-recovery-prompt.md"
 MERGE_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/merge-recovery-prompt.md"
+ROUTER_FILE="${ROOT_DIR}/assets/run-with-it-router.py"
+REGISTRY_FILE="${ROOT_DIR}/assets/agent-registry.json"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -178,9 +180,35 @@ assert_contains 'Never load full sub-coordinator log files' "documents no-load p
 assert_contains 'RUN_WITH_IT_ISSUE_DIR' "documents issue-scoped sub-coordinator artifact folder"
 
 # Routing overrides (passed through to sub-coordinator)
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'FORCED_AGENT=<explicit-worker-override-if-set>' "Step C names the canonical forced agent override"
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'FORCED_MODEL=<explicit-worker-override-if-set>' "Step C names the canonical forced model override"
+assert_file_not_contains "$SKILL_FILE" 'AGENT=<value-if-set>' "Step C does not leak the coordinator agent into child routing"
+assert_file_not_contains "$SKILL_FILE" 'MODEL=<value-if-set>' "Step C does not leak the coordinator model into child routing"
+assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '1. `FORCED_AGENT` + `FORCED_MODEL` forced together' "override precedence uses canonical forced overrides"
+assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '2. `FORCED_MODEL` forced alone' "model-only precedence uses canonical forced model override"
+assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '3. `FORCED_AGENT` forced alone' "agent-only precedence uses canonical forced agent override"
+assert_file_not_contains "$SUB_COORDINATOR_PROMPT_FILE" '1. `AGENT` + `MODEL` forced together' "override precedence does not use ambient coordinator runtime names"
 assert_contains 'AGENT_ALLOWLIST' "documents allowlist"
 assert_contains 'AGENT_DENYLIST' "documents denylist"
 assert_contains 'MAX_AGENT_FALLBACKS' "documents bounded fallback"
+
+# Easy-route counterfactual: Codex availability alone must not force Sol.
+ROUTING_WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$ROUTING_WORK_DIR"' EXIT
+ROUTING_LEDGER_FILE="${ROUTING_WORK_DIR}/ledger.json"
+printf '{}\n' > "$ROUTING_LEDGER_FILE"
+ROUTE_OUTPUT="$(python3 "$ROUTER_FILE" \
+  --registry-file "$REGISTRY_FILE" \
+  --ledger-file "$ROUTING_LEDGER_FILE" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex \
+  --allowlist codex \
+  --record)"
+ROUTE_MODEL="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+ROUTE_REASON="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
+[[ "$ROUTE_MODEL" != "gpt-5.6-sol" ]] || fail "easy Codex-only route must not select Sol"
+[[ "$ROUTE_REASON" != "forced-agent-and-model" ]] || fail "easy Codex-only route must not report forced-agent-and-model"
 
 # Sub-coordinator dispatch
 assert_contains 'sub-coordinator-prompt.md' "documents sub-coordinator prompt usage"

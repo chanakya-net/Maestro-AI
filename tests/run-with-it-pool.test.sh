@@ -29,6 +29,15 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "${message} (missing: ${needle})"
 }
 
+assert_file_not_contains() {
+  local file="$1"
+  local needle="$2"
+  local message="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "${message} (found forbidden: ${needle})"
+  fi
+}
+
 WORK_DIR="$(mktemp -d)"
 WORK_DIR_REAL="$(cd "${WORK_DIR}" && pwd -P)"
 cleanup() {
@@ -88,6 +97,8 @@ assert_file_contains "${COORDINATOR_RULES}" "hard-limit-exceeded" "coordinator r
 assert_file_contains "${SUB_PROMPT}" "hard-limit-exceeded" "sub-coordinator retries hard-limit handoff failures"
 assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "skill documents Sol Sub-Coordinator default"
 assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "README documents Sol Sub-Coordinator default"
+assert_file_not_contains "${RUN_WITH_IT_SKILL}" 'gpt-5.6-sol` | Model for child workers' "skill does not document Sol as a child-worker override"
+assert_file_not_contains "${README}" 'gpt-5.6-sol` | Model for child workers' "README does not document Sol as a child-worker override"
 
 validate_output="$("${POOL_RUNNER}" \
   --validate-only \
