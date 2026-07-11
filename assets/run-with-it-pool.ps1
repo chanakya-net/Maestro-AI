@@ -10,8 +10,10 @@ param(
     [int]$PollSeconds = $(if ($env:STATUS_POLL_SECONDS) { [int]$env:STATUS_POLL_SECONDS } else { 10 }),
     [int]$TimeoutSeconds = $(if ($env:SUB_COORD_TIMEOUT_SECONDS) { [int]$env:SUB_COORD_TIMEOUT_SECONDS } else { 3600 }),
     [int]$MaxSubCoordRecoveryAttempts = $(if ($env:MAX_SUB_COORD_RECOVERY_ATTEMPTS) { [int]$env:MAX_SUB_COORD_RECOVERY_ATTEMPTS } else { 2 }),
+    [string]$PoolStateFile = "",
     [switch]$DryRun,
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+    [switch]$Detach
 )
 
 $ErrorActionPreference = "Stop"
@@ -114,6 +116,20 @@ if (-not (Test-Path $StateFile)) { Fail "state file not found: $StateFile" }
 $RunRoot = (Resolve-Path (Join-Path (Split-Path $StateFile) "..")).Path
 $PowerShellExe = Get-PowerShellExe
 $PythonExe = Get-PythonExe
+
+if (-not $PoolStateFile) {
+    $PoolStateFile = Join-Path (Join-Path (Join-Path $RunRoot ".run-with-it") "main") "pool.state.json"
+}
+
+function Write-PoolState([int]$poolPid) {
+    Ensure-ParentDir $PoolStateFile
+    $payload = @{
+        pool_pid = $poolPid
+        started_at = [int][double]::Parse((Get-Date -UFormat %s))
+        state_file = $StateFile
+    }
+    Set-Content -Path $PoolStateFile -Value ($payload | ConvertTo-Json -Compress) -Encoding UTF8
+}
 
 function Invoke-StateHelper([object[]]$helperArgs) {
     $output = & $PythonExe $StateHelper @helperArgs
@@ -241,6 +257,31 @@ if ($ParallelJobs -le 0) {
 }
 
 foreach ($path in @($MainLog, $StatusFile, $EventsLog)) { Ensure-ParentDir $path }
+
+if ($Detach -and -not $ValidateOnly -and -not $DryRun) {
+    # Relaunch this script without -Detach as a durable supervisor process and
+    # return after recording its PID so bounded tool calls can watch it.
+    $relaunchArgs = @(
+        "-NoProfile",
+        "-File", $PSCommandPath,
+        "-AssetRoot", $AssetRoot,
+        "-StateFile", $StateFile,
+        "-ParallelJobs", "$ParallelJobs",
+        "-Agent", $Agent,
+        "-Model", $Model,
+        "-StatusFile", $StatusFile,
+        "-EventsLog", $EventsLog,
+        "-MainLog", $MainLog,
+        "-PollSeconds", "$PollSeconds",
+        "-TimeoutSeconds", "$TimeoutSeconds",
+        "-MaxSubCoordRecoveryAttempts", "$MaxSubCoordRecoveryAttempts",
+        "-PoolStateFile", $PoolStateFile
+    )
+    $poolProcess = Start-Process -FilePath $PowerShellExe -ArgumentList (Join-ProcessArguments $relaunchArgs) -PassThru
+    Write-PoolState $poolProcess.Id
+    Write-Status "STATUS|type=pool-detached|pid=$($poolProcess.Id)|pool_state_file=$PoolStateFile"
+    exit 0
+}
 
 $readyInitial = @(Get-ReadyIssues $ParallelJobs)
 Write-Status "STATUS|type=pool-ready|parallel_jobs=$ParallelJobs|ready=$($readyInitial.Count)|state_file=$StateFile"
@@ -413,17 +454,58 @@ function Run-MergeRecovery([string]$issue) {
     Update-GitHubIssue $issue $status $reportFile
 }
 
-foreach ($issue in $readyInitial) {
-    Spawn-Issue $issue
+# Surface concurrency-gate deferrals so a serialized pool is visible in the
+# status bus instead of silently degrading to one issue at a time.
+$lastAdmissionDeferrals = ""
+function Emit-AdmissionDeferrals {
+    $deferrals = ([string](Invoke-StateHelper @("admission-deferrals", "--state-file", $StateFile))).Trim()
+    if ($deferrals -and $deferrals -ne $script:lastAdmissionDeferrals) {
+        $count = @($deferrals -split ",").Count
+        Write-Status "STATUS|type=pool-admission-deferred|count=$count|deferrals=$deferrals"
+    }
+    $script:lastAdmissionDeferrals = $deferrals
 }
+
+# Re-adopt in-flight issues from a previous pool supervisor (e.g. one killed by
+# a bounded tool-call timeout). Live dispatchers keep running unsupervised; the
+# monitor loop below re-attaches to them, and dead ones flow through the normal
+# exit analysis on the first tick instead of producing a false pool-empty.
+function Reattach-ActivePool {
+    $reattached = 0
+    foreach ($line in @(Invoke-StateHelper @("active-pool-entries", "--state-file", $StateFile))) {
+        if (-not $line) { continue }
+        $fields = "$line" -split "`t"
+        $issue = $fields[0]
+        if (-not $issue) { continue }
+        $processId = if ($fields.Count -gt 1 -and $fields[1]) { [int]$fields[1] } else { 0 }
+        $reportFile = if ($fields.Count -gt 2 -and $fields[2]) { $fields[2] } else { Join-Path (Get-IssueDirFor $issue) "report.json" }
+        $process = $null
+        if ($processId -gt 0) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        }
+        $pool[$issue] = [pscustomobject]@{ process = $process; report_file = $reportFile; stdout_file = $null; stderr_file = $null }
+        $reattached++
+        Write-Status "STATUS|type=sub-coord-reattach|issue=$issue|pid=$processId|report_file=$reportFile"
+    }
+    if ($reattached -gt 0) {
+        Write-Status "STATUS|type=pool-reattached|count=$reattached|state_file=$StateFile"
+    }
+}
+
+Write-PoolState $PID
+Reattach-ActivePool
+Fill-FreeSlots "startup"
+Emit-AdmissionDeferrals
 
 $lastWaitingContextCount = ""
 while ($pool.Count -gt 0) {
     Start-Sleep -Seconds $PollSeconds
     foreach ($issue in @($pool.Keys)) {
         $process = $pool[$issue].process
-        $process.Refresh()
-        if (-not $process.HasExited) { continue }
+        if ($process) {
+            $process.Refresh()
+            if (-not $process.HasExited) { continue }
+        }
         Handle-SubCoordExit $issue $pool[$issue]
     }
     Fill-FreeSlots "tick"
@@ -432,6 +514,7 @@ while ($pool.Count -gt 0) {
         Write-Status "STATUS|type=pool-waiting-context|count=$waitingCount|state_file=$StateFile"
     }
     $lastWaitingContextCount = "$waitingCount"
+    Emit-AdmissionDeferrals
 }
 
 Write-Status "STATUS|type=pool-empty|state_file=$StateFile"

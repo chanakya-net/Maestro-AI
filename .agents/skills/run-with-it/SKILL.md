@@ -141,6 +141,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
 | `STATUS_POLL_SECONDS` | `10` | Shell polling cadence for status line output |
+| `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `run-with-it-watch.sh` / `.ps1` call in Step D |
 | `LOG_TAIL_POLL_SECONDS` | `120` | Shell polling cadence for sub-coordinator log tail |
 | `RUN_WITH_IT_STATUS_FILE` | `.run-with-it/status/current.txt` | Single-line status bus (overwritten each update) |
 | `RUN_WITH_IT_EVENTS_LOG` | `.run-with-it/status/events.log` | Append-only event log — terminal inspection only; never load into AI context |
@@ -328,7 +329,10 @@ After fetching all issues:
 5. Detect cycles and unresolved dependencies among executable issues only; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
 6. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
 7. Issues whose executable dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
-8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`, `parallel_safe`, and normalized `ownership_scope`. Missing concurrency metadata must default conservatively to exclusive execution.
+8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`, `parallel_safe`, and normalized `ownership_scope`. Derive the concurrency metadata like this:
+   - `ownership_scope`: the list of top-level directories (or deeper paths when the issue is precise) the issue's body, title, and acceptance criteria name. Use plain directory paths without glob characters; a glob-bearing scope is compared by its literal directory prefix only.
+   - `parallel_safe`: `true` unless the issue is a repo-wide refactor, migration, formatting sweep, or otherwise touches files that cannot be attributed to a bounded scope — then set `parallel_safe: false` to force exclusive execution.
+   - Issues execute in isolated per-issue worktrees with a dedicated merge-recovery path, so missing metadata does NOT serialize the pool: issues without metadata are admitted in parallel. Only an explicit `parallel_safe: false` or a proven `ownership_scope` overlap defers an issue; the pool runner reports deferrals as `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`.
 9. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 10. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
@@ -461,23 +465,28 @@ Print to user for each issue:
 ══ STEP D: SPAWN NEWLY QUEUED + ROLLING POOL MONITOR ════════════════════════════
 
 Execution-mode requirement (critical):
-  Run Step D as ONE long-lived shell session that performs both spawn and monitor.
-  Do not split spawn and monitor into separate shell invocations. Do not write a
-  bespoke rolling-pool script in the Main Orchestrator session. Use the shared
-  platform pool runner; it maintains the pool and calls the platform dispatcher
-  with `role=sub-coord` for each active issue.
+  Do not write a bespoke rolling-pool script in the Main Orchestrator session.
+  Use the shared platform pool runner; it maintains the pool and calls the
+  platform dispatcher with `role=sub-coord` for each active issue.
 
-  Run the pool runner in the foreground. Do not launch it with `nohup`, a trailing Bash `&`,
-  `Start-Process`, or another detached/background mechanism. PowerShell's
-  leading `&` is the foreground call operator and is required by the example
-  below. The pool runner already owns the blocking monitor loop and writes status
-  to the terminal and `$MAIN_LOG_FILE`.
+  Launch the pool runner ONCE as a detached supervisor with `--detach` /
+  `-Detach`, then stay attached by running the bounded platform watch runner
+  (`run-with-it-watch.sh` / `run-with-it-watch.ps1`) in a loop. Never treat
+  starting the pool process as completion of Step D: Step D completes only when
+  a watch call prints `WATCH|result=pool-empty`.
+
+  Do not run the pool runner as a blocking foreground call — execution tools
+  bound foreground calls (often to ~10 minutes) and killing the supervisor
+  mid-run orphans the pool. Do not hand-roll `nohup`, a trailing Bash `&`, or
+  `Start-Process` backgrounding either; the runner's detach mode creates its own
+  process session and records `pool_pid` in `.run-with-it/main/pool.state.json`
+  for the watch runner.
 
   Required handoff before Step D:
   - Each ready issue in `main-state.json` must have `issue_registry[<n>].context_file`
     (or `sub_coord_context_file`) pointing at the context file assembled in Step C.
 
-  Bash (macOS / Linux / Git Bash):
+  Bash (macOS / Linux / Git Bash) — launch once:
 
     "$ASSET_ROOT/run-with-it-pool.sh" \
       --asset-root "$ASSET_ROOT" \
@@ -489,9 +498,19 @@ Execution-mode requirement (critical):
       --events-log "$RUN_WITH_IT_EVENTS_LOG" \
       --main-log "$MAIN_LOG_FILE" \
       --poll-seconds "$STATUS_POLL_SECONDS" \
-      --timeout-seconds "$SUB_COORD_TIMEOUT_SECONDS"
+      --timeout-seconds "$SUB_COORD_TIMEOUT_SECONDS" \
+      --pool-state-file "$(pwd -P)/.run-with-it/main/pool.state.json" \
+      --detach
 
-  PowerShell (Windows):
+  Then watch in a loop, one bounded foreground call at a time:
+
+    "$ASSET_ROOT/run-with-it-watch.sh" \
+      --events-log "$RUN_WITH_IT_EVENTS_LOG" \
+      --pool-state-file "$(pwd -P)/.run-with-it/main/pool.state.json" \
+      --wait-seconds "${POOL_WATCH_SECONDS:-240}" \
+      --poll-seconds "$STATUS_POLL_SECONDS"
+
+  PowerShell (Windows) — launch once:
 
     & powershell -NoProfile -File (Join-Path $ASSET_ROOT "run-with-it-pool.ps1") `
       -AssetRoot $ASSET_ROOT `
@@ -503,18 +522,30 @@ Execution-mode requirement (critical):
       -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
       -MainLog $MAIN_LOG_FILE `
       -PollSeconds $env:STATUS_POLL_SECONDS `
-      -TimeoutSeconds $env:SUB_COORD_TIMEOUT_SECONDS
-    if ($LASTEXITCODE -ne 0) {
-      throw "run-with-it pool failed with exit code $LASTEXITCODE"
-    }
+      -TimeoutSeconds $env:SUB_COORD_TIMEOUT_SECONDS `
+      -Detach
 
-  If the execution tool yields a terminal/session identifier while the foreground
-  command is still running, resume or poll that same session until the process
-  exits. Do not end the Main Coordinator turn merely because the tool yielded, and
-  do not start an unrelated shell to monitor it. Successful Step D completion
-  requires the foreground process to exit successfully after emitting
-  `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by the
-  platform pool runner.
+  Then watch in a loop:
+
+    & powershell -NoProfile -File (Join-Path $ASSET_ROOT "run-with-it-watch.ps1") `
+      -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
+      -PoolStateFile (Join-Path (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main") "pool.state.json") `
+      -PollSeconds $env:STATUS_POLL_SECONDS
+
+  Each watch call prints every STATUS line appended to the events log since the
+  previous call and exits within its watch window, well inside any tool-call
+  timeout. After each call, relay the newest `run-board` line to the user so
+  periodic progress stays visible, then branch on the final `WATCH|result=...`
+  marker:
+  - `running` (exit 0): the pool is alive; immediately run the watch again.
+  - `pool-dead` (exit 3): the pool supervisor died without `pool-empty`; relaunch
+    the pool runner with the same `--detach` command — it re-attaches to live
+    Sub-Coordinators and dead ones flow through exit analysis — then keep watching.
+  - `pool-empty` (exit 0): Step D is complete.
+
+  Do not end the Main Coordinator turn between watch calls, and do not start an
+  unrelated shell to monitor the pool. Per-issue dispatcher PIDs are persisted by
+  the platform pool runner.
   The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
@@ -753,6 +784,10 @@ Emit parseable one-line status messages:
 - plan: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 - pool fill: `STATUS|type=pool-fill|active=<count>|newly_queued=<count>|pending_remaining=<count>|parallel_jobs=<PARALLEL_JOBS>`
 - pool slot filled: `STATUS|type=pool-slot-filled|issue=<n>|freed_by=<m>|pool_size=<count>`
+- pool detached: `STATUS|type=pool-detached|pid=<pid>|pool_state_file=<path>`
+- pool reattached: `STATUS|type=pool-reattached|count=<n>|state_file=<path>`
+- sub-coordinator reattach: `STATUS|type=sub-coord-reattach|issue=<n>|pid=<pid>|report_file=<path>`
+- pool admission deferred: `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`
 - pool empty: `STATUS|type=pool-empty|pending_remaining=<n>`
 - merge recovery queued: `STATUS|type=merge-recovery|issue=<n>|report_file=<path>|state=<started|completed|failed-merge|blocked>`
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`

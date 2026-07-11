@@ -225,12 +225,25 @@ def normalized_ownership_scope(entry: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(scopes))
 
 
+def scope_comparison_prefix(scope: str) -> str:
+    """Reduce a glob-bearing scope to its literal directory prefix so patterns
+    like `src/api/*` compare as `src/api` instead of conflicting with everything."""
+    glob_positions = [scope.find(char) for char in "*?[" if scope.find(char) != -1]
+    if not glob_positions:
+        return scope
+    literal = scope[: min(glob_positions)]
+    if "/" in literal:
+        return literal.rsplit("/", 1)[0]
+    return ""
+
+
 def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
     for left_scope in left:
         for right_scope in right:
-            left_key = left_scope.casefold()
-            right_key = right_scope.casefold()
-            if any(char in left_key or char in right_key for char in "*?["):
+            left_key = scope_comparison_prefix(left_scope.casefold())
+            right_key = scope_comparison_prefix(right_scope.casefold())
+            if not left_key or not right_key:
+                # Glob with no literal directory prefix matches anywhere.
                 return True
             if left_key == right_key:
                 return True
@@ -239,13 +252,29 @@ def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> b
     return False
 
 
+def parallel_safe_effective(entry: dict[str, Any]) -> bool:
+    """Issues are parallel-safe unless explicitly marked otherwise. Execution
+    happens in isolated per-issue worktrees with a dedicated merge-recovery
+    path, so missing metadata must not serialize the whole pool."""
+    value = entry.get("parallel_safe")
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().casefold() not in {"false", "0", "no"}
+    return bool(value)
+
+
 def issues_can_run_together(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    if left.get("parallel_safe") is not True or right.get("parallel_safe") is not True:
+    if not parallel_safe_effective(left) or not parallel_safe_effective(right):
         return False
     left_scope = normalized_ownership_scope(left)
     right_scope = normalized_ownership_scope(right)
     if not left_scope or not right_scope:
-        return False
+        # No scope declared on one side means no overlap evidence; worktree
+        # isolation plus merge recovery covers residual conflicts.
+        return True
     return not ownership_scopes_overlap(left_scope, right_scope)
 
 
@@ -392,11 +421,6 @@ def auto_unblock_dependents(
 def ready_issues(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     registry = state.get("issue_registry", {})
-    for entry in registry.values():
-        if not isinstance(entry, dict):
-            continue
-        entry["parallel_safe"] = entry.get("parallel_safe") is True
-        entry["ownership_scope"] = list(normalized_ownership_scope(entry))
     completed = completed_issue_numbers(state)
     ready: list[str] = []
     active_entries: list[tuple[str, dict[str, Any]]] = []
@@ -436,6 +460,33 @@ def ready_issues(args: argparse.Namespace) -> int:
     state["last_admission_deferrals"] = deferrals
     save_json(args.state_file, state)
     print(" ".join(ready))
+    return 0
+
+
+def admission_deferrals(args: argparse.Namespace) -> int:
+    """Print the deferrals recorded by the last ready-issues admission pass as
+    compact `issue:reason` pairs, one line total, empty when nothing deferred."""
+    state = load_json(args.state_file)
+    deferrals = state.get("last_admission_deferrals", {})
+    if not isinstance(deferrals, dict):
+        deferrals = {}
+    pairs = [f"{issue}:{reason}" for issue, reason in sorted(deferrals.items(), key=lambda item: str(item[0]))]
+    print(",".join(pairs))
+    return 0
+
+
+def active_pool_entries(args: argparse.Namespace) -> int:
+    """Print one tab-separated `issue pid report_file` line per active pool
+    member still marked in_progress, so a restarted pool runner can re-attach."""
+    state = load_json(args.state_file)
+    registry = state.get("issue_registry", {})
+    for issue in state.get("active_pool_issues", []):
+        entry = registry.get(str(issue), {})
+        if not isinstance(entry, dict) or entry.get("status") != "in_progress":
+            continue
+        pid = entry.get("pid") or 0
+        report_file = entry.get("report_file") or ""
+        print(f"{issue}\t{pid}\t{report_file}")
     return 0
 
 
@@ -998,6 +1049,14 @@ def build_parser() -> argparse.ArgumentParser:
     missing = subparsers.add_parser("ready-missing-context-count")
     add_state_file(missing)
     missing.set_defaults(func=ready_missing_context_count)
+
+    deferrals = subparsers.add_parser("admission-deferrals")
+    add_state_file(deferrals)
+    deferrals.set_defaults(func=admission_deferrals)
+
+    active_entries = subparsers.add_parser("active-pool-entries")
+    add_state_file(active_entries)
+    active_entries.set_defaults(func=active_pool_entries)
 
     context = subparsers.add_parser("context-file-for")
     add_state_file(context)

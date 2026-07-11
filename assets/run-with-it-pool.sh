@@ -19,6 +19,9 @@ MAX_SUB_COORD_RECOVERY_ATTEMPTS="${MAX_SUB_COORD_RECOVERY_ATTEMPTS:-2}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DRY_RUN=0
 VALIDATE_ONLY=0
+DETACH=0
+POOL_DETACHED_CHILD="${RUN_WITH_IT_POOL_DETACHED_CHILD:-0}"
+POOL_STATE_FILE=""
 
 fail() {
   echo "run-with-it-pool.sh: $1" >&2
@@ -34,8 +37,12 @@ Usage:
 Modes:
   --dry-run        Print the initial dispatch commands without spawning.
   --validate-only Validate state and emit pool-ready status without spawning.
+  --detach         Start a durable detached pool supervisor and return after
+                   recording its PID in the pool state file.
 EOF
 }
+
+ORIGINAL_ARGS=("$@")
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -49,8 +56,10 @@ while [ "$#" -gt 0 ]; do
     --main-log) MAIN_LOG="${2:-}"; shift 2 ;;
     --poll-seconds) POLL_SECONDS="${2:-}"; shift 2 ;;
     --timeout-seconds) TIMEOUT_SECONDS="${2:-}"; shift 2 ;;
+    --pool-state-file) POOL_STATE_FILE="${2:-}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --validate-only) VALIDATE_ONLY=1; shift ;;
+    --detach) DETACH=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -84,8 +93,24 @@ RUN_ROOT="$(cd "$(dirname "$STATE_FILE")/.." && pwd -P)"
 if [ -z "$PARALLEL_JOBS" ]; then
   PARALLEL_JOBS="$("$PYTHON_BIN" "$STATE_HELPER" parallel-jobs --state-file "$STATE_FILE")"
 fi
+if [ -z "$POOL_STATE_FILE" ]; then
+  POOL_STATE_FILE="${RUN_ROOT}/.run-with-it/main/pool.state.json"
+fi
 
-mkdir -p "$(dirname "$MAIN_LOG")" "$(dirname "$STATUS_FILE")" "$(dirname "$EVENTS_LOG")"
+mkdir -p "$(dirname "$MAIN_LOG")" "$(dirname "$STATUS_FILE")" "$(dirname "$EVENTS_LOG")" "$(dirname "$POOL_STATE_FILE")"
+
+write_pool_state() {
+  local pid="$1"
+  "$PYTHON_BIN" - "$POOL_STATE_FILE" "$pid" "$STATE_FILE" <<'PY'
+import json
+import sys
+import time
+
+path, pid, state_file = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump({"pool_pid": int(pid), "started_at": int(time.time()), "state_file": state_file}, handle)
+PY
+}
 
 write_status() {
   local line="$1"
@@ -94,6 +119,42 @@ write_status() {
   printf '%s\n' "$line" > "$STATUS_FILE"
   printf '%s\n' "$line" >> "$EVENTS_LOG"
 }
+
+if [ "$DETACH" = 1 ] && [ "$POOL_DETACHED_CHILD" != "1" ] && [ "$VALIDATE_ONLY" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  # nohup alone can remain in the caller's process group; create a new session
+  # so short-lived tool-call cleanup cannot kill the pool supervisor.
+  detached_pid="$("$PYTHON_BIN" - "$MAIN_LOG" "$SCRIPT_PATH" "${ORIGINAL_ARGS[@]}" <<'PY'
+import os
+import subprocess
+import sys
+
+out_file = sys.argv[1]
+command = sys.argv[2:]
+env = os.environ.copy()
+env["RUN_WITH_IT_POOL_DETACHED_CHILD"] = "1"
+
+with open(os.devnull, "rb") as stdin, open(out_file, "ab") as stdout:
+    process = subprocess.Popen(
+        command,
+        stdin=stdin,
+        stdout=stdout,
+        stderr=subprocess.STDOUT,
+        env=env,
+        close_fds=True,
+        start_new_session=True,
+    )
+
+print(process.pid)
+PY
+)"
+  write_pool_state "$detached_pid"
+  write_status "STATUS|type=pool-detached|pid=${detached_pid}|pool_state_file=${POOL_STATE_FILE}"
+  exit 0
+fi
+
+if [ "$VALIDATE_ONLY" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  write_pool_state "$$"
+fi
 
 # Compact per-issue stage board for main-coordinator visibility. Emitted only
 # when the board changes so the event log stays bounded.
@@ -364,6 +425,39 @@ emit_waiting_context_status() {
   LAST_WAITING_CONTEXT_COUNT="$waiting_count"
 }
 
+# Surface concurrency-gate deferrals so a serialized pool is visible in the
+# status bus instead of silently degrading to one issue at a time.
+LAST_ADMISSION_DEFERRALS=""
+
+emit_admission_deferrals() {
+  local deferrals count
+  deferrals="$("$PYTHON_BIN" "$STATE_HELPER" admission-deferrals --state-file "$STATE_FILE" 2>/dev/null || true)"
+  if [ -n "$deferrals" ] && [ "$deferrals" != "$LAST_ADMISSION_DEFERRALS" ]; then
+    count="$(printf '%s' "$deferrals" | awk -F',' '{print NF}')"
+    write_status "STATUS|type=pool-admission-deferred|count=${count}|deferrals=${deferrals}"
+  fi
+  LAST_ADMISSION_DEFERRALS="$deferrals"
+}
+
+# Re-adopt in-flight issues from a previous pool supervisor (e.g. one killed by
+# a bounded tool-call timeout). Live dispatchers keep running unsupervised; the
+# monitor loop below re-attaches to them, and dead ones flow through the normal
+# exit analysis on the first tick instead of producing a false pool-empty.
+reattach_active_pool() {
+  local line issue pid report_file reattached=0
+  while IFS=$'\t' read -r issue pid report_file; do
+    [ -n "$issue" ] || continue
+    pool_add "$issue"
+    pool_set PID "$issue" "${pid:-0}"
+    pool_set REPORT "$issue" "${report_file:-$(issue_dir_for "$issue")/report.json}"
+    reattached=$((reattached + 1))
+    write_status "STATUS|type=sub-coord-reattach|issue=${issue}|pid=${pid:-0}|report_file=${report_file}"
+  done <<EOF
+$("$PYTHON_BIN" "$STATE_HELPER" active-pool-entries --state-file "$STATE_FILE")
+EOF
+  [ "$reattached" -eq 0 ] || write_status "STATUS|type=pool-reattached|count=${reattached}|state_file=${STATE_FILE}"
+}
+
 spawn_issue() {
   local issue="$1"
   local context_file issue_dir log_file done_file report_file state_file pid
@@ -538,9 +632,9 @@ if [ "$DRY_RUN" = 1 ]; then
   exit 0
 fi
 
-for issue in $READY_INITIAL; do
-  spawn_issue "$issue"
-done
+reattach_active_pool
+fill_free_slots "startup"
+emit_admission_deferrals
 emit_run_board
 
 while [ -n "$POOL_ISSUES" ]; do
@@ -548,7 +642,7 @@ while [ -n "$POOL_ISSUES" ]; do
   CURRENT_POOL="$POOL_ISSUES"
   for issue in $CURRENT_POOL; do
     pid="$(pool_get PID "$issue")"
-    if kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$pid" ] && [ "$pid" != "0" ] && kill -0 "$pid" 2>/dev/null; then
       continue
     fi
     wait "$pid" 2>/dev/null || true
@@ -557,6 +651,7 @@ while [ -n "$POOL_ISSUES" ]; do
   done
   fill_free_slots "tick"
   emit_waiting_context_status
+  emit_admission_deferrals
   emit_run_board
 done
 

@@ -128,15 +128,55 @@ state["issue_registry"] = {
 }
 json.dump(state, open(path, "w"), indent=2)
 PY
-ready_conservative="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
-assert_eq "${ready_conservative}" "6" "missing concurrency metadata defaults to exclusive"
+ready_default="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_default}" "6 7" "missing concurrency metadata admits in parallel (worktree isolation)"
 python3 - "${ADMISSION_STATE}" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))
-assert state["issue_registry"]["6"]["parallel_safe"] is False
-assert state["issue_registry"]["6"]["ownership_scope"] == []
+# ready-issues is a read-only admission pass: it must not rewrite metadata.
+assert "parallel_safe" not in state["issue_registry"]["6"]
+assert "ownership_scope" not in state["issue_registry"]["6"]
 assert state["issue_registry"]["7"]["ownership_scope"] == ["docs"]
 PY
+
+# Explicit parallel_safe=false stays exclusive, string "true" is accepted, and
+# glob scopes compare by their literal directory prefix instead of conflicting
+# with everything.
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["active_pool_issues"] = [20]
+state["execution_plan"]["topo_order"] = [20, 21, 22, 23, 24]
+state["issue_registry"] = {
+    "20": {"status": "in_progress", "deps": [], "parallel_safe": True, "ownership_scope": ["src/api"], "context_file": "20.md"},
+    "21": {"status": "pending", "deps": [], "parallel_safe": False, "ownership_scope": ["docs"], "context_file": "21.md"},
+    "22": {"status": "pending", "deps": [], "parallel_safe": "true", "ownership_scope": ["docs"], "context_file": "22.md"},
+    "23": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["src/api/*"], "context_file": "23.md"},
+    "24": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["tests/*"], "context_file": "24.md"},
+}
+json.dump(state, open(path, "w"), indent=2)
+PY
+ready_explicit="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_explicit}" "22 24" "explicit false stays exclusive, string true admits, glob prefix gates overlap"
+deferrals="$(python3 "${STATE_HELPER}" admission-deferrals --state-file "${ADMISSION_STATE}")"
+assert_eq "${deferrals}" "21:concurrency-conflict-with-20,23:concurrency-conflict-with-20" "admission deferrals are recorded and queryable"
+
+# active-pool-entries lists in-flight members for supervisor re-attach.
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["active_pool_issues"] = [30, 31]
+state["execution_plan"]["topo_order"] = [30, 31]
+state["issue_registry"] = {
+    "30": {"status": "in_progress", "deps": [], "pid": 4242, "report_file": "/tmp/rep30.json", "context_file": "30.md"},
+    "31": {"status": "completed", "deps": [], "pid": 4343, "report_file": "/tmp/rep31.json", "context_file": "31.md"},
+}
+json.dump(state, open(path, "w"), indent=2)
+PY
+active_entries="$(python3 "${STATE_HELPER}" active-pool-entries --state-file "${ADMISSION_STATE}")"
+assert_eq "${active_entries}" "$(printf '30\t4242\t/tmp/rep30.json')" "active-pool-entries lists only in_progress pool members"
 
 # A blocked handoff that cites a dependency already completed is stale-base
 # evidence and must be requeued instead of becoming durably blocked.
