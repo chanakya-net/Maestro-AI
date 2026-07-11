@@ -24,6 +24,8 @@
 - Modify: `tests/run-with-it-routing.test.sh`
 - Modify: `tests/run-with-it-pool.test.sh`
 - Modify: `tests/run-with-it-pool-ps1.test.sh`
+- Modify: `tests/run-with-it-dispatch.test.sh`
+- Modify: `tests/run-with-it-dispatch-ps1.test.sh`
 
 **Interfaces:**
 - Consumes: Existing static contract assertion helpers and `run-with-it-router.py` CLI.
@@ -59,7 +61,13 @@ Expected: routing contract assertions fail because the current skill and prompt 
 - Modify: `skills/run-with-it/SKILL.md`
 - Modify: `assets/main-orchestrator-rules.md`
 - Modify: `assets/sub-coordinator-prompt.md`
+- Modify: `assets/run-with-it-dispatch.sh`
+- Modify: `assets/run-with-it-dispatch.ps1`
 - Modify: `README.md`
+- Modify: `tests/run-with-it-routing.test.sh`
+- Modify: `tests/run-with-it-pool-ps1.test.sh`
+- Modify: `tests/run-with-it-dispatch.test.sh`
+- Modify: `tests/run-with-it-dispatch-ps1.test.sh`
 
 **Interfaces:**
 - Consumes: Canonical `FORCED_AGENT` and `FORCED_MODEL` router arguments already accepted by `run-with-it-router.py`.
@@ -77,11 +85,25 @@ Replace `AGENT=<value-if-set>` and `MODEL=<value-if-set>` with `FORCED_AGENT=<ex
 
 State that the pool dispatcher’s `--agent` and `--model` values configure only the Sub-Coordinator process. Change override precedence to `FORCED_AGENT` and `FORCED_MODEL`; explicitly classify ambient `AGENT` and `MODEL` as runner telemetry, not routing policy.
 
-- [x] **Step 4: Update README documentation**
+- [x] **Step 4: Scrub legacy aliases at both dispatcher boundaries**
+
+Unconditionally remove ambient `AGENT`, `MODEL`, and
+`RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES` before Bash and PowerShell launch child
+agents. Preserve explicitly supplied canonical `FORCED_AGENT` and
+`FORCED_MODEL` values unchanged in foreground and detached dispatch.
+
+- [x] **Step 5: Remove trust in the legacy provenance marker**
+
+Delete the marker contract from the skill, README, Main Orchestrator rules, and
+Sub-Coordinator prompt. Add Bash and PowerShell dispatcher regressions proving
+that an ambient marker cannot promote legacy aliases, is scrubbed from the
+child environment, and cannot override canonical `FORCED_*` values.
+
+- [x] **Step 6: Update README documentation**
 
 Mirror the canonical override names, compatibility note, and coordinator/worker separation in user-facing configuration documentation.
 
-- [x] **Step 5: Run targeted tests and verify GREEN**
+- [x] **Step 7: Run targeted tests and verify GREEN**
 
 Run:
 
@@ -89,9 +111,11 @@ Run:
 bash tests/run-with-it-routing.test.sh
 bash tests/run-with-it-pool.test.sh
 bash tests/run-with-it-pool-ps1.test.sh
+bash tests/run-with-it-dispatch.test.sh
+bash tests/run-with-it-dispatch-ps1.test.sh
 ```
 
-Expected: all three scripts exit 0 and print their PASS lines.
+Expected: all five scripts exit 0 and print their PASS lines.
 
 ### Task 3: Verify the full routing surface
 
@@ -99,6 +123,14 @@ Expected: all three scripts exit 0 and print their PASS lines.
 - Verify: `assets/run-with-it-router.py`
 - Verify: `assets/run-with-it-pool.sh`
 - Verify: `assets/run-with-it-pool.ps1`
+- Verify: `assets/run-with-it-dispatch.sh`
+- Verify: `assets/run-with-it-dispatch.ps1`
+- Verify: `tests/run-with-it-router.test.sh`
+- Verify: `tests/run-with-it-routing.test.sh`
+- Verify: `tests/run-with-it-pool.test.sh`
+- Verify: `tests/run-with-it-pool-ps1.test.sh`
+- Verify: `tests/run-with-it-dispatch.test.sh`
+- Verify: `tests/run-with-it-dispatch-ps1.test.sh`
 - Verify: all changed documentation and tests
 
 **Interfaces:**
@@ -111,11 +143,14 @@ Run:
 
 ```bash
 bash tests/run-with-it-router.test.sh
+bash tests/run-with-it-routing.test.sh
+bash tests/run-with-it-pool.test.sh
+bash tests/run-with-it-pool-ps1.test.sh
 bash tests/run-with-it-dispatch.test.sh
 bash tests/run-with-it-dispatch-ps1.test.sh
 ```
 
-Expected: all scripts exit 0.
+Expected: all six scripts exit 0.
 
 - [x] **Step 2: Run the full contract suite**
 
@@ -137,7 +172,10 @@ git status --short
 git diff --stat
 ```
 
-Expected: no whitespace errors; only routing-contract documentation and tests are modified.
+Expected: no whitespace errors; changes are limited to routing-contract
+documentation/tests and the Bash/PowerShell dispatcher implementations. The
+router, Bash/PowerShell pools, agent registry, weights, complexity bands,
+subscription targets, and recovery behavior remain unchanged.
 
 - [x] **Step 4: Record the executed commit history**
 
@@ -150,4 +188,10 @@ commit to create. The executed bookkeeping is:
 - Implementation commits: `18afa2a fix(run-with-it): separate worker routing`,
   `57e7703 fix(run-with-it): scrub legacy aliases`, and
   `0410c63 fix(run-with-it): remove marker trust`.
-- Plan commit: `2845b30 docs: add worker routing implementation plan`.
+- Plan commits: `2845b30 docs: add worker routing implementation plan` and
+  `3e10ebc docs(plan): record routing task history`.
+
+The implementation scope across `46bf72c..0410c63` includes 11 files: the
+skill, README, Main Orchestrator/Sub-Coordinator contracts, three routing/pool
+tests, both dispatcher implementations, and both dispatcher tests. The router,
+pool implementations, and agent registry were deliberately unchanged.

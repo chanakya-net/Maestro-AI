@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
+ACTIVE_SKILL_FILE="${ROOT_DIR}/.agents/skills/run-with-it/SKILL.md"
 ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/main-orchestrator-rules.md"
 COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/coordinator-rules.md"
 SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
@@ -126,6 +127,7 @@ assert_not_present_in_active_files() {
 }
 
 [[ -f "$SKILL_FILE" ]] || fail "run-with-it skill file exists"
+[[ -f "$ACTIVE_SKILL_FILE" ]] || fail "active run-with-it skill copy exists"
 [[ -f "$ORCHESTRATOR_RULES_FILE" ]] || fail "main-orchestrator-rules file exists"
 [[ -f "$COORDINATOR_RULES_FILE" ]] || fail "coordinator-rules file exists"
 [[ -f "$SUB_COORDINATOR_PROMPT_FILE" ]] || fail "sub-coordinator-prompt file exists"
@@ -218,6 +220,22 @@ ROUTE_MODEL="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(
 ROUTE_REASON="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
 [[ "$ROUTE_MODEL" != "gpt-5.6-sol" ]] || fail "easy Codex-only route must not select Sol"
 [[ "$ROUTE_REASON" != "forced-agent-and-model" ]] || fail "easy Codex-only route must not report forced-agent-and-model"
+
+# Explicit model-only override: Sol remains available when the user forces it.
+FORCED_SOL_OUTPUT="$(python3 "$ROUTER_FILE" \
+  --registry-file "$REGISTRY_FILE" \
+  --ledger-file "${ROUTING_WORK_DIR}/forced-sol-ledger.json" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex \
+  --allowlist codex \
+  --forced-model gpt-5.6-sol)"
+FORCED_SOL_MODEL="$(printf '%s' "$FORCED_SOL_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+FORCED_SOL_REASON="$(printf '%s' "$FORCED_SOL_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
+[[ "$FORCED_SOL_MODEL" == "gpt-5.6-sol" ]] || fail "model-only forced Sol route must select Sol"
+[[ "$FORCED_SOL_REASON" == "forced-model" ]] || fail "model-only forced Sol route must report forced-model"
+
+cmp -s "$SKILL_FILE" "$ACTIVE_SKILL_FILE" || fail "active run-with-it skill copy must match canonical skill byte-for-byte"
 
 # Sub-coordinator dispatch
 assert_contains 'sub-coordinator-prompt.md' "documents sub-coordinator prompt usage"

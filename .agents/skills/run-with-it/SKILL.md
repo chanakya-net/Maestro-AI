@@ -20,13 +20,13 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
 - **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/issues/<n>/sub-coordinator.log`. Do not tail raw logs into AI context; only read the compact report JSON from `.run-with-it/issues/<n>/report.json`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
+- **Per-issue stage board.** The pool runner emits a compact `STATUS|type=run-board|board=...` line whenever the run's stages change (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`) for a "current stage, not detail" view. Print it on demand any time with `python3 "$ASSET_ROOT/run-with-it-state.py" status-board --state-file .run-with-it/main-state.json` (read-only; add `--oneline` for the single-line form).
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
-- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
+- **Never inject worker-routing overrides into a Sub-Coordinator that has already been spawned.** Canonical worker overrides (`FORCED_AGENT`, `FORCED_MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
 - **Run the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
 - **Use the platform worker watcher (`worker-watch.sh` / `worker-watch.ps1`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
-- **Worker artifact failures are Sub-Coordinator recovery work, not Main Orchestrator work.** If an implementation, review, or modification worker exits without valid artifacts, the dispatcher records failure facts in the worker state file and the Sub-Coordinator must retry/salvage according to its role-specific recovery contract or write a blocked compact report with a concrete recovery handoff. The Main Orchestrator must not inspect logs or restart workers itself.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
 - **GitHub operations on completion are immediate and sequential.** Even when Sub-Coordinators run in parallel, each issue's GitHub comment/close is processed one at a time as soon as that issue reaches a terminal outcome to avoid race conditions.
 - **Preserve local fallback behavior when GitHub or git is unavailable.**
@@ -50,7 +50,7 @@ Preferred upstream flow:
 
 **Main Orchestrator** (this skill, runs in the primary session):
 - Fetches all `ready-for-agent` issues once at startup
-- Creates one shared run feature branch (`run-with-it/<run-id>`) from the original base branch, pushes it when a GitHub remote exists, and uses it as the final PR head branch
+- Creates one shared run feature branch (`Maestro/<funny-action-animal>`) from the original base branch, pushes it when a GitHub remote exists, and uses it as the final PR head branch
 - Determines execution order with a dependency graph and topological sort based primarily on each issue's `## Blocked by` section; cycles or unresolved external blockers are marked blocked before execution
 - Maintains a rolling pool of up to `PARALLEL_JOBS` active **Sub-Coordinators** via the platform dispatcher — freed slots fill immediately when any job completes rather than waiting for whole batches
 - As each Sub-Coordinator completes, reads its compact report, immediately posts the terminal GitHub comment and closes/updates that issue when it has a terminal outcome, then spawns the next ready issue into the freed slot
@@ -59,7 +59,7 @@ Preferred upstream flow:
 - Updates `main-state.json` after each issue (its full external memory)
 - Posts terminal GitHub comments and closes/updates issues immediately per issue, not only after the full pool finishes
 - Spawns a Merge Recovery Coordinator when a Sub-Coordinator reports `merge_failed`; Main Orchestrator never merges issue branches itself
-- Creates one final PR from the shared run feature branch after all issues are terminal
+- Creates one final PR from the shared run feature branch after all issues are terminal, using `run-with-it-pr-body.py` to render the body from `.run-with-it/main-state.json`
 - Re-reads `main-state.json` at the top of every loop iteration to survive context compression
 
 **Sub-Coordinator** (spawned via `sub-coordinator-prompt.md`, runs in a child agent session):
@@ -67,6 +67,7 @@ Preferred upstream flow:
 - Creates an issue branch and issue worktree from the shared run feature branch
 - Runs complexity analysis, deterministic routing, gated read-only planning, implementation, review, and modification loops
 - Runs child workers with `REPO_ROOT` pointing at the issue worktree while keeping logs/reports under the root `.run-with-it/`
+- Spawns an Artifact Recovery Worker when implementation/modification artifact retries are exhausted so dirty work can be inspected, verified, committed, or requeued before any terminal blocked report
 - Attempts the normal merge back into the shared feature branch under `.run-with-it/locks/merge.lock`
 - Writes a compact report JSON and full log file under `.run-with-it/issues/<n>/` when done
 - Spawns worker agents whose logs/results/done sentinels are written under `.run-with-it/issues/<n>/workers/<role>/`
@@ -75,9 +76,15 @@ Preferred upstream flow:
 **Plan Worker** (spawned via `plan-prompt.md`, gated, runs after complexity and before implementation):
 - Reads the issue worktree **read-only** with a strong model and writes a concrete approach plan to `.run-with-it/issues/<n>/plan.md` plus a machine-readable `plan.json` under `workers/plan/`
 - Never edits or commits — it runs before the baseline SHA so it cannot corrupt the implementer's diff
-- Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification
-- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues skip planning
+- Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
+- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues skip planning and route weak regardless
 - The implementer, reviewer, and modifier all consume `plan.md` via `RUN_WITH_IT_PLAN_FILE`
+
+**Artifact Recovery Worker** (spawned via `artifact-recovery-prompt.md`, runs only after exhausted impl/modify artifact failures):
+- Inspects the issue worktree, including dirty uncommitted work and preserved recovery patches
+- Runs verification and commits salvaged work on the issue branch when the work is complete
+- Writes the missing `impl` or `modify` result artifact only with concrete commit and verification evidence
+- Returns a structured `synthesized-result`, `requeue`, or `blocked` decision to the Sub-Coordinator
 
 **Merge Recovery Coordinator** (spawned via `merge-recovery-prompt.md`, runs only after `merge_failed`):
 - Handles one failed issue-branch merge
@@ -128,10 +135,10 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `ISSUE_STATE` | `open` | Issue state filter |
 | `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
 | `MAX_ITERATIONS` | `20` | Max review/modify cycles per Sub-Coordinator |
-| `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it |
-| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped |
+| `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
+| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
-| `SUB_COORD_MODEL` | `gpt-5.5` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
+| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
 | `STATUS_POLL_SECONDS` | `10` | Shell polling cadence for status line output |
 | `LOG_TAIL_POLL_SECONDS` | `120` | Shell polling cadence for sub-coordinator log tail |
@@ -142,8 +149,10 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done` |
 | `RUN_WITH_IT_RESULT_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json` |
 | `RUN_WITH_IT_STATE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`; dispatcher-maintained watchdog state |
-| `AGENT` | — | Routing override passed through to Sub-Coordinators |
-| `MODEL` | — | Routing override passed through to Sub-Coordinators |
+| `FORCED_AGENT` | — | Canonical explicit child-worker agent override passed through to Sub-Coordinators |
+| `FORCED_MODEL` | — | Canonical explicit child-worker model override passed through to Sub-Coordinators |
+| `AGENT` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`; ambient `AGENT` runner telemetry is ignored |
+| `MODEL` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`; ambient `MODEL` runner telemetry is ignored |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
 | `COMPLEXITY_SCORE` | — | Routing override passed through to Sub-Coordinators |
 | `AGENT_ALLOWLIST` | — | Comma-separated; passed through to Sub-Coordinators |
@@ -172,9 +181,11 @@ Shared required files:
 - `coordinator-rules.md`
 - `sub-coordinator-prompt.md`
 - `main-orchestrator-rules.md`
+- `artifact-recovery-prompt.md`
 - `merge-recovery-prompt.md`
 - `run-with-it-state.py`
 - `run-with-it-github-update.py`
+- `run-with-it-pr-body.py`
 - `run-with-it-router.py`
 - `run-with-it-artifacts.py`
 
@@ -210,12 +221,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\complexity-prompt.md, .\assets\plan-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\artifact-recovery-prompt.md, .\assets\complexity-prompt.md, .\assets\plan-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/complexity-prompt.md ./assets/plan-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/artifact-recovery-prompt.md ./assets/complexity-prompt.md ./assets/plan-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -235,7 +246,7 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 
 Before execution verify:
 
-1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
+1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-pr-body.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
 2. `python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter, for the shared pool helper scripts.
 3. `gh` auth when GitHub intake is required.
 4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
@@ -275,9 +286,14 @@ Fallback policy:
 Before fetching work begins, create the shared run feature branch:
 
 1. Capture original base branch and SHA.
-2. Create `run-with-it/<run-id>` from that base.
-3. Push the branch when a GitHub remote exists.
-4. Record `run_branch.base_branch`, `run_branch.base_sha`, `run_branch.feature_branch`, `run_branch.feature_branch_start_sha`, `run_branch.remote`, and `run_branch.pushed`.
+2. Generate a human-readable branch name as `Maestro/<funny-action-animal>` instead of a UUID branch.
+   - Use a lowercase, hyphenated slug with exactly two words after the prefix: `<action-or-trait>-<animal>`.
+   - Prefer funny but work-safe names such as `cunning-fox`, `unfaithful-lion`, `scheming-otter`, `dramatic-llama`, `sneaky-raven`, `tapdancing-badger`, `plotting-penguin`, or `chaotic-hamster`.
+   - Do not use raw UUIDs in the branch name.
+   - If the generated branch already exists locally or on the remote, generate a different slug; only append a short numeric suffix when several reasonable retries collide.
+3. Create `Maestro/<funny-action-animal>` from that base.
+4. Push the branch when a GitHub remote exists.
+5. Record `run_branch.base_branch`, `run_branch.base_sha`, `run_branch.feature_branch`, `run_branch.feature_branch_start_sha`, `run_branch.remote`, and `run_branch.pushed`.
 
 After fetching all issues:
 
@@ -288,7 +304,7 @@ After fetching all issues:
 5. Detect cycles and unresolved dependencies among executable issues only; mark affected issues `blocked` with `dependency_proof` and `blocking_reasons`.
 6. Determine execution order: topological sort respecting dependencies. Priority order within the same dependency tier: critical fixes → development infrastructure → tracer-bullet feature slices → polish and quick wins → refactors. When `PARALLEL_JOBS > 1`, issues fill a rolling pool (up to `PARALLEL_JOBS` active at a time) — freed slots are filled immediately rather than waiting for a full batch to complete.
 7. Issues whose executable dependencies have open/unresolved status, `merge_recovery`, `failed-merge`, or `blocked` are not ready until the dependency becomes `completed`. The pool runner dispatches merge recovery for `merge_recovery` issues before dependents become ready.
-8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`.
+8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`, `parallel_safe`, and normalized `ownership_scope`. Missing concurrency metadata must default conservatively to exclusive execution.
 9. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 10. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
@@ -366,13 +382,23 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
      DELEGATED_REVIEW=<value>
      MAX_ITERATIONS=<value>
      COMMITS_LIMIT=<value>
-     AGENT=<value-if-set>
-     MODEL=<value-if-set>
+     FORCED_AGENT=<explicit-worker-override-if-set>
+     FORCED_MODEL=<explicit-worker-override-if-set>
      COMPLEXITY_LEVEL=<value-if-set>
      COMPLEXITY_SCORE=<value-if-set>
      AGENT_ALLOWLIST=<value-if-set>
      AGENT_DENYLIST=<value-if-set>
      MAX_AGENT_FALLBACKS=<value>
+
+  The Main Orchestrator handles compatibility at the trusted user-request
+  boundary. Explicit user request `AGENT=<value>` becomes `FORCED_AGENT=<value>`.
+  Explicit user request `MODEL=<value>` becomes `FORCED_MODEL=<value>`.
+  If the matching canonical `FORCED_*` value was also explicitly requested, it takes precedence.
+  Never inspect ambient `AGENT` or `MODEL` to infer aliases. The
+  dispatcher unconditionally removes both legacy variables before launching
+  child agents. `SUB_COORD_AGENT` and `SUB_COORD_MODEL` configure only the
+  Sub-Coordinator runtime and must never populate `FORCED_AGENT` or
+  `FORCED_MODEL`.
 
   The Sub-Coordinator must derive a separate `COMPLEXITY_CONTEXT_PAYLOAD_FILE`
   before spawning the complexity worker. That file is a sanitized scoring brief,
@@ -465,7 +491,15 @@ Execution-mode requirement (critical):
 
 ## Platform Dispatchers — Shared Role Launcher
 
-`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `plan`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Worker heartbeats are legacy advisory hints only; the state file is the source of truth for liveness and silent-worker detection.
+`run-with-it-dispatch.sh` and `run-with-it-dispatch.ps1` are the shared run-with-it orchestration primitives. The Main Orchestrator uses them with `role=sub-coord`; Sub-Coordinators use them with `role=complexity`, `plan`, `impl`, `review`, or `modify`. They wrap `run-agent.sh` / `run-agent.ps1`, forward the role-specific `RUN_WITH_IT_*` environment, write dispatch status lines, capture stdout/stderr into the role log, monitor done/result artifacts through `worker-watch.sh` / `worker-watch.ps1`, and write a dispatcher-owned watchdog state file. Model-emitted heartbeats remain advisory; the runner-owned `wrapper-heartbeat` and dispatcher state are the liveness authority, independent of model stdout.
+
+When a Sub-Coordinator launches worker dispatchers from a short-lived shell/tool call, use `--detach` on Bash or `-Detach` on native PowerShell, then read the dispatcher PID from the dispatcher-owned state file. Do not rely on a raw shell background job and `WORKER_PID=$!` for worker dispatches.
+
+Bash `--detach` creates a new process session/process group before returning. This is required because plain `nohup ... &` can remain attached to the tool-call process group and be killed before the worker runner PID is recorded.
+
+If a detached worker dispatcher exits or emits `STATUS|type=dispatch-bootstrap-failed` before the state file records `runner_pid`, treat it as launch bootstrap loss rather than a worker/model result. Retry the same worker once in foreground monitor mode with the same log, done, result, state, repo-root, issue-dir, status, and events paths so the dispatcher captures either `dispatch-pid` or a concrete artifact failure.
+
+Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json`; those paths are reserved for the Sub-Coordinator's final compact report. Worker result artifacts belong under `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -484,14 +518,28 @@ run-with-it-dispatch.sh \
   --status-file <file> \
   --events-log <file> \
   --quiet-seconds <seconds> \
-  --stall-seconds <seconds>
+  --stall-seconds <seconds> \
+  --detach
 ```
 
-PowerShell uses the same field names with PowerShell-style parameters, for example `-Role impl -Issue 123 -LogFile <file> -DoneFile <file> -ResultFile <file> -StateFile <file>`.
+PowerShell uses the same field names with PowerShell-style parameters, for example `-Role impl -Issue 123 -LogFile <file> -DoneFile <file> -ResultFile <file> -StateFile <file> -Detach`.
 
 Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--validate-only` / `-ValidateOnly` to verify inputs and emit `STATUS|type=dispatch-ready` without spawning.
 
-Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` means the runner is alive but the captured role log has been silent beyond the quiet threshold. `state="stalled"` with `stall_reason="alive-but-silent"` means the worker is alive, incomplete, and silent beyond the stall threshold. Completion still requires the done sentinel and valid role-specific result artifacts.
+Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` and `state="stalled"` describe model-output health while runner-owned wrapper heartbeats track process liveness. `state="artifact-recovery-required"` means Git progress was preserved without machine-readable passing verification and must enter artifact recovery. Completion still requires the done sentinel, valid role-specific result artifacts, and passing implementation/modification verification.
+
+`RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` is a compatibility fallback for older runners without wrapper heartbeats. Current runners are not terminated for quiet stdout alone; `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` bounds elapsed execution, preserving Git progress for recovery before termination.
+
+## Final PR Creation
+
+After all issues are terminal and before `gh pr create`, render the PR body from the persisted run state:
+
+```bash
+"$ASSET_ROOT/run-with-it-pr-body.py" render --state-file .run-with-it/main-state.json > .run-with-it/final-pr-body.md
+gh pr create --body-file .run-with-it/final-pr-body.md
+```
+
+The rendered body must list completed/closed issues as plain issue links such as `#123`. Do not use auto-closing keywords in the final PR body because issues are already closed by the per-issue GitHub update flow. Ban case-insensitive auto-closing keyword variants adjacent to issue refs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
 
 ## `run-agent.sh` — Full Syntax Reference
 
@@ -504,7 +552,7 @@ run-agent.sh --list-models <agent>
 
 | Flag | Env var equivalent | Required | Description |
 |------|--------------------|----------|-------------|
-| `--agent <agent>` | `AGENT` | Yes | Agent slug (e.g. `codex`, `github-copilot`, `claude`, `agy`) |
+| `--agent <agent>` | `AGENT` | Yes | Enabled agent slug (e.g. `codex`, `claude`, `agy`; `github-copilot`/`copilot` is registry-disabled while the Copilot plan is exhausted) |
 | `--model <model>` | `MODEL` | Yes (always pass explicitly) | Model id to use |
 | `--context-file <file>` | `CONTEXT_PAYLOAD_FILE` | Yes | Path to the assembled context payload file |
 | `--prompt-file <file>` | `PROMPT_FILE` | No (defaults to `<script-dir>/prompt.md`) | Path to the prompt file |
@@ -572,12 +620,12 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
 ```json
 {
   "schema_version": 4,
-  "run_id": "<uuid generated at run start>",
+  "run_id": "<funny-action-animal slug generated at run start>",
   "started_at": "<iso8601>",
   "run_branch": {
     "base_branch": "main",
     "base_sha": "abc123",
-    "feature_branch": "run-with-it/<run-id>",
+    "feature_branch": "Maestro/cunning-fox",
     "feature_branch_start_sha": "abc123",
     "remote": "origin",
     "pushed": true,
@@ -599,12 +647,16 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
       "title": "issue title",
       "deps": [],
       "dependency_proof": "Blocked by: None",
+      "parallel_safe": true,
+      "ownership_scope": ["src/orders"],
       "issue_dir": ".run-with-it/issues/36",
       "report_file": ".run-with-it/issues/36/report.json",
       "merge_recovery_report_file": ".run-with-it/issues/36/merge-recovery-report.json",
       "log_file": ".run-with-it/issues/36/sub-coordinator.log",
-      "issue_branch": "run-with-it/<run-id>-issue-36",
+      "issue_branch": "Maestro/cunning-fox-issue-36",
       "worktree_path": ".run-with-it/worktrees/issue-36",
+      "issue_base_sha": "abc1234",
+      "issue_base_source": "remote-tracking | local-fallback",
       "commit_sha": "abc1234"
     }
   },
@@ -613,11 +665,26 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
     {
       "issue": 36,
       "outcome": "completed",
+      "summary": "One paragraph compact report summary.",
       "files_modified_count": 3,
       "lines_added": 42,
       "lines_deleted": 7,
       "review_cycles": 1,
-      "commit_sha": "abc1234"
+      "commit_sha": "abc1234",
+      "verification": {
+        "passed": true,
+        "evidence": "15 tests passed, 0 failed"
+      },
+      "model_usage": [
+        {
+          "role": "impl",
+          "cycle": 1,
+          "agent": "codex",
+          "model": "gpt-5.3-codex",
+          "selection_reason": "under-target"
+        }
+      ],
+      "report_file": ".run-with-it/issues/36/report.json"
     }
   ],
   "ledger_rows": [
@@ -630,7 +697,7 @@ Key invariants:
 - `issue_registry` has one entry per issue
 - `run_branch` captures the shared feature branch used for the final PR
 - `topo_order` and `dependency_tiers` are derived from issue dependency topological sorting
-- `completed_summaries` accumulates one compact record per finished issue — this is what the main orchestrator reads back after compression
+- `completed_summaries` accumulates one compact record per finished issue, including compact `summary`, `verification`, `model_usage`, and `report_file` fields — this is what the main orchestrator reads back after compression
 - `merge_recovery` is non-terminal; dependencies are satisfied only by `completed`
 - `ledger_rows` stores verbatim STATUS lines for the final ledger printout
 - `active_pool_issues` lists which issues had active Sub-Coordinators; on resume all `in_progress` issues in `active_pool_issues` are reset to `pending` (Sub-Coordinators are ephemeral — re-spawn them fresh)
@@ -684,6 +751,7 @@ Also print a final summary of all `completed_summaries` entries showing:
 - Total issues processed
 - Completed / failed-review / blocked counts
 - Total lines added/deleted across all issues
+- Task-level model usage (`role`, `cycle`, `agent`, `model`, `selection_reason`) from each issue's `model_usage`
 - Aggregate token usage (sum `token_usage` fields from all report JSONs for issues that have completed)
 
 ## Appendix C: Resume and State Contract
