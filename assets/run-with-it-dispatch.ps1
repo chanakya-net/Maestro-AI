@@ -42,17 +42,6 @@ if (-not $hardLimitExplicit -and $Role -notin @("complexity", "impl", "modify", 
 }
 $HardLimitSeconds = $parsedHardLimitSeconds
 
-$legacyOverrideMarkers = @(
-    ([string]$env:RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES).Split(',') |
-        ForEach-Object { $_.Trim().ToUpperInvariant() } |
-        Where-Object { $_ }
-)
-if (($legacyOverrideMarkers -contains "AGENT") -and -not $env:FORCED_AGENT -and $env:AGENT) {
-    $env:FORCED_AGENT = $env:AGENT
-}
-if (($legacyOverrideMarkers -contains "MODEL") -and -not $env:FORCED_MODEL -and $env:MODEL) {
-    $env:FORCED_MODEL = $env:MODEL
-}
 Remove-Item Env:AGENT, Env:MODEL, Env:RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES -ErrorAction SilentlyContinue
 
 function Fail([string]$message) {

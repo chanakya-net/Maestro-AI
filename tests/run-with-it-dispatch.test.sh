@@ -248,8 +248,8 @@ printf 'fake-agent stdout is captured\n'
 printf 'fake-agent stderr is captured\n' >&2
 mkdir -p "$repo_root" "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
 printf 'seen\n' > "$repo_root/marker.txt"
-printf '{"outcome":"completed","repo_root_seen":"%s","agent_env":"%s","model_env":"%s","forced_agent_env":"%s","forced_model_env":"%s"}\n' \
-  "$repo_root" "${AGENT-}" "${MODEL-}" "${FORCED_AGENT-}" "${FORCED_MODEL-}" > "$RUN_WITH_IT_RESULT_FILE"
+printf '{"outcome":"completed","repo_root_seen":"%s","agent_env":"%s","model_env":"%s","forced_agent_env":"%s","forced_model_env":"%s","legacy_marker_env":"%s"}\n' \
+  "$repo_root" "${AGENT-}" "${MODEL-}" "${FORCED_AGENT-}" "${FORCED_MODEL-}" "${RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES-}" > "$RUN_WITH_IT_RESULT_FILE"
 SH
 chmod +x "${SMOKE_BIN}/fake-agent"
 
@@ -266,7 +266,8 @@ mkdir -p "$(dirname "${SMOKE_RESULT}")"
 printf 'RESULT_FILE=%s\n' "${SMOKE_RESULT}" > "${SMOKE_CONTEXT}"
 printf '# Prompt\n' > "${SMOKE_PROMPT}"
 
-AGENT=ambient-agent MODEL=ambient-model PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+AGENT=ambient-agent MODEL=ambient-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+  PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role merge-recovery \
   --issue 42 \
@@ -292,8 +293,9 @@ assert_file_contains "${SMOKE_DONE}" "DONE|issue=42|role=merge-recovery" "actual
 assert_file_contains "${SMOKE_RESULT}" "\"repo_root_seen\":\"${SMOKE_REPO_ROOT}\"" "actual dispatch forwards repo root to child agent"
 assert_file_contains "${SMOKE_RESULT}" '"agent_env":""' "actual dispatch scrubs ambient AGENT before child launch"
 assert_file_contains "${SMOKE_RESULT}" '"model_env":""' "actual dispatch scrubs ambient MODEL before child launch"
-assert_file_contains "${SMOKE_RESULT}" '"forced_agent_env":""' "unmarked ambient AGENT does not become a forced override"
-assert_file_contains "${SMOKE_RESULT}" '"forced_model_env":""' "unmarked ambient MODEL does not become a forced override"
+assert_file_contains "${SMOKE_RESULT}" '"forced_agent_env":""' "ambient marker cannot promote AGENT to a forced override"
+assert_file_contains "${SMOKE_RESULT}" '"forced_model_env":""' "ambient marker cannot promote MODEL to a forced override"
+assert_file_contains "${SMOKE_RESULT}" '"legacy_marker_env":""' "actual dispatch scrubs the ambient legacy marker before child launch"
 assert_json_file "${SMOKE_STATE}" "actual dispatch writes final watchdog state JSON"
 assert_file_contains "${SMOKE_STATE}" '"state": "completed"' "actual dispatch records completed state"
 assert_file_contains "${SMOKE_STATE}" '"result_present": true' "actual dispatch records result artifact presence"
@@ -306,6 +308,7 @@ LEGACY_DONE="${SMOKE_ISSUE_DIR}/legacy.done"
 LEGACY_STATE="${SMOKE_ISSUE_DIR}/legacy.state.json"
 printf 'RESULT_FILE=%s\n' "${LEGACY_RESULT}" > "${SMOKE_CONTEXT}"
 AGENT=legacy-agent MODEL=legacy-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+  FORCED_AGENT=canonical-agent FORCED_MODEL=canonical-model \
   PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
   --asset-root "${SMOKE_ASSET_ROOT}" \
   --role merge-recovery \
@@ -324,10 +327,11 @@ AGENT=legacy-agent MODEL=legacy-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGEN
   --events-log "${SMOKE_EVENTS}" \
   --poll-seconds 1 >/dev/null
 
-assert_file_contains "${LEGACY_RESULT}" '"agent_env":""' "marked legacy AGENT is still scrubbed before child launch"
-assert_file_contains "${LEGACY_RESULT}" '"model_env":""' "marked legacy MODEL is still scrubbed before child launch"
-assert_file_contains "${LEGACY_RESULT}" '"forced_agent_env":"legacy-agent"' "marked legacy AGENT normalizes to FORCED_AGENT"
-assert_file_contains "${LEGACY_RESULT}" '"forced_model_env":"legacy-model"' "marked legacy MODEL normalizes to FORCED_MODEL"
+assert_file_contains "${LEGACY_RESULT}" '"agent_env":""' "legacy AGENT is scrubbed when canonical overrides propagate"
+assert_file_contains "${LEGACY_RESULT}" '"model_env":""' "legacy MODEL is scrubbed when canonical overrides propagate"
+assert_file_contains "${LEGACY_RESULT}" '"forced_agent_env":"canonical-agent"' "canonical FORCED_AGENT propagates unchanged and takes precedence"
+assert_file_contains "${LEGACY_RESULT}" '"forced_model_env":"canonical-model"' "canonical FORCED_MODEL propagates unchanged and takes precedence"
+assert_file_contains "${LEGACY_RESULT}" '"legacy_marker_env":""' "legacy marker is scrubbed when canonical overrides propagate"
 printf 'RESULT_FILE=%s\n' "${SMOKE_RESULT}" > "${SMOKE_CONTEXT}"
 
 RECOVERY_PARENT="${WORK_DIR}/recovery-parent"
@@ -394,7 +398,9 @@ printf 'detached prompt\n' > "${DETACH_PROMPT}"
 
 (
   cd "${DETACH_PROJECT}"
-  PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
+  AGENT=detached-ambient-agent MODEL=detached-ambient-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+    FORCED_AGENT=detached-canonical-agent FORCED_MODEL=detached-canonical-model \
+    PATH="${SMOKE_BIN}:${PATH}" "${SMOKE_ASSET_ROOT}/run-with-it-dispatch.sh" \
     --asset-root "${SMOKE_ASSET_ROOT}" \
     --role impl \
     --issue 46 \
@@ -425,6 +431,11 @@ assert_file_contains "${DETACH_LOG}" "STATUS|type=dispatch-start|issue=46|role=i
 assert_file_contains "${DETACH_LOG}" "STATUS|type=dispatch-pid|issue=46|role=impl|cycle=1" "detached dispatcher captures runner pid"
 assert_json_file "${DETACH_STATE}" "detached dispatcher writes final state JSON"
 assert_json_file "${DETACH_RESULT}" "detached worker writes result JSON"
+assert_file_contains "${DETACH_RESULT}" '"agent_env":""' "detached dispatcher scrubs ambient AGENT"
+assert_file_contains "${DETACH_RESULT}" '"model_env":""' "detached dispatcher scrubs ambient MODEL"
+assert_file_contains "${DETACH_RESULT}" '"forced_agent_env":"detached-canonical-agent"' "detached child receives canonical FORCED_AGENT unchanged"
+assert_file_contains "${DETACH_RESULT}" '"forced_model_env":"detached-canonical-model"' "detached child receives canonical FORCED_MODEL unchanged"
+assert_file_contains "${DETACH_RESULT}" '"legacy_marker_env":""' "detached dispatcher scrubs the legacy marker"
 
 PRESTART_DIR="${WORK_DIR}/prestart-project"
 PRESTART_LOG="${PRESTART_DIR}/cycle-1.log"

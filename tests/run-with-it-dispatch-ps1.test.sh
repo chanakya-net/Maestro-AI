@@ -94,7 +94,7 @@ Set-Content -Path (Join-Path $RepoRoot "marker.txt") -Value "seen-$env:RUN_WITH_
 & git -C $RepoRoot add marker.txt | Out-Null
 & git -C $RepoRoot commit -m "impl fake marker" | Out-Null
 $commitSha = (& git -C $RepoRoot rev-parse HEAD).Trim()
-Set-Content -Path $resultFile -Value "{`"schema_version`":1,`"issue`":`"$env:RUN_WITH_IT_ISSUE`",`"role`":`"$env:RUN_WITH_IT_ROLE`",`"status`":`"success`",`"commit_sha`":`"$commitSha`",`"files_committed`":[`"marker.txt`"],`"verification`":{`"passed`":true,`"commands`":[`"fake`"]},`"repo_root_seen`":`"$RepoRoot`",`"agent_env`":`"$env:AGENT`",`"model_env`":`"$env:MODEL`",`"forced_agent_env`":`"$env:FORCED_AGENT`",`"forced_model_env`":`"$env:FORCED_MODEL`"}" -Encoding UTF8
+Set-Content -Path $resultFile -Value "{`"schema_version`":1,`"issue`":`"$env:RUN_WITH_IT_ISSUE`",`"role`":`"$env:RUN_WITH_IT_ROLE`",`"status`":`"success`",`"commit_sha`":`"$commitSha`",`"files_committed`":[`"marker.txt`"],`"verification`":{`"passed`":true,`"commands`":[`"fake`"]},`"repo_root_seen`":`"$RepoRoot`",`"agent_env`":`"$env:AGENT`",`"model_env`":`"$env:MODEL`",`"forced_agent_env`":`"$env:FORCED_AGENT`",`"forced_model_env`":`"$env:FORCED_MODEL`",`"legacy_marker_env`":`"$env:RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES`"}" -Encoding UTF8
 PS1
 
 SILENT_AGENT="${WORK_DIR}/silent-agent.ps1"
@@ -314,7 +314,8 @@ set -e
 [[ "$invalid_limit_status" == "0" ]] || fail "PowerShell malformed hard limit must fall back instead of terminating"
 assert_file_contains "$PS_INVALID_LIMIT_STATE" '"hard_limit_seconds": 7200' "PowerShell malformed hard limit uses documented default"
 
-AGENT=ambient-agent MODEL=ambient-model RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
+AGENT=ambient-agent MODEL=ambient-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+  RUN_WITH_IT_HEARTBEAT_SECONDS=1 "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
   -Issue 42 \
@@ -340,8 +341,9 @@ assert_file_contains "$DONE_FILE" "DONE|issue=42|role=impl" "dispatch writes don
 assert_json_file "$RESULT_FILE" "dispatch result JSON is valid"
 assert_file_contains "$RESULT_FILE" '"agent_env":""' "PowerShell dispatch scrubs ambient AGENT before child launch"
 assert_file_contains "$RESULT_FILE" '"model_env":""' "PowerShell dispatch scrubs ambient MODEL before child launch"
-assert_file_contains "$RESULT_FILE" '"forced_agent_env":""' "PowerShell unmarked ambient AGENT does not become a forced override"
-assert_file_contains "$RESULT_FILE" '"forced_model_env":""' "PowerShell unmarked ambient MODEL does not become a forced override"
+assert_file_contains "$RESULT_FILE" '"forced_agent_env":""' "PowerShell ambient marker cannot promote AGENT to a forced override"
+assert_file_contains "$RESULT_FILE" '"forced_model_env":""' "PowerShell ambient marker cannot promote MODEL to a forced override"
+assert_file_contains "$RESULT_FILE" '"legacy_marker_env":""' "PowerShell dispatch scrubs the ambient legacy marker before child launch"
 assert_json_file "$STATE_FILE" "dispatch state JSON is valid"
 assert_file_contains "$STATE_FILE" '"state": "completed"' "dispatch records completed state"
 
@@ -351,6 +353,7 @@ LEGACY_RESULT_FILE="${ISSUE_DIR}/workers/impl/cycle-2-result.json"
 LEGACY_STATE_FILE="${ISSUE_DIR}/workers/impl/cycle-2.state.json"
 printf 'RESULT_FILE=%s\n' "$LEGACY_RESULT_FILE" > "$CONTEXT_FILE"
 AGENT=legacy-agent MODEL=legacy-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+  FORCED_AGENT=canonical-agent FORCED_MODEL=canonical-model \
   "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
@@ -370,10 +373,11 @@ AGENT=legacy-agent MODEL=legacy-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGEN
   -EventsLog "$EVENTS_LOG" \
   -PollSeconds 1 >/dev/null
 
-assert_file_contains "$LEGACY_RESULT_FILE" '"agent_env":""' "PowerShell marked legacy AGENT is still scrubbed before child launch"
-assert_file_contains "$LEGACY_RESULT_FILE" '"model_env":""' "PowerShell marked legacy MODEL is still scrubbed before child launch"
-assert_file_contains "$LEGACY_RESULT_FILE" '"forced_agent_env":"legacy-agent"' "PowerShell marked legacy AGENT normalizes to FORCED_AGENT"
-assert_file_contains "$LEGACY_RESULT_FILE" '"forced_model_env":"legacy-model"' "PowerShell marked legacy MODEL normalizes to FORCED_MODEL"
+assert_file_contains "$LEGACY_RESULT_FILE" '"agent_env":""' "PowerShell legacy AGENT is scrubbed when canonical overrides propagate"
+assert_file_contains "$LEGACY_RESULT_FILE" '"model_env":""' "PowerShell legacy MODEL is scrubbed when canonical overrides propagate"
+assert_file_contains "$LEGACY_RESULT_FILE" '"forced_agent_env":"canonical-agent"' "PowerShell canonical FORCED_AGENT propagates unchanged and takes precedence"
+assert_file_contains "$LEGACY_RESULT_FILE" '"forced_model_env":"canonical-model"' "PowerShell canonical FORCED_MODEL propagates unchanged and takes precedence"
+assert_file_contains "$LEGACY_RESULT_FILE" '"legacy_marker_env":""' "PowerShell legacy marker is scrubbed when canonical overrides propagate"
 printf 'RESULT_FILE=%s\n' "$RESULT_FILE" > "$CONTEXT_FILE"
 
 DETACH_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/45"
@@ -386,7 +390,9 @@ DETACH_OUT="${DETACH_ISSUE_DIR}/workers/impl/cycle-1.dispatch.out"
 mkdir -p "$(dirname "$DETACH_RESULT")"
 printf 'RESULT_FILE=%s\n' "$DETACH_RESULT" > "$DETACH_CONTEXT"
 
-"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+AGENT=detached-ambient-agent MODEL=detached-ambient-model RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES=AGENT,MODEL \
+  FORCED_AGENT=detached-canonical-agent FORCED_MODEL=detached-canonical-model \
+  "$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -Detach \
   -AssetRoot "$SMOKE_ASSET_ROOT" \
   -Role impl \
@@ -419,6 +425,11 @@ assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-start|issue=45|role=imp
 assert_file_contains "$DETACH_LOG" "STATUS|type=dispatch-pid|issue=45|role=impl|cycle=1" "detached PowerShell dispatcher captures runner pid"
 assert_json_file "$DETACH_STATE" "detached PowerShell dispatcher writes state JSON"
 assert_json_file "$DETACH_RESULT" "detached PowerShell dispatcher writes result JSON"
+assert_file_contains "$DETACH_RESULT" '"agent_env":""' "detached PowerShell dispatcher scrubs ambient AGENT"
+assert_file_contains "$DETACH_RESULT" '"model_env":""' "detached PowerShell dispatcher scrubs ambient MODEL"
+assert_file_contains "$DETACH_RESULT" '"forced_agent_env":"detached-canonical-agent"' "detached PowerShell child receives canonical FORCED_AGENT unchanged"
+assert_file_contains "$DETACH_RESULT" '"forced_model_env":"detached-canonical-model"' "detached PowerShell child receives canonical FORCED_MODEL unchanged"
+assert_file_contains "$DETACH_RESULT" '"legacy_marker_env":""' "detached PowerShell dispatcher scrubs the legacy marker"
 
 SILENT_ISSUE_DIR="${SMOKE_PROJECT}/.run-with-it/issues/43"
 SILENT_CONTEXT="${SMOKE_PROJECT}/silent-context.md"

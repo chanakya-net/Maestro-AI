@@ -43,7 +43,7 @@ assert_json_file() {
 assert_file_contains "$POOL" "Analyze-SubCoordFailure" "PowerShell pool includes sub-coordinator failure analysis"
 assert_file_contains "$POOL" "sub-coord-recovery-wait" "PowerShell pool can wait for in-flight workers before recovery"
 assert_file_contains "$POOL" "sub-coord-recovery-spawn" "PowerShell pool can spawn recovery sub-coordinators"
-assert_file_contains "$POOL" 'else { "gpt-5.6-sol" }' "PowerShell pool defaults Sub-Coordinators to Sol"
+assert_file_contains "$POOL" '[string]$Model = $(if ($env:SUB_COORD_MODEL) { $env:SUB_COORD_MODEL } else { "gpt-5.6-sol" }),' "PowerShell pool Model parameter has the complete Sub-Coordinator-only Sol fallback"
 assert_file_contains "$RUN_WITH_IT_SKILL" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |' "PowerShell contract retains the complete Sub-Coordinator-only Sol default documentation"
 assert_file_contains "$README" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model used to run Sub-Coordinators |' "PowerShell contract retains the complete Sub-Coordinator-only README default"
 assert_file_not_contains "$RUN_WITH_IT_SKILL" 'gpt-5.6-sol` | Model for child workers' "PowerShell contract does not document Sol as a child-worker override"

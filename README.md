@@ -222,7 +222,6 @@ Override routing behavior with environment variables:
 | `FORCED_MODEL` | Canonical explicit child-worker model override |
 | `AGENT` | Deprecated compatibility alias: normalize only an explicitly user-supplied value to `FORCED_AGENT`; never read ambient runtime values. |
 | `MODEL` | Deprecated compatibility alias: normalize only an explicitly user-supplied value to `FORCED_MODEL`; never read ambient runtime values. |
-| `RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES` | Per-alias provenance marker containing `AGENT`, `MODEL`, or both. Set it only for deprecated aliases explicitly supplied by the user; the dispatcher consumes it and scrubs both aliases before launch. |
 | `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
 | `AGENT_DENYLIST` | Comma-separated agent slugs to block |
 | `RUN_WITH_IT_MODEL_DENYLIST` | Comma-separated models or `agent:model` routes to exclude after availability failures |
@@ -257,11 +256,11 @@ model, configure only each Sub-Coordinator process. They never become
 child-worker routing overrides; use explicit `FORCED_AGENT` and `FORCED_MODEL`
 for that policy.
 
-For deprecated compatibility, set `RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES` to
-the exact aliases explicitly supplied by the user (`AGENT`, `MODEL`, or
-`AGENT,MODEL`). A pre-existing canonical `FORCED_*` value takes precedence.
-Without this marker, inherited `AGENT` and `MODEL` are discarded at the
-dispatcher boundary and cannot affect Sub-Coordinator routing.
+For deprecated compatibility, the Main Orchestrator normalizes `AGENT` or
+`MODEL` only when that alias is explicitly named in the user's request. A
+matching canonical `FORCED_*` request takes precedence. Ambient `AGENT` and
+`MODEL` are never inspected for aliases and are discarded at the dispatcher
+boundary, so they cannot affect Sub-Coordinator routing.
 
 ## Testing
 
