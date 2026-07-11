@@ -517,6 +517,14 @@ def candidate_pairs(
     return pairs
 
 
+def model_effort_for_level(registry: dict[str, Any], model_id: str, level: str) -> str:
+    effort_map = registry.get("model_routing", {}).get("effort_by_model_and_band", {})
+    band_effort = effort_map.get(model_id, {}).get(level)
+    if band_effort:
+        return str(band_effort)
+    return str(registry.get("model_catalog", {}).get(model_id, {}).get("reasoning_effort", ""))
+
+
 def select_pair(
     registry: dict[str, Any],
     ledger: dict[str, Any],
@@ -630,6 +638,7 @@ def select_pair(
             "role": role,
             "complexity_level": base_level,
             "routing_level": level,
+            "effort": model_effort_for_level(registry, selected["model"], level),
             "selection_reason": reason,
             "target_percent": policy.get(agent, 0),
             "global_target_percent": global_policy.get(agent, policy.get(agent, 0)),
@@ -658,6 +667,7 @@ def append_decision(ledger: dict[str, Any], selection: dict[str, Any]) -> dict[s
         "routing_level": selection["routing_level"],
         "agent": selection["agent"],
         "model": selection["model"],
+        "effort": selection.get("effort", ""),
         "selection_reason": selection["selection_reason"],
     }
     ledger.setdefault("decisions", []).append(decision)
@@ -685,6 +695,7 @@ def build_output(
         "schema_version": 1,
         "agent": agent,
         "model": selection["model"],
+        "effort": selection.get("effort", ""),
         "role": selection["role"],
         "complexity_level": selection["complexity_level"],
         "routing_level": selection["routing_level"],

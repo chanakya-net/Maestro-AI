@@ -465,6 +465,23 @@
         "providers": []
       }
     },
+    "effort_by_model_and_band": {
+      "gpt-5.6-sol": {
+        "medium-hard": "high",
+        "complex": "xhigh",
+        "holy-fuck": "xhigh"
+      },
+      "claude-sonnet-5": {
+        "quite-easy": "low",
+        "easy": "medium",
+        "medium": "medium",
+        "medium-hard": "high"
+      },
+      "claude-opus-4-8": {
+        "complex": "xhigh",
+        "holy-fuck": "max"
+      }
+    },
     "selection_strategy": "top-n-cheapest-random",
     "selection_pool_size": 4,
     "_strategy_note": "Sort candidates by complexity_weight and capability/context fit. Pricing fields are intentionally omitted because routing assumes subscription plans. Take the top selection_pool_size models, then randomly pick one from that pool.",
