@@ -97,6 +97,18 @@
         "frontier"
       ]
     },
+    "claude-sonnet-5": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "complexity_weight": 7,
+      "context_window": 1000000,
+      "strengths": [
+        "coding",
+        "agentic",
+        "adaptive-thinking",
+        "speed-intelligence-balance"
+      ]
+    },
     "claude-opus-4-8-high": {
       "provider": "anthropic",
       "ability": "frontier",
@@ -225,7 +237,6 @@
       "ability": "frontier",
       "complexity_weight": 9,
       "context_window": 922000,
-      "explicit_only": true,
       "strengths": [
         "best-coding",
         "swe-bench-88.7pct",
@@ -234,7 +245,7 @@
         "MCP",
         "frontier"
       ],
-      "_note": "GPT-5.5 is available only through an explicit forced-model override and is excluded from automatic routing."
+      "_note": "GPT-5.5 is eligible for automatic medium-hard routing and remains forceable elsewhere."
     },
     "gemini-3-flash-preview": {
       "provider": "google",
@@ -397,6 +408,63 @@
         "label": "holy-fuck"
       }
     ],
+    "non_complexity_band_policy": {
+      "quite-easy": {
+        "models": [
+          "gpt-5.4",
+          "gpt-5.3-codex-spark",
+          "gpt-5.6-luna",
+          "claude-sonnet-5",
+          "claude-haiku-4-5"
+        ],
+        "providers": [
+          "google"
+        ]
+      },
+      "easy": {
+        "models": [
+          "gpt-5.4",
+          "gpt-5.3-codex-spark",
+          "gpt-5.6-luna",
+          "claude-sonnet-5",
+          "claude-haiku-4-5"
+        ],
+        "providers": [
+          "google"
+        ]
+      },
+      "medium": {
+        "models": [
+          "gpt-5.6-terra",
+          "gpt-5.3-codex-spark",
+          "claude-sonnet-5"
+        ],
+        "providers": []
+      },
+      "medium-hard": {
+        "models": [
+          "gpt-5.5",
+          "gpt-5.6-sol",
+          "gpt-5.3-codex-spark",
+          "claude-sonnet-5"
+        ],
+        "providers": []
+      },
+      "complex": {
+        "models": [
+          "gpt-5.6-sol",
+          "claude-opus-4-8"
+        ],
+        "providers": []
+      },
+      "holy-fuck": {
+        "models": [
+          "gpt-5.6-sol",
+          "claude-opus-4-8"
+        ],
+        "providers": []
+      }
+    },
     "selection_strategy": "top-n-cheapest-random",
     "selection_pool_size": 4,
     "_strategy_note": "Sort candidates by complexity_weight and capability/context fit. Pricing fields are intentionally omitted because routing assumes subscription plans. Take the top selection_pool_size models, then randomly pick one from that pool.",
@@ -443,6 +511,38 @@
           "agy": 0
         }
       },
+      "non_complexity_band_target_percent": {
+        "quite-easy": {
+          "codex": 55,
+          "claude": 35,
+          "agy": 10
+        },
+        "easy": {
+          "codex": 55,
+          "claude": 40,
+          "agy": 5
+        },
+        "medium": {
+          "codex": 70,
+          "claude": 30,
+          "agy": 0
+        },
+        "medium-hard": {
+          "codex": 70,
+          "claude": 30,
+          "agy": 0
+        },
+        "complex": {
+          "codex": 70,
+          "claude": 30,
+          "agy": 0
+        },
+        "holy-fuck": {
+          "codex": 60,
+          "claude": 40,
+          "agy": 0
+        }
+      },
       "role_band_target_percent": {
         "complexity": {
           "quite-easy": {
@@ -475,97 +575,6 @@
             "codex": 25,
             "claude": 25
           }
-        },
-        "impl": {
-          "quite-easy": {
-            "codex": 55,
-            "claude": 35,
-            "agy": 10
-          },
-          "easy": {
-            "codex": 55,
-            "claude": 40,
-            "agy": 5
-          },
-          "medium": {
-            "codex": 65,
-            "claude": 30,
-            "agy": 5
-          },
-          "medium-hard": {
-            "codex": 70,
-            "claude": 30,
-            "agy": 0
-          },
-          "complex": {
-            "codex": 70,
-            "claude": 30,
-            "agy": 0
-          },
-          "holy-fuck": {
-            "codex": 60,
-            "claude": 40,
-            "agy": 0
-          }
-        },
-        "modify": {
-          "quite-easy": {
-            "codex": 55,
-            "claude": 35,
-            "agy": 10
-          },
-          "easy": {
-            "codex": 55,
-            "claude": 40,
-            "agy": 5
-          },
-          "medium": {
-            "codex": 65,
-            "claude": 30,
-            "agy": 5
-          },
-          "medium-hard": {
-            "codex": 70,
-            "claude": 30,
-            "agy": 0
-          },
-          "complex": {
-            "codex": 70,
-            "claude": 30,
-            "agy": 0
-          },
-          "holy-fuck": {
-            "codex": 60,
-            "claude": 40,
-            "agy": 0
-          }
-        },
-        "review": {
-          "easy": {
-            "claude": 55,
-            "codex": 40,
-            "agy": 5
-          },
-          "medium": {
-            "claude": 60,
-            "codex": 35,
-            "agy": 5
-          },
-          "medium-hard": {
-            "claude": 60,
-            "codex": 35,
-            "agy": 5
-          },
-          "complex": {
-            "claude": 60,
-            "codex": 35,
-            "agy": 5
-          },
-          "holy-fuck": {
-            "claude": 60,
-            "codex": 40,
-            "agy": 0
-          }
         }
       },
       "role_agent_preference": {
@@ -580,8 +589,8 @@
           "agy"
         ],
         "review": [
-          "claude",
           "codex",
+          "claude",
           "agy"
         ],
         "artifact-recovery": [
@@ -595,8 +604,8 @@
           "agy"
         ],
         "plan": [
-          "claude",
           "codex",
+          "claude",
           "agy"
         ]
       },
@@ -767,6 +776,7 @@
         "flag_template": "--model {{model}}",
         "known_models": [
           "claude-opus-4-8",
+          "claude-sonnet-5",
           "claude-sonnet-4-6",
           "claude-haiku-4-5"
         ],

@@ -330,6 +330,11 @@ def routing_level(role: str, base_level: str) -> str:
 
 def target_policy(registry: dict[str, Any], role: str, level: str) -> dict[str, int]:
     distribution = registry.get("model_routing", {}).get("usage_distribution", {})
+    if role != "complexity":
+        policy = distribution.get("non_complexity_band_target_percent", {}).get(level)
+        if not isinstance(policy, dict):
+            fail(f"missing non-complexity usage target for band: {level}")
+        return {str(agent): int(percent) for agent, percent in policy.items()}
     default_target = distribution.get("default_target_percent", {})
     role_band = distribution.get("role_band_target_percent", {})
     role_targets = distribution.get("role_target_percent", {})
@@ -378,6 +383,26 @@ def compatible_agents_for_model(
     return candidates
 
 
+def automatic_policy_model_ids(registry: dict[str, Any], level: str) -> list[str]:
+    catalog = registry.get("model_catalog", {})
+    policy = registry.get("model_routing", {}).get("non_complexity_band_policy", {}).get(level)
+    if not isinstance(policy, dict):
+        fail(f"missing non-complexity automatic model policy for band: {level}")
+
+    selected: list[str] = []
+    for model_id in [str(value) for value in policy.get("models", [])]:
+        if model_id not in catalog:
+            fail(f"automatic model policy references unknown model: {model_id}")
+        if model_id not in selected:
+            selected.append(model_id)
+
+    providers = {str(value) for value in policy.get("providers", [])}
+    for model_id, entry in catalog.items():
+        if str(entry.get("provider", "")) in providers and model_id not in selected:
+            selected.append(model_id)
+    return selected
+
+
 def candidate_model_ids(
     registry: dict[str, Any],
     role: str,
@@ -392,11 +417,15 @@ def candidate_model_ids(
             fail(f"forced model is not in model_catalog: {forced_model}")
         return [forced_model]
 
+    if role != "complexity":
+        return [
+            model_id
+            for model_id in automatic_policy_model_ids(registry, level)
+            if model_id not in exclude_models
+        ]
+
     routing = registry.get("model_routing", {})
-    if role == "complexity":
-        weight_min, weight_max = 1, 6
-    else:
-        weight_min, weight_max = weight_range_for_level(registry, level)
+    weight_min, weight_max = 1, 6
 
     candidates: list[str] = []
     for model_id, entry in catalog.items():
