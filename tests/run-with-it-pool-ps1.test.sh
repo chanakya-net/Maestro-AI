@@ -13,11 +13,6 @@ if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
 fi
 
-if [[ -z "$PS_CMD" ]]; then
-  echo "SKIP: PowerShell unavailable for run-with-it-pool.ps1 contract"
-  exit 0
-fi
-
 fail() {
   echo "FAIL: $1" >&2
   exit 1
@@ -55,6 +50,11 @@ assert_file_not_contains "$RUN_WITH_IT_SKILL" 'gpt-5.6-sol` | Model for child wo
 assert_file_not_contains "$README" 'gpt-5.6-sol` | Model for child workers' "PowerShell contract README does not document Sol as a child-worker override"
 assert_file_contains "$COORDINATOR_RULES" "hard-limit-exceeded" "PowerShell coordinator rules classify hard-limit handoff failures"
 assert_file_contains "$SUB_PROMPT" "hard-limit-exceeded" "PowerShell sub-coordinator retries hard-limit handoff failures"
+
+if [[ -z "$PS_CMD" ]]; then
+  echo "SKIP: PowerShell unavailable for run-with-it-pool.ps1 behavioral contract"
+  exit 0
+fi
 
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"

@@ -84,6 +84,7 @@ JSON
 
 [[ -f "${POOL_RUNNER}" ]] || fail "run-with-it-pool.sh exists"
 [[ -x "${POOL_RUNNER}" ]] || fail "run-with-it-pool.sh is executable"
+assert_file_contains "${POOL_RUNNER}" 'SUB_COORD_MODEL="${SUB_COORD_MODEL:-gpt-5.6-sol}"' "pool runner directly locks the default Sub-Coordinator model"
 assert_file_contains "${POOL_RUNNER}" "merge_recovery" "pool runner documents merge recovery as non-terminal"
 assert_file_contains "${POOL_RUNNER}" "merge_failed" "pool runner maps merge failed reports to merge recovery"
 assert_file_contains "${POOL_RUNNER}" "analyze-sub-coord-failure" "pool runner analyzes failed sub-coordinators before finalizing"
