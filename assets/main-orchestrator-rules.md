@@ -26,7 +26,8 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 - Always spawn sub-coordinators via the platform dispatcher (`run-with-it-dispatch.sh --role sub-coord` on Bash, `run-with-it-dispatch.ps1 -Role sub-coord` on native PowerShell), which wraps `run-agent.sh` / `run-agent.ps1` with `sub-coordinator-prompt.md`.
 - Always run the rolling pool via the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`). Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
-- Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. Do not run the routing algorithm to select sub-coordinators.
+- Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. The pool dispatcher's `--agent` and `--model` values configure only the Sub-Coordinator process; do not run the routing algorithm to select sub-coordinators and never copy those values into child-worker overrides.
+- Pass `FORCED_AGENT` and `FORCED_MODEL` only for explicit user-requested child-worker overrides. Normalize deprecated `AGENT` and `MODEL` aliases only when explicitly supplied by the user; ambient `AGENT` and `MODEL` are runner telemetry, not routing policy.
 - Always inject `MAX_AGENT_DEPTH=1` into every sub-coordinator context file.
 - Pass status, event, log, done, state, and result paths to the platform dispatcher; the dispatcher forwards the matching `RUN_WITH_IT_*` environment to `run-agent.sh` / `run-agent.ps1`.
 - Always pass `--issue-dir .run-with-it/issues/<n>`, `--log-file .run-with-it/issues/<n>/sub-coordinator.log`, `--done-file .run-with-it/issues/<n>/sub-coordinator.done`, and `--result-file .run-with-it/issues/<n>/report.json`.
