@@ -162,6 +162,30 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `MAX_AGENT_DEPTH` | `1` | Always injected; prevents Sub-Coordinator children from spawning sub-agents |
 | `PARALLEL_JOBS` | `4` | Rolling pool size. Freed slots fill immediately. Set to `1` for sequential. |
 
+## Automatic Worker Model Matrix
+
+After calculating the effective routing band, every non-complexity automatic
+route uses this exact model set:
+
+| Effective band | Automatic models |
+|---|---|
+| quite-easy / easy | GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, eligible Gemini models exposed by Agy |
+| medium | GPT-5.6 Terra, Codex Spark, Claude Sonnet 5 |
+| medium-hard | GPT-5.5, GPT-5.6 Sol, Codex Spark, Claude Sonnet 5 |
+| complex / holy-fuck | GPT-5.6 Sol, Claude Opus 4.8 |
+
+Complexity scoring is exempt from this automatic matrix and retains its
+independent weight-based routing. Review applies its existing one-band increase; planning applies its existing two-band increase before applying the matrix. Explicit `FORCED_MODEL` values bypass automatic membership but must still pass compatibility and availability checks.
+
+Effective-band effort:
+
+- Sol: `high` at medium-hard, `xhigh` at complex and holy-fuck.
+- Sonnet 5: `low`, `medium`, `medium`, `high` from quite-easy through medium-hard.
+- Opus 4.8: `xhigh` at complex, `max` at holy-fuck.
+
+The generic route effort becomes Codex `model_reasoning_effort` or Claude Code
+`--effort`; Agy receives no effort flag.
+
 ## Asset Discovery (Required)
 
 Resolve assets in this order:

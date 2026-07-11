@@ -230,6 +230,29 @@ Override routing behavior with environment variables:
 | `COMPLEXITY_SCORE` | Force a numeric complexity score |
 | `AGENT_REGISTRY_FILE` | Override the path to `agent-registry.json` |
 
+### Automatic routing matrix
+
+The router calculates a base complexity band, applies the role adjustment, and
+then limits every non-complexity automatic route to this exact set:
+
+| Effective band | Automatic models |
+|---|---|
+| quite-easy / easy | GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, eligible Gemini models exposed by Agy |
+| medium | GPT-5.6 Terra, Codex Spark, Claude Sonnet 5 |
+| medium-hard | GPT-5.5, GPT-5.6 Sol, Codex Spark, Claude Sonnet 5 |
+| complex / holy-fuck | GPT-5.6 Sol, Claude Opus 4.8 |
+
+Complexity scoring keeps its independent lightweight routing. Review applies a
+one-band increase and planning applies a two-band increase before this matrix.
+Explicit forced-model overrides may select outside the automatic matrix but
+still must pass agent compatibility and availability checks.
+
+Effort is also based on the effective band: Sol uses `high` at medium-hard and
+`xhigh` at complex/holy-fuck; Sonnet 5 uses `low`, `medium`, `medium`, and `high`
+from quite-easy through medium-hard; Opus 4.8 uses `xhigh` at complex and `max`
+at holy-fuck. The runner translates these to Codex `model_reasoning_effort` or
+Claude Code `--effort`.
+
 ### Orchestration knobs
 
 Control how `run-with-it` schedules and intakes work:
