@@ -94,6 +94,7 @@ dry_output="$("${DISPATCHER}" \
   --cycle 1 \
   --agent codex \
   --model gpt-5.5 \
+  --effort xhigh \
   --context-file "${CONTEXT_FILE}" \
   --prompt-file "${PROMPT_FILE}" \
   --log-file "${LOG_FILE}" \
@@ -108,6 +109,7 @@ dry_output="$("${DISPATCHER}" \
 assert_contains "${dry_output}" "run-agent.sh" "dry-run wraps run-agent"
 assert_contains "${dry_output}" "--agent codex" "dry-run forwards agent"
 assert_contains "${dry_output}" "--model gpt-5.5" "dry-run forwards model"
+assert_contains "${dry_output}" "--effort xhigh" "dry-run forwards model effort"
 assert_contains "${dry_output}" "--context-file ${CONTEXT_FILE}" "dry-run forwards context file"
 assert_contains "${dry_output}" "--prompt-file ${PROMPT_FILE}" "dry-run forwards prompt file"
 assert_contains "${dry_output}" "RUN_WITH_IT_ROLE=impl" "dry-run sets role"
@@ -128,6 +130,7 @@ validate_output="$("${DISPATCHER}" \
   --cycle 1 \
   --agent codex \
   --model gpt-5.5 \
+  --effort xhigh \
   --context-file "${CONTEXT_FILE}" \
   --prompt-file "${PROMPT_FILE}" \
   --log-file "${LOG_FILE}" \
@@ -144,6 +147,7 @@ assert_file_contains "${STATUS_FILE}" "STATUS|type=dispatch-ready|issue=42|role=
 assert_file_contains "${EVENTS_LOG}" "STATUS|type=dispatch-ready|issue=42|role=impl|cycle=1" "validate-only appends events log"
 assert_json_file "${STATE_FILE}" "validate-only writes watchdog state JSON"
 assert_file_contains "${STATE_FILE}" '"state": "ready"' "validate-only records ready state"
+assert_file_contains "${STATE_FILE}" '"effort": "xhigh"' "validate-only records model effort"
 
 DEFAULT_LIMIT_STATE="${WORK_DIR}/default-sub-coord.state.json"
 DEFAULT_LIMIT_LOG="${WORK_DIR}/default-sub-coord.log"

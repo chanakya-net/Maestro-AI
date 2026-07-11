@@ -117,7 +117,7 @@ if "gpt-5.3-codex-spark" in codex_model.get("routing_disabled_models", []):
     raise SystemExit("codex registry must not disable Spark after the weekly limit reset")
 
 claude_model = registry["agents"]["claude"]["model"]
-if claude_model.get("known_models") != ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5"]:
+if claude_model.get("known_models") != ["claude-opus-4-8", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"]:
     raise SystemExit(f"claude known models mismatch: {claude_model.get('known_models')!r}")
 catalog = registry["model_catalog"]
 expected_gpt56 = {
@@ -133,7 +133,7 @@ for model_id, (ability, weight, min_band) in expected_gpt56.items():
     assert entry["context_window"] == 372000
     assert entry["reasoning_effort"] == "high"
 
-assert catalog["gpt-5.5"]["explicit_only"] is True
+assert catalog["gpt-5.5"].get("explicit_only") is not True
 assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["complex"]
 assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["holy-fuck"]
 assert "gpt-5.6-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
@@ -152,33 +152,64 @@ spec.loader.exec_module(router)
 def automatic(level, role="impl"):
     return router.candidate_model_ids(registry, role, level, None, None)
 
-assert "gpt-5.6-luna" not in automatic("quite-easy")
-assert "gpt-5.6-luna" in automatic("easy")
-assert "gpt-5.6-luna" not in automatic("medium")
-assert "gpt-5.6-terra" in automatic("medium")
-assert "gpt-5.6-terra" not in automatic("medium-hard")
-assert "gpt-5.6-sol" in automatic("medium-hard")
-assert "gpt-5.6-sol" in automatic("complex")
-assert "gpt-5.6-sol" in automatic("holy-fuck")
-for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
-    assert "gpt-5.5" not in automatic(level)
-
-automatic_bands = {
-    "gpt-5.6-luna": ["easy"],
-    "gpt-5.6-terra": ["medium"],
-    "gpt-5.6-sol": ["medium-hard", "complex", "holy-fuck"],
+expected_policy = {
+    "quite-easy": {"models": ["gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.6-luna", "claude-sonnet-5", "claude-haiku-4-5"], "providers": ["google"]},
+    "easy": {"models": ["gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.6-luna", "claude-sonnet-5", "claude-haiku-4-5"], "providers": ["google"]},
+    "medium": {"models": ["gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5"], "providers": []},
+    "medium-hard": {"models": ["gpt-5.5", "gpt-5.6-sol", "gpt-5.3-codex-spark", "claude-sonnet-5"], "providers": []},
+    "complex": {"models": ["gpt-5.6-sol", "claude-opus-4-8"], "providers": []},
+    "holy-fuck": {"models": ["gpt-5.6-sol", "claude-opus-4-8"], "providers": []},
 }
-for model_id, expected_bands in automatic_bands.items():
-    assert catalog[model_id].get("routing_bands") == expected_bands
-    for role in ("impl", "complexity"):
-        for level in ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"):
-            assert (model_id in automatic(level, role)) == (level in expected_bands)
+assert registry["model_routing"]["non_complexity_band_policy"] == expected_policy
+expected_targets = {
+    "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
+    "easy": {"codex": 55, "claude": 40, "agy": 5},
+    "medium": {"codex": 70, "claude": 30, "agy": 0},
+    "medium-hard": {"codex": 70, "claude": 30, "agy": 0},
+    "complex": {"codex": 70, "claude": 30, "agy": 0},
+    "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
+}
+assert distribution["non_complexity_band_target_percent"] == expected_targets
+assert set(distribution["role_band_target_percent"]) == {"complexity"}
+expected_effort = {
+    "gpt-5.6-sol": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
+    "claude-sonnet-5": {"quite-easy": "low", "easy": "medium", "medium": "medium", "medium-hard": "high"},
+    "claude-opus-4-8": {"complex": "xhigh", "holy-fuck": "max"},
+}
+assert registry["model_routing"]["effort_by_model_and_band"] == expected_effort
+for level, policy in expected_policy.items():
+    expected = set(policy["models"])
+    if "google" in policy["providers"]:
+        expected.update(model_id for model_id, entry in catalog.items() if entry.get("provider") == "google")
+    assert set(automatic(level, "impl")) == expected
+    assert set(automatic(level, "modify")) == expected
 
-assert router.candidate_model_ids(registry, "impl", "complex", "gpt-5.5", None) == ["gpt-5.5"]
+assert "gpt-5.4" not in automatic("complex")
+assert "gpt-5.4" not in automatic("holy-fuck")
+for score, level in {8: "quite-easy", 12: "quite-easy", 13: "easy", 17: "easy", 18: "medium", 22: "medium", 23: "medium-hard", 27: "medium-hard", 28: "complex", 32: "complex", 33: "holy-fuck", 40: "holy-fuck"}.items():
+    assert router.score_to_level(registry, score) == level
+assert router.routing_level("review", "medium") == "medium-hard"
+assert router.routing_level("plan", "medium") == "complex"
+
+assert router.candidate_model_ids(registry, "impl", "complex", "gpt-5.4", None) == ["gpt-5.4"]
 assert router.candidate_model_ids(registry, "complexity", "complex", "gpt-5.6-luna", None) == ["gpt-5.6-luna"]
 PY
 
 echo "PASS: registry declares subscription usage distribution"
+
+sol_medium_hard="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level medium-hard --detected-agents codex --forced-model gpt-5.6-sol)"
+assert_json_field "${sol_medium_hard}" 'payload["effort"] == "high"' "Sol medium-hard uses high effort"
+
+sol_complex="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level complex --detected-agents codex --forced-model gpt-5.6-sol)"
+assert_json_field "${sol_complex}" 'payload["effort"] == "xhigh"' "Sol complex uses xhigh effort"
+
+sonnet_easy="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level easy --detected-agents claude --forced-model claude-sonnet-5)"
+assert_json_field "${sonnet_easy}" 'payload["effort"] == "medium"' "Sonnet easy uses medium effort"
+
+opus_holy="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level holy-fuck --detected-agents claude --forced-model claude-opus-4-8)"
+assert_json_field "${opus_holy}" 'payload["effort"] == "max"' "Opus holy-fuck uses max effort"
+
+echo "PASS: router resolves band-specific model effort"
 
 UNBLOCKED_COPILOT_REGISTRY="${WORK_DIR}/unblocked-copilot-registry.json"
 python3 - "${REGISTRY_PATH}" "${UNBLOCKED_COPILOT_REGISTRY}" <<'PY'

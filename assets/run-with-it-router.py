@@ -330,6 +330,11 @@ def routing_level(role: str, base_level: str) -> str:
 
 def target_policy(registry: dict[str, Any], role: str, level: str) -> dict[str, int]:
     distribution = registry.get("model_routing", {}).get("usage_distribution", {})
+    if role != "complexity":
+        policy = distribution.get("non_complexity_band_target_percent", {}).get(level)
+        if not isinstance(policy, dict):
+            fail(f"missing non-complexity usage target for band: {level}")
+        return {str(agent): int(percent) for agent, percent in policy.items()}
     default_target = distribution.get("default_target_percent", {})
     role_band = distribution.get("role_band_target_percent", {})
     role_targets = distribution.get("role_target_percent", {})
@@ -378,6 +383,26 @@ def compatible_agents_for_model(
     return candidates
 
 
+def automatic_policy_model_ids(registry: dict[str, Any], level: str) -> list[str]:
+    catalog = registry.get("model_catalog", {})
+    policy = registry.get("model_routing", {}).get("non_complexity_band_policy", {}).get(level)
+    if not isinstance(policy, dict):
+        fail(f"missing non-complexity automatic model policy for band: {level}")
+
+    selected: list[str] = []
+    for model_id in [str(value) for value in policy.get("models", [])]:
+        if model_id not in catalog:
+            fail(f"automatic model policy references unknown model: {model_id}")
+        if model_id not in selected:
+            selected.append(model_id)
+
+    providers = {str(value) for value in policy.get("providers", [])}
+    for model_id, entry in catalog.items():
+        if str(entry.get("provider", "")) in providers and model_id not in selected:
+            selected.append(model_id)
+    return selected
+
+
 def candidate_model_ids(
     registry: dict[str, Any],
     role: str,
@@ -392,11 +417,15 @@ def candidate_model_ids(
             fail(f"forced model is not in model_catalog: {forced_model}")
         return [forced_model]
 
+    if role != "complexity":
+        return [
+            model_id
+            for model_id in automatic_policy_model_ids(registry, level)
+            if model_id not in exclude_models
+        ]
+
     routing = registry.get("model_routing", {})
-    if role == "complexity":
-        weight_min, weight_max = 1, 6
-    else:
-        weight_min, weight_max = weight_range_for_level(registry, level)
+    weight_min, weight_max = 1, 6
 
     candidates: list[str] = []
     for model_id, entry in catalog.items():
@@ -486,6 +515,14 @@ def candidate_pairs(
                 }
             )
     return pairs
+
+
+def model_effort_for_level(registry: dict[str, Any], model_id: str, level: str) -> str:
+    effort_map = registry.get("model_routing", {}).get("effort_by_model_and_band", {})
+    band_effort = effort_map.get(model_id, {}).get(level)
+    if band_effort:
+        return str(band_effort)
+    return str(registry.get("model_catalog", {}).get(model_id, {}).get("reasoning_effort", ""))
 
 
 def select_pair(
@@ -601,6 +638,7 @@ def select_pair(
             "role": role,
             "complexity_level": base_level,
             "routing_level": level,
+            "effort": model_effort_for_level(registry, selected["model"], level),
             "selection_reason": reason,
             "target_percent": policy.get(agent, 0),
             "global_target_percent": global_policy.get(agent, policy.get(agent, 0)),
@@ -629,6 +667,7 @@ def append_decision(ledger: dict[str, Any], selection: dict[str, Any]) -> dict[s
         "routing_level": selection["routing_level"],
         "agent": selection["agent"],
         "model": selection["model"],
+        "effort": selection.get("effort", ""),
         "selection_reason": selection["selection_reason"],
     }
     ledger.setdefault("decisions", []).append(decision)
@@ -656,6 +695,7 @@ def build_output(
         "schema_version": 1,
         "agent": agent,
         "model": selection["model"],
+        "effort": selection.get("effort", ""),
         "role": selection["role"],
         "complexity_level": selection["complexity_level"],
         "routing_level": selection["routing_level"],

@@ -12,6 +12,7 @@ ISSUE=""
 CYCLE=""
 AGENT_NAME=""
 MODEL_NAME=""
+MODEL_EFFORT=""
 CONTEXT_FILE=""
 PROMPT_FILE=""
 LOG_FILE=""
@@ -50,7 +51,7 @@ fail() {
 usage() {
   cat <<'EOF'
 Usage:
-  run-with-it-dispatch.sh --role <role> --issue <n> --agent <agent> --model <model> \
+  run-with-it-dispatch.sh --role <role> --issue <n> --agent <agent> --model <model> [--effort <level>] \
     --context-file <file> --prompt-file <file> --log-file <file> --done-file <file> \
     --result-file <file> [--state-file <file>] [--repo-root <path>] [--issue-dir <path>] [--cycle <n>] [--status-file <file>] [--events-log <file>]
 
@@ -69,6 +70,7 @@ while [ "$#" -gt 0 ]; do
     --cycle) CYCLE="${2:-}"; shift 2 ;;
     --agent) AGENT_NAME="${2:-}"; shift 2 ;;
     --model) MODEL_NAME="${2:-}"; shift 2 ;;
+    --effort) MODEL_EFFORT="${2:-}"; shift 2 ;;
     --context-file) CONTEXT_FILE="${2:-}"; shift 2 ;;
     --prompt-file) PROMPT_FILE="${2:-}"; shift 2 ;;
     --log-file) LOG_FILE="${2:-}"; shift 2 ;;
@@ -406,6 +408,7 @@ write_worker_state() {
   "runner_pid": ${runner_pid_json},
   "agent": $(json_string "$AGENT_NAME"),
   "model": $(json_string "$MODEL_NAME"),
+  "effort": $(json_string "$MODEL_EFFORT"),
   "alive": ${alive},
   "done": ${done_present},
   "result_present": ${result_present},
@@ -475,9 +478,9 @@ if [ -n "$CYCLE" ]; then
 fi
 
 if [ "$DRY_RUN" = 1 ]; then
-  printf 'GUI_MODE=0 AGENT_REGISTRY_FILE=%s REPO_ROOT=%s RUN_WITH_IT_ISSUE_DIR=%s RUN_WITH_IT_STATUS_FILE=%s RUN_WITH_IT_EVENTS_LOG=%s RUN_WITH_IT_LOG_FILE=%s RUN_WITH_IT_DONE_FILE=%s RUN_WITH_IT_RESULT_FILE=%s RUN_WITH_IT_STATE_FILE=%s RUN_WITH_IT_ARTIFACT_HELPER=%s RUN_WITH_IT_ROLE=%s RUN_WITH_IT_ISSUE=%s %s --agent %s --model %s --context-file %s --prompt-file %s --unattended\n' \
+  printf 'GUI_MODE=0 AGENT_REGISTRY_FILE=%s REPO_ROOT=%s RUN_WITH_IT_ISSUE_DIR=%s RUN_WITH_IT_STATUS_FILE=%s RUN_WITH_IT_EVENTS_LOG=%s RUN_WITH_IT_LOG_FILE=%s RUN_WITH_IT_DONE_FILE=%s RUN_WITH_IT_RESULT_FILE=%s RUN_WITH_IT_STATE_FILE=%s RUN_WITH_IT_ARTIFACT_HELPER=%s RUN_WITH_IT_ROLE=%s RUN_WITH_IT_ISSUE=%s %s --agent %s --model %s --effort %s --context-file %s --prompt-file %s --unattended\n' \
     "$REGISTRY_FILE" "$(repo_root_for_worker)" "$ISSUE_DIR" "$STATUS_FILE" "$EVENTS_LOG" "$LOG_FILE" "$DONE_FILE" "$RESULT_FILE" "$STATE_FILE" "$ARTIFACT_HELPER" "$ROLE" "$ISSUE" \
-    "$RUN_AGENT" "$AGENT_NAME" "$MODEL_NAME" "$CONTEXT_FILE" "$PROMPT_FILE"
+    "$RUN_AGENT" "$AGENT_NAME" "$MODEL_NAME" "$MODEL_EFFORT" "$CONTEXT_FILE" "$PROMPT_FILE"
   exit 0
 fi
 
@@ -600,7 +603,7 @@ last_heartbeat_line=""
 last_log_signature="$(log_signature)"
 last_state="ready"
 
-write_status "STATUS|type=dispatch-ready|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}|result_file=${RESULT_FILE}"
+write_status "STATUS|type=dispatch-ready|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}|effort=${MODEL_EFFORT}|result_file=${RESULT_FILE}"
 last_log_signature="$(log_signature)"
 dispatch_phase="ready-state"
 write_worker_state "ready" "false"
@@ -611,7 +614,7 @@ if [ "$VALIDATE_ONLY" = 1 ]; then
 fi
 
 dispatch_phase="starting"
-write_status "STATUS|type=dispatch-start|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}"
+write_status "STATUS|type=dispatch-start|issue=${ISSUE}|role=${ROLE}${cycle_field}|agent=${AGENT_NAME}|model=${MODEL_NAME}|effort=${MODEL_EFFORT}"
 last_log_signature="$(log_signature)"
 last_state="starting"
 write_worker_state "starting" "false"
@@ -633,6 +636,7 @@ RUN_WITH_IT_ISSUE="$ISSUE" \
 nohup "$RUN_AGENT" \
   --agent "$AGENT_NAME" \
   --model "$MODEL_NAME" \
+  --effort "$MODEL_EFFORT" \
   --context-file "$CONTEXT_FILE" \
   --prompt-file "$PROMPT_FILE" \
   --unattended \

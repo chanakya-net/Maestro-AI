@@ -246,6 +246,7 @@ dry_output="$("$PS_CMD" -NoProfile -File "$DISPATCHER" \
   -Cycle 1 \
   -Agent fake \
   -Model fake-model \
+  -Effort xhigh \
   -ContextFile "$CONTEXT_FILE" \
   -PromptFile "$PROMPT_FILE" \
   -LogFile "$LOG_FILE" \
@@ -260,6 +261,28 @@ assert_contains "$dry_output" "RUN_WITH_IT_STATE_FILE=${STATE_FILE}" "dry-run se
 assert_contains "$dry_output" "RUN_WITH_IT_RESULT_FILE=${RESULT_FILE}" "dry-run sets result file"
 assert_contains "$dry_output" "RUN_WITH_IT_ARTIFACT_HELPER=${SMOKE_ASSET_ROOT}/run-with-it-artifacts.py" "dry-run exposes artifact helper to workers"
 assert_contains "$dry_output" "run-agent.ps1" "dry-run wraps run-agent.ps1"
+assert_contains "$dry_output" "--effort xhigh" "PowerShell dry-run forwards model effort"
+
+"$PS_CMD" -NoProfile -File "$DISPATCHER" \
+  -ValidateOnly \
+  -AssetRoot "$SMOKE_ASSET_ROOT" \
+  -Role impl \
+  -Issue 42 \
+  -Cycle 1 \
+  -Agent fake \
+  -Model fake-model \
+  -Effort xhigh \
+  -ContextFile "$CONTEXT_FILE" \
+  -PromptFile "$PROMPT_FILE" \
+  -LogFile "$LOG_FILE" \
+  -DoneFile "$DONE_FILE" \
+  -ResultFile "$RESULT_FILE" \
+  -StateFile "$STATE_FILE" \
+  -RepoRoot "$SMOKE_REPO_ROOT" \
+  -IssueDir "$ISSUE_DIR" \
+  -StatusFile "$STATUS_FILE" \
+  -EventsLog "$EVENTS_LOG" >/dev/null
+assert_file_contains "$STATE_FILE" '"effort": "xhigh"' "PowerShell validate-only records model effort"
 
 PS_DEFAULT_LIMIT_STATE="${WORK_DIR}/default-sub-coord.state.json"
 "$PS_CMD" -NoProfile -File "$DISPATCHER" \

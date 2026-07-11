@@ -31,6 +31,7 @@ PERMANENTLY_BLOCKED_AGENT_REASON="GitHub Copilot plan is exhausted; blocked from
 
 AGENT="${AGENT:-}"
 MODEL="${MODEL:-}"
+MODEL_EFFORT="${MODEL_EFFORT:-}"
 CONTEXT_PAYLOAD_FILE="${CONTEXT_PAYLOAD_FILE:-}"
 PROMPT_FILE="${PROMPT_FILE:-${SCRIPT_DIR}/prompt.md}"
 PRINT_PROMPT="${PRINT_PROMPT:-0}"
@@ -263,12 +264,12 @@ forward_status_stream() {
 usage() {
   cat <<'EOF'
 Usage:
-  run-agent.sh --agent <agent> [--model <model>] --context-file <file> --prompt-file <file> [--dry-run] [--unattended]
+  run-agent.sh --agent <agent> [--model <model>] [--effort <level>] --context-file <file> --prompt-file <file> [--dry-run] [--unattended]
   run-agent.sh --list-agents [--detected-only]
   run-agent.sh --list-models <agent>
 
 Environment equivalents:
-  AGENT, MODEL, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED,
+  AGENT, MODEL, MODEL_EFFORT, CONTEXT_PAYLOAD_FILE, PROMPT_FILE, PRINT_PROMPT, AGENT_PERMISSION_MODE, AGENT_REGISTRY_FILE, UNATTENDED,
   RUN_WITH_IT_STATUS_FILE, RUN_WITH_IT_EVENTS_LOG, RUN_WITH_IT_LOG_FILE, RUN_WITH_IT_DONE_FILE, RUN_WITH_IT_RESULT_FILE,
   RUN_WITH_IT_STATE_FILE, RUN_WITH_IT_ROLE, RUN_WITH_IT_ISSUE, RUN_WITH_IT_ISSUE_DIR, REPO_ROOT
 EOF
@@ -343,6 +344,11 @@ while [[ $# -gt 0 ]]; do
     --model)
       [[ $# -ge 2 ]] || fail "--model requires a value"
       MODEL="$2"
+      shift 2
+      ;;
+    --effort)
+      [[ $# -ge 2 ]] || fail "--effort requires a value"
+      MODEL_EFFORT="$2"
       shift 2
       ;;
     --context-file|--context-payload-file)
@@ -747,9 +753,9 @@ if [[ -n "${MODEL}" ]]; then
   model_flag="${model_flag_template//\{\{model\}\}/${MODEL}}"
 fi
 
-model_reasoning_effort=""
-if [[ -n "${MODEL}" ]]; then
-  model_reasoning_effort="$(json_value model_reasoning_effort "${MODEL}")"
+model_effort="${MODEL_EFFORT}"
+if [[ -z "${model_effort}" && -n "${MODEL}" ]]; then
+  model_effort="$(json_value model_reasoning_effort "${MODEL}")"
 fi
 
 cmd=("${invoke_command}")
@@ -780,8 +786,11 @@ while IFS= read -r template_arg; do
       fi
       ;;
     "{{model_settings}}")
-      if [[ -n "${model_reasoning_effort}" ]]; then
-        cmd+=("-c" "model_reasoning_effort=${model_reasoning_effort}")
+      if [[ -n "${model_effort}" ]]; then
+        case "${AGENT}" in
+          codex) cmd+=("-c" "model_reasoning_effort=${model_effort}") ;;
+          claude) cmd+=("--effort" "${model_effort}") ;;
+        esac
       fi
       ;;
     *)
