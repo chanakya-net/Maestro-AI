@@ -5,6 +5,7 @@ param(
     [string]$Cycle = "",
     [Parameter(Mandatory = $true)][string]$Agent,
     [Parameter(Mandatory = $true)][string]$Model,
+    [string]$Effort = "",
     [Parameter(Mandatory = $true)][string]$ContextFile,
     [Parameter(Mandatory = $true)][string]$PromptFile,
     [Parameter(Mandatory = $true)][string]$LogFile,
@@ -191,6 +192,7 @@ function Write-WorkerState(
         runner_pid = $(if ($script:runnerPid) { $script:runnerPid } else { $null })
         agent = $Agent
         model = $Model
+        effort = $Effort
         alive = $alive
         done = ((Test-Path $DoneFile) -and ((Get-Item $DoneFile).Length -gt 0))
         result_present = ((Test-Path $ResultFile) -and ((Get-Item $ResultFile).Length -gt 0))
@@ -344,7 +346,7 @@ $cycleField = if ($Cycle) { "|cycle=$Cycle" } else { "" }
 
 if ($DryRun) {
     $repoRootValue = if ($RepoRoot) { $RepoRoot } elseif ($env:REPO_ROOT) { $env:REPO_ROOT } else { (Get-Location).Path }
-    Write-Output "GUI_MODE=0 AGENT_REGISTRY_FILE=$RegistryFile REPO_ROOT=$repoRootValue RUN_WITH_IT_ISSUE_DIR=$IssueDir RUN_WITH_IT_STATUS_FILE=$StatusFile RUN_WITH_IT_EVENTS_LOG=$EventsLog RUN_WITH_IT_LOG_FILE=$LogFile RUN_WITH_IT_DONE_FILE=$DoneFile RUN_WITH_IT_RESULT_FILE=$ResultFile RUN_WITH_IT_STATE_FILE=$StateFile RUN_WITH_IT_ARTIFACT_HELPER=$script:ArtifactHelper RUN_WITH_IT_ROLE=$Role RUN_WITH_IT_ISSUE=$Issue $RunAgent --agent $Agent --model $Model --context-file $ContextFile --prompt-file $PromptFile --unattended"
+    Write-Output "GUI_MODE=0 AGENT_REGISTRY_FILE=$RegistryFile REPO_ROOT=$repoRootValue RUN_WITH_IT_ISSUE_DIR=$IssueDir RUN_WITH_IT_STATUS_FILE=$StatusFile RUN_WITH_IT_EVENTS_LOG=$EventsLog RUN_WITH_IT_LOG_FILE=$LogFile RUN_WITH_IT_DONE_FILE=$DoneFile RUN_WITH_IT_RESULT_FILE=$ResultFile RUN_WITH_IT_STATE_FILE=$StateFile RUN_WITH_IT_ARTIFACT_HELPER=$script:ArtifactHelper RUN_WITH_IT_ROLE=$Role RUN_WITH_IT_ISSUE=$Issue $RunAgent --agent $Agent --model $Model --effort $Effort --context-file $ContextFile --prompt-file $PromptFile --unattended"
     exit 0
 }
 
@@ -369,6 +371,7 @@ if ($Detach -and -not $DetachedChild -and -not $ValidateOnly) {
         "-Cycle", $Cycle,
         "-Agent", $Agent,
         "-Model", $Model,
+        "-Effort", $Effort,
         "-ContextFile", $ContextFile,
         "-PromptFile", $PromptFile,
         "-LogFile", $LogFile,
@@ -419,7 +422,7 @@ if (Test-ImplementationRole) {
 }
 
 try {
-    Write-Status "STATUS|type=dispatch-ready|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|result_file=$ResultFile"
+    Write-Status "STATUS|type=dispatch-ready|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|effort=$Effort|result_file=$ResultFile"
     Write-WorkerState "ready" $false
 } catch {
     Write-Status "STATUS|type=dispatch-pre-start-failed|issue=$Issue|role=$Role$cycleField|reason=state-write-failed|state_file=$StateFile"
@@ -430,7 +433,7 @@ if ($ValidateOnly) {
     exit 0
 }
 
-Write-Status "STATUS|type=dispatch-start|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model"
+Write-Status "STATUS|type=dispatch-start|issue=$Issue|role=$Role$cycleField|agent=$Agent|model=$Model|effort=$Effort"
 $script:lastState = "starting"
 Write-WorkerState "starting" $false
 
@@ -440,6 +443,7 @@ $runnerArgs = @(
     "-File", $RunAgent,
     "--agent", $Agent,
     "--model", $Model,
+    "--effort", $Effort,
     "--context-file", $ContextFile,
     "--prompt-file", $PromptFile,
     "--unattended"

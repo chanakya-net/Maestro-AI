@@ -221,7 +221,7 @@ Initial schema:
 
 Write this file before every major phase transition and immediately after every worker PID is captured. On context compression/resume, read this file first. If a listed worker still has no valid result artifact, use its stored `pid`, `done_file`, `log_file`, and `result_file` to decide whether to continue waiting, process completed artifacts, or re-spawn the phase.
 
-State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_agents`, `review_history`, and `updated_at`. Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `selection_reason`, `log_file`, `done_file`, `result_file`, and `started_at`. Populate `selection_reason` from the selected route decision, never from raw logs.
+State writes must include `schema_version`, `issue_number`, `phase`, `in_flight_agents`, `review_history`, and `updated_at`. Each `in_flight_agents` entry must include `role`, `cycle`, `pid`, `agent`, `model`, `effort`, `selection_reason`, `log_file`, `done_file`, `result_file`, and `started_at`. Populate `effort` and `selection_reason` from the selected route decision, never from raw logs.
 
 ## Recovery Mode
 
@@ -296,6 +296,7 @@ WORKER_STATE_FILE="$RUN_WITH_IT_ISSUE_DIR/workers/impl/cycle-${CYCLE:-1}.state.j
   --cycle "${CYCLE:-1}" \
   --agent "$AGENT" \
   --model "$MODEL" \
+  --effort "$EFFORT" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/prompt.md" \
   --log-file "$IMPL_LOG_FILE" \
@@ -336,6 +337,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -Cycle $env:CYCLE `
   -Agent $AGENT `
   -Model $MODEL `
+  -Effort $EFFORT `
   -ContextFile $CONTEXT_PAYLOAD_FILE `
   -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
   -LogFile $IMPL_LOG_FILE `
@@ -490,9 +492,10 @@ ROUTE_JSON="$("$PYTHON_BIN" "$ROUTER_FILE" \
   --record)"
 AGENT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["agent"])')"
 MODEL="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+EFFORT="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin).get("effort", ""))')"
 SELECTION_REASON="$(printf '%s' "$ROUTE_JSON" | "$PYTHON_BIN" -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
-printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|reason=%s\n' \
-  "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" "$SELECTION_REASON" \
+printf 'STATUS|type=route-selected|issue=%s|role=%s|agent=%s|model=%s|effort=%s|reason=%s\n' \
+  "$SUB_COORD_ISSUE_NUMBER" "$ROUTE_ROLE" "$AGENT" "$MODEL" "$EFFORT" "$SELECTION_REASON" \
   >> "$SUB_COORD_LOG_FILE"
 ```
 
@@ -525,8 +528,9 @@ $routeJson = & $pythonBin $routerFile `
 $route = $routeJson | ConvertFrom-Json
 $AGENT = $route.agent
 $MODEL = $route.model
+$EFFORT = if ($route.effort) { [string]$route.effort } else { "" }
 $SELECTION_REASON = $route.selection_reason
-Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "STATUS|type=route-selected|issue=$env:SUB_COORD_ISSUE_NUMBER|role=$env:ROUTE_ROLE|agent=$AGENT|model=$MODEL|reason=$SELECTION_REASON"
+Add-Content -Path $env:SUB_COORD_LOG_FILE -Value "STATUS|type=route-selected|issue=$env:SUB_COORD_ISSUE_NUMBER|role=$env:ROUTE_ROLE|agent=$AGENT|model=$MODEL|effort=$EFFORT|reason=$SELECTION_REASON"
 ```
 
 Route helper inputs by phase:
@@ -603,6 +607,7 @@ mkdir -p "$COMPLEXITY_WORKER_DIR"
   --cycle 1 \
   --agent "$AGENT" \
   --model "$MODEL" \
+  --effort "$EFFORT" \
   --context-file "$COMPLEXITY_CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/complexity-prompt.md" \
   --log-file "$COMPLEXITY_LOG_FILE" \
@@ -636,6 +641,7 @@ New-Item -ItemType Directory -Force -Path $COMPLEXITY_WORKER_DIR | Out-Null
   -Cycle 1 `
   -Agent $AGENT `
   -Model $MODEL `
+  -Effort $EFFORT `
   -ContextFile $COMPLEXITY_CONTEXT_PAYLOAD_FILE `
   -PromptFile (Join-Path $ASSET_ROOT "complexity-prompt.md") `
   -LogFile $COMPLEXITY_LOG_FILE `
@@ -783,6 +789,7 @@ else
     --cycle 1 \
     --agent "$AGENT" \
     --model "$MODEL" \
+    --effort "$EFFORT" \
     --context-file "$PLAN_CONTEXT_PAYLOAD_FILE" \
     --prompt-file "$ASSET_ROOT/plan-prompt.md" \
     --log-file "$PLAN_LOG_FILE" \
@@ -846,6 +853,7 @@ New-Item -ItemType Directory -Force -Path $PLAN_WORKER_DIR | Out-Null
   -Cycle 1 `
   -Agent $AGENT `
   -Model $MODEL `
+  -Effort $EFFORT `
   -ContextFile $PLAN_CONTEXT_PAYLOAD_FILE `
   -PromptFile (Join-Path $ASSET_ROOT "plan-prompt.md") `
   -LogFile $PLAN_LOG_FILE `
@@ -897,6 +905,7 @@ mkdir -p "$IMPL_WORKER_DIR"
   --cycle "${CYCLE:-1}" \
   --agent "$AGENT" \
   --model "$MODEL" \
+  --effort "$EFFORT" \
   --context-file "$CONTEXT_PAYLOAD_FILE" \
   --prompt-file "$ASSET_ROOT/prompt.md" \
   --log-file "$IMPL_LOG_FILE" \
@@ -933,6 +942,7 @@ New-Item -ItemType Directory -Force -Path $IMPL_WORKER_DIR | Out-Null
   -Cycle $env:CYCLE `
   -Agent $AGENT `
   -Model $MODEL `
+  -Effort $EFFORT `
   -ContextFile $CONTEXT_PAYLOAD_FILE `
   -PromptFile (Join-Path $ASSET_ROOT "prompt.md") `
   -LogFile $IMPL_LOG_FILE `
@@ -1530,6 +1540,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
       "cycle": 1,
       "agent": "codex",
       "model": "gpt-5.3-codex",
+      "effort": "high",
       "selection_reason": "under-target"
     }
   ],

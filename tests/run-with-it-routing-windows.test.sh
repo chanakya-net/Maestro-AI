@@ -92,6 +92,7 @@ assert_not_contains_file "$SKILL_FILE" "native PowerShell can install assets and
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "run-with-it-dispatch.ps1" "sub-coordinator prompt uses PowerShell dispatcher"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "-Detach" "PowerShell worker launch uses detached dispatcher"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" "-StateFile \$WORKER_STATE_FILE" "PowerShell worker launch passes state file"
+assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" '-Effort $EFFORT' "PowerShell worker launch passes routed effort"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\issues" "PowerShell examples use issue-scoped artifact folder"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" '$ISSUE_BASE_REF = "origin/$env:RUN_FEATURE_BRANCH"' "PowerShell worktree bootstrap prefers remote shared tip"
 assert_contains_file "$SUB_COORDINATOR_PROMPT_FILE" 'issue_base_source = $ISSUE_BASE_SOURCE' "PowerShell worktree bootstrap persists base source"
