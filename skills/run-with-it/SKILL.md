@@ -24,7 +24,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run under any circumstance.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction.
-- **Never inject AGENT or MODEL overrides into a Sub-Coordinator that has already been spawned.** Routing overrides (`AGENT`, `MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
+- **Never inject worker-routing overrides into a Sub-Coordinator that has already been spawned.** Canonical worker overrides (`FORCED_AGENT`, `FORCED_MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the platform dispatcher calls `run-agent.sh` / `run-agent.ps1`, those values are locked and the Main Orchestrator must not attempt to change them.
 - **Run the platform pool runner (`run-with-it-pool.sh` / `run-with-it-pool.ps1`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
 - **Use the platform worker watcher (`worker-watch.sh` / `worker-watch.ps1`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass each dispatch child PID, `done_file`, and `log_file`; treat PID liveness as diagnostic only. Completion requires the done sentinel and compact report artifacts.
 - **All judgments about implementation quality, routing correctness, and worker behavior come exclusively from the compact report JSON.** The Main Orchestrator has no other source of truth about what happened inside a Sub-Coordinator session.
@@ -149,8 +149,10 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_DONE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.done` |
 | `RUN_WITH_IT_RESULT_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json` |
 | `RUN_WITH_IT_STATE_FILE` | role-specific | Workers: `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>.state.json`; dispatcher-maintained watchdog state |
-| `AGENT` | — | Routing override passed through to Sub-Coordinators |
-| `MODEL` | — | Routing override passed through to Sub-Coordinators |
+| `FORCED_AGENT` | — | Canonical explicit child-worker agent override passed through to Sub-Coordinators |
+| `FORCED_MODEL` | — | Canonical explicit child-worker model override passed through to Sub-Coordinators |
+| `AGENT` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`; ambient `AGENT` runner telemetry is ignored |
+| `MODEL` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`; ambient `MODEL` runner telemetry is ignored |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
 | `COMPLEXITY_SCORE` | — | Routing override passed through to Sub-Coordinators |
 | `AGENT_ALLOWLIST` | — | Comma-separated; passed through to Sub-Coordinators |
@@ -380,13 +382,23 @@ Build $SUB_COORD_CONTEXT_FILE_<n> (a separate temp file per issue) containing, i
      DELEGATED_REVIEW=<value>
      MAX_ITERATIONS=<value>
      COMMITS_LIMIT=<value>
-     AGENT=<value-if-set>
-     MODEL=<value-if-set>
+     FORCED_AGENT=<explicit-worker-override-if-set>
+     FORCED_MODEL=<explicit-worker-override-if-set>
      COMPLEXITY_LEVEL=<value-if-set>
      COMPLEXITY_SCORE=<value-if-set>
      AGENT_ALLOWLIST=<value-if-set>
      AGENT_DENYLIST=<value-if-set>
      MAX_AGENT_FALLBACKS=<value>
+
+  The Main Orchestrator handles compatibility at the trusted user-request
+  boundary. Explicit user request `AGENT=<value>` becomes `FORCED_AGENT=<value>`.
+  Explicit user request `MODEL=<value>` becomes `FORCED_MODEL=<value>`.
+  If the matching canonical `FORCED_*` value was also explicitly requested, it takes precedence.
+  Never inspect ambient `AGENT` or `MODEL` to infer aliases. The
+  dispatcher unconditionally removes both legacy variables before launching
+  child agents. `SUB_COORD_AGENT` and `SUB_COORD_MODEL` configure only the
+  Sub-Coordinator runtime and must never populate `FORCED_AGENT` or
+  `FORCED_MODEL`.
 
   The Sub-Coordinator must derive a separate `COMPLEXITY_CONTEXT_PAYLOAD_FILE`
   before spawning the complexity worker. That file is a sanitized scoring brief,

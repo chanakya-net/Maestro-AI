@@ -218,8 +218,10 @@ Override routing behavior with environment variables:
 
 | Variable | Effect |
 |----------|--------|
-| `AGENT` | Force a specific enabled agent (codex, claude, agy). `github-copilot`/`copilot` fails fast while the Copilot plan is exhausted. |
-| `MODEL` | Force a specific model |
+| `FORCED_AGENT` | Canonical explicit child-worker agent override (codex, claude, agy). `github-copilot`/`copilot` fails fast while the Copilot plan is exhausted. |
+| `FORCED_MODEL` | Canonical explicit child-worker model override |
+| `AGENT` | Deprecated compatibility alias: normalize only an explicitly user-supplied value to `FORCED_AGENT`; never read ambient runtime values. |
+| `MODEL` | Deprecated compatibility alias: normalize only an explicitly user-supplied value to `FORCED_MODEL`; never read ambient runtime values. |
 | `AGENT_ALLOWLIST` | Comma-separated agent slugs to permit |
 | `AGENT_DENYLIST` | Comma-separated agent slugs to block |
 | `RUN_WITH_IT_MODEL_DENYLIST` | Comma-separated models or `agent:model` routes to exclude after availability failures |
@@ -248,6 +250,17 @@ Control how `run-with-it` schedules and intakes work:
 | `RUN_WITH_IT_WORKER_STALL_SECONDS` | platform default | Seconds of worker silence before `stalled` status |
 | `RUN_WITH_IT_HEARTBEAT_SECONDS` | `30` | Runner-owned heartbeat cadence, independent of model stdout |
 | `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` | `7200` | Hard elapsed worker bound; `0` disables it |
+
+The pool dispatcher's `--agent` and `--model` values, including the default Sol
+model, configure only each Sub-Coordinator process. They never become
+child-worker routing overrides; use explicit `FORCED_AGENT` and `FORCED_MODEL`
+for that policy.
+
+For deprecated compatibility, the Main Orchestrator normalizes `AGENT` or
+`MODEL` only when that alias is explicitly named in the user's request. A
+matching canonical `FORCED_*` request takes precedence. Ambient `AGENT` and
+`MODEL` are never inspected for aliases and are discarded at the dispatcher
+boundary, so they cannot affect Sub-Coordinator routing.
 
 ## Testing
 

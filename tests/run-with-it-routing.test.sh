@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_FILE="${ROOT_DIR}/skills/run-with-it/SKILL.md"
+ACTIVE_SKILL_FILE="${ROOT_DIR}/.agents/skills/run-with-it/SKILL.md"
 ORCHESTRATOR_RULES_FILE="${ROOT_DIR}/assets/main-orchestrator-rules.md"
 COORDINATOR_RULES_FILE="${ROOT_DIR}/assets/coordinator-rules.md"
 SUB_COORDINATOR_PROMPT_FILE="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
@@ -13,6 +14,8 @@ MODIFIER_PROMPT_FILE="${ROOT_DIR}/assets/modifier-prompt.md"
 COMPLEXITY_PROMPT_FILE="${ROOT_DIR}/assets/complexity-prompt.md"
 ARTIFACT_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/artifact-recovery-prompt.md"
 MERGE_RECOVERY_PROMPT_FILE="${ROOT_DIR}/assets/merge-recovery-prompt.md"
+ROUTER_FILE="${ROOT_DIR}/assets/run-with-it-router.py"
+REGISTRY_FILE="${ROOT_DIR}/assets/agent-registry.json"
 
 fail() {
   echo "FAIL: $1" >&2
@@ -124,6 +127,7 @@ assert_not_present_in_active_files() {
 }
 
 [[ -f "$SKILL_FILE" ]] || fail "run-with-it skill file exists"
+[[ -f "$ACTIVE_SKILL_FILE" ]] || fail "active run-with-it skill copy exists"
 [[ -f "$ORCHESTRATOR_RULES_FILE" ]] || fail "main-orchestrator-rules file exists"
 [[ -f "$COORDINATOR_RULES_FILE" ]] || fail "coordinator-rules file exists"
 [[ -f "$SUB_COORDINATOR_PROMPT_FILE" ]] || fail "sub-coordinator-prompt file exists"
@@ -178,9 +182,60 @@ assert_contains 'Never load full sub-coordinator log files' "documents no-load p
 assert_contains 'RUN_WITH_IT_ISSUE_DIR' "documents issue-scoped sub-coordinator artifact folder"
 
 # Routing overrides (passed through to sub-coordinator)
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'FORCED_AGENT=<explicit-worker-override-if-set>' "Step C names the canonical forced agent override"
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'FORCED_MODEL=<explicit-worker-override-if-set>' "Step C names the canonical forced model override"
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'Explicit user request `AGENT=<value>` becomes `FORCED_AGENT=<value>`' "Step C normalizes an explicit deprecated agent alias at the trusted user-input boundary"
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'Explicit user request `MODEL=<value>` becomes `FORCED_MODEL=<value>`' "Step C normalizes an explicit deprecated model alias at the trusted user-input boundary"
+assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'If the matching canonical `FORCED_*` value was also explicitly requested, it takes precedence' "Step C gives canonical worker overrides precedence over deprecated aliases"
+assert_file_not_contains "$SKILL_FILE" 'AGENT=<value-if-set>' "Step C does not leak the coordinator agent into child routing"
+assert_file_not_contains "$SKILL_FILE" 'MODEL=<value-if-set>' "Step C does not leak the coordinator model into child routing"
+assert_file_line_contains "$SKILL_FILE" '| `AGENT` |' 'Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`' "top-level AGENT remains an explicit-only deprecated alias"
+assert_file_line_contains "$SKILL_FILE" '| `MODEL` |' 'Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`' "top-level MODEL remains an explicit-only deprecated alias"
+assert_file_not_contains "$SKILL_FILE" 'RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES' "skill removes the ambient legacy provenance-marker contract"
+assert_file_not_contains "$ORCHESTRATOR_RULES_FILE" 'RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES' "Main Orchestrator rules remove the ambient legacy provenance-marker contract"
+assert_file_not_contains "$SUB_COORDINATOR_PROMPT_FILE" 'RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES' "Sub-Coordinator prompt removes the ambient legacy provenance-marker contract"
+assert_file_not_contains "${ROOT_DIR}/README.md" 'RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES' "README removes the ambient legacy provenance-marker contract"
+assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '1. `FORCED_AGENT` + `FORCED_MODEL` forced together' "override precedence uses canonical forced overrides"
+assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '2. `FORCED_MODEL` forced alone' "model-only precedence uses canonical forced model override"
+assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '3. `FORCED_AGENT` forced alone' "agent-only precedence uses canonical forced agent override"
+assert_file_not_contains "$SUB_COORDINATOR_PROMPT_FILE" '1. `AGENT` + `MODEL` forced together' "override precedence does not use ambient coordinator runtime names"
 assert_contains 'AGENT_ALLOWLIST' "documents allowlist"
 assert_contains 'AGENT_DENYLIST' "documents denylist"
 assert_contains 'MAX_AGENT_FALLBACKS' "documents bounded fallback"
+
+# Easy-route counterfactual: Codex availability alone must not force Sol.
+ROUTING_WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$ROUTING_WORK_DIR"' EXIT
+ROUTING_LEDGER_FILE="${ROUTING_WORK_DIR}/ledger.json"
+printf '{}\n' > "$ROUTING_LEDGER_FILE"
+ROUTE_OUTPUT="$(python3 "$ROUTER_FILE" \
+  --registry-file "$REGISTRY_FILE" \
+  --ledger-file "$ROUTING_LEDGER_FILE" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex \
+  --allowlist codex \
+  --record)"
+ROUTE_MODEL="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+ROUTE_REASON="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
+[[ "$ROUTE_MODEL" != "gpt-5.6-sol" ]] || fail "easy Codex-only route must not select Sol"
+[[ "$ROUTE_REASON" != "forced-agent-and-model" ]] || fail "easy Codex-only route must not report forced-agent-and-model"
+
+# Explicit model-only override: Sol remains available when the user forces it.
+FORCED_SOL_OUTPUT="$(python3 "$ROUTER_FILE" \
+  --registry-file "$REGISTRY_FILE" \
+  --ledger-file "${ROUTING_WORK_DIR}/forced-sol-ledger.json" \
+  --role impl \
+  --complexity-level easy \
+  --detected-agents codex \
+  --allowlist codex \
+  --forced-model gpt-5.6-sol)"
+FORCED_SOL_MODEL="$(printf '%s' "$FORCED_SOL_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
+FORCED_SOL_REASON="$(printf '%s' "$FORCED_SOL_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
+[[ "$FORCED_SOL_MODEL" == "gpt-5.6-sol" ]] || fail "model-only forced Sol route must select Sol"
+[[ "$FORCED_SOL_REASON" == "forced-model" ]] || fail "model-only forced Sol route must report forced-model"
+
+cmp -s "$SKILL_FILE" "$ACTIVE_SKILL_FILE" || fail "active run-with-it skill copy must match canonical skill byte-for-byte"
 
 # Sub-coordinator dispatch
 assert_contains 'sub-coordinator-prompt.md' "documents sub-coordinator prompt usage"

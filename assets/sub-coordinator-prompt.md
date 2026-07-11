@@ -451,7 +451,9 @@ All workers must use `run-with-it-artifacts.py write-json` to validate and atomi
 
 ### Deterministic Router Helper (Mandatory)
 
-Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects forced `AGENT`/`MODEL`, applies `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, `RUN_WITH_IT_MODEL_DENYLIST`, and `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`, and records the decision in `.run-with-it/usage-ledger.json`.
+Use `$ASSET_ROOT/run-with-it-router.py` for every worker route decision. Do not hand-roll random model selection in the Sub-Coordinator when the helper is available. The helper reads `agent-registry.json`, applies subscription usage targets, respects `FORCED_AGENT`/`FORCED_MODEL`, applies `AGENT_ALLOWLIST`, `AGENT_DENYLIST`, `RUN_WITH_IT_MODEL_DENYLIST`, and `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`, and records the decision in `.run-with-it/usage-ledger.json`.
+
+The pool dispatcher's `--agent` and `--model` values configure this Sub-Coordinator process only. `SUB_COORD_AGENT` and `SUB_COORD_MODEL` must never select child workers. Ambient inherited `AGENT` and `MODEL` values are runner telemetry, not routing policy; use only explicit `FORCED_AGENT` and `FORCED_MODEL` values supplied in this context. The Main Orchestrator normalizes explicitly requested deprecated aliases before dispatch, and the dispatcher unconditionally removes `AGENT` and `MODEL` before launching this Sub-Coordinator.
 
 Usage target summary from `agent-registry.json`:
 - overall default: Codex 60%, Claude 35%, Agy 5%
@@ -989,9 +991,9 @@ If no installed agent supports any model in the bumped reviewer band:
 
 ### Override Precedence (highest first)
 
-1. `AGENT` + `MODEL` forced together
-2. `MODEL` forced alone → skip Steps 1–3, run Step 4 with forced model
-3. `AGENT` forced alone → skip Step 4, run Steps 1–3 restricted to that agent's `known_models`
+1. `FORCED_AGENT` + `FORCED_MODEL` forced together
+2. `FORCED_MODEL` forced alone → skip Steps 1–3, run Step 4 with forced model
+3. `FORCED_AGENT` forced alone → skip Step 4, run Steps 1–3 restricted to that agent's `known_models`
 4. `COMPLEXITY_LEVEL` forced → use corresponding weight range, skip score computation
 5. `COMPLEXITY_SCORE` forced → use as computed score, run full Steps 1–4
 6. Computed score from nine dimensions → full Steps 1–4

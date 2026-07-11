@@ -6,14 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 POOL="${ROOT_DIR}/assets/run-with-it-pool.ps1"
 COORDINATOR_RULES="${ROOT_DIR}/assets/coordinator-rules.md"
 SUB_PROMPT="${ROOT_DIR}/assets/sub-coordinator-prompt.md"
+RUN_WITH_IT_SKILL="${ROOT_DIR}/skills/run-with-it/SKILL.md"
+README="${ROOT_DIR}/README.md"
 PS_CMD="${PWSH:-}"
 if [[ -z "$PS_CMD" ]]; then
   PS_CMD="$(command -v pwsh || command -v powershell.exe || command -v powershell || true)"
-fi
-
-if [[ -z "$PS_CMD" ]]; then
-  echo "SKIP: PowerShell unavailable for run-with-it-pool.ps1 contract"
-  exit 0
 fi
 
 fail() {
@@ -28,6 +25,15 @@ assert_file_contains() {
   grep -Fq -- "$needle" "$file" || fail "$message (missing: $needle in $file)"
 }
 
+assert_file_not_contains() {
+  local file="$1"
+  local needle="$2"
+  local message="$3"
+  if grep -Fq -- "$needle" "$file"; then
+    fail "$message (found forbidden: $needle in $file)"
+  fi
+}
+
 assert_json_file() {
   local file="$1"
   local message="$2"
@@ -37,9 +43,18 @@ assert_json_file() {
 assert_file_contains "$POOL" "Analyze-SubCoordFailure" "PowerShell pool includes sub-coordinator failure analysis"
 assert_file_contains "$POOL" "sub-coord-recovery-wait" "PowerShell pool can wait for in-flight workers before recovery"
 assert_file_contains "$POOL" "sub-coord-recovery-spawn" "PowerShell pool can spawn recovery sub-coordinators"
-assert_file_contains "$POOL" 'else { "gpt-5.6-sol" }' "PowerShell pool defaults Sub-Coordinators to Sol"
+assert_file_contains "$POOL" '[string]$Model = $(if ($env:SUB_COORD_MODEL) { $env:SUB_COORD_MODEL } else { "gpt-5.6-sol" }),' "PowerShell pool Model parameter has the complete Sub-Coordinator-only Sol fallback"
+assert_file_contains "$RUN_WITH_IT_SKILL" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |' "PowerShell contract retains the complete Sub-Coordinator-only Sol default documentation"
+assert_file_contains "$README" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model used to run Sub-Coordinators |' "PowerShell contract retains the complete Sub-Coordinator-only README default"
+assert_file_not_contains "$RUN_WITH_IT_SKILL" 'gpt-5.6-sol` | Model for child workers' "PowerShell contract does not document Sol as a child-worker override"
+assert_file_not_contains "$README" 'gpt-5.6-sol` | Model for child workers' "PowerShell contract README does not document Sol as a child-worker override"
 assert_file_contains "$COORDINATOR_RULES" "hard-limit-exceeded" "PowerShell coordinator rules classify hard-limit handoff failures"
 assert_file_contains "$SUB_PROMPT" "hard-limit-exceeded" "PowerShell sub-coordinator retries hard-limit handoff failures"
+
+if [[ -z "$PS_CMD" ]]; then
+  echo "SKIP: PowerShell unavailable for run-with-it-pool.ps1 behavioral contract"
+  exit 0
+fi
 
 BASE_DIR="$(mktemp -d)"
 WORK_DIR="${BASE_DIR}/with spaces"

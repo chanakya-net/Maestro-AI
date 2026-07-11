@@ -42,6 +42,8 @@ if (-not $hardLimitExplicit -and $Role -notin @("complexity", "impl", "modify", 
 }
 $HardLimitSeconds = $parsedHardLimitSeconds
 
+Remove-Item Env:AGENT, Env:MODEL, Env:RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES -ErrorAction SilentlyContinue
+
 function Fail([string]$message) {
     [Console]::Error.WriteLine("run-with-it-dispatch.ps1: $message")
     exit 2

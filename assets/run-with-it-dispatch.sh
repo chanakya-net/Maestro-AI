@@ -146,6 +146,8 @@ if [ -n "$REPO_ROOT_OVERRIDE" ]; then
 fi
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
 
+unset AGENT MODEL RUN_WITH_IT_EXPLICIT_LEGACY_OVERRIDES
+
 if [ -z "$STATE_FILE" ]; then
   log_name="$(basename "$LOG_FILE")"
   if [[ "$log_name" == *.log ]]; then
