@@ -29,19 +29,19 @@
 - Consumes: Existing static contract assertion helpers and `run-with-it-router.py` CLI.
 - Produces: Regression assertions requiring canonical worker override names and forbidding coordinator-runtime leakage.
 
-- [ ] **Step 1: Add routing contract assertions**
+- [x] **Step 1: Add routing contract assertions**
 
 Add assertions requiring the Step C environment block and override precedence section to use `FORCED_AGENT` and `FORCED_MODEL`. Add forbidden assertions for `AGENT=<value-if-set>`, `MODEL=<value-if-set>`, and the old ``AGENT` + `MODEL` forced together` wording.
 
-- [ ] **Step 2: Add the easy-route counterfactual**
+- [x] **Step 2: Add the easy-route counterfactual**
 
 Invoke `run-with-it-router.py` with a temporary empty ledger, `--role impl`, `--complexity-level easy`, and Codex-only agent constraints, but no forced model. Assert the selected model is not `gpt-5.6-sol` and the reason is not `forced-agent-and-model`.
 
-- [ ] **Step 3: Add pool contract assertions**
+- [x] **Step 3: Add pool contract assertions**
 
 Require Bash and PowerShell pool tests to retain `gpt-5.6-sol` as the Sub-Coordinator default while asserting their documentation does not describe that value as a child override.
 
-- [ ] **Step 4: Run tests and verify RED**
+- [x] **Step 4: Run tests and verify RED**
 
 Run:
 
@@ -65,23 +65,23 @@ Expected: routing contract assertions fail because the current skill and prompt 
 - Consumes: Canonical `FORCED_AGENT` and `FORCED_MODEL` router arguments already accepted by `run-with-it-router.py`.
 - Produces: Context files containing canonical worker overrides only when explicitly requested.
 
-- [ ] **Step 1: Update the skill input contract**
+- [x] **Step 1: Update the skill input contract**
 
 Document `FORCED_AGENT` and `FORCED_MODEL` as canonical inputs. Mark `AGENT` and `MODEL` as deprecated aliases accepted only when explicitly named by the user, never read from ambient process state.
 
-- [ ] **Step 2: Update Step C context generation**
+- [x] **Step 2: Update Step C context generation**
 
 Replace `AGENT=<value-if-set>` and `MODEL=<value-if-set>` with `FORCED_AGENT=<explicit-worker-override-if-set>` and `FORCED_MODEL=<explicit-worker-override-if-set>`. Add an invariant forbidding `SUB_COORD_*` values from populating these fields.
 
-- [ ] **Step 3: Update orchestration and Sub-Coordinator rules**
+- [x] **Step 3: Update orchestration and Sub-Coordinator rules**
 
 State that the pool dispatcher’s `--agent` and `--model` values configure only the Sub-Coordinator process. Change override precedence to `FORCED_AGENT` and `FORCED_MODEL`; explicitly classify ambient `AGENT` and `MODEL` as runner telemetry, not routing policy.
 
-- [ ] **Step 4: Update README documentation**
+- [x] **Step 4: Update README documentation**
 
 Mirror the canonical override names, compatibility note, and coordinator/worker separation in user-facing configuration documentation.
 
-- [ ] **Step 5: Run targeted tests and verify GREEN**
+- [x] **Step 5: Run targeted tests and verify GREEN**
 
 Run:
 
@@ -105,7 +105,7 @@ Expected: all three scripts exit 0 and print their PASS lines.
 - Consumes: Completed contract changes from Tasks 1 and 2.
 - Produces: Evidence that existing routing, pool, and dispatcher behavior remains valid.
 
-- [ ] **Step 1: Run focused router and dispatcher suites**
+- [x] **Step 1: Run focused router and dispatcher suites**
 
 Run:
 
@@ -117,7 +117,7 @@ bash tests/run-with-it-dispatch-ps1.test.sh
 
 Expected: all scripts exit 0.
 
-- [ ] **Step 2: Run the full contract suite**
+- [x] **Step 2: Run the full contract suite**
 
 Run:
 
@@ -127,7 +127,7 @@ for test_file in tests/*.test.sh; do bash "$test_file"; done
 
 Expected: every test script exits 0.
 
-- [ ] **Step 3: Check formatting and scope**
+- [x] **Step 3: Check formatting and scope**
 
 Run:
 
@@ -139,9 +139,15 @@ git diff --stat
 
 Expected: no whitespace errors; only routing-contract documentation and tests are modified.
 
-- [ ] **Step 4: Commit the implementation**
+- [x] **Step 4: Record the executed commit history**
 
-```bash
-git add README.md skills/run-with-it/SKILL.md assets/main-orchestrator-rules.md assets/sub-coordinator-prompt.md tests/run-with-it-routing.test.sh tests/run-with-it-pool.test.sh tests/run-with-it-pool-ps1.test.sh docs/superpowers/plans/2026-07-11-sub-coordinator-worker-routing-separation.md
-git commit -m "fix(run-with-it): separate worker routing"
-```
+The work was committed incrementally; there is no single aggregate implementation
+commit to create. The executed bookkeeping is:
+
+- Test commits: `6d91029 test: lock worker routing contract`,
+  `1558ccc test: strengthen routing compatibility tests`, and
+  `3c95ab7 test: lock pool defaults and static checks`.
+- Implementation commits: `18afa2a fix(run-with-it): separate worker routing`,
+  `57e7703 fix(run-with-it): scrub legacy aliases`, and
+  `0410c63 fix(run-with-it): remove marker trust`.
+- Plan commit: `2845b30 docs: add worker routing implementation plan`.
