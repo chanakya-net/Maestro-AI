@@ -110,10 +110,24 @@ context window, and routing metadata matching the matrix. Existing broad
 weights remain available for complexity scoring and as candidate-fit metadata;
 the exact allowlist wins for non-complexity automatic routing.
 
-The registry's role preference order remains Codex, Claude, then Agy for roles
-without a more specific existing preference. Existing role/band target
-percentages continue to drive distribution. Preference order is a deterministic
-tie-breaker, not permission to ignore accumulated usage-share debt.
+Every non-complexity role uses Codex, Claude, then Agy as its agent preference
+order. This replaces the existing Claude-first preference for review and plan
+workers. Non-complexity roles also share the following effective-band targets so
+the accumulated usage ledger and the preference order express the same policy:
+
+| Effective band | Codex | Claude | Agy |
+|---|---:|---:|---:|
+| `quite-easy` | 55% | 35% | 10% |
+| `easy` | 55% | 40% | 5% |
+| `medium` | 70% | 30% | 0% |
+| `medium-hard` | 70% | 30% | 0% |
+| `complex` | 70% | 30% | 0% |
+| `holy-fuck` | 60% | 40% | 0% |
+
+Only simple bands distribute to Gemini/Agy because the approved medium and
+higher model sets contain no Gemini models. Preference order remains a
+deterministic tie-breaker after usage-share debt; it does not disable ledger
+balancing.
 
 ## Router and Runner Data Flow
 
@@ -178,6 +192,9 @@ Tests will cover:
     matrix.
 11. Existing availability, exclusion, ledger, and complexity-worker tests remain
     green.
+12. Every non-complexity role uses the Codex, Claude, Agy preference order and
+    the effective-band distribution targets, while complexity scoring retains
+    its existing independent targets.
 
 ## Documentation and Installation
 
