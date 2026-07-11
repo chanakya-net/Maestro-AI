@@ -211,9 +211,11 @@ def issue_dependencies_completed(info: dict[str, Any], completed: set[int]) -> b
 def classify_ownership_scope(entry: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     """Classify an issue's declared ownership scope as one of:
     - ("absent", ())      — key missing or an explicitly empty list; no evidence
-    - ("root", ())        — any entry normalizes to the repo root; overlaps everything
-    - ("malformed", ())   — not a list, or contains non-string entries
-    - ("valid", scopes)   — normalized, sorted, non-root path prefixes
+    - ("root", ())        — an entry names the repo root (".", "/"); overlaps everything
+    - ("malformed", ())   — not a list, non-string entries, or a path alias that
+                            could evade overlap detection: absolute paths, drive
+                            or UNC paths, and parent-escaping ".." prefixes
+    - ("valid", scopes)   — normalized, sorted, repo-relative path prefixes
     Root and malformed must never be conflated with absent: an explicit claim of
     "everything" or unparseable metadata has to fail closed, not open."""
     if "ownership_scope" not in entry or entry.get("ownership_scope") is None:
@@ -229,7 +231,20 @@ def classify_ownership_scope(entry: dict[str, Any]) -> tuple[str, tuple[str, ...
         scope = value.strip().replace("\\", "/")
         while scope.startswith("./"):
             scope = scope[2:]
-        scope = posixpath.normpath(scope).strip("/")
+        if scope in {"", ".", "/"}:
+            saw_root = True
+            continue
+        normalized = posixpath.normpath(scope)
+        # Aliases of paths outside (or re-entering) the repo compare unequal to
+        # their repo-relative form and would evade overlap detection.
+        if (
+            normalized.startswith("/")
+            or normalized == ".."
+            or normalized.startswith("../")
+            or re.match(r"^[A-Za-z]:", normalized)
+        ):
+            return ("malformed", ())
+        scope = normalized.strip("/")
         if not scope or scope == ".":
             saw_root = True
             continue

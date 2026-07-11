@@ -93,6 +93,9 @@ RUN_ROOT="$(cd "$(dirname "$STATE_FILE")/.." && pwd -P)"
 if [ -z "$PARALLEL_JOBS" ]; then
   PARALLEL_JOBS="$("$PYTHON_BIN" "$STATE_HELPER" parallel-jobs --state-file "$STATE_FILE")"
 fi
+# A poll interval of zero would busy-spin the monitor loop; use the default.
+case "$POLL_SECONDS" in ''|*[!0-9]*) POLL_SECONDS=10 ;; esac
+[ "$POLL_SECONDS" -ge 1 ] || POLL_SECONDS=10
 if [ -z "$POOL_STATE_FILE" ]; then
   POOL_STATE_FILE="${RUN_ROOT}/.run-with-it/main/pool.state.json"
 fi

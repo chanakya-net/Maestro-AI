@@ -149,7 +149,7 @@ import json, sys
 path = sys.argv[1]
 state = json.load(open(path))
 state["active_pool_issues"] = [20]
-state["execution_plan"]["topo_order"] = [20, 21, 22, 23, 24, 25, 26, 27]
+state["execution_plan"]["topo_order"] = [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
 state["issue_registry"] = {
     "20": {"status": "in_progress", "deps": [], "parallel_safe": True, "ownership_scope": ["src/api"], "context_file": "20.md"},
     "21": {"status": "pending", "deps": [], "parallel_safe": False, "ownership_scope": ["docs"], "context_file": "21.md"},
@@ -159,13 +159,16 @@ state["issue_registry"] = {
     "25": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["."], "context_file": "25.md"},
     "26": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": "docs", "context_file": "26.md"},
     "27": {"status": "pending", "deps": [], "parallel_safe": "off", "ownership_scope": ["docs/guides"], "context_file": "27.md"},
+    "28": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["../AI-Skills/docs"], "context_file": "28.md"},
+    "29": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["/Users/repo/docs"], "context_file": "29.md"},
+    "30": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["C:\\\\repo\\\\docs"], "context_file": "30.md"},
 }
 json.dump(state, open(path, "w"), indent=2)
 PY
 ready_explicit="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 6)"
-assert_eq "${ready_explicit}" "22 24" "explicit false, root scope, and malformed metadata all stay exclusive"
+assert_eq "${ready_explicit}" "22 24" "explicit false, root scope, malformed metadata, and path aliases all stay exclusive"
 deferrals="$(python3 "${STATE_HELPER}" admission-deferrals --state-file "${ADMISSION_STATE}")"
-assert_eq "${deferrals}" "21:concurrency-conflict-with-20,23:concurrency-conflict-with-20,25:concurrency-conflict-with-20,26:concurrency-conflict-with-20,27:concurrency-conflict-with-20" "admission deferrals are recorded and queryable"
+assert_eq "${deferrals}" "21:concurrency-conflict-with-20,23:concurrency-conflict-with-20,25:concurrency-conflict-with-20,26:concurrency-conflict-with-20,27:concurrency-conflict-with-20,28:concurrency-conflict-with-20,29:concurrency-conflict-with-20,30:concurrency-conflict-with-20" "admission deferrals are recorded and queryable"
 
 # Malformed metadata still executes — exclusively: admitted alone into an empty
 # pool, and everything else defers behind it.

@@ -256,6 +256,10 @@ if ($ParallelJobs -le 0) {
     $ParallelJobs = [int](Invoke-StateHelper @("parallel-jobs", "--state-file", $StateFile))
 }
 
+# An unset env var passed as -PollSeconds binds as integer 0, which would
+# busy-spin the monitor loop; fall back to the default.
+if ($PollSeconds -le 0) { $PollSeconds = 10 }
+
 foreach ($path in @($MainLog, $StatusFile, $EventsLog)) { Ensure-ParentDir $path }
 
 if ($Detach -and -not $ValidateOnly -and -not $DryRun) {

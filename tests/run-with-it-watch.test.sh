@@ -99,6 +99,37 @@ assert_contains "${dead_output}" "WATCH|result=pool-dead" "watch reports a dead 
 [ "${dead_status}" -eq 3 ] || fail "pool-dead must exit 3 (got ${dead_status})"
 assert_contains "${dead_output}" "STATUS|type=sub-coord-spawn|issue=2" "watch still drains lines before reporting pool-dead"
 
+# --- PollSeconds=0 must not hang the bounded watch (regression: elapsed time
+# advanced by zero, so WaitSeconds was never reached; on Windows an unset
+# STATUS_POLL_SECONDS binds -PollSeconds as 0) ---
+sleep 300 &
+SLEEPER_PID=$!
+printf '{"pool_pid": %s, "started_at": 0, "state_file": "unused"}\n' "${SLEEPER_PID}" > "${POOL_STATE_FILE}"
+zero_output="$(python3 - "${WATCH_RUNNER}" "${EVENTS_LOG}" "${POOL_STATE_FILE}" "${CURSOR_FILE}" <<'PY'
+import subprocess
+import sys
+
+watch, events_log, pool_state, cursor = sys.argv[1:5]
+try:
+    result = subprocess.run(
+        ["bash", watch,
+         "--events-log", events_log,
+         "--pool-state-file", pool_state,
+         "--cursor-file", cursor,
+         "--wait-seconds", "1", "--poll-seconds", "0"],
+        capture_output=True, text=True, timeout=60,
+    )
+except subprocess.TimeoutExpired:
+    print("TIMEOUT: watch hung with --poll-seconds 0")
+    raise SystemExit(1)
+print(result.stdout, end="")
+PY
+)" || fail "watch with --poll-seconds 0 hung or crashed"
+assert_contains "${zero_output}" "WATCH|result=running" "poll-seconds 0 falls back to the default instead of hanging"
+kill "${SLEEPER_PID}" 2>/dev/null || true
+wait "${SLEEPER_PID}" 2>/dev/null || true
+SLEEPER_PID=""
+
 # --- PowerShell watcher: functional parity (regression: status lines in the
 # success stream must not make `if (Drain-NewLines)` truthy and fake pool-empty) ---
 if command -v pwsh >/dev/null 2>&1; then
@@ -142,6 +173,35 @@ if command -v pwsh >/dev/null 2>&1; then
     -WaitSeconds 30 -PollSeconds 1)" || ps_dead_status=$?
   assert_contains "${ps_dead}" "WATCH|result=pool-dead" "pwsh watch reports a dead pool supervisor"
   [ "${ps_dead_status}" -eq 3 ] || fail "pwsh pool-dead must exit 3 (got ${ps_dead_status})"
+
+  # PollSeconds 0 (unset STATUS_POLL_SECONDS binding) must not hang.
+  sleep 300 &
+  SLEEPER_PID=$!
+  printf '{"pool_pid": %s, "started_at": 0, "state_file": "unused"}\n' "${SLEEPER_PID}" > "${PS_POOL_STATE_FILE}"
+  ps_zero="$(python3 - "${WATCH_RUNNER_PS1}" "${PS_EVENTS_LOG}" "${PS_POOL_STATE_FILE}" "${PS_CURSOR_FILE}" <<'PY'
+import subprocess
+import sys
+
+watch, events_log, pool_state, cursor = sys.argv[1:5]
+try:
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-File", watch,
+         "-EventsLog", events_log,
+         "-PoolStateFile", pool_state,
+         "-CursorFile", cursor,
+         "-WaitSeconds", "1", "-PollSeconds", "0"],
+        capture_output=True, text=True, timeout=90,
+    )
+except subprocess.TimeoutExpired:
+    print("TIMEOUT: pwsh watch hung with -PollSeconds 0")
+    raise SystemExit(1)
+print(result.stdout, end="")
+PY
+)" || fail "pwsh watch with -PollSeconds 0 hung or crashed"
+  assert_contains "${ps_zero}" "WATCH|result=running" "pwsh poll-seconds 0 falls back to the default instead of hanging"
+  kill "${SLEEPER_PID}" 2>/dev/null || true
+  wait "${SLEEPER_PID}" 2>/dev/null || true
+  SLEEPER_PID=""
 else
   echo "SKIP: pwsh not installed; PowerShell watcher functional checks skipped"
 fi

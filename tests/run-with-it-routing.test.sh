@@ -73,6 +73,23 @@ assert_file_section_contains() {
   fi
 }
 
+assert_file_section_not_contains() {
+  local file="$1"
+  local start="$2"
+  local end="$3"
+  local needle="$4"
+  local message="$5"
+  local section
+  section="$(awk -v start="$start" -v end="$end" '
+    index($0, start) { in_section = 1 }
+    in_section { print }
+    in_section && index($0, end) { exit }
+  ' "$file")"
+  if [[ "$section" == *"$needle"* ]]; then
+    fail "${message} (found forbidden in targeted section: ${needle})"
+  fi
+}
+
 assert_file_line_contains() {
   local file="$1"
   local anchor="$2"
@@ -281,7 +298,7 @@ assert_file_contains "$COORDINATOR_RULES_FILE" 'Normal Sub-Coordinators report o
 # Resume
 assert_contains 'Resume Flow' "documents resume flow"
 assert_contains 'main-state.json' "documents resume state check"
-assert_contains 'Sub-Coordinators are ephemeral' "documents sub-coordinator re-spawn on resume"
+assert_contains 'Validate the supervisor lease first' "documents lease-aware resume instead of blind re-spawn"
 
 # Status messages (where documented)
 assert_contains 'STATUS|type=sub-coord-spawn' "documents sub spawn status line"
@@ -320,10 +337,21 @@ assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'WATCH|result=pool-empty' "orche
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'pool-admission-deferred' "orchestrator rules surface concurrency-gate deferrals"
 assert_file_contains "$SKILL_FILE" 'Validate the supervisor lease first' "resume flow validates the detached supervisor lease before touching state"
 assert_file_contains "$SKILL_FILE" 'Never bulk-reset `in_progress` issues' "resume flow forbids bulk in_progress resets that duplicate detached work"
-assert_file_not_contains "$SKILL_FILE" 'Reset ALL of them to `status="pending"`' "resume flow no longer resets in_progress issues unconditionally"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'validate the supervisor lease' "orchestrator rules require lease validation on resume/compression"
 assert_file_contains "$SKILL_FILE" 'Refuse discard if termination cannot be established' "discard refuses to delete state under live detached processes"
-assert_file_contains "$SKILL_FILE" 'STATUS|type=discard-shutdown' "discard documents the identity-checked shutdown status line"
+assert_file_contains "$SKILL_FILE" 'run-with-it-stop.sh' "discard terminates the run through the platform stop helper"
+assert_file_contains "$SKILL_FILE" 'STOP|result=' "discard documents the stop helper result contract"
+assert_file_contains "$SKILL_FILE" 'Sole exception:' "no-kill rule carries an explicit confirmed-discard exception"
+# No reset/clear instruction may survive anywhere an agent looks after
+# compression or on resume — stale copies of the old bulk-reset contract are
+# how detached dispatchers get duplicated.
+assert_file_section_not_contains "$SKILL_FILE" '### Resume Flow' '### Compression Survival' 'reset all `in_progress`' "Resume Flow must not instruct bulk in_progress resets"
+assert_file_section_not_contains "$SKILL_FILE" '### Resume Flow' '### Compression Survival' 'clear `active_pool_issues` to `[]`' "Resume Flow must not instruct clearing active_pool_issues"
+assert_file_section_contains "$SKILL_FILE" '### Compression Survival' '## Appendix D' 'validate the supervisor lease' "Compression Survival follows the lease-aware Resume Flow"
+assert_file_section_not_contains "$SKILL_FILE" '### Compression Survival' '## Appendix D' 'reset all `in_progress`' "Compression Survival must not instruct bulk in_progress resets"
+assert_file_section_not_contains "$SKILL_FILE" '### Compression Survival' '## Appendix D' 'clear `active_pool_issues` to `[]`' "Compression Survival must not instruct clearing active_pool_issues"
+assert_file_not_contains "$SKILL_FILE" 'are reset to `pending`' "no stale bulk-reset contract survives anywhere in the skill"
+assert_file_not_contains "$SKILL_FILE" 'Sub-Coordinators are ephemeral' "no stale re-spawn-fresh rationale survives anywhere in the skill"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'Never treat starting the pool process as completion of the Main Coordinator turn.' "orchestrator rules forbid returning immediately after pool launch"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'must never merge issue branches' "orchestrator rules forbid direct issue branch merges"
 assert_file_contains "$ORCHESTRATOR_RULES_FILE" 'Maestro/<funny-action-animal>' "orchestrator rules document Maestro run branch naming"

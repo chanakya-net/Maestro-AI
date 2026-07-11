@@ -50,6 +50,12 @@ done
 [ -n "$POOL_STATE_FILE" ] || fail "--pool-state-file is required"
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || fail "python helper runtime not found: $PYTHON_BIN"
 
+# A poll interval of zero (e.g. an unset env var binding as 0) would never
+# advance elapsed time and hang the bounded watch; fall back to the default.
+case "$POLL_SECONDS" in ''|*[!0-9]*) POLL_SECONDS=10 ;; esac
+[ "$POLL_SECONDS" -ge 1 ] || POLL_SECONDS=10
+case "$WAIT_SECONDS" in ''|*[!0-9]*) WAIT_SECONDS=240 ;; esac
+
 if [ -z "$CURSOR_FILE" ]; then
   CURSOR_FILE="$(dirname "$EVENTS_LOG")/watch-cursor"
 fi

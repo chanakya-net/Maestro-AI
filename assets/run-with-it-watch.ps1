@@ -26,6 +26,11 @@ function Fail([string]$message) {
 if (-not $EventsLog) { Fail "-EventsLog is required" }
 if (-not $PoolStateFile) { Fail "-PoolStateFile is required" }
 
+# An unset env var passed as -PollSeconds binds as integer 0, which would never
+# advance elapsed time and hang the bounded watch; fall back to the defaults.
+if ($PollSeconds -le 0) { $PollSeconds = 10 }
+if ($WaitSeconds -lt 0) { $WaitSeconds = 240 }
+
 if (-not $CursorFile) {
     $CursorFile = Join-Path (Split-Path $EventsLog) "watch-cursor"
 }

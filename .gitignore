@@ -149,3 +149,4 @@ vite.config.ts.timestamp-*
 .codegraph/codegraph.db-wal
 .codegraph/codegraph.db-shm
 .codegraph/.dirty
+__pycache__/
