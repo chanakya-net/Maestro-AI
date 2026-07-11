@@ -99,6 +99,53 @@ assert_contains "${dead_output}" "WATCH|result=pool-dead" "watch reports a dead 
 [ "${dead_status}" -eq 3 ] || fail "pool-dead must exit 3 (got ${dead_status})"
 assert_contains "${dead_output}" "STATUS|type=sub-coord-spawn|issue=2" "watch still drains lines before reporting pool-dead"
 
+# --- PowerShell watcher: functional parity (regression: status lines in the
+# success stream must not make `if (Drain-NewLines)` truthy and fake pool-empty) ---
+if command -v pwsh >/dev/null 2>&1; then
+  PS_EVENTS_LOG="${WORK_DIR}/status/ps-events.log"
+  PS_POOL_STATE_FILE="${WORK_DIR}/main/ps-pool.state.json"
+  PS_CURSOR_FILE="${WORK_DIR}/status/ps-watch-cursor"
+
+  sleep 300 &
+  SLEEPER_PID=$!
+  printf '{"pool_pid": %s, "started_at": 0, "state_file": "unused"}\n' "${SLEEPER_PID}" > "${PS_POOL_STATE_FILE}"
+  printf 'STATUS|type=pool-detached|pid=%s\n' "${SLEEPER_PID}" >> "${PS_EVENTS_LOG}"
+  printf 'STATUS|type=run-board|board=#1 impl(cyc1)\n' >> "${PS_EVENTS_LOG}"
+
+  ps_first="$(pwsh -NoProfile -File "${WATCH_RUNNER_PS1}" \
+    -EventsLog "${PS_EVENTS_LOG}" \
+    -PoolStateFile "${PS_POOL_STATE_FILE}" \
+    -CursorFile "${PS_CURSOR_FILE}" \
+    -WaitSeconds 0 -PollSeconds 1)"
+  assert_contains "${ps_first}" "STATUS|type=run-board" "pwsh watch prints drained status lines"
+  assert_contains "${ps_first}" "WATCH|result=running" "pwsh watch reports running while the pool is alive"
+  assert_not_contains "${ps_first}" "WATCH|result=pool-empty" "pwsh watch must not fake pool-empty from ordinary status output"
+
+  printf 'STATUS|type=pool-empty|state_file=unused\n' >> "${PS_EVENTS_LOG}"
+  ps_second="$(pwsh -NoProfile -File "${WATCH_RUNNER_PS1}" \
+    -EventsLog "${PS_EVENTS_LOG}" \
+    -PoolStateFile "${PS_POOL_STATE_FILE}" \
+    -CursorFile "${PS_CURSOR_FILE}" \
+    -WaitSeconds 30 -PollSeconds 1)"
+  assert_not_contains "${ps_second}" "STATUS|type=run-board" "pwsh watch does not reprint drained lines"
+  assert_contains "${ps_second}" "WATCH|result=pool-empty" "pwsh watch reports pool-empty"
+
+  kill "${SLEEPER_PID}" 2>/dev/null || true
+  wait "${SLEEPER_PID}" 2>/dev/null || true
+  SLEEPER_PID=""
+  printf 'STATUS|type=sub-coord-spawn|issue=9|pid=999\n' >> "${PS_EVENTS_LOG}"
+  ps_dead_status=0
+  ps_dead="$(pwsh -NoProfile -File "${WATCH_RUNNER_PS1}" \
+    -EventsLog "${PS_EVENTS_LOG}" \
+    -PoolStateFile "${PS_POOL_STATE_FILE}" \
+    -CursorFile "${PS_CURSOR_FILE}" \
+    -WaitSeconds 30 -PollSeconds 1)" || ps_dead_status=$?
+  assert_contains "${ps_dead}" "WATCH|result=pool-dead" "pwsh watch reports a dead pool supervisor"
+  [ "${ps_dead_status}" -eq 3 ] || fail "pwsh pool-dead must exit 3 (got ${ps_dead_status})"
+else
+  echo "SKIP: pwsh not installed; PowerShell watcher functional checks skipped"
+fi
+
 # --- Static contract: pool runner supports detach, re-attach, and deferral visibility ---
 assert_file_contains "${POOL_RUNNER}" "--detach" "pool runner supports detached supervisor mode"
 assert_file_contains "${POOL_RUNNER}" "active-pool-entries" "pool runner re-attaches to in-flight issues on restart"

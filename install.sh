@@ -131,7 +131,7 @@ ensure_node() {
 install_assets() {
   say "→ Installing shared assets"
 
-  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "artifact-recovery-prompt.md" "merge-recovery-prompt.md" "complexity-prompt.md" "plan-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-with-it-state.py" "run-with-it-github-update.py" "run-with-it-pr-body.py" "run-with-it-router.py" "run-with-it-artifacts.py" "run-agent.sh" "run-with-it-dispatch.sh" "run-with-it-pool.sh" "worker-watch.sh" "agent-registry.json")
+  local files=("prompt.md" "sub-coordinator-prompt.md" "main-orchestrator-rules.md" "artifact-recovery-prompt.md" "merge-recovery-prompt.md" "complexity-prompt.md" "plan-prompt.md" "review-prompt.md" "modifier-prompt.md" "coordinator-rules.md" "run-with-it-state.py" "run-with-it-github-update.py" "run-with-it-pr-body.py" "run-with-it-router.py" "run-with-it-artifacts.py" "run-agent.sh" "run-with-it-dispatch.sh" "run-with-it-pool.sh" "run-with-it-watch.sh" "worker-watch.sh" "agent-registry.json")
   local base_url="https://raw.githubusercontent.com/${REPO}/${ASSETS_REF}/assets"
 
   if [ "$DRY" = 1 ]; then
@@ -143,6 +143,7 @@ install_assets() {
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-agent.sh"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-dispatch.sh"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-pool.sh"
+    note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-watch.sh"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-state.py"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-github-update.py"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-with-it-pr-body.py"
@@ -182,6 +183,7 @@ install_assets() {
   chmod +x "${ASSETS_DEST}/run-agent.sh"
   chmod +x "${ASSETS_DEST}/run-with-it-dispatch.sh"
   chmod +x "${ASSETS_DEST}/run-with-it-pool.sh"
+  chmod +x "${ASSETS_DEST}/run-with-it-watch.sh"
   chmod +x "${ASSETS_DEST}/run-with-it-state.py"
   chmod +x "${ASSETS_DEST}/run-with-it-github-update.py"
   chmod +x "${ASSETS_DEST}/run-with-it-pr-body.py"
@@ -215,6 +217,7 @@ patch_claude_permissions() {
     note "    Bash(*run-agent.sh*)"
     note "    Bash(*run-with-it-dispatch.sh*)"
     note "    Bash(*run-with-it-pool.sh*)"
+    note "    Bash(*run-with-it-watch.sh*)"
     note "    Bash(codex *)"
     note "    Bash(opencode *)"
     note "    Bash(gemini *)"
@@ -228,6 +231,7 @@ ENTRIES = [
     "Bash(*run-agent.sh*)",
     "Bash(*run-with-it-dispatch.sh*)",
     "Bash(*run-with-it-pool.sh*)",
+    "Bash(*run-with-it-watch.sh*)",
     "Bash(codex *)",
     "Bash(opencode *)",
     "Bash(gemini *)",

@@ -47,26 +47,34 @@ function Get-PoolPid {
     }
 }
 
-# Print events-log lines added since the cursor, advance the cursor, and
-# return whether pool-empty was observed.
+# Collect events-log lines added since the cursor and advance the cursor.
+# Returns a single structured object; the caller prints the lines. Emitting
+# lines from inside this function would pollute the success stream and make
+# any status line truthy in an `if` condition.
 function Drain-NewLines {
+    $result = [pscustomobject]@{ Lines = @(); SawEmpty = $false }
     $cursor = Read-Cursor
-    if (-not (Test-Path $EventsLog)) { return $false }
+    if (-not (Test-Path $EventsLog)) { return $result }
     $lines = @(Get-Content $EventsLog)
-    $sawEmpty = $false
     if ($lines.Count -gt $cursor) {
-        foreach ($line in $lines[$cursor..($lines.Count - 1)]) {
-            Write-Output $line
-            if ("$line" -like "*type=pool-empty*") { $sawEmpty = $true }
+        $result.Lines = @($lines[$cursor..($lines.Count - 1)])
+        foreach ($line in $result.Lines) {
+            if ("$line" -like "*type=pool-empty*") { $result.SawEmpty = $true }
         }
         Set-Content -Path $CursorFile -Value "$($lines.Count)" -Encoding UTF8
     }
-    return $sawEmpty
+    return $result
+}
+
+function Write-DrainedLines($drain) {
+    foreach ($line in $drain.Lines) { Write-Output $line }
 }
 
 $elapsed = 0
 while ($true) {
-    if (Drain-NewLines) {
+    $drain = Drain-NewLines
+    Write-DrainedLines $drain
+    if ($drain.SawEmpty) {
         Write-Output "WATCH|result=pool-empty|events_log=$EventsLog"
         exit 0
     }
@@ -78,7 +86,9 @@ while ($true) {
     if (-not $alive) {
         # Drain once more: the pool may have written pool-empty and exited
         # between the drain above and the liveness check.
-        if (Drain-NewLines) {
+        $drain = Drain-NewLines
+        Write-DrainedLines $drain
+        if ($drain.SawEmpty) {
             Write-Output "WATCH|result=pool-empty|events_log=$EventsLog"
             exit 0
         }

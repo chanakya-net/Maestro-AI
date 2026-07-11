@@ -219,6 +219,7 @@ Bash required helper files:
 - `run-agent.sh`
 - `run-with-it-dispatch.sh`
 - `run-with-it-pool.sh`
+- `run-with-it-watch.sh`
 - `worker-watch.sh`
 
 PowerShell required helper files:
@@ -226,6 +227,7 @@ PowerShell required helper files:
 - `run-agent.ps1`
 - `run-with-it-dispatch.ps1`
 - `run-with-it-pool.ps1`
+- `run-with-it-watch.ps1`
 - `worker-watch.ps1`
 
 Selection rules:
@@ -246,12 +248,12 @@ Selection rules:
 
 **PowerShell (Windows):**
 ```powershell
-New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\artifact-recovery-prompt.md, .\assets\complexity-prompt.md, .\assets\plan-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.ai-skill-collections\assets"; Copy-Item -Force .\assets\prompt.md, .\assets\run-agent.ps1, .\assets\run-with-it-dispatch.ps1, .\assets\run-with-it-pool.ps1, .\assets\run-with-it-watch.ps1, .\assets\worker-watch.ps1, .\assets\run-with-it-state.py, .\assets\run-with-it-github-update.py, .\assets\run-with-it-pr-body.py, .\assets\run-with-it-router.py, .\assets\run-with-it-artifacts.py, .\assets\agent-registry.json, .\assets\review-prompt.md, .\assets\modifier-prompt.md, .\assets\artifact-recovery-prompt.md, .\assets\complexity-prompt.md, .\assets\plan-prompt.md, .\assets\coordinator-rules.md, .\assets\sub-coordinator-prompt.md, .\assets\main-orchestrator-rules.md, .\assets\merge-recovery-prompt.md "$env:USERPROFILE\.ai-skill-collections\assets\"
 ```
 
 **Bash (macOS / Linux / Git Bash):**
 ```bash
-mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/artifact-recovery-prompt.md ./assets/complexity-prompt.md ./assets/plan-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
+mkdir -p "$HOME/.ai-skill-collections/assets" && cp -f ./assets/prompt.md ./assets/run-agent.sh ./assets/run-with-it-dispatch.sh ./assets/run-with-it-pool.sh ./assets/run-with-it-watch.sh ./assets/worker-watch.sh ./assets/run-with-it-state.py ./assets/run-with-it-github-update.py ./assets/run-with-it-pr-body.py ./assets/run-with-it-router.py ./assets/run-with-it-artifacts.py ./assets/agent-registry.json ./assets/review-prompt.md ./assets/modifier-prompt.md ./assets/artifact-recovery-prompt.md ./assets/complexity-prompt.md ./assets/plan-prompt.md ./assets/coordinator-rules.md ./assets/sub-coordinator-prompt.md ./assets/main-orchestrator-rules.md ./assets/merge-recovery-prompt.md "$HOME/.ai-skill-collections/assets/" && chmod +x "$HOME/.ai-skill-collections/assets/run-agent.sh" "$HOME/.ai-skill-collections/assets/run-with-it-dispatch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-pool.sh" "$HOME/.ai-skill-collections/assets/run-with-it-watch.sh" "$HOME/.ai-skill-collections/assets/worker-watch.sh" "$HOME/.ai-skill-collections/assets/run-with-it-state.py" "$HOME/.ai-skill-collections/assets/run-with-it-github-update.py" "$HOME/.ai-skill-collections/assets/run-with-it-pr-body.py" "$HOME/.ai-skill-collections/assets/run-with-it-router.py" "$HOME/.ai-skill-collections/assets/run-with-it-artifacts.py"
 ```
 
 ## Main Orchestrator Rules File
@@ -271,7 +273,7 @@ cp "$ASSET_ROOT/main-orchestrator-rules.md" .run-with-it/main-orchestrator-rules
 
 Before execution verify:
 
-1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-pr-body.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
+1. Resolved asset root exists and contains all required files listed in Asset Discovery. On Bash, runners (`run-agent.sh`, `run-with-it-dispatch.sh`, `run-with-it-pool.sh`, `run-with-it-watch.sh`, `worker-watch.sh`) and Python helpers (`run-with-it-state.py`, `run-with-it-github-update.py`, `run-with-it-pr-body.py`, `run-with-it-router.py`, `run-with-it-artifacts.py`) are executable. On native PowerShell, verify the `.ps1` runners exist; executable bits are not required.
 2. `python3` is available, or `PYTHON_BIN` points to a Python 3 interpreter, for the shared pool helper scripts.
 3. `gh` auth when GitHub intake is required.
 4. `SUB_COORD_AGENT` is installed (detected): on Bash, run `"$ASSET_ROOT/run-agent.sh" --list-agents --detected-only`; on native PowerShell, run `& (Join-Path $ASSET_ROOT "run-agent.ps1") --list-agents --detected-only`. Confirm `SUB_COORD_AGENT` appears.
@@ -668,12 +670,33 @@ On failed or interrupted run:
 
 ### Discard
 
-On `discard`:
+On `discard`, terminate all detached run processes BEFORE deleting anything. The
+supervisor and dispatchers are detached: left running, they will keep writing
+into deleted or newly recreated paths and can still perform GitHub updates.
 
-- Print the planned discard targets and ask the user to confirm before deleting. After confirmation, delete preserved generated files including `.run-with-it/main-state.json`, reports, logs, reviews, worktrees, locks, `technical_requirements.md`, `prd.md`, and `issues.md`.
-- Update `.gitignore` and commit with message `chore: remove skill-generated artifacts (discarded run)`.
-- Emit `STATUS|type=cleanup|action=discarded|files_removed=<n>`.
-- Proceed as a fresh run.
+1. **Identity-checked shutdown, in order:**
+   - Supervisor: read `pool_pid` from `.run-with-it/main/pool.state.json`. If the
+     PID is alive AND its command line references the pool runner (Bash:
+     `ps -p <pid> -o command=` contains `run-with-it-pool`; PowerShell:
+     `(Get-CimInstance Win32_Process -Filter "ProcessId=<pid>").CommandLine`),
+     send SIGTERM (`kill <pid>` / `Stop-Process`), wait up to 10 seconds, then
+     SIGKILL if still alive. If the PID is alive but the command line does NOT
+     match, it belongs to an unrelated process — do not signal it; treat the
+     supervisor as already gone.
+   - Dispatchers: for each `active_pool_issues` member, read the dispatcher PID
+     from `.run-with-it/issues/<n>/sub-coordinator.state.json` (and any
+     `sub-coordinator-recovery-*.state.json`), apply the same identity check
+     (command line references `run-with-it-dispatch` or `run-agent`), then
+     terminate and await each one the same way.
+   - Verify termination: re-check every signaled PID is gone. Emit
+     `STATUS|type=discard-shutdown|supervisor=<killed|already-dead|not-ours>|dispatchers_killed=<n>|dispatchers_already_dead=<n>`.
+2. **Refuse discard if termination cannot be established** — a signaled PID that
+   remains alive after SIGKILL, or a permission error signaling it. Report the
+   surviving PIDs and stop; do not delete state out from under live processes.
+3. Print the planned discard targets and ask the user to confirm before deleting. After confirmation, delete preserved generated files including `.run-with-it/main-state.json`, `.run-with-it/main/pool.state.json`, reports, logs, reviews, worktrees, locks, `technical_requirements.md`, `prd.md`, and `issues.md`.
+4. Update `.gitignore` and commit with message `chore: remove skill-generated artifacts (discarded run)`.
+5. Emit `STATUS|type=cleanup|action=discarded|files_removed=<n>`.
+6. Proceed as a fresh run.
 
 ## Appendix A: Main State Schema
 
@@ -806,6 +829,7 @@ Emit parseable one-line status messages:
 - runner sandbox retry: `STATUS|type=runner-sandbox-retry|agent=<agent>|model=<model>|reason=<error-summary>`
 - runner sandbox retry result: `STATUS|type=runner-sandbox-retry-result|outcome=<success|failed>`
 - cleanup completed: `STATUS|type=cleanup|action=completed|files_removed=<n>`
+- discard shutdown: `STATUS|type=discard-shutdown|supervisor=<killed|already-dead|not-ours>|dispatchers_killed=<n>|dispatchers_already_dead=<n>`
 - cleanup discarded: `STATUS|type=cleanup|action=discarded|files_removed=<n>`
 - final ledger row: `STATUS|type=ledger|task=<task-id>|role=impl|cycle=0|agent=<agent-name>|model=<model-id>|added=<n>|deleted=<n>|total=<n>|reason=sub-coordinator|input_tokens=<n-or-unknown>|output_tokens=<n-or-unknown>|cache_hit_tokens=<n-or-unknown>|telemetry_source=sub-coordinator-report`
 
@@ -827,11 +851,30 @@ Also print a final summary of all `completed_summaries` entries showing:
 On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 14). On `resume`:
 
 1. Re-read `.run-with-it/main-state.json`.
-2. Identify all issues with `status="in_progress"` — these had a Sub-Coordinator interrupted mid-run. Reset ALL of them to `status="pending"` (Sub-Coordinators are ephemeral; re-spawn them fresh). Also clear `active_pool_issues` to `[]`.
-3. Identify all issues with `status="pending"` — these haven't started yet.
-4. Identify all issues with `status="completed"`, `"failed-review"`, or `"blocked"` — skip these entirely.
-5. Re-enter Main Loop at Step A (which fills the rolling pool immediately).
-6. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|re_queued_in_progress=<m>|parallel_jobs=<PARALLEL_JOBS>`
+2. **Validate the supervisor lease first.** The pool supervisor and dispatchers run
+   detached, so they may still be alive from the interrupted session. Read
+   `.run-with-it/main/pool.state.json` and check `pool_pid`:
+   - **Supervisor alive** (PID exists and its command line references the pool
+     runner, e.g. `ps -p <pid> -o command=` contains `run-with-it-pool`): do NOT
+     reset anything and do NOT relaunch. Re-enter the Step D watch loop against
+     the existing supervisor and continue until `WATCH|result=pool-empty`.
+   - **Supervisor dead** (missing state file, dead PID, or PID reused by an
+     unrelated process): relaunch the detached pool runner. It re-attaches to
+     `active_pool_issues` — live dispatchers keep running under the new
+     supervisor; dead ones flow through structured exit analysis.
+3. **Never bulk-reset `in_progress` issues or clear `active_pool_issues`.**
+   Resetting an issue whose detached dispatcher is still alive dispatches it a
+   second time: duplicate work, merges, state writes, token cost, and GitHub
+   comments. Requeue an individual issue to `pending` (via
+   `run-with-it-state.py requeue`) only when structured evidence proves its
+   dispatcher is dead — dead dispatcher PID in the issue's dispatcher state
+   file — AND no issue-scoped `sub-state.json` supports recovery. The pool
+   runner's re-attach path already performs this analysis; prefer relaunching
+   the pool over manual requeues.
+4. Identify all issues with `status="pending"` — these haven't started yet.
+5. Identify all issues with `status="completed"`, `"failed-review"`, or `"blocked"` — skip these entirely.
+6. Re-enter Main Loop at Step A.
+7. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|supervisor=<alive|relaunched>|re_queued_in_progress=<m>|parallel_jobs=<PARALLEL_JOBS>`
 
 If `.run-with-it/main-state.json` is missing or unparseable when the user types `resume`, emit:
 

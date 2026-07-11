@@ -141,26 +141,48 @@ PY
 
 # Explicit parallel_safe=false stays exclusive, string "true" is accepted, and
 # glob scopes compare by their literal directory prefix instead of conflicting
-# with everything.
+# with everything. Root and malformed metadata fail closed: root scopes overlap
+# everything, non-list scopes and non-canonical parallel_safe values are
+# malformed and never co-scheduled.
 python3 - "${ADMISSION_STATE}" <<'PY'
 import json, sys
 path = sys.argv[1]
 state = json.load(open(path))
 state["active_pool_issues"] = [20]
-state["execution_plan"]["topo_order"] = [20, 21, 22, 23, 24]
+state["execution_plan"]["topo_order"] = [20, 21, 22, 23, 24, 25, 26, 27]
 state["issue_registry"] = {
     "20": {"status": "in_progress", "deps": [], "parallel_safe": True, "ownership_scope": ["src/api"], "context_file": "20.md"},
     "21": {"status": "pending", "deps": [], "parallel_safe": False, "ownership_scope": ["docs"], "context_file": "21.md"},
     "22": {"status": "pending", "deps": [], "parallel_safe": "true", "ownership_scope": ["docs"], "context_file": "22.md"},
     "23": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["src/api/*"], "context_file": "23.md"},
     "24": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["tests/*"], "context_file": "24.md"},
+    "25": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["."], "context_file": "25.md"},
+    "26": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": "docs", "context_file": "26.md"},
+    "27": {"status": "pending", "deps": [], "parallel_safe": "off", "ownership_scope": ["docs/guides"], "context_file": "27.md"},
 }
 json.dump(state, open(path, "w"), indent=2)
 PY
-ready_explicit="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
-assert_eq "${ready_explicit}" "22 24" "explicit false stays exclusive, string true admits, glob prefix gates overlap"
+ready_explicit="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 6)"
+assert_eq "${ready_explicit}" "22 24" "explicit false, root scope, and malformed metadata all stay exclusive"
 deferrals="$(python3 "${STATE_HELPER}" admission-deferrals --state-file "${ADMISSION_STATE}")"
-assert_eq "${deferrals}" "21:concurrency-conflict-with-20,23:concurrency-conflict-with-20" "admission deferrals are recorded and queryable"
+assert_eq "${deferrals}" "21:concurrency-conflict-with-20,23:concurrency-conflict-with-20,25:concurrency-conflict-with-20,26:concurrency-conflict-with-20,27:concurrency-conflict-with-20" "admission deferrals are recorded and queryable"
+
+# Malformed metadata still executes — exclusively: admitted alone into an empty
+# pool, and everything else defers behind it.
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["active_pool_issues"] = []
+state["execution_plan"]["topo_order"] = [40, 41]
+state["issue_registry"] = {
+    "40": {"status": "pending", "deps": [], "parallel_safe": "garbage", "ownership_scope": ["docs"], "context_file": "40.md"},
+    "41": {"status": "pending", "deps": [], "parallel_safe": True, "ownership_scope": ["src"], "context_file": "41.md"},
+}
+json.dump(state, open(path, "w"), indent=2)
+PY
+ready_malformed="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_malformed}" "40" "malformed metadata runs exclusively rather than failing open"
 
 # active-pool-entries lists in-flight members for supervisor re-attach.
 python3 - "${ADMISSION_STATE}" <<'PY'

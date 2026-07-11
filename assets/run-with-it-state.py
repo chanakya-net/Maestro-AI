@@ -208,21 +208,37 @@ def issue_dependencies_completed(info: dict[str, Any], completed: set[int]) -> b
     return all(int(dep) in completed for dep in info.get("deps", []))
 
 
-def normalized_ownership_scope(entry: dict[str, Any]) -> tuple[str, ...]:
-    raw = entry.get("ownership_scope", [])
+def classify_ownership_scope(entry: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Classify an issue's declared ownership scope as one of:
+    - ("absent", ())      — key missing or an explicitly empty list; no evidence
+    - ("root", ())        — any entry normalizes to the repo root; overlaps everything
+    - ("malformed", ())   — not a list, or contains non-string entries
+    - ("valid", scopes)   — normalized, sorted, non-root path prefixes
+    Root and malformed must never be conflated with absent: an explicit claim of
+    "everything" or unparseable metadata has to fail closed, not open."""
+    if "ownership_scope" not in entry or entry.get("ownership_scope") is None:
+        return ("absent", ())
+    raw = entry.get("ownership_scope")
     if not isinstance(raw, list):
-        return ()
+        return ("malformed", ())
     scopes: set[str] = set()
+    saw_root = False
     for value in raw:
         if not isinstance(value, str):
-            continue
+            return ("malformed", ())
         scope = value.strip().replace("\\", "/")
         while scope.startswith("./"):
             scope = scope[2:]
         scope = posixpath.normpath(scope).strip("/")
-        if scope and scope != ".":
-            scopes.add(scope)
-    return tuple(sorted(scopes))
+        if not scope or scope == ".":
+            saw_root = True
+            continue
+        scopes.add(scope)
+    if saw_root:
+        return ("root", ())
+    if not scopes:
+        return ("absent", ())
+    return ("valid", tuple(sorted(scopes)))
 
 
 def scope_comparison_prefix(scope: str) -> str:
@@ -252,28 +268,42 @@ def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> b
     return False
 
 
-def parallel_safe_effective(entry: dict[str, Any]) -> bool:
-    """Issues are parallel-safe unless explicitly marked otherwise. Execution
-    happens in isolated per-issue worktrees with a dedicated merge-recovery
-    path, so missing metadata must not serialize the whole pool."""
+def classify_parallel_safe(entry: dict[str, Any]) -> str:
+    """Classify `parallel_safe` as "absent", "true", "false", or "malformed".
+    Only canonical boolean forms are accepted; anything else (e.g. "off",
+    "garbage", numbers, lists) is malformed and must fail closed. Absent
+    defaults to parallel: execution happens in isolated per-issue worktrees
+    with a dedicated merge-recovery path, so missing metadata must not
+    serialize the whole pool."""
     value = entry.get("parallel_safe")
     if value is None:
-        return True
+        return "absent"
     if isinstance(value, bool):
-        return value
+        return "true" if value else "false"
     if isinstance(value, str):
-        return value.strip().casefold() not in {"false", "0", "no"}
-    return bool(value)
+        canonical = value.strip().casefold()
+        if canonical in {"true", "1", "yes"}:
+            return "true"
+        if canonical in {"false", "0", "no"}:
+            return "false"
+    return "malformed"
 
 
 def issues_can_run_together(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    if not parallel_safe_effective(left) or not parallel_safe_effective(right):
+    left_safe = classify_parallel_safe(left)
+    right_safe = classify_parallel_safe(right)
+    if "false" in (left_safe, right_safe) or "malformed" in (left_safe, right_safe):
         return False
-    left_scope = normalized_ownership_scope(left)
-    right_scope = normalized_ownership_scope(right)
-    if not left_scope or not right_scope:
-        # No scope declared on one side means no overlap evidence; worktree
-        # isolation plus merge recovery covers residual conflicts.
+    left_kind, left_scope = classify_ownership_scope(left)
+    right_kind, right_scope = classify_ownership_scope(right)
+    if "malformed" in (left_kind, right_kind):
+        return False
+    if "root" in (left_kind, right_kind):
+        # An explicit repo-root scope overlaps everything.
+        return False
+    if left_kind == "absent" or right_kind == "absent":
+        # No overlap evidence on one side; worktree isolation plus merge
+        # recovery covers residual conflicts.
         return True
     return not ownership_scopes_overlap(left_scope, right_scope)
 
