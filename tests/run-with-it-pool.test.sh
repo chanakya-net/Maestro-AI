@@ -95,8 +95,8 @@ assert_file_contains "${SUB_PROMPT}" "artifact-recovery-prompt.md" "sub-coordina
 assert_file_contains "${SUB_PROMPT}" "STATUS|type=artifact-recovery-result" "sub-coordinator prompt documents artifact recovery result status"
 assert_file_contains "${COORDINATOR_RULES}" "hard-limit-exceeded" "coordinator rules classify hard-limit handoff failures"
 assert_file_contains "${SUB_PROMPT}" "hard-limit-exceeded" "sub-coordinator retries hard-limit handoff failures"
-assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "skill documents Sol Sub-Coordinator default"
-assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` |' "README documents Sol Sub-Coordinator default"
+assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |' "skill documents the complete Sub-Coordinator-only Sol default"
+assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model used to run Sub-Coordinators |' "README documents the complete Sub-Coordinator-only Sol default"
 assert_file_not_contains "${RUN_WITH_IT_SKILL}" 'gpt-5.6-sol` | Model for child workers' "skill does not document Sol as a child-worker override"
 assert_file_not_contains "${README}" 'gpt-5.6-sol` | Model for child workers' "README does not document Sol as a child-worker override"
 

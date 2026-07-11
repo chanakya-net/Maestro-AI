@@ -184,6 +184,8 @@ assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINA
 assert_file_section_contains "$SKILL_FILE" '══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════' '  The Sub-Coordinator must derive a separate' 'FORCED_MODEL=<explicit-worker-override-if-set>' "Step C names the canonical forced model override"
 assert_file_not_contains "$SKILL_FILE" 'AGENT=<value-if-set>' "Step C does not leak the coordinator agent into child routing"
 assert_file_not_contains "$SKILL_FILE" 'MODEL=<value-if-set>' "Step C does not leak the coordinator model into child routing"
+assert_file_line_contains "$SKILL_FILE" '| `AGENT` |' 'Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`' "top-level AGENT remains an explicit-only deprecated alias"
+assert_file_line_contains "$SKILL_FILE" '| `MODEL` |' 'Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`' "top-level MODEL remains an explicit-only deprecated alias"
 assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '1. `FORCED_AGENT` + `FORCED_MODEL` forced together' "override precedence uses canonical forced overrides"
 assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '2. `FORCED_MODEL` forced alone' "model-only precedence uses canonical forced model override"
 assert_file_section_contains "$SUB_COORDINATOR_PROMPT_FILE" '### Override Precedence (highest first)' '### Bounded Fallback' '3. `FORCED_AGENT` forced alone' "agent-only precedence uses canonical forced agent override"
