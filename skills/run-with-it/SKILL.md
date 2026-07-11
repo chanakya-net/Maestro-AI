@@ -443,13 +443,19 @@ Execution-mode requirement (critical):
   platform pool runner; it maintains the pool and calls the platform dispatcher
   with `role=sub-coord` for each active issue.
 
+  Run the pool runner in the foreground. Do not launch it with `nohup`, a trailing Bash `&`,
+  `Start-Process`, or another detached/background mechanism. PowerShell's
+  leading `&` is the foreground call operator and is required by the example
+  below. The pool runner already owns the blocking monitor loop and writes status
+  to the terminal and `$MAIN_LOG_FILE`.
+
   Required handoff before Step D:
   - Each ready issue in `main-state.json` must have `issue_registry[<n>].context_file`
     (or `sub_coord_context_file`) pointing at the context file assembled in Step C.
 
   Bash (macOS / Linux / Git Bash):
 
-    nohup "$ASSET_ROOT/run-with-it-pool.sh" \
+    "$ASSET_ROOT/run-with-it-pool.sh" \
       --asset-root "$ASSET_ROOT" \
       --state-file "$(pwd -P)/.run-with-it/main-state.json" \
       --parallel-jobs "$PARALLEL_JOBS" \
@@ -459,31 +465,32 @@ Execution-mode requirement (critical):
       --events-log "$RUN_WITH_IT_EVENTS_LOG" \
       --main-log "$MAIN_LOG_FILE" \
       --poll-seconds "$STATUS_POLL_SECONDS" \
-      --timeout-seconds "$SUB_COORD_TIMEOUT_SECONDS" \
-      >>"$MAIN_LOG_FILE" 2>&1 < /dev/null &
-
-    POOL_PID=$!
+      --timeout-seconds "$SUB_COORD_TIMEOUT_SECONDS"
 
   PowerShell (Windows):
 
-    $poolProcess = Start-Process -FilePath "powershell" -ArgumentList @(
-      "-NoProfile", "-File", (Join-Path $ASSET_ROOT "run-with-it-pool.ps1"),
-      "-AssetRoot", $ASSET_ROOT,
-      "-StateFile", (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main-state.json"),
-      "-ParallelJobs", $env:PARALLEL_JOBS,
-      "-Agent", $env:SUB_COORD_AGENT,
-      "-Model", $env:SUB_COORD_MODEL,
-      "-StatusFile", $env:RUN_WITH_IT_STATUS_FILE,
-      "-EventsLog", $env:RUN_WITH_IT_EVENTS_LOG,
-      "-MainLog", $MAIN_LOG_FILE,
-      "-PollSeconds", $env:STATUS_POLL_SECONDS,
-      "-TimeoutSeconds", $env:SUB_COORD_TIMEOUT_SECONDS
-    ) -PassThru
+    & powershell -NoProfile -File (Join-Path $ASSET_ROOT "run-with-it-pool.ps1") `
+      -AssetRoot $ASSET_ROOT `
+      -StateFile (Join-Path (Join-Path (Get-Location).Path ".run-with-it") "main-state.json") `
+      -ParallelJobs $env:PARALLEL_JOBS `
+      -Agent $env:SUB_COORD_AGENT `
+      -Model $env:SUB_COORD_MODEL `
+      -StatusFile $env:RUN_WITH_IT_STATUS_FILE `
+      -EventsLog $env:RUN_WITH_IT_EVENTS_LOG `
+      -MainLog $MAIN_LOG_FILE `
+      -PollSeconds $env:STATUS_POLL_SECONDS `
+      -TimeoutSeconds $env:SUB_COORD_TIMEOUT_SECONDS
+    if ($LASTEXITCODE -ne 0) {
+      throw "run-with-it pool failed with exit code $LASTEXITCODE"
+    }
 
-    $POOL_PID = $poolProcess.Id
-
-  Persist `POOL_PID` in `main-state.json` for recovery visibility, then monitor that single process until
-  it emits `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by the platform pool runner.
+  If the execution tool yields a terminal/session identifier while the foreground
+  command is still running, resume or poll that same session until the process
+  exits. Do not end the Main Coordinator turn merely because the tool yielded, and
+  do not start an unrelated shell to monitor it. Successful Step D completion
+  requires the foreground process to exit successfully after emitting
+  `STATUS|type=pool-empty`. Per-issue dispatcher PIDs are persisted by the
+  platform pool runner.
   The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════
