@@ -208,29 +208,73 @@ def issue_dependencies_completed(info: dict[str, Any], completed: set[int]) -> b
     return all(int(dep) in completed for dep in info.get("deps", []))
 
 
-def normalized_ownership_scope(entry: dict[str, Any]) -> tuple[str, ...]:
-    raw = entry.get("ownership_scope", [])
+def classify_ownership_scope(entry: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    """Classify an issue's declared ownership scope as one of:
+    - ("absent", ())      — key missing or an explicitly empty list; no evidence
+    - ("root", ())        — an entry names the repo root (".", "/"); overlaps everything
+    - ("malformed", ())   — not a list, non-string entries, or a path alias that
+                            could evade overlap detection: absolute paths, drive
+                            or UNC paths, and parent-escaping ".." prefixes
+    - ("valid", scopes)   — normalized, sorted, repo-relative path prefixes
+    Root and malformed must never be conflated with absent: an explicit claim of
+    "everything" or unparseable metadata has to fail closed, not open."""
+    if "ownership_scope" not in entry or entry.get("ownership_scope") is None:
+        return ("absent", ())
+    raw = entry.get("ownership_scope")
     if not isinstance(raw, list):
-        return ()
+        return ("malformed", ())
     scopes: set[str] = set()
+    saw_root = False
     for value in raw:
         if not isinstance(value, str):
-            continue
+            return ("malformed", ())
         scope = value.strip().replace("\\", "/")
         while scope.startswith("./"):
             scope = scope[2:]
-        scope = posixpath.normpath(scope).strip("/")
-        if scope and scope != ".":
-            scopes.add(scope)
-    return tuple(sorted(scopes))
+        if scope in {"", ".", "/"}:
+            saw_root = True
+            continue
+        normalized = posixpath.normpath(scope)
+        # Aliases of paths outside (or re-entering) the repo compare unequal to
+        # their repo-relative form and would evade overlap detection.
+        if (
+            normalized.startswith("/")
+            or normalized == ".."
+            or normalized.startswith("../")
+            or re.match(r"^[A-Za-z]:", normalized)
+        ):
+            return ("malformed", ())
+        scope = normalized.strip("/")
+        if not scope or scope == ".":
+            saw_root = True
+            continue
+        scopes.add(scope)
+    if saw_root:
+        return ("root", ())
+    if not scopes:
+        return ("absent", ())
+    return ("valid", tuple(sorted(scopes)))
+
+
+def scope_comparison_prefix(scope: str) -> str:
+    """Reduce a glob-bearing scope to its literal directory prefix so patterns
+    like `src/api/*` compare as `src/api` instead of conflicting with everything."""
+    glob_positions = [scope.find(char) for char in "*?[" if scope.find(char) != -1]
+    if not glob_positions:
+        return scope
+    literal = scope[: min(glob_positions)]
+    if "/" in literal:
+        return literal.rsplit("/", 1)[0]
+    return ""
 
 
 def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
     for left_scope in left:
         for right_scope in right:
-            left_key = left_scope.casefold()
-            right_key = right_scope.casefold()
-            if any(char in left_key or char in right_key for char in "*?["):
+            left_key = scope_comparison_prefix(left_scope.casefold())
+            right_key = scope_comparison_prefix(right_scope.casefold())
+            if not left_key or not right_key:
+                # Glob with no literal directory prefix matches anywhere.
                 return True
             if left_key == right_key:
                 return True
@@ -239,13 +283,57 @@ def ownership_scopes_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> b
     return False
 
 
-def issues_can_run_together(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    if left.get("parallel_safe") is not True or right.get("parallel_safe") is not True:
+def classify_parallel_safe(entry: dict[str, Any]) -> str:
+    """Classify `parallel_safe` as "absent", "true", "false", or "malformed".
+    Only canonical boolean forms are accepted; anything else (e.g. "off",
+    "garbage", numbers, lists) is malformed and must fail closed. Absent
+    defaults to parallel: execution happens in isolated per-issue worktrees
+    with a dedicated merge-recovery path, so missing metadata must not
+    serialize the whole pool."""
+    value = entry.get("parallel_safe")
+    if value is None:
+        return "absent"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        canonical = value.strip().casefold()
+        if canonical in {"true", "1", "yes"}:
+            return "true"
+        if canonical in {"false", "0", "no"}:
+            return "false"
+    return "malformed"
+
+
+def issues_can_run_together(
+    left: dict[str, Any], right: dict[str, Any], absent_policy: str = "permissive"
+) -> bool:
+    """absent_policy governs issues with MISSING concurrency metadata:
+    - "permissive" (legacy states without the capability flag): absent metadata
+      admits in parallel, relying on worktree isolation plus merge recovery.
+      This is explicit fail-open behavior for backward compatibility only.
+    - "strict" (required for newly generated plans, which must derive metadata
+      for every issue): absent metadata runs exclusively, because worktrees
+      only isolate filesystem conflicts — not semantic conflicts, migrations,
+      generated files, or shared external resources."""
+    left_safe = classify_parallel_safe(left)
+    right_safe = classify_parallel_safe(right)
+    if "false" in (left_safe, right_safe) or "malformed" in (left_safe, right_safe):
         return False
-    left_scope = normalized_ownership_scope(left)
-    right_scope = normalized_ownership_scope(right)
-    if not left_scope or not right_scope:
+    left_kind, left_scope = classify_ownership_scope(left)
+    right_kind, right_scope = classify_ownership_scope(right)
+    if "malformed" in (left_kind, right_kind):
         return False
+    if "root" in (left_kind, right_kind):
+        # An explicit repo-root scope overlaps everything.
+        return False
+    if absent_policy == "strict" and (
+        "absent" in (left_safe, right_safe)
+        or left_kind == "absent"
+        or right_kind == "absent"
+    ):
+        return False
+    if left_kind == "absent" or right_kind == "absent":
+        return True
     return not ownership_scopes_overlap(left_scope, right_scope)
 
 
@@ -392,12 +480,10 @@ def auto_unblock_dependents(
 def ready_issues(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     registry = state.get("issue_registry", {})
-    for entry in registry.values():
-        if not isinstance(entry, dict):
-            continue
-        entry["parallel_safe"] = entry.get("parallel_safe") is True
-        entry["ownership_scope"] = list(normalized_ownership_scope(entry))
     completed = completed_issue_numbers(state)
+    absent_policy = str(
+        state.get("execution_plan", {}).get("concurrency_policy") or "permissive"
+    ).casefold()
     ready: list[str] = []
     active_entries: list[tuple[str, dict[str, Any]]] = []
     for active_issue in state.get("active_pool_issues", []):
@@ -424,7 +510,7 @@ def ready_issues(args: argparse.Namespace) -> int:
             (
                 other_issue
                 for other_issue, other_info in conflicts
-                if not issues_can_run_together(info, other_info)
+                if not issues_can_run_together(info, other_info, absent_policy)
             ),
             None,
         )
@@ -436,6 +522,33 @@ def ready_issues(args: argparse.Namespace) -> int:
     state["last_admission_deferrals"] = deferrals
     save_json(args.state_file, state)
     print(" ".join(ready))
+    return 0
+
+
+def admission_deferrals(args: argparse.Namespace) -> int:
+    """Print the deferrals recorded by the last ready-issues admission pass as
+    compact `issue:reason` pairs, one line total, empty when nothing deferred."""
+    state = load_json(args.state_file)
+    deferrals = state.get("last_admission_deferrals", {})
+    if not isinstance(deferrals, dict):
+        deferrals = {}
+    pairs = [f"{issue}:{reason}" for issue, reason in sorted(deferrals.items(), key=lambda item: str(item[0]))]
+    print(",".join(pairs))
+    return 0
+
+
+def active_pool_entries(args: argparse.Namespace) -> int:
+    """Print one tab-separated `issue pid report_file` line per active pool
+    member still marked in_progress, so a restarted pool runner can re-attach."""
+    state = load_json(args.state_file)
+    registry = state.get("issue_registry", {})
+    for issue in state.get("active_pool_issues", []):
+        entry = registry.get(str(issue), {})
+        if not isinstance(entry, dict) or entry.get("status") != "in_progress":
+            continue
+        pid = entry.get("pid") or 0
+        report_file = entry.get("report_file") or ""
+        print(f"{issue}\t{pid}\t{report_file}")
     return 0
 
 
@@ -998,6 +1111,14 @@ def build_parser() -> argparse.ArgumentParser:
     missing = subparsers.add_parser("ready-missing-context-count")
     add_state_file(missing)
     missing.set_defaults(func=ready_missing_context_count)
+
+    deferrals = subparsers.add_parser("admission-deferrals")
+    add_state_file(deferrals)
+    deferrals.set_defaults(func=admission_deferrals)
+
+    active_entries = subparsers.add_parser("active-pool-entries")
+    add_state_file(active_entries)
+    active_entries.set_defaults(func=active_pool_entries)
 
     context = subparsers.add_parser("context-file-for")
     add_state_file(context)

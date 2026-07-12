@@ -101,7 +101,7 @@ function Try-Run {
 function Install-Assets {
     Say "→ Installing shared assets"
 
-    $files   = @("prompt.md", "sub-coordinator-prompt.md", "main-orchestrator-rules.md", "artifact-recovery-prompt.md", "merge-recovery-prompt.md", "complexity-prompt.md", "plan-prompt.md", "review-prompt.md", "modifier-prompt.md", "coordinator-rules.md", "run-with-it-state.py", "run-with-it-github-update.py", "run-with-it-pr-body.py", "run-with-it-router.py", "run-with-it-artifacts.py", "run-agent.ps1", "run-with-it-dispatch.ps1", "run-with-it-pool.ps1", "worker-watch.ps1", "agent-registry.json")
+    $files   = @("prompt.md", "sub-coordinator-prompt.md", "main-orchestrator-rules.md", "artifact-recovery-prompt.md", "merge-recovery-prompt.md", "complexity-prompt.md", "plan-prompt.md", "review-prompt.md", "modifier-prompt.md", "coordinator-rules.md", "run-with-it-state.py", "run-with-it-github-update.py", "run-with-it-pr-body.py", "run-with-it-router.py", "run-with-it-artifacts.py", "run-agent.ps1", "run-with-it-dispatch.ps1", "run-with-it-pool.ps1", "run-with-it-watch.ps1", "run-with-it-stop.ps1", "worker-watch.ps1", "agent-registry.json")
     $baseUrl = "https://raw.githubusercontent.com/$REPO/$ASSETS_REF/assets"
 
     if ($DryRun) {

@@ -121,6 +121,8 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 | `run-agent.sh` / `run-agent.ps1` | Cross-agent CLI runner — wraps Codex, Claude, Agy, and OpenCode behind a unified interface with status bus, telemetry, GUI-safe permission downgrading, and structured agent-unavailable reporting; `github-copilot`/`copilot` fails fast while disabled. |
 | `run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1` | Worker dispatcher — spawns background agent sessions via `run-agent`, monitors liveness, detects stalls, classifies failures as infrastructure vs. capability, and recovers missing result artifacts from git state. |
 | `run-with-it-pool.sh` / `run-with-it-pool.ps1` | Rolling-pool supervisor — fills available parallel slots with ready issues, spawns Sub-Coordinators, emits the live run-board, detects merge/sub-coordinator failures, and triggers recovery. |
+| `run-with-it-watch.sh` / `run-with-it-watch.ps1` | Bounded status watcher — each call prints status lines appended since the previous call and exits within its watch window; reports `pool-empty`, `running`, or `pool-dead` so the Main Coordinator stays attached without long blocking calls. |
+| `run-with-it-stop.sh` / `run-with-it-stop.ps1` | Identity-checked run shutdown — terminates and verifies complete process groups/trees for every recorded pool, dispatcher, and runner PID; used by confirmed `discard`. |
 
 ### Prompts (agent instructions)
 
@@ -350,6 +352,8 @@ AI-Skills/
 │   ├── run-agent.sh / run-agent.ps1       # Cross-agent CLI runner
 │   ├── run-with-it-dispatch.sh / run-with-it-dispatch.ps1 # Worker dispatcher with stall detection
 │   ├── run-with-it-pool.sh / run-with-it-pool.ps1         # Rolling-pool supervisor
+│   ├── run-with-it-watch.sh / run-with-it-watch.ps1       # Bounded status watcher
+│   ├── run-with-it-stop.sh / run-with-it-stop.ps1         # Identity-checked run shutdown
 │   ├── run-with-it-router.py              # Deterministic usage-debt model router
 │   ├── run-with-it-state.py               # Atomic JSON state mutations
 │   ├── run-with-it-artifacts.py           # Artifact validation and synthesis
