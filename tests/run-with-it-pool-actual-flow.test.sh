@@ -133,6 +133,8 @@ prompt_payload="$2"
 report_file="$(printf '%s' "$prompt_payload" | sed -n 's/^REPORT_FILE=//p; s/^MERGE_RECOVERY_REPORT_FILE=//p' | head -n 1)"
 outcome="$(printf '%s' "$prompt_payload" | sed -n 's/^OUTCOME=//p' | head -n 1)"
 recovery_mode="$(printf '%s' "$prompt_payload" | sed -n 's/^SUB_COORD_RECOVERY_MODE=//p' | head -n 1)"
+sleep_for="$(printf '%s' "$prompt_payload" | sed -n 's/^SLEEP=//p' | head -n 1)"
+if [[ -n "$sleep_for" ]]; then sleep "$sleep_for"; fi
 issue="${RUN_WITH_IT_ISSUE:-unknown}"
 role="${RUN_WITH_IT_ROLE:-unknown}"
 printf 'STATUS|type=heartbeat|issue=%s|role=%s|phase=starting|progress=fake sub start\n' "$issue" "$role"
@@ -426,6 +428,44 @@ assert_file_contains "$RECOVERY_PROJECT/.run-with-it/status/events.log" "STATUS|
 assert_file_contains "$RECOVERY_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-recovery-spawn|issue=21|attempt=1" "events log records recovery sub-coordinator spawn"
 assert_file_contains "$RECOVERY_PROJECT/.run-with-it/status/events.log" "STATUS|type=sub-coord-complete|issue=21|outcome=completed" "events log records recovered issue completion"
 assert_file_contains "$RECOVERY_PROJECT/.run-with-it/issues/21/sub-coordinator-recovery-1.log" "STATUS|type=sub-resume" "recovery sub-coordinator resumes from saved state"
+
+# Late-context rolling pool: an issue whose context file does not exist yet is
+# waiting-context — the pool must keep running, surface the wait, and dispatch
+# the issue as soon as the Main Orchestrator writes the context, without a
+# relaunch and without the missing file killing the supervisor.
+LATECTX_ROOT="$WORK_DIR/late-context"
+make_fixture "$LATECTX_ROOT"
+LATECTX_PROJECT="$LATECTX_ROOT/project"
+mkdir -p "$LATECTX_PROJECT/.run-with-it/issues/51"
+cat > "$LATECTX_PROJECT/.run-with-it/contexts/sub-51.md" <<EOF
+REPORT_FILE=$LATECTX_PROJECT/.run-with-it/issues/51/report.json
+OUTCOME=completed
+SLEEP=6
+EOF
+cat > "$LATECTX_PROJECT/.run-with-it/main-state.json" <<JSON
+{
+  "schema_version": 4,
+  "execution_plan": { "parallel_jobs": 2, "topo_order": [51, 52] },
+  "issue_registry": {
+    "51": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-51"], "context_file": "$LATECTX_PROJECT/.run-with-it/contexts/sub-51.md" },
+    "52": { "status": "pending", "deps": [], "parallel_safe": true, "ownership_scope": ["src/issue-52"], "context_file": "$LATECTX_PROJECT/.run-with-it/contexts/sub-52.md" }
+  },
+  "active_pool_issues": [],
+  "completed_summaries": [],
+  "ledger_rows": []
+}
+JSON
+( sleep 3; write_context "$LATECTX_PROJECT" 52 completed ) &
+LATE_WRITER_PID=$!
+POOL_HEARTBEAT_SECONDS=2 run_pool "$LATECTX_ROOT" 2
+wait "$LATE_WRITER_PID" 2>/dev/null || true
+latectx_events="$LATECTX_PROJECT/.run-with-it/status/events.log"
+assert_json_status "$LATECTX_PROJECT/.run-with-it/main-state.json" 51 completed
+assert_json_status "$LATECTX_PROJECT/.run-with-it/main-state.json" 52 completed
+assert_file_contains "$latectx_events" "STATUS|type=pool-waiting-context|count=1" "pool surfaces the issue waiting on its context file"
+assert_file_contains "$latectx_events" "STATUS|type=pool-slot-filled|issue=52|freed_by=tick" "pool dispatches the late-context issue on a tick without a relaunch"
+assert_file_contains "$latectx_events" "STATUS|type=pool-heartbeat|" "pool emits periodic liveness heartbeats"
+assert_file_contains "$LATECTX_PROJECT/.run-with-it/main/main.log" "STATUS|type=pool-empty" "late-context pool run ends with pool-empty"
 
 python3 - "$SUCCESS_PROJECT/.run-with-it/main-state.json" "$MIXED_PROJECT/.run-with-it/main-state.json" <<'PY'
 import json, sys

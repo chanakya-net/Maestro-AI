@@ -26,6 +26,12 @@ WORK_DIR="$(mktemp -d)"
 cleanup() { rm -rf "${WORK_DIR}"; }
 trap cleanup EXIT
 
+# ready-issues only admits issues whose context file exists on disk. The
+# admission fixtures below use bare relative paths like "22.md", so run from
+# WORK_DIR and materialize every referenced context file up front.
+cd "${WORK_DIR}"
+for ctx_n in $(seq 1 62); do printf '# ctx\n' > "${WORK_DIR}/${ctx_n}.md"; done
+
 STATE_FILE="${WORK_DIR}/main-state.json"
 ISSUE_DIR_700="${WORK_DIR}/issues/700"
 mkdir -p "${ISSUE_DIR_700}"
@@ -302,5 +308,32 @@ JSON
 printf '%s\n' '{"outcome":"blocked","blocking_reasons":["blocked by missing STRIPE_API_KEY"]}' > "${WORK_DIR}/generic-block-report.json"
 generic_block_outcome="$(python3 "${STATE_HELPER}" finalize-issue --issue 71 --report-file "${WORK_DIR}/generic-block-report.json" --state-file "${GENERIC_BLOCK_STATE}")"
 assert_eq "${generic_block_outcome}" "blocked" "generic blocked-by text is not stale dependency evidence"
+
+# --- ready-issues defers issues whose recorded context file is missing on disk ---
+DISK_STATE="${WORK_DIR}/disk-context-state.json"
+printf '# ctx\n' > "${WORK_DIR}/ctx-80.md"
+cat > "${DISK_STATE}" <<JSON
+{
+  "schema_version": 4,
+  "execution_plan": {"topo_order": [80, 81, 82], "parallel_jobs": 4},
+  "active_pool_issues": [],
+  "issue_registry": {
+    "80": {"status": "pending", "deps": [], "context_file": "${WORK_DIR}/ctx-80.md"},
+    "81": {"status": "pending", "deps": [], "context_file": "${WORK_DIR}/ctx-81-missing.md"},
+    "82": {"status": "pending", "deps": []}
+  }
+}
+JSON
+ready_disk="$(python3 "${STATE_HELPER}" ready-issues --state-file "${DISK_STATE}" --limit 4)"
+assert_eq "${ready_disk}" "80" "ready-issues admits only issues whose context file exists on disk"
+missing_disk="$(python3 "${STATE_HELPER}" ready-missing-context-count --state-file "${DISK_STATE}")"
+assert_eq "${missing_disk}" "2" "missing-on-disk context counts as waiting-context alongside unset context"
+
+# --- status-counts: heartbeat counts line ---
+counts_line="$(python3 "${STATE_HELPER}" status-counts --state-file "${DISK_STATE}")"
+assert_contains "${counts_line}" "total=3" "status-counts reports total issues"
+assert_contains "${counts_line}" "pending=3" "status-counts reports pending issues"
+assert_contains "${counts_line}" "waiting_context=2" "status-counts reports dependency-ready issues waiting on contexts"
+assert_contains "${counts_line}" "completed=0" "status-counts reports completed issues"
 
 echo "PASS: run-with-it state requeue/auto-unblock/status-board"

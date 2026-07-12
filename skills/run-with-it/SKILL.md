@@ -21,6 +21,9 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/issues/<n>/sub-coordinator.log`. Do not tail raw logs into AI context; only read the compact report JSON from `.run-with-it/issues/<n>/report.json`.
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
 - **Per-issue stage board.** The pool runner emits a compact `STATUS|type=run-board|board=...` line whenever the run's stages change (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`) for a "current stage, not detail" view. Print it on demand any time with `python3 "$ASSET_ROOT/run-with-it-state.py" status-board --state-file .run-with-it/main-state.json` (read-only; add `--oneline` for the single-line form).
+- **Pool liveness heartbeat.** The pool runner emits `STATUS|type=pool-heartbeat|pool_pid=<pid>|active=<n>|parallel_jobs=<n>|total=..|completed=..|in_progress=..|pending=..|blocked=..|waiting_context=..` every `POOL_HEARTBEAT_SECONDS` (default 60). A heartbeat in the watch output means the pool is alive even when nothing else changed; relay its counts to the user as the periodic progress update.
+- **Assemble context files for ALL pending issues up front — dependents included.** The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling. Writing every context in Step C is what makes "freed slots fill immediately" true. If a `STATUS|type=pool-waiting-context` line ever appears, contexts are missing: assemble them immediately (Step C) while the pool keeps running — it picks them up on its next tick without a relaunch.
+- **Stay attached until every issue is terminal.** The Main Orchestrator session must keep running the watch loop, and after each watch window print a one-line user-facing progress update from the newest `run-board` / `pool-heartbeat` lines (e.g. `Pool alive — 2 running, 3 pending, 4 completed, 1 blocked`). Never end the turn, go silent, or declare the run finished while any issue is still `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means GOTO Step A, not done.
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
 - **Never kill, cancel, or restart a Sub-Coordinator mid-run.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction. **Sole exception:** a user-confirmed `discard`, which terminates the entire run — supervisor, dispatchers, and runners — through the platform stop helper (`run-with-it-stop.sh` / `run-with-it-stop.ps1`) per the Cleanup Discard flow. Never hand-roll kills even then.
@@ -162,6 +165,8 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `DELEGATED_REVIEW` | `true` | Enable Sub-Coordinator delegated review; passed through |
 | `MAX_AGENT_DEPTH` | `1` | Always injected; prevents Sub-Coordinator children from spawning sub-agents |
 | `PARALLEL_JOBS` | `4` | Rolling pool size. Freed slots fill immediately. Set to `1` for sequential. |
+| `POOL_HEARTBEAT_SECONDS` | `60` | Cadence of the pool runner's `STATUS|type=pool-heartbeat` liveness line (per-status counts + active pool size) |
+| `MAX_SPAWN_BOOTSTRAP_ATTEMPTS` | `3` | Consecutive failed spawn attempts before the pool runner finalizes an issue as terminal instead of retrying |
 
 ## Automatic Worker Model Matrix
 
@@ -362,29 +367,37 @@ Emit: STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json
 Emit: STATUS|type=main-loop|iteration=<n>|pending=<count>|completed=<count>
       |failed=<count>
 
-══ STEP B: FILL ROLLING POOL ════════════════════════════════════════════════════
+══ STEP B: SUPPLY CONTEXTS FOR THE ROLLING POOL ════════════════════════════════
 Compute ACTIVE_POOL = all issues in issue_registry with status="in_progress"
 (cross-check against active_pool_issues in state for consistency).
-POOL_SLOTS_FREE = PARALLEL_JOBS - len(ACTIVE_POOL).
 
-Collect READY_ISSUES = all issues with status="pending" whose dependencies are
-all "completed", ordered by priority:
+Collect NEWLY_QUEUED = ALL issues with status="pending" that do not yet have a
+context file on disk (issue_registry[<n>].context_file unset, or the recorded
+path no longer exists) — INCLUDING issues whose dependencies are not yet
+completed. Order by priority:
   critical fixes → dev infra → tracer-bullet slices → polish → refactors.
-Issues in READY_ISSUES must have no unmet dependencies on each other.
 
-If POOL_SLOTS_FREE > 0 and READY_ISSUES is non-empty:
-  Select NEWLY_QUEUED = READY_ISSUES[0 : POOL_SLOTS_FREE].
-  For each issue <n> in NEWLY_QUEUED:
-    Leave issue status="pending" until the platform pool runner spawns it.
-    Ensure its context file path is recorded in main-state.json during Step C.
-    The pool runner marks status="in_progress" and appends <n> to active_pool_issues when it captures the dispatcher PID.
-  Emit: STATUS|type=pool-fill|active=<len(ACTIVE_POOL)+len(NEWLY_QUEUED)>
-        |newly_queued=<len(NEWLY_QUEUED)>|pending_remaining=<pending_after>
-        |parallel_jobs=<PARALLEL_JOBS>
+Rationale (do not "optimize" this back to a slot-sized batch): the pool runner
+is the only dispatcher, and it can only dispatch issues whose context files
+already exist — issues without contexts are invisible to slot filling. Writing
+every context up front is what lets the pool fill freed slots immediately and
+auto-dispatch dependents the moment their dependencies complete, without
+waiting on this session. Context staleness is acceptable: the Sub-Coordinator
+re-fetches the issue body when it starts.
 
-If ACTIVE_POOL is empty and READY_ISSUES is empty:
-  Check if any issues remain with status="pending" — if all have unmet deps,
-  re-evaluate them; if still unresolvable, mark them "blocked".
+For each issue <n> in NEWLY_QUEUED:
+  Leave issue status="pending" until the platform pool runner spawns it.
+  Record its context file path in main-state.json during Step C.
+  The pool runner marks status="in_progress" and appends <n> to
+  active_pool_issues when it captures the dispatcher PID.
+Emit: STATUS|type=pool-fill|active=<len(ACTIVE_POOL)>
+      |newly_queued=<len(NEWLY_QUEUED)>|pending_remaining=<pending_after>
+      |parallel_jobs=<PARALLEL_JOBS>
+
+If ACTIVE_POOL is empty and NEWLY_QUEUED is empty:
+  Check if any issues remain with status="pending" — if all have unmet deps
+  whose blockers are terminal-but-not-completed, re-evaluate them; if still
+  unresolvable, mark them "blocked".
   If ALL issues are terminal (completed / failed-review / blocked):
     EXIT LOOP → proceed to Final Ledger and Cleanup.
 
@@ -540,18 +553,33 @@ Execution-mode requirement (critical):
 
   Each watch call prints every STATUS line appended to the events log since the
   previous call and exits within its watch window, well inside any tool-call
-  timeout. After each call, relay the newest `run-board` line to the user so
-  periodic progress stays visible, then branch on the final `WATCH|result=...`
-  marker:
+  timeout. After EVERY call — even when nothing changed — print a one-line
+  user-facing progress update built from the newest `run-board` and
+  `pool-heartbeat` lines, e.g.:
+
+    "Pool alive (pid 12345) — 2 running, 3 pending, 4 completed, 1 blocked.
+     Board: #42 impl(cyc1) | #43 review(cyc2) | #44 done"
+
+  The pool emits `pool-heartbeat` every POOL_HEARTBEAT_SECONDS (default 60), so
+  the user is never left guessing whether the run is alive. Then react to the
+  drained lines:
+  - `STATUS|type=pool-waiting-context` or `STATUS|type=sub-coord-dispatch-
+    bootstrap-failed|...|reason=missing-context-file`: contexts are missing —
+    assemble them NOW (run Step C for those issues) while the pool keeps
+    running; it picks the new contexts up on its next tick without a relaunch.
+  Then branch on the final `WATCH|result=...` marker:
   - `running` (exit 0): the pool is alive; immediately run the watch again.
   - `pool-dead` (exit 3): the pool supervisor died without `pool-empty`; relaunch
     the pool runner with the same `--detach` command — it re-attaches to live
     Sub-Coordinators and dead ones flow through exit analysis — then keep watching.
-  - `pool-empty` (exit 0): Step D is complete.
+  - `pool-empty` (exit 0): Step D is complete. This is NOT the end of the run:
+    GOTO Step A, which decides between another pool pass (issues still pending)
+    and Final Ledger (all terminal).
 
   Do not end the Main Coordinator turn between watch calls, and do not start an
-  unrelated shell to monitor the pool. Per-issue dispatcher PIDs are persisted by
-  the platform pool runner.
+  unrelated shell to monitor the pool. The Main Orchestrator stays attached and
+  looping until every issue is terminal (completed / failed-review / blocked).
+  Per-issue dispatcher PIDs are persisted by the platform pool runner.
   The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
 ══ GOTO STEP A ═════════════════════════════════════════════════════════════════

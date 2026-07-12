@@ -10,6 +10,8 @@ param(
     [int]$PollSeconds = $(if ($env:STATUS_POLL_SECONDS) { [int]$env:STATUS_POLL_SECONDS } else { 10 }),
     [int]$TimeoutSeconds = $(if ($env:SUB_COORD_TIMEOUT_SECONDS) { [int]$env:SUB_COORD_TIMEOUT_SECONDS } else { 3600 }),
     [int]$MaxSubCoordRecoveryAttempts = $(if ($env:MAX_SUB_COORD_RECOVERY_ATTEMPTS) { [int]$env:MAX_SUB_COORD_RECOVERY_ATTEMPTS } else { 2 }),
+    [int]$MaxSpawnBootstrapAttempts = $(if ($env:MAX_SPAWN_BOOTSTRAP_ATTEMPTS) { [int]$env:MAX_SPAWN_BOOTSTRAP_ATTEMPTS } else { 3 }),
+    [int]$HeartbeatSeconds = $(if ($env:POOL_HEARTBEAT_SECONDS) { [int]$env:POOL_HEARTBEAT_SECONDS } else { 60 }),
     [string]$PoolStateFile = "",
     [switch]$DryRun,
     [switch]$ValidateOnly,
@@ -385,10 +387,16 @@ if ($DryRun) {
 }
 
 $pool = @{}
+$script:spawnBootstrapAttempts = @{}
 
 function Spawn-Issue([string]$issue) {
     $contextFile = Get-ContextFileFor $issue
-    if (-not (Test-Path $contextFile)) { Fail "context file missing for issue ${issue}: $contextFile" }
+    if (-not (Test-Path $contextFile)) {
+        # Not fatal: the Main Orchestrator may still be assembling this context.
+        # Throw so Fill-FreeSlots defers the issue instead of exiting the pool.
+        Write-Status "STATUS|type=sub-coord-dispatch-bootstrap-failed|issue=$issue|reason=missing-context-file|context_file=$contextFile"
+        throw "context file missing for issue ${issue}: $contextFile"
+    }
     $issueDir = Get-IssueDirFor $issue
     $logFile = Join-Path $issueDir "sub-coordinator.log"
     $doneFile = Join-Path $issueDir "sub-coordinator.done"
@@ -468,9 +476,41 @@ function Fill-FreeSlots([string]$reason) {
     if ($freeSlots -le 0) { return }
     foreach ($queuedIssue in @(Get-ReadyIssues $freeSlots)) {
         if ($pool.ContainsKey($queuedIssue)) { continue }
-        Spawn-Issue $queuedIssue
-        Write-Status "STATUS|type=pool-slot-filled|issue=$queuedIssue|freed_by=$reason|pool_size=$($pool.Count)"
+        try {
+            Spawn-Issue $queuedIssue
+            $script:spawnBootstrapAttempts[$queuedIssue] = 0
+            Write-Status "STATUS|type=pool-slot-filled|issue=$queuedIssue|freed_by=$reason|pool_size=$($pool.Count)"
+        } catch {
+            # A failed spawn must never kill the supervisor: defer the issue,
+            # retry on later ticks, and finalize it as terminal after bounded
+            # attempts so the rest of the run keeps moving.
+            if ($pool.ContainsKey($queuedIssue)) { continue }
+            $attempts = 1 + [int]($script:spawnBootstrapAttempts[$queuedIssue])
+            $script:spawnBootstrapAttempts[$queuedIssue] = $attempts
+            if ($attempts -lt $MaxSpawnBootstrapAttempts) {
+                Write-Status "STATUS|type=pool-slot-fill-failed|issue=$queuedIssue|freed_by=$reason|attempt=$attempts|max_attempts=$MaxSpawnBootstrapAttempts"
+                continue
+            }
+            $reportFile = Join-Path (Get-IssueDirFor $queuedIssue) "report.json"
+            Write-Status "STATUS|type=pool-slot-fill-abandoned|issue=$queuedIssue|attempts=$attempts|report_file=$reportFile"
+            Mark-SubCoordRecoveryDispatchFailed $queuedIssue $reportFile
+            Finalize-PoolIssue $queuedIssue $reportFile $null
+        }
     }
+}
+
+# Unconditional liveness signal: fires on a fixed cadence so watchers can tell
+# "pool alive and idle" apart from "pool dead" without probing the PID.
+function Emit-Heartbeat {
+    # Invoke-StateHelper exits the pool on failure; a heartbeat must never do
+    # that, so call the helper directly and swallow errors.
+    $counts = ""
+    try {
+        $counts = [string](& $PythonExe $StateHelper status-counts --state-file $StateFile 2>$null)
+        if ($LASTEXITCODE -ne 0) { $counts = "" }
+    } catch { $counts = "" }
+    $suffix = if ($counts) { "|$counts" } else { "" }
+    Write-Status "STATUS|type=pool-heartbeat|pool_pid=$PID|active=$($pool.Count)|parallel_jobs=$ParallelJobs$suffix"
 }
 
 function Run-MergeRecovery([string]$issue) {
@@ -573,8 +613,10 @@ Write-PoolState $PID
 Reattach-ActivePool
 Fill-FreeSlots "startup"
 Emit-AdmissionDeferrals
+Emit-Heartbeat
 
 $lastWaitingContextCount = ""
+$heartbeatElapsed = 0
 while ($pool.Count -gt 0) {
     Start-Sleep -Seconds $PollSeconds
     foreach ($issue in @($pool.Keys)) {
@@ -592,6 +634,11 @@ while ($pool.Count -gt 0) {
     }
     $lastWaitingContextCount = "$waitingCount"
     Emit-AdmissionDeferrals
+    $heartbeatElapsed += $PollSeconds
+    if ($heartbeatElapsed -ge $HeartbeatSeconds) {
+        Emit-Heartbeat
+        $heartbeatElapsed = 0
+    }
 }
 
 Write-Status "STATUS|type=pool-empty|state_file=$StateFile"
