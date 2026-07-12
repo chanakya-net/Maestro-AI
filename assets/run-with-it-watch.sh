@@ -17,6 +17,7 @@ POOL_STATE_FILE=""
 CURSOR_FILE=""
 WAIT_SECONDS="${POOL_WATCH_SECONDS:-240}"
 POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
+MATCH_PATTERN="${RUN_WITH_IT_POOL_PATTERN:-run-with-it-pool}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 fail() {
@@ -30,7 +31,8 @@ Usage:
   run-with-it-watch.sh --events-log .run-with-it/status/events.log \
     --pool-state-file .run-with-it/main/pool.state.json \
     [--cursor-file .run-with-it/status/watch-cursor] \
-    [--wait-seconds 240] [--poll-seconds 10]
+    [--wait-seconds 240] [--poll-seconds 10] \
+    [--match-pattern run-with-it-pool]
 EOF
 }
 
@@ -41,6 +43,7 @@ while [ "$#" -gt 0 ]; do
     --cursor-file) CURSOR_FILE="${2:-}"; shift 2 ;;
     --wait-seconds) WAIT_SECONDS="${2:-}"; shift 2 ;;
     --poll-seconds) POLL_SECONDS="${2:-}"; shift 2 ;;
+    --match-pattern) MATCH_PATTERN="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -81,6 +84,34 @@ print(int(data.get("pool_pid") or 0))
 PY
 }
 
+pool_pid_start() {
+  [ -f "$POOL_STATE_FILE" ] || { echo ""; return; }
+  "$PYTHON_BIN" - "$POOL_STATE_FILE" <<'PY' 2>/dev/null || echo ""
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+print(data.get("pool_pid_start") or "")
+PY
+}
+
+# PID existence alone is not identity: verify the command line and, when the
+# lease recorded one, the process start time, so a recycled PID belonging to an
+# unrelated process reads as pool-dead instead of being watched forever.
+pool_alive() {
+  local pid="$1" recorded_start actual_start
+  [ -n "$pid" ] && [ "$pid" != "0" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  ps -p "$pid" -o command= 2>/dev/null | grep -Eq "$MATCH_PATTERN" || return 1
+  recorded_start="$(pool_pid_start)"
+  if [ -n "$recorded_start" ]; then
+    actual_start="$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//')"
+    [ "$actual_start" = "$recorded_start" ] || return 1
+  fi
+  return 0
+}
+
 # Print events-log lines added since the cursor, advance the cursor, and
 # report via exit code whether pool-empty was observed (0 yes, 1 no).
 drain_new_lines() {
@@ -107,7 +138,7 @@ while :; do
     exit 0
   fi
   pid="$(pool_pid)"
-  if [ -z "$pid" ] || [ "$pid" = "0" ] || ! kill -0 "$pid" 2>/dev/null; then
+  if ! pool_alive "$pid"; then
     # Drain once more: the pool may have written pool-empty and exited
     # between the drain above and the liveness check.
     if drain_new_lines; then

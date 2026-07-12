@@ -129,7 +129,41 @@ state["issue_registry"] = {
 json.dump(state, open(path, "w"), indent=2)
 PY
 ready_default="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
-assert_eq "${ready_default}" "6 7" "missing concurrency metadata admits in parallel (worktree isolation)"
+assert_eq "${ready_default}" "6 7" "legacy permissive states admit missing metadata in parallel"
+
+# Under concurrency_policy=strict (required for newly generated plans), missing
+# metadata runs exclusively instead of failing open.
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["execution_plan"]["concurrency_policy"] = "strict"
+state["active_pool_issues"] = []
+state["issue_registry"]["6"]["status"] = "pending"
+state["issue_registry"]["7"]["status"] = "pending"
+json.dump(state, open(path, "w"), indent=2)
+PY
+ready_strict="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_strict}" "6" "strict policy runs missing-metadata issues exclusively"
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["issue_registry"]["6"]["parallel_safe"] = True
+state["issue_registry"]["6"]["ownership_scope"] = ["src"]
+json.dump(state, open(path, "w"), indent=2)
+PY
+ready_strict_full="$(python3 "${STATE_HELPER}" ready-issues --state-file "${ADMISSION_STATE}" --limit 4)"
+assert_eq "${ready_strict_full}" "6 7" "strict policy admits fully-derived disjoint metadata in parallel"
+python3 - "${ADMISSION_STATE}" <<'PY'
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+del state["execution_plan"]["concurrency_policy"]
+del state["issue_registry"]["6"]["parallel_safe"]
+del state["issue_registry"]["6"]["ownership_scope"]
+json.dump(state, open(path, "w"), indent=2)
+PY
 python3 - "${ADMISSION_STATE}" <<'PY'
 import json, sys
 state = json.load(open(sys.argv[1]))

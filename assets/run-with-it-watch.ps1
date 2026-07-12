@@ -3,7 +3,8 @@ param(
     [string]$PoolStateFile = "",
     [string]$CursorFile = "",
     [int]$WaitSeconds = $(if ($env:POOL_WATCH_SECONDS) { [int]$env:POOL_WATCH_SECONDS } else { 240 }),
-    [int]$PollSeconds = $(if ($env:STATUS_POLL_SECONDS) { [int]$env:STATUS_POLL_SECONDS } else { 10 })
+    [int]$PollSeconds = $(if ($env:STATUS_POLL_SECONDS) { [int]$env:STATUS_POLL_SECONDS } else { 10 }),
+    [string]$MatchPattern = $(if ($env:RUN_WITH_IT_POOL_PATTERN) { $env:RUN_WITH_IT_POOL_PATTERN } else { "run-with-it-pool" })
 )
 
 # Bounded foreground watch over the run-with-it status bus. The Main
@@ -42,14 +43,50 @@ function Read-Cursor {
     return 0
 }
 
-function Get-PoolPid {
-    if (-not (Test-Path $PoolStateFile)) { return 0 }
+function Get-PoolLease {
+    $lease = [pscustomobject]@{ ProcessId = 0; Start = "" }
+    if (-not (Test-Path $PoolStateFile)) { return $lease }
     try {
         $data = Get-Content $PoolStateFile -Raw | ConvertFrom-Json
-        return [int]$data.pool_pid
-    } catch {
-        return 0
+        $lease.ProcessId = [int]$data.pool_pid
+        if ($data.PSObject.Properties["pool_pid_start"]) { $lease.Start = [string]$data.pool_pid_start }
+    } catch {}
+    return $lease
+}
+
+function Get-CommandLineFor([int]$processId) {
+    try {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.CommandLine) { return [string]$proc.CommandLine }
+    } catch {}
+    try {
+        $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($proc) { return [string]$proc.Path }
+    } catch {}
+    return ""
+}
+
+# PID existence alone is not identity: verify the command line and, when the
+# lease recorded one, the process start time, so a recycled PID belonging to an
+# unrelated process reads as pool-dead instead of being watched forever.
+function Test-PoolAlive($lease) {
+    if ($lease.ProcessId -le 0) { return $false }
+    $proc = Get-Process -Id $lease.ProcessId -ErrorAction SilentlyContinue
+    if (-not $proc) { return $false }
+    if ((Get-CommandLineFor $lease.ProcessId) -notmatch $MatchPattern) { return $false }
+    # Process.StartTime is only reliable for foreign processes on Windows; on
+    # Unix .NET can report values off by months, so the command-line match is
+    # the identity signal there.
+    if ($lease.Start -and ($env:OS -eq "Windows_NT" -or $IsWindows)) {
+        $parsedStart = [datetime]::MinValue
+        if ([datetime]::TryParse($lease.Start, [ref]$parsedStart)) {
+            try {
+                $delta = [math]::Abs(($proc.StartTime - $parsedStart).TotalSeconds)
+                if ($delta -gt 2) { return $false }
+            } catch {}
+        }
     }
+    return $true
 }
 
 # Collect events-log lines added since the cursor and advance the cursor.
@@ -83,11 +120,9 @@ while ($true) {
         Write-Output "WATCH|result=pool-empty|events_log=$EventsLog"
         exit 0
     }
-    $poolPid = Get-PoolPid
-    $alive = $false
-    if ($poolPid -gt 0) {
-        $alive = [bool](Get-Process -Id $poolPid -ErrorAction SilentlyContinue)
-    }
+    $lease = Get-PoolLease
+    $poolPid = $lease.ProcessId
+    $alive = Test-PoolAlive $lease
     if (-not $alive) {
         # Drain once more: the pool may have written pool-empty and exited
         # between the drain above and the liveness check.

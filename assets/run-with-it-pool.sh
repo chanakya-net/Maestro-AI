@@ -102,17 +102,77 @@ fi
 
 mkdir -p "$(dirname "$MAIN_LOG")" "$(dirname "$STATUS_FILE")" "$(dirname "$EVENTS_LOG")" "$(dirname "$POOL_STATE_FILE")"
 
+pid_start_time() {
+  ps -p "$1" -o lstart= 2>/dev/null | sed 's/^ *//;s/ *$//' || true
+}
+
+pid_command_line() {
+  ps -p "$1" -o command= 2>/dev/null || true
+}
+
+# Lease fingerprint: PID alone is not identity — a recycled PID could belong to
+# an unrelated process. The lease records the process start time and consumers
+# additionally match the command line before trusting it.
 write_pool_state() {
-  local pid="$1"
-  "$PYTHON_BIN" - "$POOL_STATE_FILE" "$pid" "$STATE_FILE" <<'PY'
+  local pid="$1" pid_start
+  pid_start="$(pid_start_time "$pid")"
+  "$PYTHON_BIN" - "$POOL_STATE_FILE" "$pid" "$pid_start" "$STATE_FILE" <<'PY'
 import json
+import os
 import sys
 import time
 
-path, pid, state_file = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump({"pool_pid": int(pid), "started_at": int(time.time()), "state_file": state_file}, handle)
+path, pid, pid_start, state_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+# Atomic replace: the watch runner reads this file concurrently; a torn read
+# would parse as a missing lease and report a false pool-dead.
+tmp_path = f"{path}.tmp.{os.getpid()}"
+with open(tmp_path, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "pool_pid": int(pid),
+            "pool_pid_start": pid_start,
+            "started_at": int(time.time()),
+            "state_file": state_file,
+        },
+        handle,
+    )
+os.replace(tmp_path, path)
 PY
+}
+
+POOL_MATCH_PATTERN="${RUN_WITH_IT_POOL_PATTERN:-run-with-it-pool}"
+
+# Refuse to run a second supervisor over the same run: duplicate pools would
+# double-dispatch every ready issue.
+refuse_if_pool_already_running() {
+  local existing_pid existing_start actual_start
+  [ -f "$POOL_STATE_FILE" ] || return 0
+  existing_pid="$("$PYTHON_BIN" -c '
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        print(int(json.load(handle).get("pool_pid") or 0))
+except Exception:
+    print(0)
+' "$POOL_STATE_FILE")"
+  [ "$existing_pid" -gt 1 ] 2>/dev/null || return 0
+  [ "$existing_pid" != "$$" ] || return 0
+  kill -0 "$existing_pid" 2>/dev/null || return 0
+  pid_command_line "$existing_pid" | grep -Eq "$POOL_MATCH_PATTERN" || return 0
+  existing_start="$("$PYTHON_BIN" -c '
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as handle:
+        print(json.load(handle).get("pool_pid_start") or "")
+except Exception:
+    print("")
+' "$POOL_STATE_FILE")"
+  if [ -n "$existing_start" ]; then
+    actual_start="$(pid_start_time "$existing_pid")"
+    [ "$actual_start" = "$existing_start" ] || return 0
+  fi
+  write_status "STATUS|type=pool-already-running|pid=${existing_pid}|pool_state_file=${POOL_STATE_FILE}"
+  exit 2
 }
 
 write_status() {
@@ -124,6 +184,7 @@ write_status() {
 }
 
 if [ "$DETACH" = 1 ] && [ "$POOL_DETACHED_CHILD" != "1" ] && [ "$VALIDATE_ONLY" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  refuse_if_pool_already_running
   # nohup alone can remain in the caller's process group; create a new session
   # so short-lived tool-call cleanup cannot kill the pool supervisor.
   detached_pid="$("$PYTHON_BIN" - "$MAIN_LOG" "$SCRIPT_PATH" "${ORIGINAL_ARGS[@]}" <<'PY'
@@ -156,6 +217,7 @@ PY
 fi
 
 if [ "$VALIDATE_ONLY" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  refuse_if_pool_already_running
   write_pool_state "$$"
 fi
 
@@ -446,15 +508,28 @@ emit_admission_deferrals() {
 # a bounded tool-call timeout). Live dispatchers keep running unsupervised; the
 # monitor loop below re-attaches to them, and dead ones flow through the normal
 # exit analysis on the first tick instead of producing a false pool-empty.
+# PID existence alone is not identity: a recycled PID belonging to an unrelated
+# process must not be adopted, or the pool would wait on it forever. Identity
+# mismatches are marked stale (pid 0) and enter exit analysis on the first tick.
+DISPATCH_MATCH_PATTERN="${RUN_WITH_IT_DISPATCH_PATTERN:-run-with-it-dispatch|run-agent}"
+
 reattach_active_pool() {
-  local line issue pid report_file reattached=0
+  local line issue pid report_file identity reattached=0
   while IFS=$'\t' read -r issue pid report_file; do
     [ -n "$issue" ] || continue
+    identity="live"
+    if [ -z "$pid" ] || [ "$pid" = "0" ] || ! kill -0 "$pid" 2>/dev/null; then
+      identity="dead"
+      pid=0
+    elif ! pid_command_line "$pid" | grep -Eq "$DISPATCH_MATCH_PATTERN"; then
+      identity="stale"
+      pid=0
+    fi
     pool_add "$issue"
-    pool_set PID "$issue" "${pid:-0}"
+    pool_set PID "$issue" "$pid"
     pool_set REPORT "$issue" "${report_file:-$(issue_dir_for "$issue")/report.json}"
     reattached=$((reattached + 1))
-    write_status "STATUS|type=sub-coord-reattach|issue=${issue}|pid=${pid:-0}|report_file=${report_file}"
+    write_status "STATUS|type=sub-coord-reattach|issue=${issue}|pid=${pid}|identity=${identity}|report_file=${report_file}"
   done <<EOF
 $("$PYTHON_BIN" "$STATE_HELPER" active-pool-entries --state-file "$STATE_FILE")
 EOF

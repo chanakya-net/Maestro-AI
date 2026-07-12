@@ -151,14 +151,29 @@ done <<EOF
 $(collect_pids)
 EOF
 
-any_alive() {
-  local pid
+# Every member of every signaled group, plus the recorded roots. Verification
+# must cover unrecorded group children (e.g. a provider CLI that ignores TERM
+# while its recorded dispatcher exits) — checking only recorded PIDs can
+# report clean while a worker keeps running.
+group_members() {
+  local pgid="$1"
+  ps -eo pid=,pgid= 2>/dev/null | awk -v pgid="$pgid" '$2 == pgid { print $1 }'
+}
+
+live_targets() {
+  local pid pgid
   for pid in $TARGET_PIDS; do
     if kill -0 "$pid" 2>/dev/null; then
-      return 0
+      printf '%s\n' "$pid"
     fi
   done
-  return 1
+  for pgid in $SIGNALED_PGIDS; do
+    group_members "$pgid"
+  done | sort -un
+}
+
+any_alive() {
+  [ -n "$(live_targets)" ]
 }
 
 waited=0
@@ -168,6 +183,8 @@ while [ "$waited" -lt "$TERM_WAIT_SECONDS" ] && any_alive; do
 done
 
 if any_alive; then
+  # KILL every signaled group unconditionally: the original leader may already
+  # be gone while an unrecorded child survives inside the group.
   for pgid in $SIGNALED_PGIDS; do
     signal_group KILL "$pgid" || true
   done
@@ -177,15 +194,10 @@ if any_alive; then
   sleep 1
 fi
 
-SURVIVORS=""
-for pid in $TARGET_PIDS; do
-  if kill -0 "$pid" 2>/dev/null; then
-    SURVIVORS="${SURVIVORS} ${pid}"
-  fi
-done
+SURVIVORS="$(live_targets | tr '\n' ',' | sed 's/,$//')"
 
 if [ -n "$SURVIVORS" ]; then
-  echo "STOP|result=survivors|terminated=${TERMINATED}|already_dead=${ALREADY_DEAD}|skipped_not_ours=${SKIPPED_NOT_OURS}|survivors=$(echo "$SURVIVORS" | tr -s ' ' ',' | sed 's/^,//')"
+  echo "STOP|result=survivors|terminated=${TERMINATED}|already_dead=${ALREADY_DEAD}|skipped_not_ours=${SKIPPED_NOT_OURS}|survivors=${SURVIVORS}"
   exit 3
 fi
 

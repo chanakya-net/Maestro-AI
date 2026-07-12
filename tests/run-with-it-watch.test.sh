@@ -60,7 +60,7 @@ first_output="$(bash "${WATCH_RUNNER}" \
   --events-log "${EVENTS_LOG}" \
   --pool-state-file "${POOL_STATE_FILE}" \
   --cursor-file "${CURSOR_FILE}" \
-  --wait-seconds 0 --poll-seconds 1)"
+  --wait-seconds 0 --poll-seconds 1 --match-pattern "sleep 300")"
 assert_contains "${first_output}" "STATUS|type=pool-ready" "watch drains status lines since start"
 assert_contains "${first_output}" "STATUS|type=sub-coord-spawn|issue=1" "watch drains every appended line"
 assert_contains "${first_output}" "WATCH|result=running" "watch reports running while the pool is alive"
@@ -71,7 +71,7 @@ second_output="$(bash "${WATCH_RUNNER}" \
   --events-log "${EVENTS_LOG}" \
   --pool-state-file "${POOL_STATE_FILE}" \
   --cursor-file "${CURSOR_FILE}" \
-  --wait-seconds 0 --poll-seconds 1)"
+  --wait-seconds 0 --poll-seconds 1 --match-pattern "sleep 300")"
 assert_not_contains "${second_output}" "STATUS|type=pool-ready" "watch does not reprint drained lines"
 assert_contains "${second_output}" "STATUS|type=run-board" "watch prints newly appended lines"
 
@@ -81,7 +81,7 @@ third_output="$(bash "${WATCH_RUNNER}" \
   --events-log "${EVENTS_LOG}" \
   --pool-state-file "${POOL_STATE_FILE}" \
   --cursor-file "${CURSOR_FILE}" \
-  --wait-seconds 30 --poll-seconds 1)"
+  --wait-seconds 30 --poll-seconds 1 --match-pattern "sleep 300")"
 assert_contains "${third_output}" "WATCH|result=pool-empty" "watch reports pool-empty and stops"
 
 # --- A dead pool without pool-empty exits 3 with the pool-dead marker ---
@@ -94,7 +94,7 @@ dead_output="$(bash "${WATCH_RUNNER}" \
   --events-log "${EVENTS_LOG}" \
   --pool-state-file "${POOL_STATE_FILE}" \
   --cursor-file "${CURSOR_FILE}" \
-  --wait-seconds 30 --poll-seconds 1)" || dead_status=$?
+  --wait-seconds 30 --poll-seconds 1 --match-pattern "sleep 300")" || dead_status=$?
 assert_contains "${dead_output}" "WATCH|result=pool-dead" "watch reports a dead pool supervisor"
 [ "${dead_status}" -eq 3 ] || fail "pool-dead must exit 3 (got ${dead_status})"
 assert_contains "${dead_output}" "STATUS|type=sub-coord-spawn|issue=2" "watch still drains lines before reporting pool-dead"
@@ -116,7 +116,8 @@ try:
          "--events-log", events_log,
          "--pool-state-file", pool_state,
          "--cursor-file", cursor,
-         "--wait-seconds", "1", "--poll-seconds", "0"],
+         "--wait-seconds", "1", "--poll-seconds", "0",
+         "--match-pattern", "sleep 300"],
         capture_output=True, text=True, timeout=60,
     )
 except subprocess.TimeoutExpired:
@@ -147,7 +148,7 @@ if command -v pwsh >/dev/null 2>&1; then
     -EventsLog "${PS_EVENTS_LOG}" \
     -PoolStateFile "${PS_POOL_STATE_FILE}" \
     -CursorFile "${PS_CURSOR_FILE}" \
-    -WaitSeconds 0 -PollSeconds 1)"
+    -WaitSeconds 0 -PollSeconds 1 -MatchPattern "sleep")"
   assert_contains "${ps_first}" "STATUS|type=run-board" "pwsh watch prints drained status lines"
   assert_contains "${ps_first}" "WATCH|result=running" "pwsh watch reports running while the pool is alive"
   assert_not_contains "${ps_first}" "WATCH|result=pool-empty" "pwsh watch must not fake pool-empty from ordinary status output"
@@ -157,7 +158,7 @@ if command -v pwsh >/dev/null 2>&1; then
     -EventsLog "${PS_EVENTS_LOG}" \
     -PoolStateFile "${PS_POOL_STATE_FILE}" \
     -CursorFile "${PS_CURSOR_FILE}" \
-    -WaitSeconds 30 -PollSeconds 1)"
+    -WaitSeconds 30 -PollSeconds 1 -MatchPattern "sleep")"
   assert_not_contains "${ps_second}" "STATUS|type=run-board" "pwsh watch does not reprint drained lines"
   assert_contains "${ps_second}" "WATCH|result=pool-empty" "pwsh watch reports pool-empty"
 
@@ -170,7 +171,7 @@ if command -v pwsh >/dev/null 2>&1; then
     -EventsLog "${PS_EVENTS_LOG}" \
     -PoolStateFile "${PS_POOL_STATE_FILE}" \
     -CursorFile "${PS_CURSOR_FILE}" \
-    -WaitSeconds 30 -PollSeconds 1)" || ps_dead_status=$?
+    -WaitSeconds 30 -PollSeconds 1 -MatchPattern "sleep")" || ps_dead_status=$?
   assert_contains "${ps_dead}" "WATCH|result=pool-dead" "pwsh watch reports a dead pool supervisor"
   [ "${ps_dead_status}" -eq 3 ] || fail "pwsh pool-dead must exit 3 (got ${ps_dead_status})"
 
@@ -189,7 +190,8 @@ try:
          "-EventsLog", events_log,
          "-PoolStateFile", pool_state,
          "-CursorFile", cursor,
-         "-WaitSeconds", "1", "-PollSeconds", "0"],
+         "-WaitSeconds", "1", "-PollSeconds", "0",
+         "-MatchPattern", "sleep"],
         capture_output=True, text=True, timeout=90,
     )
 except subprocess.TimeoutExpired:

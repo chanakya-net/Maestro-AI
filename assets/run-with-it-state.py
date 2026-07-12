@@ -304,7 +304,17 @@ def classify_parallel_safe(entry: dict[str, Any]) -> str:
     return "malformed"
 
 
-def issues_can_run_together(left: dict[str, Any], right: dict[str, Any]) -> bool:
+def issues_can_run_together(
+    left: dict[str, Any], right: dict[str, Any], absent_policy: str = "permissive"
+) -> bool:
+    """absent_policy governs issues with MISSING concurrency metadata:
+    - "permissive" (legacy states without the capability flag): absent metadata
+      admits in parallel, relying on worktree isolation plus merge recovery.
+      This is explicit fail-open behavior for backward compatibility only.
+    - "strict" (required for newly generated plans, which must derive metadata
+      for every issue): absent metadata runs exclusively, because worktrees
+      only isolate filesystem conflicts — not semantic conflicts, migrations,
+      generated files, or shared external resources."""
     left_safe = classify_parallel_safe(left)
     right_safe = classify_parallel_safe(right)
     if "false" in (left_safe, right_safe) or "malformed" in (left_safe, right_safe):
@@ -316,9 +326,13 @@ def issues_can_run_together(left: dict[str, Any], right: dict[str, Any]) -> bool
     if "root" in (left_kind, right_kind):
         # An explicit repo-root scope overlaps everything.
         return False
+    if absent_policy == "strict" and (
+        "absent" in (left_safe, right_safe)
+        or left_kind == "absent"
+        or right_kind == "absent"
+    ):
+        return False
     if left_kind == "absent" or right_kind == "absent":
-        # No overlap evidence on one side; worktree isolation plus merge
-        # recovery covers residual conflicts.
         return True
     return not ownership_scopes_overlap(left_scope, right_scope)
 
@@ -467,6 +481,9 @@ def ready_issues(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
     registry = state.get("issue_registry", {})
     completed = completed_issue_numbers(state)
+    absent_policy = str(
+        state.get("execution_plan", {}).get("concurrency_policy") or "permissive"
+    ).casefold()
     ready: list[str] = []
     active_entries: list[tuple[str, dict[str, Any]]] = []
     for active_issue in state.get("active_pool_issues", []):
@@ -493,7 +510,7 @@ def ready_issues(args: argparse.Namespace) -> int:
             (
                 other_issue
                 for other_issue, other_info in conflicts
-                if not issues_can_run_together(info, other_info)
+                if not issues_can_run_together(info, other_info, absent_policy)
             ),
             None,
         )

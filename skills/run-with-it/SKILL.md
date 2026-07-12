@@ -336,7 +336,9 @@ After fetching all issues:
 8. Write the complete execution plan to `.run-with-it/main-state.json` before doing any work. Record `parallel_jobs`, `execution_mode` (`sequential` when `PARALLEL_JOBS=1`, `rolling-pool` otherwise), `topo_order`, `dependency_tiers`, and each issue's `dependency_proof`, `parallel_safe`, and normalized `ownership_scope`. Derive the concurrency metadata like this:
    - `ownership_scope`: the list of top-level directories (or deeper paths when the issue is precise) the issue's body, title, and acceptance criteria name. Use plain repo-relative directory paths without glob characters; a glob-bearing scope is compared by its literal directory prefix only, and absolute paths, drive/UNC paths, and `..`-escaping paths are rejected as malformed (the issue then runs exclusively).
    - `parallel_safe`: `true` unless the issue is a repo-wide refactor, migration, formatting sweep, or otherwise touches files that cannot be attributed to a bounded scope — then set `parallel_safe: false` to force exclusive execution.
-   - Issues execute in isolated per-issue worktrees with a dedicated merge-recovery path, so missing metadata does NOT serialize the pool: issues without metadata are admitted in parallel. Only an explicit `parallel_safe: false` or a proven `ownership_scope` overlap defers an issue; the pool runner reports deferrals as `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`.
+   - `concurrency_policy`: newly written plans MUST set `execution_plan.concurrency_policy: "strict"` and derive the metadata above for every issue. Under `strict`, an issue with missing concurrency metadata runs exclusively — worktrees isolate filesystem conflicts only, not semantic conflicts, migrations, generated files, or shared external resources.
+   - Legacy states without `concurrency_policy` run `permissive`: missing metadata admits in parallel, relying on worktree isolation plus merge recovery. This fail-open behavior exists only for backward compatibility with states written before the flag; do not write new plans without the flag.
+   - Explicit `parallel_safe: false`, root/malformed metadata, or a proven `ownership_scope` overlap always defers an issue regardless of policy; the pool runner reports deferrals as `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`.
 9. Emit: `STATUS|type=plan|total_issues=<n>|mode=<sequential|rolling-pool>|parallel_jobs=<PARALLEL_JOBS>|pending=<n>|blocked=<n>`
 10. Emit: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=0|pending=<n>`
 
@@ -718,6 +720,7 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
   },
   "execution_plan": {
     "execution_mode": "sequential | rolling-pool",
+    "concurrency_policy": "strict",
     "parallel_jobs": 4,
     "topo_order": [36, 37],
     "dependency_tiers": [[36], [37]],
@@ -808,8 +811,9 @@ Emit parseable one-line status messages:
 - pool fill: `STATUS|type=pool-fill|active=<count>|newly_queued=<count>|pending_remaining=<count>|parallel_jobs=<PARALLEL_JOBS>`
 - pool slot filled: `STATUS|type=pool-slot-filled|issue=<n>|freed_by=<m>|pool_size=<count>`
 - pool detached: `STATUS|type=pool-detached|pid=<pid>|pool_state_file=<path>`
+- pool already running (duplicate launch refused, exit 2): `STATUS|type=pool-already-running|pid=<pid>|pool_state_file=<path>`
 - pool reattached: `STATUS|type=pool-reattached|count=<n>|state_file=<path>`
-- sub-coordinator reattach: `STATUS|type=sub-coord-reattach|issue=<n>|pid=<pid>|report_file=<path>`
+- sub-coordinator reattach: `STATUS|type=sub-coord-reattach|issue=<n>|pid=<pid>|identity=<live|stale|dead>|report_file=<path>` — `stale` means the recorded PID is alive but its command line no longer matches a dispatcher (recycled PID); it is never adopted and enters exit analysis
 - pool admission deferred: `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`
 - pool empty: `STATUS|type=pool-empty|pending_remaining=<n>`
 - merge recovery queued: `STATUS|type=merge-recovery|issue=<n>|report_file=<path>|state=<started|completed|failed-merge|blocked>`

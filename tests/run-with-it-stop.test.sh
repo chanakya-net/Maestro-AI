@@ -54,7 +54,13 @@ cat > "${FAKE_DISPATCHER}" <<'EOF'
 #!/usr/bin/env bash
 child_pid_file="$1"
 mode="${2:-attached}"
-sleep 600 &
+if [ "$mode" = "stubborn" ]; then
+  # Unrecorded group child that ignores TERM, mirroring a provider CLI that
+  # survives its dispatcher.
+  bash -c 'trap "" TERM; sleep 600' &
+else
+  sleep 600 &
+fi
 echo "$!" > "$child_pid_file"
 [ "$mode" = "orphan" ] && exit 0
 wait
@@ -132,6 +138,30 @@ kill -0 "${DISPATCHER_PID}" 2>/dev/null && fail "dispatcher leader survived stop
 kill -0 "${RUNNER_PID}" 2>/dev/null && fail "in-group runner survived stop (dispatcher-only kill regression)"
 kill -0 "${ORPHAN_RUNNER_PID}" 2>/dev/null && fail "orphaned runner survived stop"
 kill -0 "${NOT_OURS_PID}" 2>/dev/null || fail "not-ours process was killed despite failing the identity check"
+
+# --- Regression: an UNRECORDED group child that ignores TERM must still die.
+# The recorded dispatcher exits on TERM; verifying only recorded PIDs would
+# skip KILL and report clean while the child keeps running. ---
+mkdir -p "${WORK_DIR}/run2/.run-with-it/main" "${WORK_DIR}/run2/.run-with-it/issues/11"
+STUBBORN_DISPATCHER_PID="$(spawn_detached "${FAKE_DISPATCHER}" "${WORK_DIR}/pids/runner-11" stubborn)"
+echo "${STUBBORN_DISPATCHER_PID}" > "${WORK_DIR}/pids/dispatcher-11"
+wait_for_file "${WORK_DIR}/pids/runner-11" || fail "fixture stubborn dispatcher never spawned its child"
+STUBBORN_CHILD_PID="$(cat "${WORK_DIR}/pids/runner-11")"
+# Only the dispatcher is recorded; the TERM-ignoring child is not.
+printf '{"dispatcher_pid": %s, "state": "running"}\n' "${STUBBORN_DISPATCHER_PID}" \
+  > "${WORK_DIR}/run2/.run-with-it/issues/11/sub-coordinator.state.json"
+printf '{"pool_pid": 99999999, "started_at": 0, "state_file": "unused"}\n' \
+  > "${WORK_DIR}/run2/.run-with-it/main/pool.state.json"
+
+stubborn_output="$(bash "${STOP_RUNNER}" \
+  --run-root "${WORK_DIR}/run2" \
+  --term-wait-seconds 2 \
+  --match-pattern "${MATCH_PATTERN}")"
+stubborn_status=$?
+[ "${stubborn_status}" -eq 0 ] || fail "stubborn-child stop must exit 0 after group KILL (got ${stubborn_status})"
+assert_contains "${stubborn_output}" "STOP|result=clean" "stubborn-child stop reports clean only after the group is empty"
+kill -0 "${STUBBORN_DISPATCHER_PID}" 2>/dev/null && fail "stubborn fixture dispatcher survived stop"
+kill -0 "${STUBBORN_CHILD_PID}" 2>/dev/null && fail "unrecorded TERM-ignoring group child survived stop (group verification regression)"
 
 # --- Idempotent re-run: everything already dead except the not-ours PID ---
 second_output="$(bash "${STOP_RUNNER}" \

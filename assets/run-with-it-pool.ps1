@@ -121,14 +121,71 @@ if (-not $PoolStateFile) {
     $PoolStateFile = Join-Path (Join-Path (Join-Path $RunRoot ".run-with-it") "main") "pool.state.json"
 }
 
+function Get-CommandLineFor([int]$processId) {
+    try {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.CommandLine) { return [string]$proc.CommandLine }
+    } catch {}
+    try {
+        $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($proc) { return [string]$proc.Path }
+    } catch {}
+    return ""
+}
+
+# Lease fingerprint: PID alone is not identity — a recycled PID could belong to
+# an unrelated process. The lease records the process start time and consumers
+# additionally match the command line before trusting it.
 function Write-PoolState([int]$poolPid) {
     Ensure-ParentDir $PoolStateFile
+    $poolPidStart = ""
+    try {
+        $proc = Get-Process -Id $poolPid -ErrorAction SilentlyContinue
+        if ($proc) { $poolPidStart = $proc.StartTime.ToString("o") }
+    } catch {}
     $payload = @{
         pool_pid = $poolPid
+        pool_pid_start = $poolPidStart
         started_at = [int][double]::Parse((Get-Date -UFormat %s))
         state_file = $StateFile
     }
-    Set-Content -Path $PoolStateFile -Value ($payload | ConvertTo-Json -Compress) -Encoding UTF8
+    # Atomic replace: the watch runner reads this file concurrently; a torn
+    # read would parse as a missing lease and report a false pool-dead.
+    $tempFile = "$PoolStateFile.tmp.$PID"
+    Set-Content -Path $tempFile -Value ($payload | ConvertTo-Json -Compress) -Encoding UTF8
+    Move-Item -Force -Path $tempFile -Destination $PoolStateFile
+}
+
+$PoolMatchPattern = $(if ($env:RUN_WITH_IT_POOL_PATTERN) { $env:RUN_WITH_IT_POOL_PATTERN } else { "run-with-it-pool" })
+
+# Refuse to run a second supervisor over the same run: duplicate pools would
+# double-dispatch every ready issue.
+function Refuse-IfPoolAlreadyRunning {
+    if (-not (Test-Path $PoolStateFile)) { return }
+    $existingPid = 0
+    $existingStart = ""
+    try {
+        $data = Get-Content $PoolStateFile -Raw | ConvertFrom-Json
+        $existingPid = [int]$data.pool_pid
+        if ($data.PSObject.Properties["pool_pid_start"]) { $existingStart = [string]$data.pool_pid_start }
+    } catch { return }
+    if ($existingPid -le 1 -or $existingPid -eq $PID) { return }
+    $proc = Get-Process -Id $existingPid -ErrorAction SilentlyContinue
+    if (-not $proc) { return }
+    if ((Get-CommandLineFor $existingPid) -notmatch $PoolMatchPattern) { return }
+    # Process.StartTime is only reliable for foreign processes on Windows; on
+    # Unix .NET can report values off by months, so the command-line match is
+    # the identity signal there.
+    if ($existingStart -and ($env:OS -eq "Windows_NT" -or $IsWindows)) {
+        $parsedStart = [datetime]::MinValue
+        if ([datetime]::TryParse($existingStart, [ref]$parsedStart)) {
+            try {
+                if ([math]::Abs(($proc.StartTime - $parsedStart).TotalSeconds) -gt 2) { return }
+            } catch {}
+        }
+    }
+    Write-Status "STATUS|type=pool-already-running|pid=$existingPid|pool_state_file=$PoolStateFile"
+    exit 2
 }
 
 function Invoke-StateHelper([object[]]$helperArgs) {
@@ -263,6 +320,7 @@ if ($PollSeconds -le 0) { $PollSeconds = 10 }
 foreach ($path in @($MainLog, $StatusFile, $EventsLog)) { Ensure-ParentDir $path }
 
 if ($Detach -and -not $ValidateOnly -and -not $DryRun) {
+    Refuse-IfPoolAlreadyRunning
     # Relaunch this script without -Detach as a durable supervisor process and
     # return after recording its PID so bounded tool calls can watch it.
     $relaunchArgs = @(
@@ -474,6 +532,11 @@ function Emit-AdmissionDeferrals {
 # a bounded tool-call timeout). Live dispatchers keep running unsupervised; the
 # monitor loop below re-attaches to them, and dead ones flow through the normal
 # exit analysis on the first tick instead of producing a false pool-empty.
+# PID existence alone is not identity: a recycled PID belonging to an unrelated
+# process must not be adopted, or the pool would wait on it forever. Identity
+# mismatches are marked stale and enter exit analysis on the first tick.
+$DispatchMatchPattern = $(if ($env:RUN_WITH_IT_DISPATCH_PATTERN) { $env:RUN_WITH_IT_DISPATCH_PATTERN } else { "run-with-it-dispatch|run-agent" })
+
 function Reattach-ActivePool {
     $reattached = 0
     foreach ($line in @(Invoke-StateHelper @("active-pool-entries", "--state-file", $StateFile))) {
@@ -484,18 +547,28 @@ function Reattach-ActivePool {
         $processId = if ($fields.Count -gt 1 -and $fields[1]) { [int]$fields[1] } else { 0 }
         $reportFile = if ($fields.Count -gt 2 -and $fields[2]) { $fields[2] } else { Join-Path (Get-IssueDirFor $issue) "report.json" }
         $process = $null
+        $identity = "dead"
         if ($processId -gt 0) {
             $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
         }
+        if ($process) {
+            if ((Get-CommandLineFor $processId) -match $DispatchMatchPattern) {
+                $identity = "live"
+            } else {
+                $identity = "stale"
+                $process = $null
+            }
+        }
         $pool[$issue] = [pscustomobject]@{ process = $process; report_file = $reportFile; stdout_file = $null; stderr_file = $null }
         $reattached++
-        Write-Status "STATUS|type=sub-coord-reattach|issue=$issue|pid=$processId|report_file=$reportFile"
+        Write-Status "STATUS|type=sub-coord-reattach|issue=$issue|pid=$processId|identity=$identity|report_file=$reportFile"
     }
     if ($reattached -gt 0) {
         Write-Status "STATUS|type=pool-reattached|count=$reattached|state_file=$StateFile"
     }
 }
 
+Refuse-IfPoolAlreadyRunning
 Write-PoolState $PID
 Reattach-ActivePool
 Fill-FreeSlots "startup"
