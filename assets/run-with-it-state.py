@@ -503,7 +503,9 @@ def ready_issues(args: argparse.Namespace) -> int:
         if not issue_dependencies_completed(info, completed):
             continue
         context_file = info.get("context_file") or info.get("sub_coord_context_file")
-        if not context_file:
+        # A recorded path whose file is gone is the same as no context: admitting
+        # it would make the pool's spawn fail. Count it as waiting-context instead.
+        if not context_file or not os.path.isfile(context_file):
             continue
         conflicts = active_entries + selected_entries
         incompatible = next(
@@ -566,9 +568,40 @@ def ready_missing_context_count(args: argparse.Namespace) -> int:
         if not issue_dependencies_completed(info, completed):
             continue
         context_file = info.get("context_file") or info.get("sub_coord_context_file") or ""
-        if not context_file:
+        if not context_file or not os.path.isfile(context_file):
             count += 1
     print(count)
+    return 0
+
+
+def status_counts(args: argparse.Namespace) -> int:
+    """One compact pipe-joined counts line for the pool heartbeat: per-status
+    totals plus how many dependency-ready issues are waiting on context files."""
+    state = load_json(args.state_file)
+    registry = state.get("issue_registry", {})
+    completed = completed_issue_numbers(state)
+    counts = {
+        "total": 0,
+        "completed": 0,
+        "in_progress": 0,
+        "pending": 0,
+        "blocked": 0,
+        "failed_review": 0,
+        "merge_recovery": 0,
+        "waiting_context": 0,
+    }
+    for key, entry in registry.items():
+        if not isinstance(entry, dict):
+            continue
+        counts["total"] += 1
+        status = str(entry.get("status") or "unknown").replace("-", "_")
+        if status in counts:
+            counts[status] += 1
+        if entry.get("status") == "pending" and issue_dependencies_completed(entry, completed):
+            context_file = entry.get("context_file") or entry.get("sub_coord_context_file") or ""
+            if not context_file or not os.path.isfile(context_file):
+                counts["waiting_context"] += 1
+    print("|".join(f"{key}={value}" for key, value in counts.items()))
     return 0
 
 
@@ -1107,6 +1140,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_state_file(ready)
     ready.add_argument("--limit", type=int, required=True)
     ready.set_defaults(func=ready_issues)
+
+    counts_cmd = subparsers.add_parser("status-counts")
+    add_state_file(counts_cmd)
+    counts_cmd.set_defaults(func=status_counts)
 
     missing = subparsers.add_parser("ready-missing-context-count")
     add_state_file(missing)

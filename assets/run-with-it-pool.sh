@@ -14,8 +14,10 @@ STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-$(pwd -P)/.run-with-it/status/current.tx
 EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
 MAIN_LOG="$(pwd -P)/.run-with-it/main/main.log"
 POLL_SECONDS="${STATUS_POLL_SECONDS:-10}"
+HEARTBEAT_SECONDS="${POOL_HEARTBEAT_SECONDS:-60}"
 TIMEOUT_SECONDS="${SUB_COORD_TIMEOUT_SECONDS:-3600}"
 MAX_SUB_COORD_RECOVERY_ATTEMPTS="${MAX_SUB_COORD_RECOVERY_ATTEMPTS:-2}"
+MAX_SPAWN_BOOTSTRAP_ATTEMPTS="${MAX_SPAWN_BOOTSTRAP_ATTEMPTS:-3}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 DRY_RUN=0
 VALIDATE_ONLY=0
@@ -96,6 +98,10 @@ fi
 # A poll interval of zero would busy-spin the monitor loop; use the default.
 case "$POLL_SECONDS" in ''|*[!0-9]*) POLL_SECONDS=10 ;; esac
 [ "$POLL_SECONDS" -ge 1 ] || POLL_SECONDS=10
+case "$HEARTBEAT_SECONDS" in ''|*[!0-9]*) HEARTBEAT_SECONDS=60 ;; esac
+[ "$HEARTBEAT_SECONDS" -ge 1 ] || HEARTBEAT_SECONDS=60
+case "$MAX_SPAWN_BOOTSTRAP_ATTEMPTS" in ''|*[!0-9]*) MAX_SPAWN_BOOTSTRAP_ATTEMPTS=3 ;; esac
+[ "$MAX_SPAWN_BOOTSTRAP_ATTEMPTS" -ge 1 ] || MAX_SPAWN_BOOTSTRAP_ATTEMPTS=3
 if [ -z "$POOL_STATE_FILE" ]; then
   POOL_STATE_FILE="${RUN_ROOT}/.run-with-it/main/pool.state.json"
 fi
@@ -240,6 +246,16 @@ ready_issues() {
 
 ready_missing_context_count() {
   "$PYTHON_BIN" "$STATE_HELPER" ready-missing-context-count --state-file "$STATE_FILE"
+}
+
+# Unconditional liveness signal: unlike run-board (change-only), the heartbeat
+# fires on a fixed cadence so watchers can tell "pool alive and idle" apart
+# from "pool dead" without probing the PID.
+emit_heartbeat() {
+  local counts active
+  counts="$("$PYTHON_BIN" "$STATE_HELPER" status-counts --state-file "$STATE_FILE" 2>/dev/null || true)"
+  active="$(set -- $POOL_ISSUES; echo $#)"
+  write_status "STATUS|type=pool-heartbeat|pool_pid=$$|active=${active}|parallel_jobs=${PARALLEL_JOBS}${counts:+|${counts}}"
 }
 
 context_file_for() {
@@ -466,7 +482,7 @@ pool_get() {
 
 fill_free_slots() {
   local reason="$1"
-  local pool_size free_slots queued_issue next_batch
+  local pool_size free_slots queued_issue next_batch attempts report_file
   set -- $POOL_ISSUES
   pool_size=$#
   free_slots=$((PARALLEL_JOBS - pool_size))
@@ -474,8 +490,28 @@ fill_free_slots() {
 
   next_batch="$(ready_issues "$free_slots")"
   for queued_issue in $next_batch; do
-    spawn_issue "$queued_issue"
-    write_status "STATUS|type=pool-slot-filled|issue=${queued_issue}|freed_by=${reason}|pool_size=$(set -- $POOL_ISSUES; echo $#)"
+    # A recursive fill (finalize below re-enters fill_free_slots) may have
+    # already spawned this issue; dispatching it twice would double the work.
+    case " $POOL_ISSUES " in *" $queued_issue "*) continue ;; esac
+    if spawn_issue "$queued_issue"; then
+      pool_set BOOTFAIL "$queued_issue" 0
+      write_status "STATUS|type=pool-slot-filled|issue=${queued_issue}|freed_by=${reason}|pool_size=$(set -- $POOL_ISSUES; echo $#)"
+      continue
+    fi
+    # A failed spawn must never kill the supervisor (set -e would otherwise
+    # exit here): defer the issue, retry on later ticks, and finalize it as
+    # terminal after bounded attempts so the rest of the run keeps moving.
+    attempts="$(pool_get BOOTFAIL "$queued_issue")"
+    attempts=$(( ${attempts:-0} + 1 ))
+    pool_set BOOTFAIL "$queued_issue" "$attempts"
+    if [ "$attempts" -lt "$MAX_SPAWN_BOOTSTRAP_ATTEMPTS" ]; then
+      write_status "STATUS|type=pool-slot-fill-failed|issue=${queued_issue}|freed_by=${reason}|attempt=${attempts}|max_attempts=${MAX_SPAWN_BOOTSTRAP_ATTEMPTS}"
+      continue
+    fi
+    report_file="$(issue_dir_for "$queued_issue")/report.json"
+    write_status "STATUS|type=pool-slot-fill-abandoned|issue=${queued_issue}|attempts=${attempts}|report_file=${report_file}"
+    mark_sub_coord_recovery_dispatch_failed "$queued_issue" "$report_file"
+    finalize_pool_issue "$queued_issue" "$report_file"
   done
 }
 
@@ -540,7 +576,12 @@ spawn_issue() {
   local issue="$1"
   local context_file issue_dir log_file done_file report_file state_file pid
   context_file="$(context_file_for "$issue")"
-  [ -f "$context_file" ] || fail "context file missing for issue $issue: $context_file"
+  if [ ! -f "$context_file" ]; then
+    # Not fatal: the Main Orchestrator may still be assembling this context.
+    # Defer the issue; ready-issues holds it back until the file exists.
+    write_status "STATUS|type=sub-coord-dispatch-bootstrap-failed|issue=${issue}|reason=missing-context-file|context_file=${context_file}"
+    return 1
+  fi
   issue_dir="$(issue_dir_for "$issue")"
   log_file="${issue_dir}/sub-coordinator.log"
   done_file="${issue_dir}/sub-coordinator.done"
@@ -714,7 +755,9 @@ reattach_active_pool
 fill_free_slots "startup"
 emit_admission_deferrals
 emit_run_board
+emit_heartbeat
 
+HEARTBEAT_ELAPSED=0
 while [ -n "$POOL_ISSUES" ]; do
   sleep "$POLL_SECONDS"
   CURRENT_POOL="$POOL_ISSUES"
@@ -731,6 +774,11 @@ while [ -n "$POOL_ISSUES" ]; do
   emit_waiting_context_status
   emit_admission_deferrals
   emit_run_board
+  HEARTBEAT_ELAPSED=$((HEARTBEAT_ELAPSED + POLL_SECONDS))
+  if [ "$HEARTBEAT_ELAPSED" -ge "$HEARTBEAT_SECONDS" ]; then
+    emit_heartbeat
+    HEARTBEAT_ELAPSED=0
+  fi
 done
 
 write_status "STATUS|type=pool-empty|state_file=${STATE_FILE}"

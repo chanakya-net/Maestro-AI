@@ -51,6 +51,11 @@ FALLBACK_STATE_FILE="$WORK_DIR/fallback-main-state.json"
 MISSING_STATE_FILE="$WORK_DIR/missing-main-state.json"
 MALFORMED_STATE_FILE="$WORK_DIR/malformed-main-state.json"
 
+# ready-issues only admits issues whose context file exists on disk.
+printf '# ctx\n' > "$WORK_DIR/sub-1.md"
+printf '# ctx\n' > "$WORK_DIR/sub-2.md"
+printf '# ctx\n' > "$WORK_DIR/sub-3.md"
+
 cat > "$STATE_FILE" <<JSON
 {
   "schema_version": 4,
