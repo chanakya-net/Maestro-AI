@@ -168,6 +168,8 @@ Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable implementation handoff.
 
+On a verified no-op (`IMPL_COMMIT_SHA=NONE`), skip the commit-based builder below — it runs `git show` against the commit SHA and cannot handle `NONE` — and write the *Verified no-op variant* payload instead.
+
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
 - Write the done sentinel exactly to `RUN_WITH_IT_DONE_FILE`.

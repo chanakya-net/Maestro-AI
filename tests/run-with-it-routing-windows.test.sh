@@ -65,6 +65,7 @@ function global:python3 {
     $global:LASTEXITCODE = 0
 }
 Remove-Item Env:ISSUE_BASE_SHA -ErrorAction SilentlyContinue
+Remove-Item Env:REVIEW_HEAD_SHA -ErrorAction SilentlyContinue
 $env:RUN_WITH_IT_ARTIFACT_HELPER = "artifact-helper.py"
 $env:RUN_WITH_IT_ISSUE = "42"
 $env:RUN_WITH_IT_RESULT_FILE = "result.json"
@@ -102,7 +103,7 @@ assert_not_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\impl\\iss
 assert_not_contains_file "$SUB_COORDINATOR_PROMPT_FILE" ".run-with-it\\complexity\\issue-" "PowerShell examples do not use legacy complexity folder"
 
 assert_contains_file "$IMPLEMENTER_PROMPT_FILE" '--pre-spawn-head "$env:ISSUE_BASE_SHA"' "PowerShell implementer preserves an empty pre-spawn-head argument"
-assert_contains_file "$MODIFIER_PROMPT_FILE" '--pre-spawn-head "$env:ISSUE_BASE_SHA"' "PowerShell modifier preserves an empty pre-spawn-head argument"
+assert_contains_file "$MODIFIER_PROMPT_FILE" '--pre-spawn-head "$env:REVIEW_HEAD_SHA"' "PowerShell modifier passes the modify-cycle pre-spawn head"
 if [[ -n "$PS_CMD" ]]; then
   assert_prompt_preserves_empty_pre_spawn_head "$IMPLEMENTER_PROMPT_FILE" "impl"
   assert_prompt_preserves_empty_pre_spawn_head "$MODIFIER_PROMPT_FILE" "modify"

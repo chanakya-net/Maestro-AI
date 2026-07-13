@@ -166,6 +166,8 @@ Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable modification handoff.
 
+On a verified no-op (`MODIFY_COMMIT_SHA=NONE`), skip the commit-based builder below — it runs `git show` against the commit SHA and cannot handle `NONE` — and write the *Verified no-op variant* payload instead.
+
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
 - Write the done sentinel exactly to `RUN_WITH_IT_DONE_FILE`.
@@ -222,7 +224,7 @@ python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
   --role modify --issue "$RUN_WITH_IT_ISSUE" \
   --payload-file "$MODIFY_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
   --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
-  --pre-spawn-head "${ISSUE_BASE_SHA:-}" || { rm -f "$MODIFY_PAYLOAD_FILE"; exit 1; }
+  --pre-spawn-head "${REVIEW_HEAD_SHA:-}" || { rm -f "$MODIFY_PAYLOAD_FILE"; exit 1; }
 rm -f "$MODIFY_PAYLOAD_FILE"
 ```
 
@@ -254,9 +256,39 @@ $payload = @{
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
 $payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
 $payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
-& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:ISSUE_BASE_SHA"
+& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:REVIEW_HEAD_SHA"
 if ($LASTEXITCODE -ne 0) { throw "modification artifact validation failed" }
 Remove-Item -Force $payloadFile
+```
+
+### Verified no-op variant
+
+Use this **only** when every review comment is already addressed upstream and the full verification suite passes with no changes needed (no commit was made). Write this payload directly (do not run the commit-based builder above), then validate it with `write-json` using `--pre-spawn-head "${REVIEW_HEAD_SHA:-}"` — the validator confirms `HEAD` still equals the pre-spawn head, so a no-op with unexpected commits is rejected. Include one `review_comment_closure` entry per reviewer comment id, each with evidence that it is already resolved. The dispatcher accepts this as success; it rejects a no-op whose `verification.passed` is not `true`.
+
+```json
+{
+  "schema_version": 1,
+  "issue": "<issue>",
+  "role": "modify",
+  "status": "success",
+  "no_op": true,
+  "commit_sha": "NONE",
+  "files_committed": [],
+  "review_comment_closure": [
+    {
+      "id": "R001",
+      "status": "addressed",
+      "action": "already resolved upstream — cite the commit or code that satisfies it",
+      "files_changed": [],
+      "verification": ["exact command or inspection proving closure"]
+    }
+  ],
+  "verification": {
+    "passed": true,
+    "commands": ["<exact verification commands run>"],
+    "note": "All review comments already satisfied upstream; no changes required."
+  }
+}
 ```
 
 ## Completion Sentinel
@@ -283,7 +315,7 @@ You must run tests after addressing reviewer comments.
 
 1. Run every verification command supplied by the coordinator.
 2. If those commands are incomplete or absent, run the narrowest relevant test scope first, then the full suite when practical.
-3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. For failures you can demonstrate are pre-existing or infrastructure-caused, record the concrete evidence per the Scope rules instead of broadening the patch.
+3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`run-with-it-artifacts.py`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and do not set `verification.passed=false` for failures you are not responsible for.
 4. Re-run the failing command after each fix until it passes.
 
 Do not report completion while tests you are responsible for are failing. A failing test suite caused by this change is a failed modification.

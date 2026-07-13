@@ -1040,7 +1040,7 @@ Evaluate these rules **in order**; the first matching rule decides:
 | Rule | Condition | Action |
 |------|-----------|--------|
 | 1 | `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
-| 2 | `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to compact report generation — the implementer already committed. Do not continue to steps 1–7 this cycle. |
+| 2 | `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). The implementer already committed — perform the normal merge back to the shared feature branch (Appendix C2), then proceed to compact report generation. Do not continue to steps 1–7 this cycle. |
 | 3 | Everything else (`total_lines_changed` 30–55 with `files_changed ≤ 3`, or tests not confirmed passing) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage) — then skip review as in rule 2. Otherwise continue to step 1. |
 
 "Explicit all-tests-pass" means the implementer's report contains a test command **and** a clearly passing result. Absent, partial, timeout, or skipped test output does **not** qualify — in those cases proceed to step 1.
@@ -1243,7 +1243,7 @@ Read only the `--numstat` summary (file path + added + deleted counts) — never
 
 ## Appendix C2: Normal Merge Back to Shared Feature Branch
 
-After review approval, attempt to merge this issue branch back into the shared run feature branch. The Main Orchestrator must never perform this merge; this Sub-Coordinator owns the normal merge attempt.
+After review approval (or a Step 0 review skip), attempt to merge this issue branch back into the shared run feature branch. The Main Orchestrator must never perform this merge; this Sub-Coordinator owns the normal merge attempt.
 
 Acquire `.run-with-it/locks/merge.lock` before touching the shared feature branch:
 

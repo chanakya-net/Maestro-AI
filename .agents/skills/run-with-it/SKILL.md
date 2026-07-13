@@ -872,7 +872,7 @@ After the loop exits and before cleanup, print the aggregated final ledger by re
 
 Also print a final summary of all `completed_summaries` entries showing:
 - Total issues processed
-- Completed / failed-review / blocked counts
+- Completed / failed-review / failed-merge / blocked counts
 - Total lines added/deleted across all issues
 - Task-level model usage (`role`, `cycle`, `agent`, `model`, `selection_reason`) from each issue's `model_usage`
 - Aggregate token usage (sum `token_usage` fields from all report JSONs for issues that have completed)
@@ -905,7 +905,7 @@ On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Prefl
    runner's re-attach path already performs this analysis; prefer relaunching
    the pool over manual requeues.
 4. Identify all issues with `status="pending"` — these haven't started yet.
-5. Identify all issues with `status="completed"`, `"failed-review"`, or `"blocked"` — skip these entirely.
+5. Identify all issues with `status="completed"`, `"failed-review"`, `"failed-merge"`, or `"blocked"` — skip these entirely.
 6. Re-enter Main Loop at Step A.
 7. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|supervisor=<alive|relaunched>|re_queued_in_progress=<m>|parallel_jobs=<PARALLEL_JOBS>`
 

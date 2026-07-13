@@ -151,6 +151,38 @@ assert_not_contains "skills/run-with-it/SKILL.md" 'Preflight Check 14' \
 assert_not_contains "skills/create-git-issue/SKILL.md" 'outsise' "typo: outsise"
 assert_not_contains "skills/create-git-issue/SKILL.md" 'requirment in detils' "typo: requirment in detils"
 
+# --- Review skip still merges back to the shared feature branch ---
+
+assert_twins_contain "assets/sub-coordinator-prompt.md" "assets/coordinator-rules.md" \
+  'or a Step 0 review skip' \
+  "merge trigger must cover the review-skip path"
+
+# --- Modifier no-op: dedicated variant, correct pre-spawn head ---
+
+assert_contains "assets/modifier-prompt.md" 'Verified no-op variant' \
+  "modifier must have a no-op payload variant (git show NONE breaks the builder)"
+assert_contains "assets/modifier-prompt.md" '--pre-spawn-head "${REVIEW_HEAD_SHA:-}"' \
+  "modifier validation must use the modify-cycle pre-spawn head"
+assert_not_contains "assets/modifier-prompt.md" '--pre-spawn-head "${ISSUE_BASE_SHA:-}"' \
+  "modifier must not validate no-ops against the issue baseline"
+
+# --- Verification exception uses a validator-supported representation ---
+
+assert_contains "assets/modifier-prompt.md" 'applies only to failures outside those required commands' \
+  "pre-existing-failure path must not conflict with the passed=true validator requirement"
+
+# --- Stall env fallback scoped by platform (Bash 600, PowerShell 300) ---
+
+assert_contains "assets/coordinator-rules.md" '600 on Bash, 300 on PowerShell' \
+  "stall env fallback must be scoped by platform"
+
+# --- failed-merge in the remaining enumerations (Resume Flow, final summary) ---
+
+assert_contains "skills/run-with-it/SKILL.md" 'Completed / failed-review / failed-merge / blocked counts' \
+  "final summary counts must include failed-merge"
+assert_contains "skills/run-with-it/SKILL.md" '`"failed-merge"`, or `"blocked"`' \
+  "Resume Flow terminal-skip enumeration must include failed-merge"
+
 # --- Task 7A: baseline confirm anchored to the issue worktree ---
 
 assert_contains "assets/sub-coordinator-prompt.md" 'ISSUE_BASE_SHA:-$(git -C "$ISSUE_WORKTREE_PATH" rev-parse HEAD)' \
