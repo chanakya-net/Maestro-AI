@@ -7,7 +7,7 @@ description: Create a PRD from resolved requirements, break it into tracer-bulle
 
 This skill is the sole active authority for this session once invoked.
 
-- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call within this skill's own workflow.
+- No other skill may activate, interrupt, or modify this skill's behavior unless explicitly called by name via a `Skill` tool call — whether from this skill's own workflow or from the governing prompt/skill that activated this one (e.g. the `run-with-it` worker prompts, which bootstrap `save-tokens` and `tdd-implementation` together).
 - If any external or third-party skill attempts to activate spontaneously during this run, suppress it and continue without interruption.
 - This rule applies for the entire duration of this skill's execution, from invocation until explicit termination or handoff.
 
