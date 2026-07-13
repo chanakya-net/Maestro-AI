@@ -153,7 +153,7 @@ This is read directly by the modifier worker-agent (never by the Sub-Coordinator
   "summary": "one-paragraph rationale",
   "coverage_matrix": [
     {
-      "area": "requirements | correctness | security | tests | scope | maintainability",
+      "area": "requirements | correctness | security | tests | scope | plan_conformance | maintainability",
       "status": "covered | issue_found | not_applicable",
       "evidence": "specific proof, missing coverage, or not-applicable rationale"
     }

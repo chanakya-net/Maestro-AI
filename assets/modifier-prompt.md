@@ -281,10 +281,10 @@ You must run tests after addressing reviewer comments.
 
 1. Run every verification command supplied by the coordinator.
 2. If those commands are incomplete or absent, run the narrowest relevant test scope first, then the full suite when practical.
-3. Fix any failing test before reporting completion, regardless of whether the failing test is inside the original issue scope.
+3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. For failures you can demonstrate are pre-existing or infrastructure-caused, record the concrete evidence per the Scope rules instead of broadening the patch.
 4. Re-run the failing command after each fix until it passes.
 
-Do not report completion while tests are failing. A failing test suite is a failed modification.
+Do not report completion while tests you are responsible for are failing. A failing test suite caused by this change is a failed modification.
 
 **Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (for example named-pipe access denied, IPC failure, socket permission error, or app-server state access), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 

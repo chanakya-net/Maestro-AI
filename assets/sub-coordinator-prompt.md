@@ -538,7 +538,7 @@ Route helper inputs by phase:
 - complexity worker: `ROUTE_ROLE=complexity`, `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}` unless an explicit runtime override skips complexity entirely
 - plan worker: `ROUTE_ROLE=plan`, `ROUTE_COMPLEXITY_LEVEL=<blind scored complexity level>` — pass the blind band as-is; the router's `PLAN_BUMP` forces a strong band internally, so never pre-bump it here (see *Plan Sub-Agent Delegation*)
 - implementer worker: `ROUTE_ROLE=impl`, `ROUTE_COMPLEXITY_LEVEL=$EFFECTIVE_COMPLEXITY` — the plan's grounded re-score when a plan ran, otherwise the blind scored complexity level (see *Plan Sub-Agent Delegation*)
-- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `REVIEW_EXCLUDE_MODELS` to a comma-separated union of the implementation/modification model plus every failed reviewer model from this cycle. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). Every repeated `--exclude-model` wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion remain cumulative; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles. Before launch, assert the selected reviewer model is absent from `REVIEW_EXCLUDE_MODELS`; otherwise reject the route and retry selection.
+- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) — the router's `REVIEW_BUMP` applies the one-band reviewer increase internally, so pass the implementation band as-is; never pre-bump it here — and set `REVIEW_EXCLUDE_MODELS` to a comma-separated union of the implementation/modification model plus every failed reviewer model from this cycle. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). Every repeated `--exclude-model` wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion remain cumulative; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles. Before launch, assert the selected reviewer model is absent from `REVIEW_EXCLUDE_MODELS`; otherwise reject the route and retry selection.
 - modifier worker: `ROUTE_ROLE=modify`, use `$EFFECTIVE_COMPLEXITY` as the base band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
 If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
@@ -974,7 +974,9 @@ fi
 
 Store both `ISSUE_BASE_SHA` and `IMPL_COMMIT_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. These two SHAs define the exact diff range for the reviewer. **Never read `git diff` output into the Sub-Coordinator context. Never pass `HEAD` to the reviewer — use the explicit `IMPL_COMMIT_SHA`.**
 
-### Reviewer Band Selection
+### Reviewer Band Selection (prompt fallback router only)
+
+This manual bump applies only when `run-with-it-router.py` is unavailable and the Prompt Fallback Router is in use; the deterministic router performs this one-band bump itself via `REVIEW_BUMP`.
 
 For each review pass, bump the current implementation band up exactly one level and reuse the same model-first selection logic:
 
@@ -1533,6 +1535,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     "non_approval_count": 0,
     "nitpick_only": false
   },
+  "review_skipped": false,
+  "review_skip_reason": null,
   "token_usage": {
     "impl_input": 0, "impl_output": 0,
     "review_input": 0, "review_output": 0,
@@ -1585,6 +1589,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
 4. Ensure the JSON is fully written and valid before exiting.
 
 `model_usage` must include every worker route selected for the issue, including `artifact-recovery` when it runs. If a role is skipped, omit that role; do not invent model names.
+
+`review_skipped` / `review_skip_reason` are set only when Step 0 skipped review (`true` / `"trivial-change"`); in that case `review_summary.reviewer_model` is `null` and `final_verdict` is `"approve"` — a skip is treated as a clean approve.
 
 The report file is the sub-coordinator's only required artifact for the Main Orchestrator.
 

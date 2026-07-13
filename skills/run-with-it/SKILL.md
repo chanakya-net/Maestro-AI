@@ -249,7 +249,7 @@ Selection rules:
 
 ### Fresh/No-Git Project Notes
 
-- This skill must work in folders that are not initialized with git.
+- Without git, this skill supports asset discovery and local-issue intake only; issue branches, worktrees, merges, merge recovery, and the final PR require a git repository.
 - Asset discovery is filesystem-based, not git-root-based.
 - If assets are missing, report the platform-appropriate one-command fix:
 
@@ -967,5 +967,5 @@ Comment requirements:
 - `Token Usage` must report task-specific telemetry only (from `report.token_usage`).
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run and whether they passed, failed, or were blocked (from `report.verification`).
-- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`.
+- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true` and review ran. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`. When `report.review_skipped` is true, write `Review: skipped (trivial-change)` instead.
 - `Blocking Reasons` section must be included **only** when `report.blocking_reasons` is non-empty. Render each entry as a separate markdown bullet. Omit the section entirely otherwise.
