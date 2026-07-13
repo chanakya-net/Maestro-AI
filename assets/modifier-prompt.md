@@ -129,7 +129,7 @@ if ($env:RUN_WITH_IT_ISSUE_BRANCH -and ((git -C $checkinRepoRoot rev-parse --abb
 
 ## Mandatory Commit Before Handoff
 
-**You MUST commit all your changes before writing the done file.** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
+**You MUST commit all your changes before writing the done file (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
 
 Commit sequence (after verification passes and all reviewer comments are addressed):
 
@@ -158,7 +158,7 @@ Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
 - **You did not apply the requested fixes** (incomplete, gave up, or could not finish) → emit `MODIFY_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
 - **Every review comment is already addressed upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `MODIFY_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}`. The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite and confirming each comment is resolved — never use it to skip real work.
 
-**Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and list of committed files.
+**Do not write the done file until the commit is made (or the verified no-op result artifact is written per the verified no-op contract) and the result JSON is written.** The output report must include the commit SHA and list of committed files.
 
 ## Result Artifact
 
@@ -259,7 +259,7 @@ Remove-Item -Force $payloadFile
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made, `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready.
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made (or the verified no-op result artifact is written per the verified no-op contract), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready.
 
 Bash:
 ```bash
@@ -273,7 +273,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=modify|status=success|source=agent"
 ```
 
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
 ## Verification
 
@@ -290,7 +290,7 @@ Do not report completion while tests are failing. A failing test suite is a fail
 
 ## Output Contract
 
-Do not output this report until all required verification passes and the mandatory commit is made.
+Do not output this report until all required verification passes and the mandatory commit is made (or the verified no-op result artifact is written).
 
 Report:
 

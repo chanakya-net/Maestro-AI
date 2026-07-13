@@ -970,6 +970,8 @@ if [ "$IMPL_COMMIT_SHA" = "$ISSUE_BASE_SHA" ]; then
 fi
 ```
 
+**Exception — verified no-op:** if `IMPL_COMMIT_SHA` equals `ISSUE_BASE_SHA` but the implementer's result artifact is valid with `"no_op": true` and `verification.passed=true` (the verified no-op contract in `prompt.md`, validated by `run-with-it-artifacts.py`), treat the phase as success with `commit_sha=NONE`; do not mark `implementer-no-commit`.
+
 Store both `ISSUE_BASE_SHA` and `IMPL_COMMIT_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. These two SHAs define the exact diff range for the reviewer. **Never read `git diff` output into the Sub-Coordinator context. Never pass `HEAD` to the reviewer — use the explicit `IMPL_COMMIT_SHA`.**
 
 ### Reviewer Band Selection
@@ -1219,6 +1221,8 @@ EOF
        # Terminate as failed-review with blocking_reason="modifier-no-commit"
      fi
      ```
+     **Exception — verified no-op:** if `MODIFY_COMMIT_SHA` equals `REVIEW_HEAD_SHA` but the modifier's result artifact is valid with `"no_op": true` and `verification.passed=true` (the verified no-op contract in `modifier-prompt.md`, validated by `run-with-it-artifacts.py`), treat the modification as success; do not mark `modifier-no-commit`, and keep `REVIEW_HEAD_SHA` unchanged for the next review cycle.
+
      Store `MODIFY_COMMIT_SHA` in state. For the next review cycle: `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA` (and `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA` — never changes).
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
@@ -1496,7 +1500,7 @@ The worker may write this file when its required artifacts are complete. The pla
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
 - plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `run-with-it-artifacts.py failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
-- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`)
+- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `run-with-it-artifacts.py`
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
 When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.

@@ -160,7 +160,7 @@ Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 - **You did not actually implement the slice** (incomplete work, gave up, or could not finish) → emit `IMPL_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
 - **The acceptance criteria are already fully satisfied upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `IMPL_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}` (see Result Artifact → *Verified no-op variant*). The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite — never use it to skip real work.
 
-**Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
+**Do not write the done file until the commit is made (or the verified no-op result artifact is written per the Verified no-op variant) and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
 
 ## Result Artifact
 
@@ -267,7 +267,7 @@ Use this **only** when the acceptance criteria are already fully met upstream an
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made, `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made (or the verified no-op result artifact is written per the Verified no-op variant), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
 
 Bash:
 ```bash
@@ -281,11 +281,11 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
 ```
 
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
 ## Output Contract
 
-Do not output this report until all tests pass and the mandatory commit is made. If tests are failing, fix them first.
+Do not output this report until all tests pass and the mandatory commit is made (or the verified no-op result artifact is written). If tests are failing, fix them first.
 
 Report:
 
