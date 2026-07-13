@@ -1035,11 +1035,13 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 - `files_changed` — number of distinct files in the `git diff --numstat` output
 - `total_lines_changed` — sum of all `added + deleted` line counts across all files
 
-| Condition | Action |
-|-----------|--------|
-| `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to compact report generation — the implementer already committed. Do not continue to steps 1–7 this cycle. |
-| `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
-| Gray zone (`total_lines_changed` 30–55, or `files_changed` 2–4) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage). If tests are not 100% confirmed passing, continue to step 1. If tests are explicitly 100% passing, skip review as above. |
+Evaluate these rules **in order**; the first matching rule decides:
+
+| Rule | Condition | Action |
+|------|-----------|--------|
+| 1 | `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
+| 2 | `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to compact report generation — the implementer already committed. Do not continue to steps 1–7 this cycle. |
+| 3 | Everything else (`total_lines_changed` 30–55 with `files_changed ≤ 3`, or tests not confirmed passing) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage) — then skip review as in rule 2. Otherwise continue to step 1. |
 
 "Explicit all-tests-pass" means the implementer's report contains a test command **and** a clearly passing result. Absent, partial, timeout, or skipped test output does **not** qualify — in those cases proceed to step 1.
 
