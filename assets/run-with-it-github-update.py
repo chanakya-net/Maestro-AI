@@ -75,6 +75,21 @@ def format_token(value: int | None) -> str:
 
 def render_terminal_comment(report_file: str, fallback_outcome: str) -> str:
     report = load_report(report_file)
+    # Merge-recovery reports carry no token/review telemetry; fall back to the
+    # sibling original issue report for those fields only (never for outcome,
+    # summary, verification, or blocking reasons — those describe the recovery).
+    if not report.get("token_usage") or not report.get("review_summary"):
+        sibling = os.path.join(os.path.dirname(os.path.abspath(report_file)), "report.json")
+        if sibling != os.path.abspath(report_file):
+            original = load_report(sibling)
+            if original:
+                if not report.get("token_usage"):
+                    report["token_usage"] = original.get("token_usage") or {}
+                if not report.get("review_summary"):
+                    report["review_summary"] = original.get("review_summary") or {}
+                if report.get("review_skipped") is None and original.get("review_skipped") is not None:
+                    report["review_skipped"] = original.get("review_skipped")
+                    report["review_skip_reason"] = original.get("review_skip_reason")
     outcome = report.get("outcome") or fallback_outcome or "blocked"
     summary = report.get("summary") or "No summary provided."
     verification = report.get("verification") or {}
@@ -96,7 +111,10 @@ def render_terminal_comment(report_file: str, fallback_outcome: str) -> str:
     cycles = review.get("cycles_used")
     final = review.get("final_verdict") or "unknown"
     reviewer = review.get("reviewer_model") or "unknown"
-    if cycles is None:
+    if report.get("review_skipped") is True:
+        skip_reason = report.get("review_skip_reason") or "trivial-change"
+        review_line = f"Review: skipped ({skip_reason})"
+    elif cycles is None:
         review_line = f"Review: unknown, final verdict: {final}, reviewer model: {reviewer}"
     elif int(cycles) <= 1 and final == "approve":
         review_line = f"Review: approve (1 cycle), final verdict: {final}, reviewer model: {reviewer}"
