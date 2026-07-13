@@ -45,10 +45,10 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 ## Live Status Rules
 
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
-- While a sub-coordinator runs, the bounded watch runner is the standard polling mechanism; `current.txt` remains an on-demand terminal view (print only changed status lines when inspecting it manually).
+- While a sub-coordinator runs, the bounded watch runner is the standard polling mechanism; as an on-demand terminal view you may also poll `current.txt` from the shell and print only changed status lines.
 - The bounded watch runner (`run-with-it-watch.sh` / `run-with-it-watch.ps1`) is the standard polling mechanism: each call prints the status lines appended to the events log since the previous call, then exits within its watch window so no tool-call timeout is ever hit.
 - Do not tail raw sub-coordinator logs. The status bus is the terminal-visible progress channel; compact report JSON is the AI-visible outcome channel.
-- Sub-Coordinator liveness is monitored by the platform pool runner, which invokes the worker watcher (`worker-watch.sh` / `worker-watch.ps1`) inside the dispatcher; the Main Orchestrator only loops the bounded watch runner and never runs worker-watch itself. PID liveness is diagnostic only.
+- Sub-Coordinator liveness is monitored by the platform pool runner, which invokes the worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) inside the dispatcher; the Main Orchestrator only loops the bounded watch runner and never runs worker-watch itself. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 - The pool runner emits a compact per-issue stage board as `STATUS|type=run-board|board=...` to `current.txt`/`events.log` whenever the board changes (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`). This is the "current stage, not detail" view of the whole run.

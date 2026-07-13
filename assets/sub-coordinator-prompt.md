@@ -371,7 +371,7 @@ CHECKIN_TARGET=issue-worktree
 CHECKIN_OWNER=<impl-worker|modify-worker|not-applicable>
 ```
 
-Worker payloads must not include `SUB_COORD_REPORT_FILE`; workers never write `.run-with-it/issues/<n>/report.json` — that path is reserved for the final compact report (full contract in `coordinator-rules.md`, Worker-Agent Dispatch Rules).
+Worker payloads must not include `SUB_COORD_REPORT_FILE`. Do not pass `SUB_COORD_REPORT_FILE` to worker payloads and do not instruct workers to write `.run-with-it/issues/<n>/report.json` — that path is reserved for the final compact report (full contract in `coordinator-rules.md`, Worker-Agent Dispatch Rules).
 
 For implementation and modification workers, the check-in metadata is mandatory. These workers own their handoff commit and must commit only to `RUN_WITH_IT_REPO_ROOT` on `RUN_WITH_IT_ISSUE_BRANCH`; the shared feature branch is merge/recovery territory, not worker check-in territory.
 
@@ -856,7 +856,7 @@ New-Item -ItemType Directory -Force -Path $PLAN_WORKER_DIR | Out-Null
   -Detach
 ```
 
-**Confirm the issue baseline SHA (captured at worktree bootstrap) before spawning the implementer.** This SHA anchors the reviewer's diff range and must never be the root checkout's `HEAD` at review time (other issues may commit in parallel).
+**Capture the issue baseline SHA before spawning the implementer** — it is already set at worktree bootstrap, so this step confirms it rather than overwriting it. This SHA anchors the reviewer's diff range and must never be the root checkout's `HEAD` at review time (other issues may commit in parallel).
 
 ```bash
 ISSUE_BASE_SHA="${ISSUE_BASE_SHA:-$(git -C "$ISSUE_WORKTREE_PATH" rev-parse HEAD)}"
