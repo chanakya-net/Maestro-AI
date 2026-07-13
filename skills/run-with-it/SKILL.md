@@ -137,7 +137,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `ISSUE_LIMIT` | `1000` | Max issues to fetch (fetches all by default) |
 | `ISSUE_STATE` | `open` | Issue state filter |
 | `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
-| `MAX_ITERATIONS` | `20` | Max review/modify cycles per Sub-Coordinator |
+| `MAX_ITERATIONS` | `20` | Deprecated / no effect — the review/modify loop cap is hardcoded to 8 cycles in `sub-coordinator-prompt.md` (Appendix B); still forwarded in context files for backward compatibility but not consulted |
 | `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
@@ -354,7 +354,7 @@ After fetching all issues:
 ```
 MAIN ORCHESTRATOR LOOP
 Repeat until all issues in main-state.json have a terminal status
-(completed / failed-review / blocked):
+(completed / failed-review / failed-merge / blocked):
 
 ══ STEP A: MEMORY REFRESH ══════════════════════════════════════════════════════
 Re-read .run-with-it/main-orchestrator-rules.md from disk.
@@ -398,7 +398,7 @@ If ACTIVE_POOL is empty and NEWLY_QUEUED is empty:
   Check if any issues remain with status="pending" — if all have unmet deps
   whose blockers are terminal-but-not-completed, re-evaluate them; if still
   unresolvable, mark them "blocked".
-  If ALL issues are terminal (completed / failed-review / blocked):
+  If ALL issues are terminal (completed / failed-review / failed-merge / blocked):
     EXIT LOOP → proceed to Final Ledger and Cleanup.
 
 ══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════
@@ -578,7 +578,7 @@ Execution-mode requirement (critical):
 
   Do not end the Main Coordinator turn between watch calls, and do not start an
   unrelated shell to monitor the pool. The Main Orchestrator stays attached and
-  looping until every issue is terminal (completed / failed-review / blocked).
+  looping until every issue is terminal (completed / failed-review / failed-merge / blocked).
   Per-issue dispatcher PIDs are persisted by the platform pool runner.
   The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
@@ -624,7 +624,7 @@ Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--valid
 
 Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` and `state="stalled"` describe model-output health while runner-owned wrapper heartbeats track process liveness. `state="artifact-recovery-required"` means Git progress was preserved without machine-readable passing verification and must enter artifact recovery. Completion still requires the done sentinel, valid role-specific result artifacts, and passing implementation/modification verification.
 
-`RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` is a compatibility fallback for older runners without wrapper heartbeats. Current runners are not terminated for quiet stdout alone; `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` bounds elapsed execution, preserving Git progress for recovery before termination.
+`RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity,impl,modify,plan`) is a compatibility fallback for older runners without wrapper heartbeats. Current runners are not terminated for quiet stdout alone; `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` bounds elapsed execution, preserving Git progress for recovery before termination.
 
 ## Final PR Creation
 
@@ -924,7 +924,7 @@ After context compression (conversation history cleared), treat the situation as
 
 ### Terminal Issue Comments
 
-Post issue comments immediately for terminal outcomes: `completed`, `blocked`, or `failed-review`.
+Post issue comments immediately for terminal outcomes: `completed`, `blocked`, `failed-review`, or `failed-merge` (set after merge recovery fails).
 Each terminal comment must be posted only after reading the compact report for that issue, and must not wait for unrelated issues or the full pool to finish.
 Populate all fields from the Sub-Coordinator's compact report JSON.
 
@@ -941,7 +941,7 @@ Terminal comment template:
 
 ```md
 ## Status
-<completed|blocked|failed-review>
+<completed|blocked|failed-review|failed-merge>
 
 ## Summary
 <task outcome summary — from report.summary>

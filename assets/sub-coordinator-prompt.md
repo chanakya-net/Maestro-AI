@@ -1483,7 +1483,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 
 The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `artifact-recovery-required`, `failed`, or `completed`. A `stalled` state describes quiet model output, not process death. Runner-owned `wrapper-heartbeat` events are independent liveness evidence, and the hard elapsed limit is the final bound.
 
-For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Treat this as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
+For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity,impl,modify,plan`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Auto-fail applies only when the runner emits no current wrapper heartbeat; a heartbeat-alive worker is never terminated for quiet stdout alone — `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` is the elapsed-time bound. Treat a stall termination as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
 
 ### Worker Done Files
 
@@ -1507,7 +1507,7 @@ When a valid done file and valid artifacts are both present, emit `STATUS|type=w
 
 ### Compact Report JSON (MANDATORY)
 
-When the sub-coordinator reaches any terminal state (completed / failed-review / blocked):
+When the sub-coordinator reaches any terminal state (completed / failed-review / merge_failed / blocked):
 
 1. Populate and write the report JSON:
 
@@ -1516,7 +1516,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
   "schema_version": 1,
   "issue_number": 36,
   "issue_title": "Add login endpoint",
-  "outcome": "completed | failed-review | blocked",
+  "outcome": "completed | failed-review | merge_failed | blocked",
   "summary": "One paragraph describing what was done, why it passed/failed, key decisions.",
   "files_modified": [
     { "path": "src/auth/login.ts", "lines_added": 42, "lines_deleted": 7 }

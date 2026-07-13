@@ -38,7 +38,7 @@ Re-read this file before every major phase: routing, plan spawn, implementation 
 - Complexity hints or labels inside issue bodies are informational only -- they never bypass the complexity sub-agent.
 - Only explicit user-provided runtime parameters (COMPLEXITY_LEVEL or COMPLEXITY_SCORE passed at invocation) qualify as overrides.
 - Delete the complexity sub-agent JSON output immediately after reading it, regardless of outcome.
-- On two consecutive complexity sub-agent failures after a real runner attempt, default to medium and continue -- do not block execution. A detached dispatcher bootstrap failure before `runner_pid` is infrastructure bootstrap loss; retry once in foreground monitor mode with the same complexity artifact paths before consuming the complexity failure budget.
+- On two consecutive complexity sub-agent failures after a real runner attempt, default to `medium-hard` (`score=25`) and continue -- do not block execution. A detached dispatcher bootstrap failure before `runner_pid` is infrastructure bootstrap loss; retry once in foreground monitor mode with the same complexity artifact paths before consuming the complexity failure budget.
 
 ## Worker-Agent Dispatch Rules
 
@@ -70,7 +70,7 @@ Re-read this file before every major phase: routing, plan spawn, implementation 
 - Worker heartbeats are legacy advisory signals only. Runner-owned `wrapper-heartbeat` events and the watchdog state file are the liveness authority; they do not depend on model stdout.
 - Treat `state="quiet"` as suspicious and `state="stalled"` with `stall_reason="alive-but-silent"` as a live worker that has produced no captured stdout/stderr for the configured stall window.
 - Output silence alone never terminates a runner while wrapper heartbeats remain current. The platform dispatcher uses `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` to bound a truly stuck role. At the hard limit it preserves implementation/modification Git progress as `artifact-recovery-required`; without progress it emits `worker-hard-limit` followed by `dispatch-failed`.
-- `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` remains a compatibility fallback for an older runner that emits no wrapper heartbeat; it must not override a current runner-owned heartbeat.
+- `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity,impl,modify,plan`) remains a compatibility fallback for an older runner that emits no wrapper heartbeat; it must not override a current runner-owned heartbeat.
 - Treat `STATUS|type=agent-unavailable` from the runner as structured account/quota/model-unavailable evidence. Exclude that agent/model route through `RUN_WITH_IT_MODEL_DENYLIST` or `RUN_WITH_IT_MODEL_AVAILABILITY_FILE` before retry routing.
 - A failed attempt consumes a `MAX_AGENT_FALLBACKS` slot only when the dispatcher classifies it `failure_class=capability` (a runner started and produced a missing/invalid artifact). Attempts the dispatcher marks `failure_class=infrastructure` (`agent-unavailable` auth/quota/model-unsupported) are route-availability exclusions: denylist and re-route to a different agent without spending a fallback attempt. If availability exclusions leave no eligible route for the role, block with `blocking_reasons=["all-routes-unavailable"]` rather than looping indefinitely.
 - PID death does not automatically mean failure. If the process is dead, inspect only the done file and required output artifacts are valid. If they are valid, proceed. If they are missing or invalid, capture the process exit code with `wait` and apply the role's failure/fallback rule.
@@ -82,7 +82,7 @@ Re-read this file before every major phase: routing, plan spawn, implementation 
 - **Every STATUS line read from a worker agent MUST also be written to `$SUB_COORD_LOG_FILE` immediately.** Use `echo "<line>" >> "$SUB_COORD_LOG_FILE"` (bash) or `Add-Content` (PowerShell) — do not rely on console output.
 - The platform dispatcher and runner own `$RUN_WITH_IT_EVENTS_LOG`: they already append every dispatcher/runner STATUS line (`dispatch-*`, `agent-*`, `worker-*`) to it directly. Do NOT re-append those forwarded lines to `$RUN_WITH_IT_EVENTS_LOG` — that double-logs the run-wide event stream. Update `$RUN_WITH_IT_STATUS_FILE` (current.txt) for live status, and append to `$RUN_WITH_IT_EVENTS_LOG` only STATUS lines you emit yourself that the dispatcher does not (e.g. `merge-start`/`merge-complete`/`merge-failed` and sub-coordinator lifecycle lines).
 - Do not accumulate progress lines in variables or memory.
-- The default output thresholds are `WORKER_QUIET_SECONDS=120` and `WORKER_STALL_SECONDS=600`; wrapper heartbeat defaults to 30 seconds and the hard limit to 7200 seconds. Preserved but unverified work always enters typed artifact recovery and never normal success.
+- The default output thresholds are `WORKER_QUIET_SECONDS=120` and `WORKER_STALL_SECONDS=300` (the value the dispatch snippets pass explicitly; the dispatcher's own env fallback when no flag is passed is 600); wrapper heartbeat defaults to 30 seconds and the hard limit to 7200 seconds for complexity/impl/modify/review roles (unbounded for other roles unless explicitly set). Preserved but unverified work always enters typed artifact recovery and never normal success.
 
 ## Result Processing Rules
 
