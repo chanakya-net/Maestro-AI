@@ -11,6 +11,7 @@ Before any other action (including reading files, routing, spawning workers, or 
 
 **GitHub Copilot disabled:** `github-copilot` is blocked in `agent-registry.json` because the Copilot plan is exhausted. Do not select, force, allowlist-only, or spawn GitHub Copilot. If it appears installed or detected, treat it as unavailable; the alias remains only so direct requests fail fast with a clear disabled-agent error.
 
+<!-- SYNC: this section is intentionally duplicated in assets/coordinator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
 These rules apply for the entire lifetime of this session:
 
@@ -204,20 +205,7 @@ cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 
 ## Mandatory State Bootstrap
 
-Before spawning the complexity worker, create `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. This file is required even if the run later fails before the first worker starts.
-
-Initial schema:
-
-```json
-{
-  "schema_version": 1,
-  "issue_number": 42,
-  "phase": "starting",
-  "in_flight_agents": [],
-  "review_history": [],
-  "updated_at": "2026-05-15T00:00:00Z"
-}
-```
+The Issue Worktree Bootstrap above performs the canonical initial write of `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. This file is required even if the run later fails before the first worker starts — it must exist before the complexity worker is spawned.
 
 Write this file before every major phase transition and immediately after every worker PID is captured. On context compression/resume, read this file first. If a listed worker still has no valid result artifact, use its stored `pid`, `done_file`, `log_file`, and `result_file` to decide whether to continue waiting, process completed artifacts, or re-spawn the phase.
 
@@ -383,7 +371,7 @@ CHECKIN_TARGET=issue-worktree
 CHECKIN_OWNER=<impl-worker|modify-worker|not-applicable>
 ```
 
-Worker payloads must not include `SUB_COORD_REPORT_FILE`. Do not pass `SUB_COORD_REPORT_FILE` to worker payloads and do not instruct workers to write `.run-with-it/issues/<n>/report.json`; that path is reserved for the Sub-Coordinator's final compact report.
+Worker payloads must not include `SUB_COORD_REPORT_FILE`; workers never write `.run-with-it/issues/<n>/report.json` — that path is reserved for the final compact report (full contract in `coordinator-rules.md`, Worker-Agent Dispatch Rules).
 
 For implementation and modification workers, the check-in metadata is mandatory. These workers own their handoff commit and must commit only to `RUN_WITH_IT_REPO_ROOT` on `RUN_WITH_IT_ISSUE_BRANCH`; the shared feature branch is merge/recovery territory, not worker check-in territory.
 
@@ -994,7 +982,7 @@ Reviewer model selection rules:
 2. Reuse the main model-first algorithm.
 3. Exclude the current implementation `model_id` from the candidate pool.
 4. If the current implementation model is already at `holy-fuck`, stay at `holy-fuck` and pick a different model.
-5. **Sticky reviewer across cycles.** The model chosen on review cycle 1 is the issue reviewer. For review cycles ≥ 2, pass it as `PREFER_MODEL` so the same reviewer judges its own prior comments and can approve once they are addressed — this is what lets the review loop converge instead of each new model surfacing a fresh comment set (issue 641: 8 cycles, never approved, reviewer rotated almost every cycle). The preference is soft: `EXCLUDE_MODEL` (impl-model exclusion, artifact-retry exclusions) and availability still win, and a fallback selection does not overwrite the established issue reviewer for the next cycle.
+5. **Sticky reviewer across cycles.** See the reviewer entry under *Route helper inputs by phase* (Appendix A) — the cycle-1 reviewer model is the issue reviewer and is passed as `PREFER_MODEL` on later cycles; exclusions and availability still win, and a fallback selection does not overwrite the established issue reviewer.
 
 ### Degraded Fallback
 

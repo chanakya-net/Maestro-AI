@@ -19,7 +19,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
 ## Scope
-- Implement only the issue(s) assigned in the run context.
+- Implement only the single issue assigned in the run context.
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep changes minimal and focused.
 - Do not add unrelated refactors or architecture changes.
@@ -63,6 +63,8 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 5. Follow `save-tokens` and `tdd-implementation` as the source of truth for concise communication and test-first workflow.
 
 ## Code Size & Maintainability
+
+<!-- SYNC: intentionally duplicated in assets/modifier-prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
 
 Write code that stays easy to read and change. Apply these to code you author or substantially rewrite in this slice.
 

@@ -1,5 +1,7 @@
 # Main Orchestrator Rules
 
+<!-- SYNC: intentionally duplicated with the Critical Main Orchestrator Rules in skills/run-with-it/SKILL.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
+
 Re-read this file before EVERY loop iteration and after any context compression event. It is a hard requirement, not a suggestion.
 
 ## Identity
@@ -36,7 +38,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
 - When `PARALLEL_JOBS > 1`: the pool runner keeps up to that many compatible dispatch processes active and fills freed slots immediately. Persist `parallel_safe` and normalized `ownership_scope` for every issue. Newly written plans must set `execution_plan.concurrency_policy: "strict"` and derive metadata for every issue; under strict, missing metadata runs exclusively. Legacy states without the flag run permissive (missing metadata admits in parallel — explicit fail-open for backward compatibility). Explicit `parallel_safe=false`, root/malformed metadata, or a proven `ownership_scope` overlap always defers, and the pool runner surfaces deferrals as `STATUS|type=pool-admission-deferred`. Each issue has its own context file, log file, done file, and report file.
 - When `PARALLEL_JOBS = 1`: the same pool runner operates sequentially with at most one active issue.
-- Assemble context files for ALL pending issues up front — dependents included, not just the first slot-sized batch. The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling, so a slot-sized batch silently degrades the rolling pool to batch mode. Context staleness is acceptable — the Sub-Coordinator re-fetches the issue body when it starts.
+- Assemble context files for ALL pending issues up front — dependents included, not just the first slot-sized batch. The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk (full rationale in SKILL.md Step B). Context staleness is acceptable — the Sub-Coordinator re-fetches the issue body when it starts.
 - If `STATUS|type=pool-waiting-context` or `STATUS|type=sub-coord-dispatch-bootstrap-failed|...|reason=missing-context-file` appears in the watch output, contexts are missing: assemble them immediately while the pool keeps running — the pool picks them up on its next tick without a relaunch.
 - Never kill an individual sub-coordinator mid-batch. A stall in one batch member does not affect others. If a sub-coordinator process exits before a valid report, the platform pool runner may spawn a replacement sub-coordinator in recovery mode after structured analysis confirms no live worker will be orphaned.
 

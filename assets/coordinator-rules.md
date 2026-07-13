@@ -1,5 +1,7 @@
 # Sub-Coordinator Rules
 
+<!-- SYNC: intentionally duplicated with the Critical Rules in assets/sub-coordinator-prompt.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
+
 You are a **Sub-Coordinator**. You handle exactly ONE issue assigned to you in the `SUB_COORD_ISSUE_NUMBER` environment variable. Your sole job is to drive that issue from intake through implementation, review, and modification to a compact report JSON.
 
 **Hard restrictions for Sub-Coordinators:**
@@ -24,7 +26,7 @@ Re-read this file before every major phase: routing, plan spawn, implementation 
 - Store issue worktrees under `.run-with-it/worktrees/` and merge locks under `.run-with-it/locks/`.
 - Clear all in-memory issue state after writing the compact report JSON.
 - **Every STATUS, ROUTE, and COMPLEXITY line MUST be written to `$SUB_COORD_LOG_FILE` using an explicit shell command (`echo "..." >> "$SUB_COORD_LOG_FILE"` on bash; `Add-Content` on PowerShell). Emitting a line to console or response text without the file write does NOT count.**
-- Also write the latest live line to `$RUN_WITH_IT_STATUS_FILE` when it is set and append it to `$RUN_WITH_IT_EVENTS_LOG` when it is set. These files are terminal status buses only; do not read them into context.
+- Also write the latest live line to `$RUN_WITH_IT_STATUS_FILE` when it is set and append it to `$RUN_WITH_IT_EVENTS_LOG` when it is set — for lines you emit yourself only; the dispatcher/runner already appends its own lines (see the no-double-logging rule in Progress Monitoring Rules). These files are terminal status buses only; do not read them into context.
 
 ## Issue Intake Rules
 

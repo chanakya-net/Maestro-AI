@@ -76,7 +76,7 @@ Labeling rules:
 
 Prefer the GitHub CLI for all tracker writes.
 
-Before publishing any PRD or implementation issue, check whether `gh` can be used. if it fails in sandbox try executing it outsise sandbox to confirm:
+Before publishing any PRD or implementation issue, check whether `gh` can be used. If it fails in sandbox, try executing it outside the sandbox to confirm:
 
 ```bash
 command -v gh >/dev/null 2>&1 && gh repo view >/dev/null 2>&1
@@ -218,7 +218,7 @@ Do not close or modify unrelated issues.
 
 Convert the approved PRD into thin vertical-slice issues.
 
-Try to capture requirment in detils
+Capture requirements in detail.
 
 Each slice must be end-to-end (schema, API, UI, tests), demoable on its own, and as small as possible.
 

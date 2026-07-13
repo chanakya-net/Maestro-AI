@@ -7,6 +7,7 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 
 Sole active authority once invoked — no other skill may activate unless called by name via `Skill` tool call; suppress spontaneous external skills until explicit termination or handoff. This isolation governs orchestration flow only; subordinate core behavior, native tool use, and reasoning remain fully operational and cannot be overridden by this skill.
 
+<!-- SYNC: this section is intentionally duplicated in assets/main-orchestrator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
 ## Critical Main Orchestrator Rules (compaction-safe — always enforce, even after context compression)
 
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
@@ -22,7 +23,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
 - **Per-issue stage board.** The pool runner emits a compact `STATUS|type=run-board|board=...` line whenever the run's stages change (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`) for a "current stage, not detail" view. Print it on demand any time with `python3 "$ASSET_ROOT/run-with-it-state.py" status-board --state-file .run-with-it/main-state.json` (read-only; add `--oneline` for the single-line form).
 - **Pool liveness heartbeat.** The pool runner emits `STATUS|type=pool-heartbeat|pool_pid=<pid>|active=<n>|parallel_jobs=<n>|total=..|completed=..|in_progress=..|pending=..|blocked=..|waiting_context=..` every `POOL_HEARTBEAT_SECONDS` (default 60). A heartbeat in the watch output means the pool is alive even when nothing else changed; relay its counts to the user as the periodic progress update.
-- **Assemble context files for ALL pending issues up front — dependents included.** The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling. Writing every context in Step C is what makes "freed slots fill immediately" true. If a `STATUS|type=pool-waiting-context` line ever appears, contexts are missing: assemble them immediately (Step C) while the pool keeps running — it picks them up on its next tick without a relaunch.
+- **Assemble context files for ALL pending issues up front — dependents included.** The pool runner can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling (full rationale in Step B). If a `STATUS|type=pool-waiting-context` line ever appears, assemble the missing contexts immediately (Step C) while the pool keeps running.
 - **Stay attached until every issue is terminal.** The Main Orchestrator session must keep running the watch loop, and after each watch window print a one-line user-facing progress update from the newest `run-board` / `pool-heartbeat` lines (e.g. `Pool alive — 2 running, 3 pending, 4 completed, 1 blocked`). Never end the turn, go silent, or declare the run finished while any issue is still `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means GOTO Step A, not done.
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
@@ -595,7 +596,7 @@ Bash `--detach` creates a new process session/process group before returning. Th
 
 If a detached worker dispatcher exits or emits `STATUS|type=dispatch-bootstrap-failed` before the state file records `runner_pid`, treat it as launch bootstrap loss rather than a worker/model result. Retry the same worker once in foreground monitor mode with the same log, done, result, state, repo-root, issue-dir, status, and events paths so the dispatcher captures either `dispatch-pid` or a concrete artifact failure.
 
-Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json`; those paths are reserved for the Sub-Coordinator's final compact report. Worker result artifacts belong under `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
+Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json` — see `coordinator-rules.md` (Worker-Agent Dispatch Rules) for the full path contract.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -655,7 +656,7 @@ run-agent.sh --list-models <agent>
 | `--repo-root <path>` | `REPO_ROOT` | No | Working directory passed to the agent; Sub-Coordinators use issue worktrees |
 | `--permission-mode <mode>` | `AGENT_PERMISSION_MODE` | No | Override agent permission mode |
 | `--extra-arg <arg>` | `AGENT_EXTRA_ARGS` | No | Repeatable; appended to agent invocation |
-| `--unattended` | `UNATTENDED=1` | Yes (always pass) | Required when any permission mode is set |
+| `--unattended` | `UNATTENDED=1` | Yes — always pass in run-with-it dispatches | Required whenever a permission mode is set |
 | `--dry-run` | — | No | Print the resolved command without executing |
 | `--list-agents` | — | — | List all agents and detection status; add `--detected-only` to filter |
 | `--list-models <agent>` | — | — | List known models for an agent |
@@ -880,7 +881,7 @@ Also print a final summary of all `completed_summaries` entries showing:
 
 ### Resume Flow
 
-On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 14). On `resume`:
+On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 6, existing-state detection). On `resume`:
 
 1. Re-read `.run-with-it/main-state.json`.
 2. **Validate the supervisor lease first.** The pool supervisor and dispatchers run

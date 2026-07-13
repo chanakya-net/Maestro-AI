@@ -70,6 +70,8 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 ## Code Size & Maintainability
 
+<!-- SYNC: intentionally duplicated in assets/prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
+
 Write code that stays easy to read and change. Apply these to code you author or substantially rewrite while addressing reviewer comments.
 
 **Functions / methods**
