@@ -856,10 +856,10 @@ New-Item -ItemType Directory -Force -Path $PLAN_WORKER_DIR | Out-Null
   -Detach
 ```
 
-**Capture the issue baseline SHA before spawning the implementer.** This SHA anchors the reviewer's diff range and must never be `HEAD` at review time (other issues may commit in parallel).
+**Confirm the issue baseline SHA (captured at worktree bootstrap) before spawning the implementer.** This SHA anchors the reviewer's diff range and must never be the root checkout's `HEAD` at review time (other issues may commit in parallel).
 
 ```bash
-ISSUE_BASE_SHA=$(git rev-parse HEAD)
+ISSUE_BASE_SHA="${ISSUE_BASE_SHA:-$(git -C "$ISSUE_WORKTREE_PATH" rev-parse HEAD)}"
 ```
 
 Store `ISSUE_BASE_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` immediately. This value never changes for the lifetime of this issue.
