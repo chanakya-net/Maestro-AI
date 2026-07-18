@@ -7,6 +7,7 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 
 Sole active authority once invoked — no other skill may activate unless called by name via `Skill` tool call; suppress spontaneous external skills until explicit termination or handoff. This isolation governs orchestration flow only; subordinate core behavior, native tool use, and reasoning remain fully operational and cannot be overridden by this skill.
 
+<!-- SYNC: this section is intentionally duplicated in assets/main-orchestrator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
 ## Critical Main Orchestrator Rules (compaction-safe — always enforce, even after context compression)
 
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
@@ -22,7 +23,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never load live status logs into context.** Live progress is written to `.run-with-it/status/current.txt` and `.run-with-it/status/events.log`; shell watchers may print one changed line to the terminal, but the Main Orchestrator must not read those files into AI memory.
 - **Per-issue stage board.** The pool runner emits a compact `STATUS|type=run-board|board=...` line whenever the run's stages change (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`) for a "current stage, not detail" view. Print it on demand any time with `python3 "$ASSET_ROOT/run-with-it-state.py" status-board --state-file .run-with-it/main-state.json` (read-only; add `--oneline` for the single-line form).
 - **Pool liveness heartbeat.** The pool runner emits `STATUS|type=pool-heartbeat|pool_pid=<pid>|active=<n>|parallel_jobs=<n>|total=..|completed=..|in_progress=..|pending=..|blocked=..|waiting_context=..` every `POOL_HEARTBEAT_SECONDS` (default 60). A heartbeat in the watch output means the pool is alive even when nothing else changed; relay its counts to the user as the periodic progress update.
-- **Assemble context files for ALL pending issues up front — dependents included.** The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling. Writing every context in Step C is what makes "freed slots fill immediately" true. If a `STATUS|type=pool-waiting-context` line ever appears, contexts are missing: assemble them immediately (Step C) while the pool keeps running — it picks them up on its next tick without a relaunch.
+- **Assemble context files for ALL pending issues up front — dependents included.** The pool runner can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling (full rationale in Step B). If a `STATUS|type=pool-waiting-context` line ever appears, assemble the missing contexts immediately (Step C) while the pool keeps running.
 - **Stay attached until every issue is terminal.** The Main Orchestrator session must keep running the watch loop, and after each watch window print a one-line user-facing progress update from the newest `run-board` / `pool-heartbeat` lines (e.g. `Pool alive — 2 running, 3 pending, 4 completed, 1 blocked`). Never end the turn, go silent, or declare the run finished while any issue is still `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means GOTO Step A, not done.
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
@@ -137,7 +138,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `ISSUE_LIMIT` | `1000` | Max issues to fetch (fetches all by default) |
 | `ISSUE_STATE` | `open` | Issue state filter |
 | `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
-| `MAX_ITERATIONS` | `20` | Max review/modify cycles per Sub-Coordinator |
+| `MAX_ITERATIONS` | `20` | Deprecated / no effect — the review/modify loop cap is hardcoded to 8 cycles in `sub-coordinator-prompt.md` (Appendix B); still forwarded in context files for backward compatibility but not consulted |
 | `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
@@ -249,7 +250,7 @@ Selection rules:
 
 ### Fresh/No-Git Project Notes
 
-- This skill must work in folders that are not initialized with git.
+- Without git, this skill supports asset discovery and local-issue intake only; issue branches, worktrees, merges, merge recovery, and the final PR require a git repository.
 - Asset discovery is filesystem-based, not git-root-based.
 - If assets are missing, report the platform-appropriate one-command fix:
 
@@ -354,7 +355,7 @@ After fetching all issues:
 ```
 MAIN ORCHESTRATOR LOOP
 Repeat until all issues in main-state.json have a terminal status
-(completed / failed-review / blocked):
+(completed / failed-review / failed-merge / blocked):
 
 ══ STEP A: MEMORY REFRESH ══════════════════════════════════════════════════════
 Re-read .run-with-it/main-orchestrator-rules.md from disk.
@@ -398,7 +399,7 @@ If ACTIVE_POOL is empty and NEWLY_QUEUED is empty:
   Check if any issues remain with status="pending" — if all have unmet deps
   whose blockers are terminal-but-not-completed, re-evaluate them; if still
   unresolvable, mark them "blocked".
-  If ALL issues are terminal (completed / failed-review / blocked):
+  If ALL issues are terminal (completed / failed-review / failed-merge / blocked):
     EXIT LOOP → proceed to Final Ledger and Cleanup.
 
 ══ STEP C: ASSEMBLE SUB-COORDINATOR CONTEXT FILES ══════════════════════════════
@@ -578,7 +579,7 @@ Execution-mode requirement (critical):
 
   Do not end the Main Coordinator turn between watch calls, and do not start an
   unrelated shell to monitor the pool. The Main Orchestrator stays attached and
-  looping until every issue is terminal (completed / failed-review / blocked).
+  looping until every issue is terminal (completed / failed-review / failed-merge / blocked).
   Per-issue dispatcher PIDs are persisted by the platform pool runner.
   The pool runner must also perform each terminal per-issue GitHub update immediately after finalizing that issue's compact report: post the terminal comment populated from the report, close the issue when `outcome=completed`, leave `blocked` and `failed-review` issues open after commenting, and emit `STATUS|type=github-update|issue=<n>|outcome=<outcome>|action=<commented|skipped|failed>|closed=<true|false>`.
 
@@ -595,7 +596,7 @@ Bash `--detach` creates a new process session/process group before returning. Th
 
 If a detached worker dispatcher exits or emits `STATUS|type=dispatch-bootstrap-failed` before the state file records `runner_pid`, treat it as launch bootstrap loss rather than a worker/model result. Retry the same worker once in foreground monitor mode with the same log, done, result, state, repo-root, issue-dir, status, and events paths so the dispatcher captures either `dispatch-pid` or a concrete artifact failure.
 
-Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json`; those paths are reserved for the Sub-Coordinator's final compact report. Worker result artifacts belong under `.run-with-it/issues/<n>/workers/<role>/cycle-<cycle>-result.json`.
+Worker result files must never be `$SUB_COORD_REPORT_FILE` or `.run-with-it/issues/<n>/report.json` — see `coordinator-rules.md` (Worker-Agent Dispatch Rules) for the full path contract.
 
 ```bash
 run-with-it-dispatch.sh \
@@ -624,7 +625,7 @@ Use `--dry-run` / `-DryRun` to print the wrapped runner invocation, and `--valid
 
 Worker watchdog files use the issue-scoped layout `cycle-<cycle>.state.json`. `state="quiet"` and `state="stalled"` describe model-output health while runner-owned wrapper heartbeats track process liveness. `state="artifact-recovery-required"` means Git progress was preserved without machine-readable passing verification and must enter artifact recovery. Completion still requires the done sentinel, valid role-specific result artifacts, and passing implementation/modification verification.
 
-`RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` is a compatibility fallback for older runners without wrapper heartbeats. Current runners are not terminated for quiet stdout alone; `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` bounds elapsed execution, preserving Git progress for recovery before termination.
+`RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity,impl,modify,plan`) is a compatibility fallback for older runners without wrapper heartbeats. Current runners are not terminated for quiet stdout alone; `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` bounds elapsed execution, preserving Git progress for recovery before termination.
 
 ## Final PR Creation
 
@@ -655,7 +656,7 @@ run-agent.sh --list-models <agent>
 | `--repo-root <path>` | `REPO_ROOT` | No | Working directory passed to the agent; Sub-Coordinators use issue worktrees |
 | `--permission-mode <mode>` | `AGENT_PERMISSION_MODE` | No | Override agent permission mode |
 | `--extra-arg <arg>` | `AGENT_EXTRA_ARGS` | No | Repeatable; appended to agent invocation |
-| `--unattended` | `UNATTENDED=1` | Yes (always pass) | Required when any permission mode is set |
+| `--unattended` | `UNATTENDED=1` | Yes — always pass in run-with-it dispatches | Required whenever a permission mode is set |
 | `--dry-run` | — | No | Print the resolved command without executing |
 | `--list-agents` | — | — | List all agents and detection status; add `--detected-only` to filter |
 | `--list-models <agent>` | — | — | List known models for an agent |
@@ -871,7 +872,7 @@ After the loop exits and before cleanup, print the aggregated final ledger by re
 
 Also print a final summary of all `completed_summaries` entries showing:
 - Total issues processed
-- Completed / failed-review / blocked counts
+- Completed / failed-review / failed-merge / blocked counts
 - Total lines added/deleted across all issues
 - Task-level model usage (`role`, `cycle`, `agent`, `model`, `selection_reason`) from each issue's `model_usage`
 - Aggregate token usage (sum `token_usage` fields from all report JSONs for issues that have completed)
@@ -880,7 +881,7 @@ Also print a final summary of all `completed_summaries` entries showing:
 
 ### Resume Flow
 
-On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 14). On `resume`:
+On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Preflight Check 6, existing-state detection). On `resume`:
 
 1. Re-read `.run-with-it/main-state.json`.
 2. **Validate the supervisor lease first.** The pool supervisor and dispatchers run
@@ -904,7 +905,7 @@ On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Prefl
    runner's re-attach path already performs this analysis; prefer relaunching
    the pool over manual requeues.
 4. Identify all issues with `status="pending"` — these haven't started yet.
-5. Identify all issues with `status="completed"`, `"failed-review"`, or `"blocked"` — skip these entirely.
+5. Identify all issues with `status="completed"`, `"failed-review"`, `"failed-merge"`, or `"blocked"` — skip these entirely.
 6. Re-enter Main Loop at Step A.
 7. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|supervisor=<alive|relaunched>|re_queued_in_progress=<m>|parallel_jobs=<PARALLEL_JOBS>`
 
@@ -924,7 +925,7 @@ After context compression (conversation history cleared), treat the situation as
 
 ### Terminal Issue Comments
 
-Post issue comments immediately for terminal outcomes: `completed`, `blocked`, or `failed-review`.
+Post issue comments immediately for terminal outcomes: `completed`, `blocked`, `failed-review`, or `failed-merge` (set after merge recovery fails).
 Each terminal comment must be posted only after reading the compact report for that issue, and must not wait for unrelated issues or the full pool to finish.
 Populate all fields from the Sub-Coordinator's compact report JSON.
 
@@ -941,7 +942,7 @@ Terminal comment template:
 
 ```md
 ## Status
-<completed|blocked|failed-review>
+<completed|blocked|failed-review|failed-merge>
 
 ## Summary
 <task outcome summary — from report.summary>
@@ -967,5 +968,5 @@ Comment requirements:
 - `Token Usage` must report task-specific telemetry only (from `report.token_usage`).
 - If any token value is unavailable, render that value explicitly as `unknown`.
 - `Verification` must summarize the checks run and whether they passed, failed, or were blocked (from `report.verification`).
-- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true`. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`.
+- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true` and review ran. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`. When `report.review_skipped` is true, write `Review: skipped (trivial-change)` instead.
 - `Blocking Reasons` section must be included **only** when `report.blocking_reasons` is non-empty. Render each entry as a separate markdown bullet. Omit the section entirely otherwise.

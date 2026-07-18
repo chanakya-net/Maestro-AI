@@ -11,6 +11,7 @@ Before any other action (including reading files, routing, spawning workers, or 
 
 **GitHub Copilot disabled:** `github-copilot` is blocked in `agent-registry.json` because the Copilot plan is exhausted. Do not select, force, allowlist-only, or spawn GitHub Copilot. If it appears installed or detected, treat it as unavailable; the alias remains only so direct requests fail fast with a clear disabled-agent error.
 
+<!-- SYNC: this section is intentionally duplicated in assets/coordinator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
 These rules apply for the entire lifetime of this session:
 
@@ -204,20 +205,7 @@ cp "$ASSET_ROOT/coordinator-rules.md" .run-with-it/coordinator-rules.md
 
 ## Mandatory State Bootstrap
 
-Before spawning the complexity worker, create `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. This file is required even if the run later fails before the first worker starts.
-
-Initial schema:
-
-```json
-{
-  "schema_version": 1,
-  "issue_number": 42,
-  "phase": "starting",
-  "in_flight_agents": [],
-  "review_history": [],
-  "updated_at": "2026-05-15T00:00:00Z"
-}
-```
+The Issue Worktree Bootstrap above performs the canonical initial write of `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. This file is required even if the run later fails before the first worker starts — it must exist before the complexity worker is spawned.
 
 Write this file before every major phase transition and immediately after every worker PID is captured. On context compression/resume, read this file first. If a listed worker still has no valid result artifact, use its stored `pid`, `done_file`, `log_file`, and `result_file` to decide whether to continue waiting, process completed artifacts, or re-spawn the phase.
 
@@ -383,7 +371,7 @@ CHECKIN_TARGET=issue-worktree
 CHECKIN_OWNER=<impl-worker|modify-worker|not-applicable>
 ```
 
-Worker payloads must not include `SUB_COORD_REPORT_FILE`. Do not pass `SUB_COORD_REPORT_FILE` to worker payloads and do not instruct workers to write `.run-with-it/issues/<n>/report.json`; that path is reserved for the Sub-Coordinator's final compact report.
+Worker payloads must not include `SUB_COORD_REPORT_FILE`. Do not pass `SUB_COORD_REPORT_FILE` to worker payloads and do not instruct workers to write `.run-with-it/issues/<n>/report.json` — that path is reserved for the final compact report (full contract in `coordinator-rules.md`, Worker-Agent Dispatch Rules).
 
 For implementation and modification workers, the check-in metadata is mandatory. These workers own their handoff commit and must commit only to `RUN_WITH_IT_REPO_ROOT` on `RUN_WITH_IT_ISSUE_BRANCH`; the shared feature branch is merge/recovery territory, not worker check-in territory.
 
@@ -538,7 +526,7 @@ Route helper inputs by phase:
 - complexity worker: `ROUTE_ROLE=complexity`, `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}` unless an explicit runtime override skips complexity entirely
 - plan worker: `ROUTE_ROLE=plan`, `ROUTE_COMPLEXITY_LEVEL=<blind scored complexity level>` — pass the blind band as-is; the router's `PLAN_BUMP` forces a strong band internally, so never pre-bump it here (see *Plan Sub-Agent Delegation*)
 - implementer worker: `ROUTE_ROLE=impl`, `ROUTE_COMPLEXITY_LEVEL=$EFFECTIVE_COMPLEXITY` — the plan's grounded re-score when a plan ran, otherwise the blind scored complexity level (see *Plan Sub-Agent Delegation*)
-- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) and set `REVIEW_EXCLUDE_MODELS` to a comma-separated union of the implementation/modification model plus every failed reviewer model from this cycle. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). Every repeated `--exclude-model` wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion remain cumulative; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles. Before launch, assert the selected reviewer model is absent from `REVIEW_EXCLUDE_MODELS`; otherwise reject the route and retry selection.
+- reviewer worker: `ROUTE_ROLE=review`, use the implementation complexity band (`$EFFECTIVE_COMPLEXITY`, the same band the implementer routed on) — the router's `REVIEW_BUMP` applies the one-band reviewer increase internally, so pass the implementation band as-is; never pre-bump it here — and set `REVIEW_EXCLUDE_MODELS` to a comma-separated union of the implementation/modification model plus every failed reviewer model from this cycle. On review cycle 1, leave `PREFER_MODEL` empty (let routing pick). The cycle-1 reviewer model becomes the **issue reviewer**: on every later review cycle for the same issue, set `PREFER_MODEL` to that model so the same reviewer converges on its own comments instead of a fresh model re-litigating the whole diff each cycle (the issue-641 failure mode). Every repeated `--exclude-model` wins over `PREFER_MODEL`, so artifact-retry exclusions and the impl-model exclusion remain cumulative; if the issue reviewer is genuinely unavailable the router falls back automatically (reason ≠ `sticky-reviewer-preference`), and that fallback model does **not** replace the established issue reviewer for subsequent cycles. Before launch, assert the selected reviewer model is absent from `REVIEW_EXCLUDE_MODELS`; otherwise reject the route and retry selection.
 - modifier worker: `ROUTE_ROLE=modify`, use `$EFFECTIVE_COMPLEXITY` as the base band; after escalation, pass the escalated band as `ROUTE_COMPLEXITY_LEVEL`
 
 If `run-with-it-router.py` is missing or exits non-zero, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the documented fallback algorithm below once. Do not silently ignore router failure.
@@ -868,10 +856,10 @@ New-Item -ItemType Directory -Force -Path $PLAN_WORKER_DIR | Out-Null
   -Detach
 ```
 
-**Capture the issue baseline SHA before spawning the implementer.** This SHA anchors the reviewer's diff range and must never be `HEAD` at review time (other issues may commit in parallel).
+**Capture the issue baseline SHA before spawning the implementer** — it is already set at worktree bootstrap, so this step confirms it rather than overwriting it. This SHA anchors the reviewer's diff range and must never be the root checkout's `HEAD` at review time (other issues may commit in parallel).
 
 ```bash
-ISSUE_BASE_SHA=$(git rev-parse HEAD)
+ISSUE_BASE_SHA="${ISSUE_BASE_SHA:-$(git -C "$ISSUE_WORKTREE_PATH" rev-parse HEAD)}"
 ```
 
 Store `ISSUE_BASE_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` immediately. This value never changes for the lifetime of this issue.
@@ -970,9 +958,13 @@ if [ "$IMPL_COMMIT_SHA" = "$ISSUE_BASE_SHA" ]; then
 fi
 ```
 
+**Exception — verified no-op:** if `IMPL_COMMIT_SHA` equals `ISSUE_BASE_SHA` but the implementer's result artifact is valid with `"no_op": true` and `verification.passed=true` (the verified no-op contract in `prompt.md`, validated by `run-with-it-artifacts.py`), treat the phase as success with `commit_sha=NONE`; do not mark `implementer-no-commit`.
+
 Store both `ISSUE_BASE_SHA` and `IMPL_COMMIT_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`. These two SHAs define the exact diff range for the reviewer. **Never read `git diff` output into the Sub-Coordinator context. Never pass `HEAD` to the reviewer — use the explicit `IMPL_COMMIT_SHA`.**
 
-### Reviewer Band Selection
+### Reviewer Band Selection (prompt fallback router only)
+
+This manual bump applies only when `run-with-it-router.py` is unavailable and the Prompt Fallback Router is in use; the deterministic router performs this one-band bump itself via `REVIEW_BUMP`.
 
 For each review pass, bump the current implementation band up exactly one level and reuse the same model-first selection logic:
 
@@ -990,7 +982,7 @@ Reviewer model selection rules:
 2. Reuse the main model-first algorithm.
 3. Exclude the current implementation `model_id` from the candidate pool.
 4. If the current implementation model is already at `holy-fuck`, stay at `holy-fuck` and pick a different model.
-5. **Sticky reviewer across cycles.** The model chosen on review cycle 1 is the issue reviewer. For review cycles ≥ 2, pass it as `PREFER_MODEL` so the same reviewer judges its own prior comments and can approve once they are addressed — this is what lets the review loop converge instead of each new model surfacing a fresh comment set (issue 641: 8 cycles, never approved, reviewer rotated almost every cycle). The preference is soft: `EXCLUDE_MODEL` (impl-model exclusion, artifact-retry exclusions) and availability still win, and a fallback selection does not overwrite the established issue reviewer for the next cycle.
+5. **Sticky reviewer across cycles.** See the reviewer entry under *Route helper inputs by phase* (Appendix A) — the cycle-1 reviewer model is the issue reviewer and is passed as `PREFER_MODEL` on later cycles; exclusions and availability still win, and a fallback selection does not overwrite the established issue reviewer.
 
 ### Degraded Fallback
 
@@ -1043,11 +1035,13 @@ Gather the `--numstat` data already collected via Appendix C after the implement
 - `files_changed` — number of distinct files in the `git diff --numstat` output
 - `total_lines_changed` — sum of all `added + deleted` line counts across all files
 
-| Condition | Action |
-|-----------|--------|
-| `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). Proceed directly to compact report generation — the implementer already committed. Do not continue to steps 1–7 this cycle. |
-| `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
-| Gray zone (`total_lines_changed` 30–55, or `files_changed` 2–4) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage). If tests are not 100% confirmed passing, continue to step 1. If tests are explicitly 100% passing, skip review as above. |
+Evaluate these rules **in order**; the first matching rule decides:
+
+| Rule | Condition | Action |
+|------|-----------|--------|
+| 1 | `files_changed > 3` **OR** `total_lines_changed > 55` | **Review is mandatory.** Continue to step 1. |
+| 2 | `files_changed ≤ 3` **AND** `total_lines_changed < 30` **AND** verification shows **explicit all-tests-pass** | **Skip review.** Treat as clean approve. Emit `STATUS\|type=review-skipped\|reason=trivial-change\|files=<n>\|lines=<n>`. Write `"review_skipped": true` and `"review_skip_reason": "trivial-change"` into the compact report (Appendix E). The implementer already committed — perform the normal merge back to the shared feature branch (Appendix C2), then proceed to compact report generation. Do not continue to steps 1–7 this cycle. |
+| 3 | Everything else (`total_lines_changed` 30–55 with `files_changed ≤ 3`, or tests not confirmed passing) | Review is required unless verification results show **100% explicit all-tests-pass** (no absent, partial, timeout, or skipped test coverage) — then skip review as in rule 2. Otherwise continue to step 1. |
 
 "Explicit all-tests-pass" means the implementer's report contains a test command **and** a clearly passing result. Absent, partial, timeout, or skipped test output does **not** qualify — in those cases proceed to step 1.
 
@@ -1219,6 +1213,8 @@ EOF
        # Terminate as failed-review with blocking_reason="modifier-no-commit"
      fi
      ```
+     **Exception — verified no-op:** if `MODIFY_COMMIT_SHA` equals `REVIEW_HEAD_SHA` but the modifier's result artifact is valid with `"no_op": true` and `verification.passed=true` (the verified no-op contract in `modifier-prompt.md`, validated by `run-with-it-artifacts.py`), treat the modification as success; do not mark `modifier-no-commit`, and keep `REVIEW_HEAD_SHA` unchanged for the next review cycle.
+
      Store `MODIFY_COMMIT_SHA` in state. For the next review cycle: `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA` (and `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA` — never changes).
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
@@ -1247,7 +1243,7 @@ Read only the `--numstat` summary (file path + added + deleted counts) — never
 
 ## Appendix C2: Normal Merge Back to Shared Feature Branch
 
-After review approval, attempt to merge this issue branch back into the shared run feature branch. The Main Orchestrator must never perform this merge; this Sub-Coordinator owns the normal merge attempt.
+After review approval (or a Step 0 review skip), attempt to merge this issue branch back into the shared run feature branch. The Main Orchestrator must never perform this merge; this Sub-Coordinator owns the normal merge attempt.
 
 Acquire `.run-with-it/locks/merge.lock` before touching the shared feature branch:
 
@@ -1479,7 +1475,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_STATE_FILE` to a role-specif
 
 The platform dispatcher (`run-with-it-dispatch.sh` / `run-with-it-dispatch.ps1`) owns this file. Read it to determine whether a worker is `running`, `quiet`, `stalled`, `artifact-recovery-required`, `failed`, or `completed`. A `stalled` state describes quiet model output, not process death. Runner-owned `wrapper-heartbeat` events are independent liveness evidence, and the hard elapsed limit is the final bound.
 
-For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Treat this as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
+For roles listed in `RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES` (Bash default: `complexity,impl,modify,plan`), the dispatcher terminates a stalled runner and emits `STATUS|type=worker-stall-timeout` followed by `dispatch-failed`. Auto-fail applies only when the runner emits no current wrapper heartbeat; a heartbeat-alive worker is never terminated for quiet stdout alone — `RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS` is the elapsed-time bound. Treat a stall termination as a concrete worker infrastructure failure and apply the role fallback rule. For complexity, retry/fallback; do not wait indefinitely for the terminated scorer.
 
 ### Worker Done Files
 
@@ -1496,14 +1492,14 @@ The worker may write this file when its required artifacts are complete. The pla
 
 - complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
 - plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `run-with-it-artifacts.py failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
-- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`)
+- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `run-with-it-artifacts.py`
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
 When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.
 
 ### Compact Report JSON (MANDATORY)
 
-When the sub-coordinator reaches any terminal state (completed / failed-review / blocked):
+When the sub-coordinator reaches any terminal state (completed / failed-review / merge_failed / blocked):
 
 1. Populate and write the report JSON:
 
@@ -1512,7 +1508,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
   "schema_version": 1,
   "issue_number": 36,
   "issue_title": "Add login endpoint",
-  "outcome": "completed | failed-review | blocked",
+  "outcome": "completed | failed-review | merge_failed | blocked",
   "summary": "One paragraph describing what was done, why it passed/failed, key decisions.",
   "files_modified": [
     { "path": "src/auth/login.ts", "lines_added": 42, "lines_deleted": 7 }
@@ -1529,6 +1525,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
     "non_approval_count": 0,
     "nitpick_only": false
   },
+  "review_skipped": false,
+  "review_skip_reason": null,
   "token_usage": {
     "impl_input": 0, "impl_output": 0,
     "review_input": 0, "review_output": 0,
@@ -1581,6 +1579,8 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
 4. Ensure the JSON is fully written and valid before exiting.
 
 `model_usage` must include every worker route selected for the issue, including `artifact-recovery` when it runs. If a role is skipped, omit that role; do not invent model names.
+
+`review_skipped` / `review_skip_reason` are set only when Step 0 skipped review (`true` / `"trivial-change"`); in that case `review_summary.reviewer_model` is `null` and `final_verdict` is `"approve"` — a skip is treated as a clean approve.
 
 The report file is the sub-coordinator's only required artifact for the Main Orchestrator.
 

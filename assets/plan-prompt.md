@@ -104,7 +104,14 @@ payload = {
     "approach": "REPLACE_WITH_1_TO_3_SENTENCE_APPROACH",
     "complexity_level": "REPLACE_WITH_GROUNDED_BAND",
     "files": [],
-    "slices": [],
+    "slices": [
+        {
+            "order": 1,
+            "behavior": "REPLACE_WITH_SLICE_BEHAVIOR",
+            "test_target": "REPLACE_WITH_TEST_TARGET",
+            "files": [],
+        },
+    ],
     "interfaces": [],
     "risks": [],
     "out_of_scope": [],
@@ -131,7 +138,7 @@ $payload = @{
   approach = "REPLACE_WITH_1_TO_3_SENTENCE_APPROACH"
   complexity_level = "REPLACE_WITH_GROUNDED_BAND"
   files = @()
-  slices = @()
+  slices = @(@{ order = 1; behavior = "REPLACE_WITH_SLICE_BEHAVIOR"; test_target = "REPLACE_WITH_TEST_TARGET"; files = @() })
   interfaces = @()
   risks = @()
   out_of_scope = @()

@@ -219,7 +219,7 @@ Acceptance checks (for human or automated verifier)
 - Contains all 9 dimension rubrics and 1–5 level descriptions.
 - Contains the `COMPLEXITY|` line format spec with d1..d9.
 - Contains the JSON blob format spec with `total`, `level`, `scores` (9 keys), and `rationale` (9 keys).
-- Contains CodeGraph tool instructions and grep/find fallback.
+- Contains read-only file-discovery instructions (grep/find/cat/Read).
 - Contains an explicit prohibition on implementation advice.
 
 ---

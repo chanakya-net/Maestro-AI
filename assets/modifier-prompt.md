@@ -70,6 +70,8 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 ## Code Size & Maintainability
 
+<!-- SYNC: intentionally duplicated in assets/prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
+
 Write code that stays easy to read and change. Apply these to code you author or substantially rewrite while addressing reviewer comments.
 
 **Functions / methods**
@@ -129,7 +131,7 @@ if ($env:RUN_WITH_IT_ISSUE_BRANCH -and ((git -C $checkinRepoRoot rev-parse --abb
 
 ## Mandatory Commit Before Handoff
 
-**You MUST commit all your changes before writing the done file.** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
+**You MUST commit all your changes before writing the done file (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
 
 Commit sequence (after verification passes and all reviewer comments are addressed):
 
@@ -158,11 +160,13 @@ Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
 - **You did not apply the requested fixes** (incomplete, gave up, or could not finish) → emit `MODIFY_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
 - **Every review comment is already addressed upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `MODIFY_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}`. The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite and confirming each comment is resolved — never use it to skip real work.
 
-**Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and list of committed files.
+**Do not write the done file until the commit is made (or the verified no-op result artifact is written per the verified no-op contract) and the result JSON is written.** The output report must include the commit SHA and list of committed files.
 
 ## Result Artifact
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable modification handoff.
+
+On a verified no-op (`MODIFY_COMMIT_SHA=NONE`), skip the commit-based builder below — it runs `git show` against the commit SHA and cannot handle `NONE` — and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
@@ -220,7 +224,7 @@ python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
   --role modify --issue "$RUN_WITH_IT_ISSUE" \
   --payload-file "$MODIFY_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
   --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
-  --pre-spawn-head "${ISSUE_BASE_SHA:-}" || { rm -f "$MODIFY_PAYLOAD_FILE"; exit 1; }
+  --pre-spawn-head "${REVIEW_HEAD_SHA:-}" || { rm -f "$MODIFY_PAYLOAD_FILE"; exit 1; }
 rm -f "$MODIFY_PAYLOAD_FILE"
 ```
 
@@ -252,14 +256,44 @@ $payload = @{
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
 $payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
 $payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
-& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:ISSUE_BASE_SHA"
+& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:REVIEW_HEAD_SHA"
 if ($LASTEXITCODE -ne 0) { throw "modification artifact validation failed" }
 Remove-Item -Force $payloadFile
 ```
 
+### Verified no-op variant
+
+Use this **only** when every review comment is already addressed upstream and the full verification suite passes with no changes needed (no commit was made). Write this payload directly (do not run the commit-based builder above), then validate it with `write-json` using `--pre-spawn-head "${REVIEW_HEAD_SHA:-}"` — the validator confirms `HEAD` still equals the pre-spawn head, so a no-op with unexpected commits is rejected. Include one `review_comment_closure` entry per reviewer comment id, each with evidence that it is already resolved. The dispatcher accepts this as success; it rejects a no-op whose `verification.passed` is not `true`.
+
+```json
+{
+  "schema_version": 1,
+  "issue": "<issue>",
+  "role": "modify",
+  "status": "success",
+  "no_op": true,
+  "commit_sha": "NONE",
+  "files_committed": [],
+  "review_comment_closure": [
+    {
+      "id": "R001",
+      "status": "addressed",
+      "action": "already resolved upstream — cite the commit or code that satisfies it",
+      "files_changed": [],
+      "verification": ["exact command or inspection proving closure"]
+    }
+  ],
+  "verification": {
+    "passed": true,
+    "commands": ["<exact verification commands run>"],
+    "note": "All review comments already satisfied upstream; no changes required."
+  }
+}
+```
+
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made, `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready.
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made (or the verified no-op result artifact is written per the verified no-op contract), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready.
 
 Bash:
 ```bash
@@ -273,7 +307,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=modify|status=success|source=agent"
 ```
 
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
 ## Verification
 
@@ -281,16 +315,16 @@ You must run tests after addressing reviewer comments.
 
 1. Run every verification command supplied by the coordinator.
 2. If those commands are incomplete or absent, run the narrowest relevant test scope first, then the full suite when practical.
-3. Fix any failing test before reporting completion, regardless of whether the failing test is inside the original issue scope.
+3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`run-with-it-artifacts.py`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and do not set `verification.passed=false` for failures you are not responsible for.
 4. Re-run the failing command after each fix until it passes.
 
-Do not report completion while tests are failing. A failing test suite is a failed modification.
+Do not report completion while tests you are responsible for are failing. A failing test suite caused by this change is a failed modification.
 
 **Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (for example named-pipe access denied, IPC failure, socket permission error, or app-server state access), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 
 ## Output Contract
 
-Do not output this report until all required verification passes and the mandatory commit is made.
+Do not output this report until all required verification passes and the mandatory commit is made (or the verified no-op result artifact is written).
 
 Report:
 

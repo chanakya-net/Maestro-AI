@@ -19,7 +19,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 Issue selection, dependency planning, runner selection, orchestration, reviewer JSON output, status ledgers, and terminal issue updates are handled outside this prompt.
 
 ## Scope
-- Implement only the issue(s) assigned in the run context.
+- Implement only the single issue assigned in the run context.
 - Run inside the provided `REPO_ROOT`, which may be an issue worktree created by the Sub-Coordinator.
 - Keep changes minimal and focused.
 - Do not add unrelated refactors or architecture changes.
@@ -63,6 +63,8 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 5. Follow `save-tokens` and `tdd-implementation` as the source of truth for concise communication and test-first workflow.
 
 ## Code Size & Maintainability
+
+<!-- SYNC: intentionally duplicated in assets/modifier-prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
 
 Write code that stays easy to read and change. Apply these to code you author or substantially rewrite in this slice.
 
@@ -160,11 +162,13 @@ Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 - **You did not actually implement the slice** (incomplete work, gave up, or could not finish) → emit `IMPL_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
 - **The acceptance criteria are already fully satisfied upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `IMPL_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}` (see Result Artifact → *Verified no-op variant*). The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite — never use it to skip real work.
 
-**Do not write the done file until the commit is made and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
+**Do not write the done file until the commit is made (or the verified no-op result artifact is written per the Verified no-op variant) and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
 
 ## Result Artifact
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable implementation handoff.
+
+On a verified no-op (`IMPL_COMMIT_SHA=NONE`), skip the commit-based builder below — it runs `git show` against the commit SHA and cannot handle `NONE` — and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
@@ -267,7 +271,7 @@ Use this **only** when the acceptance criteria are already fully met upstream an
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made, `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made (or the verified no-op result artifact is written per the Verified no-op variant), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
 
 Bash:
 ```bash
@@ -281,11 +285,11 @@ New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
 ```
 
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made, the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
+Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
 ## Output Contract
 
-Do not output this report until all tests pass and the mandatory commit is made. If tests are failing, fix them first.
+Do not output this report until all tests pass and the mandatory commit is made (or the verified no-op result artifact is written). If tests are failing, fix them first.
 
 Report:
 

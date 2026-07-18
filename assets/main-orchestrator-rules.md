@@ -1,5 +1,7 @@
 # Main Orchestrator Rules
 
+<!-- SYNC: intentionally duplicated with the Critical Main Orchestrator Rules in skills/run-with-it/SKILL.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/markdown-contract-consistency.test.sh asserts key tokens match. -->
+
 Re-read this file before EVERY loop iteration and after any context compression event. It is a hard requirement, not a suggestion.
 
 ## Identity
@@ -36,23 +38,23 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - The pool runner marks each newly queued issue as `in_progress` in `main-state.json` and maintains `active_pool_issues`. It writes state to disk before spawning each dispatch process.
 - When `PARALLEL_JOBS > 1`: the pool runner keeps up to that many compatible dispatch processes active and fills freed slots immediately. Persist `parallel_safe` and normalized `ownership_scope` for every issue. Newly written plans must set `execution_plan.concurrency_policy: "strict"` and derive metadata for every issue; under strict, missing metadata runs exclusively. Legacy states without the flag run permissive (missing metadata admits in parallel — explicit fail-open for backward compatibility). Explicit `parallel_safe=false`, root/malformed metadata, or a proven `ownership_scope` overlap always defers, and the pool runner surfaces deferrals as `STATUS|type=pool-admission-deferred`. Each issue has its own context file, log file, done file, and report file.
 - When `PARALLEL_JOBS = 1`: the same pool runner operates sequentially with at most one active issue.
-- Assemble context files for ALL pending issues up front — dependents included, not just the first slot-sized batch. The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk; an issue without a context file is invisible to slot filling, so a slot-sized batch silently degrades the rolling pool to batch mode. Context staleness is acceptable — the Sub-Coordinator re-fetches the issue body when it starts.
+- Assemble context files for ALL pending issues up front — dependents included, not just the first slot-sized batch. The pool runner is the only dispatcher and it can only dispatch issues whose context files already exist on disk (full rationale in SKILL.md Step B). Context staleness is acceptable — the Sub-Coordinator re-fetches the issue body when it starts.
 - If `STATUS|type=pool-waiting-context` or `STATUS|type=sub-coord-dispatch-bootstrap-failed|...|reason=missing-context-file` appears in the watch output, contexts are missing: assemble them immediately while the pool keeps running — the pool picks them up on its next tick without a relaunch.
 - Never kill an individual sub-coordinator mid-batch. A stall in one batch member does not affect others. If a sub-coordinator process exits before a valid report, the platform pool runner may spawn a replacement sub-coordinator in recovery mode after structured analysis confirms no live worker will be orphaned.
 
 ## Live Status Rules
 
 - Use `.run-with-it/status/current.txt` as a single-line current-status file and `.run-with-it/status/events.log` as an append-only terminal log.
-- While a sub-coordinator runs, poll `current.txt` from the shell and print only changed status lines.
+- While a sub-coordinator runs, the bounded watch runner is the standard polling mechanism; as an on-demand terminal view you may also poll `current.txt` from the shell and print only changed status lines.
 - The bounded watch runner (`run-with-it-watch.sh` / `run-with-it-watch.ps1`) is the standard polling mechanism: each call prints the status lines appended to the events log since the previous call, then exits within its watch window so no tool-call timeout is ever hit.
 - Do not tail raw sub-coordinator logs. The status bus is the terminal-visible progress channel; compact report JSON is the AI-visible outcome channel.
-- In the monitor loop, run the platform worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) using the stored sub-coordinator PID/done/log paths to emit liveness diagnostics and log-tail change detection. PID liveness is diagnostic only.
+- Sub-Coordinator liveness is monitored by the platform pool runner, which invokes the worker watcher (`assets/worker-watch.sh` / `assets/worker-watch.ps1`) inside the dispatcher; the Main Orchestrator only loops the bounded watch runner and never runs worker-watch itself. PID liveness is diagnostic only.
 - Do not summarize, retain, or reason from live status lines; they are terminal visibility only.
 - The compact report JSON remains the only source of truth for outcome, files changed, verification, review result, and token usage.
 - The pool runner emits a compact per-issue stage board as `STATUS|type=run-board|board=...` to `current.txt`/`events.log` whenever the board changes (e.g. `#618 merge-recovery(cyc2) | #631 impl(cyc1) | #633 blocked:631 | #627 done`). This is the "current stage, not detail" view of the whole run.
 - The pool runner emits `STATUS|type=pool-heartbeat|pool_pid=<pid>|active=<n>|parallel_jobs=<n>|total=..|completed=..|in_progress=..|pending=..|blocked=..|waiting_context=..` every `POOL_HEARTBEAT_SECONDS` (default 60) regardless of change. A heartbeat in the watch output proves the pool is alive even when nothing else moved.
 - After EVERY watch call — even when nothing changed — print a one-line user-facing progress update built from the newest `run-board` and `pool-heartbeat` lines (e.g. `Pool alive (pid 12345) — 2 running, 3 pending, 4 completed, 1 blocked`). The user must never have to guess whether the run is still alive.
-- Stay attached until every issue is terminal (completed / failed-review / blocked). Never end the turn, go silent, or declare the run finished while any issue is `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means return to Step A for another pool pass, not done.
+- Stay attached until every issue is terminal (completed / failed-review / failed-merge / blocked). Never end the turn, go silent, or declare the run finished while any issue is `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means return to Step A for another pool pass, not done.
 - On demand, print the same board with `run-with-it-state.py status-board --state-file .run-with-it/main-state.json` (one issue per line), or `--oneline` for the single-line form. This is read-only and safe to run at any time. Stages: `ready`/`queued`, `blocked:<deps>`, `<role>(cyc<n>)` while in progress, `merge-recovery`, `blocked`, `done`.
 
 ## Requeue Rules
@@ -86,7 +88,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never run tests, build commands, or compile the project.
 - Never pause to ask the user how to proceed after state is loaded — execute the loop.
 - Never present execution option menus.
-- If all issues are terminal (completed/failed-review/blocked): exit loop and run cleanup.
+- If all issues are terminal (completed/failed-review/failed-merge/blocked): exit loop and run cleanup.
 - `merge_recovery` is non-terminal. Keep unrelated ready issues moving, but do not schedule dependents until the recovered issue becomes `completed`.
 - If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via the platform dispatcher with `role=merge-recovery`, reads the compact recovery report, updates the issue to `completed`, `failed-merge`, or `blocked`, then immediately performs the terminal GitHub update for that recovered outcome.
 - When Merge Recovery Coordinator succeeds, set the issue status to `completed`, append its compact recovery summary, recalculate dependency readiness, and continue the rolling pool.
