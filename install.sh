@@ -138,7 +138,7 @@ install_assets() {
     note "  [dry-run] mkdir -p $ASSETS_DEST"
     local f
     for f in "${files[@]}"; do
-      note "  [dry-run] curl -fsSL ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
+      note "  [dry-run] curl -fsSL --connect-timeout 5 --retry 3 ${base_url}/${f} -o ${ASSETS_DEST}/${f}"
     done
     note "  [dry-run] chmod +x ${ASSETS_DEST}/run-agent.sh"
     note "  [dry-run] chmod +x ${ASSETS_DEST}/pair-colleague.sh"
@@ -167,20 +167,48 @@ install_assets() {
 
   mkdir -p "$ASSETS_DEST"
 
+  local total=${#files[@]}
   local f url tmp
+
+  # --connect-timeout keeps a blackholed CDN address from stalling the run:
+  # raw.githubusercontent.com resolves to several IPs, and a dropped SYN
+  # otherwise costs ~15s before curl falls back to the next one.
+  local curl_opts=(-fsSL --connect-timeout 5 --retry 3 --retry-delay 1 --retry-connrefused)
+
+  # Fetch everything in one invocation so the TCP+TLS handshake is paid once
+  # and the rest of the files ride the same connection.
+  local batch=()
   for f in "${files[@]}"; do
-    url="${base_url}/${f}"
-    tmp="${ASSETS_DEST}/${f}.tmp"
+    batch+=(-o "${ASSETS_DEST}/${f}.tmp" "${base_url}/${f}")
+  done
 
-    if ! curl -fsSL "$url" -o "$tmp"; then
-      rm -f "$tmp"
-      FAILED+=("assets")
-      err "  failed to download ${url}"
-      echo
-      return 1
-    fi
+  note "  downloading ${total} files"
 
-    mv "$tmp" "${ASSETS_DEST}/${f}"
+  if ! curl "${curl_opts[@]}" "${batch[@]}" 2>/dev/null; then
+    # Batch mode reports no per-URL detail, so re-run sequentially to name the
+    # file that actually failed.
+    rm -f "${ASSETS_DEST}"/*.tmp
+    warn "  batch download failed; retrying one file at a time"
+
+    local i=0
+    for f in "${files[@]}"; do
+      i=$((i + 1))
+      url="${base_url}/${f}"
+      tmp="${ASSETS_DEST}/${f}.tmp"
+      note "    [${i}/${total}] ${f}"
+
+      if ! curl "${curl_opts[@]}" "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        FAILED+=("assets")
+        err "  failed to download ${url}"
+        echo
+        return 1
+      fi
+    done
+  fi
+
+  for f in "${files[@]}"; do
+    mv "${ASSETS_DEST}/${f}.tmp" "${ASSETS_DEST}/${f}"
   done
 
   chmod +x "${ASSETS_DEST}/run-agent.sh"
