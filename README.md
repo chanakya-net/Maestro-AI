@@ -1,6 +1,6 @@
 # AI-Skills
 
-> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, live stage visibility, cost-optimized model routing, artifact recovery, and automatic merge recovery across 4 providers and 26 models.
+> **Open-source multi-agent orchestration system for AI coding agents** — dependency-aware scheduling, live stage visibility, cost-optimized model routing, artifact recovery, and automatic merge recovery across 4 providers and 30 models.
 
 📖 **Learn more:** [explainer.html](explainer.html) — full walkthrough &nbsp;·&nbsp; [diagram.pdf](diagram.pdf) — architecture sequence diagram
 
@@ -146,7 +146,7 @@ The `assets/` directory contains the shared prompts, scripts, and configuration 
 
 | File | What it does |
 |------|-------------|
-| `agent-registry.json` | Agent catalog — detection commands, invocation templates, 26-model catalog with complexity weights, routing rules, and subscription distribution targets. |
+| `agent-registry.json` | Agent catalog — detection commands, invocation templates, 30-model catalog with complexity weights, routing rules, and subscription distribution targets. |
 | `run-with-it-router.py` | Deterministic model router — selects agent/model pairs using usage-debt minimization across usable providers with role-specific and complexity-band-specific targets (default: Codex 60%, Claude 35%, Agy 5%; GitHub Copilot is registry-disabled while the plan is exhausted). |
 | `run-with-it-state.py` | State mutation helper — atomic JSON reads/writes for issue readiness, dependency resolution, context file generation, status-board rendering, requeue repair, auto-unblocking, and merge recovery transitions. |
 | `run-with-it-artifacts.py` | Artifact validator — validates worker result JSONs, classifies artifact failures, accepts verified no-ops, and safely synthesizes missing artifacts from git commits, log output, or canonical retry data. |
@@ -395,7 +395,7 @@ then limits every non-complexity automatic route to this exact set:
 | medium | GPT-5.6 Terra, Codex Spark, Claude Sonnet 5 |
 | medium-hard | GPT-5.5, GPT-5.6 Sol, Claude Opus 5 |
 | complex | GPT-5.6 Sol, Claude Opus 5 |
-| holy-fuck | GPT-5.6 Sol, Claude Opus 5, Claude Fable 5 |
+| holy-fuck | GPT-5.6 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1 |
 
 Complexity scoring keeps its independent lightweight routing. Review applies a
 one-band increase and planning applies a two-band increase before this matrix.
@@ -405,7 +405,7 @@ still must pass agent compatibility and availability checks.
 Effort is also based on the effective band: Sol uses `high` at medium-hard and
 `xhigh` at complex/holy-fuck; Sonnet 5 uses `low`, `medium`, and `medium` from
 quite-easy through medium; Opus 5 uses `high` at medium-hard, `xhigh` at
-complex, and `max` at holy-fuck; Fable 5 uses `max` at holy-fuck. The runner
+complex, and `max` at holy-fuck; Astra and Fable 5.1 use `max` at holy-fuck. The runner
 translates these to Codex `model_reasoning_effort` or
 Claude Code `--effort`.
 

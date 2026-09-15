@@ -167,6 +167,7 @@ for model_id, catalog_entry in model_catalog.items():
         check(removed_key not in catalog_entry, f"{model_id} omits {removed_key} under subscription routing")
 
 expected_codex_models = [
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -215,7 +216,7 @@ expected_policy = {
     "medium": {"models": ["gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5"], "providers": []},
     "medium-hard": {"models": ["gpt-5.5", "gpt-5.6-sol", "claude-opus-5"], "providers": []},
     "complex": {"models": ["gpt-5.6-sol", "claude-opus-5"], "providers": []},
-    "holy-fuck": {"models": ["gpt-5.6-sol", "claude-opus-5", "claude-fable-5"], "providers": []},
+    "holy-fuck": {"models": ["gpt-5.6-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1"], "providers": []},
 }
 assert model_routing["non_complexity_band_policy"] == expected_policy
 expected_targets = {
@@ -246,7 +247,7 @@ assert router.candidate_model_ids(registry, "complexity", "complex", "gpt-5.6-lu
 
 claude_model = agents["claude"]["model"]
 expected_claude_models = [
-    "claude-fable-5",
+    "claude-fable-5-1",
     "claude-opus-5",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
@@ -647,7 +648,7 @@ assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dr
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
 
-for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
+for model in gpt-6-astra gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
   output="$("${RUNNER_PATH}" \
     --agent codex \
     --model "${model}" \
@@ -668,6 +669,18 @@ codex_xhigh_output="$(${RUNNER_PATH} \
   --dry-run \
   --unattended)"
 assert_contains "${codex_xhigh_output}" "-c model_reasoning_effort=xhigh" "Codex renders routed xhigh effort"
+
+for route in codex:gpt-6-astra claude:claude-fable-5-1; do
+  agent="${route%%:*}"
+  model="${route#*:}"
+  output="$("${RUNNER_PATH}" --agent "${agent}" --model "${model}" --effort max --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
+  assert_contains "${output}" "--model ${model}" "Runner uses canonical ${model} ID"
+  if [[ "${agent}" == codex ]]; then
+    assert_contains "${output}" "-c model_reasoning_effort=max" "Astra renders max effort"
+  else
+    assert_contains "${output}" "--effort max" "Fable 5.1 renders max effort"
+  fi
+done
 
 claude_medium_output="$(${RUNNER_PATH} \
   --agent claude \
