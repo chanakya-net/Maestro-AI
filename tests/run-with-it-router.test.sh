@@ -103,6 +103,7 @@ for role, preference in distribution.get("role_agent_preference", {}).items():
 
 codex_model = registry["agents"]["codex"]["model"]
 expected_codex_models = [
+    "gpt-6-astra",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
@@ -117,7 +118,7 @@ if "gpt-5.3-codex-spark" in codex_model.get("routing_disabled_models", []):
     raise SystemExit("codex registry must not disable Spark after the weekly limit reset")
 
 claude_model = registry["agents"]["claude"]["model"]
-if claude_model.get("known_models") != ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"]:
+if claude_model.get("known_models") != ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"]:
     raise SystemExit(f"claude known models mismatch: {claude_model.get('known_models')!r}")
 catalog = registry["model_catalog"]
 expected_gpt56 = {
@@ -143,8 +144,8 @@ if "claude-opus-4-8" in catalog:
     raise SystemExit("Opus 4.8 must be removed from the model catalog; use only Opus 5 series")
 if "claude-opus-5" not in catalog:
     raise SystemExit("Opus 5 must remain in the model catalog")
-if "claude-fable-5" not in catalog:
-    raise SystemExit("Fable 5 must remain in the model catalog")
+if "claude-fable-5-1" not in catalog:
+    raise SystemExit("Fable 5.1 must remain in the model catalog")
 if catalog["gpt-5.3-codex-spark"].get("routing_disabled") is True:
     raise SystemExit("Codex Spark must be routable after the weekly limit reset")
 
@@ -162,7 +163,7 @@ expected_policy = {
     "medium": {"models": ["gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5"], "providers": []},
     "medium-hard": {"models": ["gpt-5.5", "gpt-5.6-sol", "claude-opus-5"], "providers": []},
     "complex": {"models": ["gpt-5.6-sol", "claude-opus-5"], "providers": []},
-    "holy-fuck": {"models": ["gpt-5.6-sol", "claude-opus-5", "claude-fable-5"], "providers": []},
+    "holy-fuck": {"models": ["gpt-5.6-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1"], "providers": []},
 }
 assert registry["model_routing"]["non_complexity_band_policy"] == expected_policy
 expected_targets = {
@@ -176,10 +177,11 @@ expected_targets = {
 assert distribution["non_complexity_band_target_percent"] == expected_targets
 assert set(distribution["role_band_target_percent"]) == {"complexity"}
 expected_effort = {
+    "gpt-6-astra": {"holy-fuck": "max"},
     "gpt-5.6-sol": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
     "claude-sonnet-5": {"quite-easy": "low", "easy": "medium", "medium": "medium"},
     "claude-opus-5": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "max"},
-    "claude-fable-5": {"holy-fuck": "max"},
+    "claude-fable-5-1": {"holy-fuck": "max"},
 }
 assert registry["model_routing"]["effort_by_model_and_band"] == expected_effort
 for level, policy in expected_policy.items():
@@ -198,6 +200,15 @@ assert router.routing_level("plan", "medium") == "complex"
 
 assert router.candidate_model_ids(registry, "impl", "complex", "gpt-5.4", None) == ["gpt-5.4"]
 assert router.candidate_model_ids(registry, "complexity", "complex", "gpt-5.6-luna", None) == ["gpt-5.6-luna"]
+for model in ("gpt-6-astra", "claude-fable-5-1"):
+    assert model in automatic("holy-fuck")
+    assert model in router.candidate_model_ids(registry, "complexity", "holy-fuck", None, None)
+    for level in router.BAND_ORDER[:-1]:
+        assert model not in automatic(level)
+        assert model not in router.candidate_model_ids(registry, "complexity", level, None, None)
+    assert router.candidate_model_ids(registry, "impl", "easy", model, None) == [model]
+    assert model not in router.candidate_model_ids(registry, "impl", "holy-fuck", None, {model})
+assert "claude-fable-5" not in catalog
 PY
 
 echo "PASS: registry declares subscription usage distribution"
@@ -215,6 +226,13 @@ opus_holy="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${
 assert_json_field "${opus_holy}" 'payload["effort"] == "max"' "Opus holy-fuck uses max effort"
 
 echo "PASS: router resolves band-specific model effort"
+
+for route in codex:gpt-6-astra claude:claude-fable-5-1; do
+  agent="${route%%:*}"
+  model="${route#*:}"
+  result="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level holy-fuck --detected-agents "${agent}" --forced-model "${model}")"
+  assert_json_field "${result}" "payload['model'] == '${model}' and payload['agent'] == '${agent}' and payload['effort'] == 'max'" "${model} routes through ${agent} with max effort"
+done
 
 UNBLOCKED_COPILOT_REGISTRY="${WORK_DIR}/unblocked-copilot-registry.json"
 python3 - "${REGISTRY_PATH}" "${UNBLOCKED_COPILOT_REGISTRY}" <<'PY'

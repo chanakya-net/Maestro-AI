@@ -97,7 +97,7 @@
         "frontier"
       ]
     },
-    "claude-fable-5": {
+    "claude-fable-5-1": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 10,
@@ -142,6 +142,20 @@
         "maximum-reasoning-effort",
         "frontier",
         "hardest-problems"
+      ]
+    },
+    "gpt-6-astra": {
+      "provider": "openai",
+      "ability": "frontier",
+      "complexity_weight": 10,
+      "min_band": "holy-fuck",
+      "context_window": 1050000,
+      "reasoning_effort": "high",
+      "strengths": [
+        "complex-reasoning",
+        "agentic-coding",
+        "computer-use",
+        "long-horizon-agentic"
       ]
     },
     "gpt-5.6-luna": {
@@ -472,13 +486,17 @@
       "holy-fuck": {
         "models": [
           "gpt-5.6-sol",
+          "gpt-6-astra",
           "claude-opus-5",
-          "claude-fable-5"
+          "claude-fable-5-1"
         ],
         "providers": []
       }
     },
     "effort_by_model_and_band": {
+      "gpt-6-astra": {
+        "holy-fuck": "max"
+      },
       "gpt-5.6-sol": {
         "medium-hard": "high",
         "complex": "xhigh",
@@ -494,7 +512,7 @@
         "complex": "xhigh",
         "holy-fuck": "max"
       },
-      "claude-fable-5": {
+      "claude-fable-5-1": {
         "holy-fuck": "max"
       }
     },
@@ -663,7 +681,7 @@
         "fallback_agents": [
           "claude"
         ],
-        "_note": "Anthropic models route through any available agent, preferring direct Claude for the active Claude subscription. claude-opus-5 is min_band=medium-hard and should not appear below that band; claude-fable-5 is min_band=holy-fuck. Opus routing uses only the Opus 5 series."
+        "_note": "Anthropic models route through any available agent, preferring direct Claude for the active Claude subscription. claude-opus-5 is min_band=medium-hard and should not appear below that band; claude-fable-5-1 is min_band=holy-fuck. Opus routing uses only the Opus 5 series."
       }
     },
     "hard_minimum_overrides": [
@@ -676,17 +694,18 @@
       "complex": [],
       "holy-fuck": [
         "gpt-5.6-sol",
+        "gpt-6-astra",
         "claude-opus-5",
-        "claude-fable-5"
+        "claude-fable-5-1"
       ],
-      "_note": "GPT-5.6 Sol, Claude Opus 5, and Claude Fable 5 are pinned into the holy-fuck pool regardless of subscription-neutral ranking. GPT-5.5 remains available only through an explicit forced-model override."
+      "_note": "GPT-5.6 Sol, GPT-6 Astra, Claude Opus 5, and Claude Fable 5.1 are pinned into the holy-fuck pool regardless of subscription-neutral ranking. GPT-5.5 is eligible for automatic medium-hard routing and remains forceable elsewhere."
     },
     "interchangeable_agent_groups": [],
     "agent_preference_rules": [
       {
         "models": [
           "claude-opus-5",
-          "claude-fable-5"
+          "claude-fable-5-1"
         ],
         "preferred_agents": [
           "claude"
@@ -710,7 +729,7 @@
         "preferred_agents": [
           "claude"
         ],
-        "_note": "Direct Claude agent is preferred for Anthropic models under the current Claude subscription. claude-opus-5 is min_band=medium-hard and claude-fable-5 is min_band=holy-fuck; both are excluded from lower bands automatically. Opus routing uses only the Opus 5 series."
+        "_note": "Direct Claude agent is preferred for Anthropic models under the current Claude subscription. claude-opus-5 is min_band=medium-hard and claude-fable-5-1 is min_band=holy-fuck; both are excluded from lower bands automatically. Opus routing uses only the Opus 5 series."
       }
     ]
   },
@@ -755,6 +774,7 @@
         "default": "",
         "flag_template": "--model {{model}}",
         "known_models": [
+          "gpt-6-astra",
           "gpt-5.6-sol",
           "gpt-5.6-terra",
           "gpt-5.6-luna",
@@ -816,7 +836,7 @@
         "default": "claude-sonnet-4-6",
         "flag_template": "--model {{model}}",
         "known_models": [
-          "claude-fable-5",
+          "claude-fable-5-1",
           "claude-opus-5",
           "claude-sonnet-5",
           "claude-sonnet-4-6",
