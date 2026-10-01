@@ -190,7 +190,7 @@
         "tool-use"
       ]
     },
-    "gpt-5.6-sol": {
+    "gpt-6.1-sol": {
       "provider": "openai",
       "ability": "frontier",
       "complexity_weight": 7,
@@ -200,7 +200,7 @@
         "complex",
         "holy-fuck"
       ],
-      "context_window": 372000,
+      "context_window": 1050000,
       "reasoning_effort": "high",
       "strengths": [
         "complex-open-ended-work",
@@ -471,21 +471,21 @@
       "medium-hard": {
         "models": [
           "gpt-5.5",
-          "gpt-5.6-sol",
+          "gpt-6.1-sol",
           "claude-opus-5"
         ],
         "providers": []
       },
       "complex": {
         "models": [
-          "gpt-5.6-sol",
+          "gpt-6.1-sol",
           "claude-opus-5"
         ],
         "providers": []
       },
       "holy-fuck": {
         "models": [
-          "gpt-5.6-sol",
+          "gpt-6.1-sol",
           "gpt-6-astra",
           "claude-opus-5",
           "claude-fable-5-1"
@@ -497,7 +497,7 @@
       "gpt-6-astra": {
         "holy-fuck": "max"
       },
-      "gpt-5.6-sol": {
+      "gpt-6.1-sol": {
         "medium-hard": "high",
         "complex": "xhigh",
         "holy-fuck": "xhigh"
@@ -693,12 +693,12 @@
     "band_required_models": {
       "complex": [],
       "holy-fuck": [
-        "gpt-5.6-sol",
+        "gpt-6.1-sol",
         "gpt-6-astra",
         "claude-opus-5",
         "claude-fable-5-1"
       ],
-      "_note": "GPT-5.6 Sol, GPT-6 Astra, Claude Opus 5, and Claude Fable 5.1 are pinned into the holy-fuck pool regardless of subscription-neutral ranking. GPT-5.5 is eligible for automatic medium-hard routing and remains forceable elsewhere."
+      "_note": "GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5, and Claude Fable 5.1 are pinned into the holy-fuck pool regardless of subscription-neutral ranking. GPT-5.5 is eligible for automatic medium-hard routing and remains forceable elsewhere."
     },
     "interchangeable_agent_groups": [],
     "agent_preference_rules": [
@@ -775,7 +775,7 @@
         "flag_template": "--model {{model}}",
         "known_models": [
           "gpt-6-astra",
-          "gpt-5.6-sol",
+          "gpt-6.1-sol",
           "gpt-5.6-terra",
           "gpt-5.6-luna",
           "gpt-5.5",

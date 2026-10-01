@@ -192,7 +192,7 @@ assert_equals "0" "$invalid_heartbeat_status" "PowerShell malformed heartbeat va
 invalid_heartbeat_last_event="$(tail -n 1 "$INVALID_HEARTBEAT_EVENTS_LOG" | tr -d '\r')"
 assert_contains "$invalid_heartbeat_last_event" 'STATUS|type=agent-complete|' "PowerShell malformed heartbeat fallback still completes the agent"
 
-for model in gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
+for model in gpt-5.6-luna gpt-5.6-terra gpt-6.1-sol; do
   output="$(REPO_ROOT="${ROOT_DIR}" \
     "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
     --agent codex \
@@ -208,7 +208,7 @@ done
 codex_xhigh_output="$(REPO_ROOT="${ROOT_DIR}" \
   "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
   --agent codex \
-  --model gpt-5.6-sol \
+  --model gpt-6.1-sol \
   --effort xhigh \
   --context-file "$CONTEXT_FILE" \
   --prompt-file "$PROMPT_FILE" \
@@ -231,7 +231,7 @@ precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
   REPO_ROOT="${ROOT_DIR}" \
   "$PS_CMD" -NoProfile -File "$RUNNER_PATH" \
   --agent codex \
-  --model gpt-5.6-sol \
+  --model gpt-6.1-sol \
   --context-file "$CONTEXT_FILE" \
   --prompt-file "$PROMPT_FILE" \
   --dry-run \

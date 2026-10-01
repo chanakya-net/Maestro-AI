@@ -104,7 +104,7 @@ for role, preference in distribution.get("role_agent_preference", {}).items():
 codex_model = registry["agents"]["codex"]["model"]
 expected_codex_models = [
     "gpt-6-astra",
-    "gpt-5.6-sol",
+    "gpt-6.1-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5",
@@ -121,23 +121,23 @@ claude_model = registry["agents"]["claude"]["model"]
 if claude_model.get("known_models") != ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-sonnet-4-6", "claude-haiku-4-5"]:
     raise SystemExit(f"claude known models mismatch: {claude_model.get('known_models')!r}")
 catalog = registry["model_catalog"]
-expected_gpt56 = {
+expected_openai_tiers = {
     "gpt-5.6-luna": ("balanced", 3, "easy"),
     "gpt-5.6-terra": ("advanced", 5, "medium"),
-    "gpt-5.6-sol": ("frontier", 7, "medium-hard"),
+    "gpt-6.1-sol": ("frontier", 7, "medium-hard"),
 }
-for model_id, (ability, weight, min_band) in expected_gpt56.items():
+for model_id, (ability, weight, min_band) in expected_openai_tiers.items():
     entry = catalog[model_id]
     assert entry["ability"] == ability
     assert entry["complexity_weight"] == weight
     assert entry["min_band"] == min_band
-    assert entry["context_window"] == 372000
+    assert entry["context_window"] == (1050000 if model_id == "gpt-6.1-sol" else 372000)
     assert entry["reasoning_effort"] == "high"
 
 assert catalog["gpt-5.5"].get("explicit_only") is not True
 assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["complex"]
 assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["holy-fuck"]
-assert "gpt-5.6-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
+assert "gpt-6.1-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
 if "claude-opus-4.7" in catalog:
     raise SystemExit("Opus 4.7 must be removed from the model catalog; use only Opus 5 series")
 if "claude-opus-4-8" in catalog:
@@ -161,9 +161,9 @@ expected_policy = {
     "quite-easy": {"models": ["gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.6-luna", "claude-sonnet-5", "claude-haiku-4-5"], "providers": ["google"]},
     "easy": {"models": ["gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.6-luna", "claude-sonnet-5", "claude-haiku-4-5"], "providers": ["google"]},
     "medium": {"models": ["gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5"], "providers": []},
-    "medium-hard": {"models": ["gpt-5.5", "gpt-5.6-sol", "claude-opus-5"], "providers": []},
-    "complex": {"models": ["gpt-5.6-sol", "claude-opus-5"], "providers": []},
-    "holy-fuck": {"models": ["gpt-5.6-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1"], "providers": []},
+    "medium-hard": {"models": ["gpt-5.5", "gpt-6.1-sol", "claude-opus-5"], "providers": []},
+    "complex": {"models": ["gpt-6.1-sol", "claude-opus-5"], "providers": []},
+    "holy-fuck": {"models": ["gpt-6.1-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1"], "providers": []},
 }
 assert registry["model_routing"]["non_complexity_band_policy"] == expected_policy
 expected_targets = {
@@ -178,7 +178,7 @@ assert distribution["non_complexity_band_target_percent"] == expected_targets
 assert set(distribution["role_band_target_percent"]) == {"complexity"}
 expected_effort = {
     "gpt-6-astra": {"holy-fuck": "max"},
-    "gpt-5.6-sol": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
+    "gpt-6.1-sol": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
     "claude-sonnet-5": {"quite-easy": "low", "easy": "medium", "medium": "medium"},
     "claude-opus-5": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "max"},
     "claude-fable-5-1": {"holy-fuck": "max"},
@@ -213,10 +213,10 @@ PY
 
 echo "PASS: registry declares subscription usage distribution"
 
-sol_medium_hard="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level medium-hard --detected-agents codex --forced-model gpt-5.6-sol)"
+sol_medium_hard="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level medium-hard --detected-agents codex --forced-model gpt-6.1-sol)"
 assert_json_field "${sol_medium_hard}" 'payload["effort"] == "high"' "Sol medium-hard uses high effort"
 
-sol_complex="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level complex --detected-agents codex --forced-model gpt-5.6-sol)"
+sol_complex="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level complex --detected-agents codex --forced-model gpt-6.1-sol)"
 assert_json_field "${sol_complex}" 'payload["effort"] == "xhigh"' "Sol complex uses xhigh effort"
 
 sonnet_easy="$(${ROUTER_PATH} --registry-file "${REGISTRY_PATH}" --ledger-file "${WORK_DIR}/effort.json" --role impl --complexity-level easy --detected-agents claude --forced-model claude-sonnet-5)"

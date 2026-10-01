@@ -84,7 +84,7 @@ JSON
 
 [[ -f "${POOL_RUNNER}" ]] || fail "run-with-it-pool.sh exists"
 [[ -x "${POOL_RUNNER}" ]] || fail "run-with-it-pool.sh is executable"
-assert_file_contains "${POOL_RUNNER}" 'SUB_COORD_MODEL="${SUB_COORD_MODEL:-gpt-5.6-sol}"' "pool runner directly locks the default Sub-Coordinator model"
+assert_file_contains "${POOL_RUNNER}" 'SUB_COORD_MODEL="${SUB_COORD_MODEL:-gpt-6.1-sol}"' "pool runner directly locks the default Sub-Coordinator model"
 assert_file_contains "${POOL_RUNNER}" "merge_recovery" "pool runner documents merge recovery as non-terminal"
 assert_file_contains "${POOL_RUNNER}" "merge_failed" "pool runner maps merge failed reports to merge recovery"
 assert_file_contains "${POOL_RUNNER}" "analyze-sub-coord-failure" "pool runner analyzes failed sub-coordinators before finalizing"
@@ -126,10 +126,10 @@ assert_file_contains "${SUB_PROMPT}" "artifact-recovery-prompt.md" "sub-coordina
 assert_file_contains "${SUB_PROMPT}" "STATUS|type=artifact-recovery-result" "sub-coordinator prompt documents artifact recovery result status"
 assert_file_contains "${COORDINATOR_RULES}" "hard-limit-exceeded" "coordinator rules classify hard-limit handoff failures"
 assert_file_contains "${SUB_PROMPT}" "hard-limit-exceeded" "sub-coordinator retries hard-limit handoff failures"
-assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |' "skill documents the complete Sub-Coordinator-only Sol default"
-assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model used to run Sub-Coordinators |' "README documents the complete Sub-Coordinator-only Sol default"
-assert_file_not_contains "${RUN_WITH_IT_SKILL}" 'gpt-5.6-sol` | Model for child workers' "skill does not document Sol as a child-worker override"
-assert_file_not_contains "${README}" 'gpt-5.6-sol` | Model for child workers' "README does not document Sol as a child-worker override"
+assert_file_contains "${RUN_WITH_IT_SKILL}" '| `SUB_COORD_MODEL` | `gpt-6.1-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |' "skill documents the complete Sub-Coordinator-only Sol default"
+assert_file_contains "${README}" '| `SUB_COORD_MODEL` | `gpt-6.1-sol` | Model used to run Sub-Coordinators |' "README documents the complete Sub-Coordinator-only Sol default"
+assert_file_not_contains "${RUN_WITH_IT_SKILL}" 'gpt-6.1-sol` | Model for child workers' "skill does not document Sol as a child-worker override"
+assert_file_not_contains "${README}" 'gpt-6.1-sol` | Model for child workers' "README does not document Sol as a child-worker override"
 
 validate_output="$("${POOL_RUNNER}" \
   --validate-only \
@@ -166,7 +166,7 @@ assert_contains "${dry_output}" "--log-file ${WORK_DIR_REAL}/.run-with-it/issues
 assert_contains "${dry_output}" "--result-file ${WORK_DIR_REAL}/.run-with-it/issues/101/report.json" "dry-run places compact report in issue folder"
 assert_contains "${dry_output}" "--state-file ${WORK_DIR_REAL}/.run-with-it/issues/101/sub-coordinator.state.json" "dry-run passes sub-coordinator dispatcher state file"
 assert_contains "${dry_output}" "--detach" "dry-run launches sub-coordinator dispatcher in detached mode"
-assert_contains "${dry_output}" "--model gpt-5.6-sol" "pool defaults Sub-Coordinators to Sol"
+assert_contains "${dry_output}" "--model gpt-6.1-sol" "pool defaults Sub-Coordinators to Sol"
 
 printf '# issue 201 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-201.md"
 printf '# issue 202 context\n' > "${WORK_DIR}/.run-with-it/contexts/sub-202.md"

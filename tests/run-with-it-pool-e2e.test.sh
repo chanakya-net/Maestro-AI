@@ -103,7 +103,7 @@ launch_pool() {
   "${POOL_RUNNER}" \
     --asset-root "${FAKE_ASSETS}" \
     --state-file "${dir}/.run-with-it/main-state.json" \
-    --parallel-jobs 1 --agent codex --model gpt-5.6-sol \
+    --parallel-jobs 1 --agent codex --model gpt-6.1-sol \
     --status-file "${dir}/.run-with-it/status/current.txt" \
     --events-log "${dir}/.run-with-it/status/events.log" \
     --main-log "${dir}/.run-with-it/main/main.log" \
@@ -208,7 +208,7 @@ EOF
   pwsh -NoProfile -File "${POOL_RUNNER_PS1}" \
     -AssetRoot "${FAKE_ASSETS}" \
     -StateFile "${RUN4}/.run-with-it/main-state.json" \
-    -ParallelJobs 1 -Agent codex -Model gpt-5.6-sol \
+    -ParallelJobs 1 -Agent codex -Model gpt-6.1-sol \
     -StatusFile "${RUN4}/.run-with-it/status/current.txt" \
     -EventsLog "${RUN4}/.run-with-it/status/events.log" \
     -MainLog "${RUN4}/.run-with-it/main/main.log" \

@@ -142,7 +142,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
-| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
+| `SUB_COORD_MODEL` | `gpt-6.1-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
 | `STATUS_POLL_SECONDS` | `10` | Shell polling cadence for status line output |
 | `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `run-with-it-watch.sh` / `.ps1` call in Step D |
@@ -182,9 +182,9 @@ route uses this exact model set:
 |---|---|
 | quite-easy / easy | GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, eligible Gemini models exposed by Agy |
 | medium | GPT-5.6 Terra, Codex Spark, Claude Sonnet 5 |
-| medium-hard | GPT-5.5, GPT-5.6 Sol, Claude Opus 5 |
-| complex | GPT-5.6 Sol, Claude Opus 5 |
-| holy-fuck | GPT-5.6 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1 |
+| medium-hard | GPT-5.5, GPT-6.1 Sol, Claude Opus 5 |
+| complex | GPT-6.1 Sol, Claude Opus 5 |
+| holy-fuck | GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1 |
 
 Complexity scoring is exempt from this automatic matrix and retains its
 independent weight-based routing. Review applies its existing one-band increase; planning applies its existing two-band increase before applying the matrix. Explicit `FORCED_MODEL` values bypass automatic membership but must still pass compatibility and availability checks.

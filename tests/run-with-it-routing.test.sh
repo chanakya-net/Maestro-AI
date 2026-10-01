@@ -235,7 +235,7 @@ ROUTE_OUTPUT="$(python3 "$ROUTER_FILE" \
   --record)"
 ROUTE_MODEL="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
 ROUTE_REASON="$(printf '%s' "$ROUTE_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
-[[ "$ROUTE_MODEL" != "gpt-5.6-sol" ]] || fail "easy Codex-only route must not select Sol"
+[[ "$ROUTE_MODEL" != "gpt-6.1-sol" ]] || fail "easy Codex-only route must not select Sol"
 [[ "$ROUTE_REASON" != "forced-agent-and-model" ]] || fail "easy Codex-only route must not report forced-agent-and-model"
 
 # Explicit model-only override: Sol remains available when the user forces it.
@@ -246,10 +246,10 @@ FORCED_SOL_OUTPUT="$(python3 "$ROUTER_FILE" \
   --complexity-level easy \
   --detected-agents codex \
   --allowlist codex \
-  --forced-model gpt-5.6-sol)"
+  --forced-model gpt-6.1-sol)"
 FORCED_SOL_MODEL="$(printf '%s' "$FORCED_SOL_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["model"])')"
 FORCED_SOL_REASON="$(printf '%s' "$FORCED_SOL_OUTPUT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["selection_reason"])')"
-[[ "$FORCED_SOL_MODEL" == "gpt-5.6-sol" ]] || fail "model-only forced Sol route must select Sol"
+[[ "$FORCED_SOL_MODEL" == "gpt-6.1-sol" ]] || fail "model-only forced Sol route must select Sol"
 [[ "$FORCED_SOL_REASON" == "forced-model" ]] || fail "model-only forced Sol route must report forced-model"
 
 cmp -s "$SKILL_FILE" "$ACTIVE_SKILL_FILE" || fail "active run-with-it skill copy must match canonical skill byte-for-byte"
@@ -414,9 +414,9 @@ assert_file_contains "$COORDINATOR_RULES_FILE" 'Codex 60%, Claude 35%, Agy 5%' "
 assert_file_contains "$SUB_COORDINATOR_PROMPT_FILE" 'STATUS|type=route-selected' "sub-coordinator documents route-selected status"
 assert_file_contains "${ROOT_DIR}/README.md" 'GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, eligible Gemini' "README documents simple-band models"
 assert_file_contains "${ROOT_DIR}/README.md" 'GPT-5.6 Terra, Codex Spark, Claude Sonnet 5' "README documents medium-band models"
-assert_file_contains "${ROOT_DIR}/README.md" 'GPT-5.5, GPT-5.6 Sol, Claude Opus 5' "README documents medium-hard models"
-assert_file_contains "${ROOT_DIR}/README.md" 'GPT-5.6 Sol, Claude Opus 5' "README documents complex models"
-assert_file_contains "${ROOT_DIR}/README.md" 'GPT-5.6 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1' "README documents holy-fuck models"
+assert_file_contains "${ROOT_DIR}/README.md" 'GPT-5.5, GPT-6.1 Sol, Claude Opus 5' "README documents medium-hard models"
+assert_file_contains "${ROOT_DIR}/README.md" 'GPT-6.1 Sol, Claude Opus 5' "README documents complex models"
+assert_file_contains "${ROOT_DIR}/README.md" 'GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1' "README documents holy-fuck models"
 assert_file_contains "$SKILL_FILE" 'Complexity scoring is exempt from this automatic matrix' "skill documents complexity routing exemption"
 assert_file_contains "$SKILL_FILE" 'Review applies its existing one-band increase; planning applies its existing two-band increase' "skill documents role band increases"
 assert_file_contains "$SKILL_FILE" 'Sol: `high` at medium-hard, `xhigh` at complex and holy-fuck' "skill documents Sol effort"

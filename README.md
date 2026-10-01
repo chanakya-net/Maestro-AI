@@ -393,9 +393,9 @@ then limits every non-complexity automatic route to this exact set:
 |---|---|
 | quite-easy / easy | GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, eligible Gemini models exposed by Agy |
 | medium | GPT-5.6 Terra, Codex Spark, Claude Sonnet 5 |
-| medium-hard | GPT-5.5, GPT-5.6 Sol, Claude Opus 5 |
-| complex | GPT-5.6 Sol, Claude Opus 5 |
-| holy-fuck | GPT-5.6 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1 |
+| medium-hard | GPT-5.5, GPT-6.1 Sol, Claude Opus 5 |
+| complex | GPT-6.1 Sol, Claude Opus 5 |
+| holy-fuck | GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1 |
 
 Complexity scoring keeps its independent lightweight routing. Review applies a
 one-band increase and planning applies a two-band increase before this matrix.
@@ -420,7 +420,7 @@ Control how `run-with-it` schedules and intakes work:
 | `ISSUE_STATE` | `open` | Issue state filter |
 | `ISSUE_LIMIT` | `1000` | Maximum number of matching issues to fetch |
 | `SUB_COORD_AGENT` | `codex` | Agent used to run Sub-Coordinators |
-| `SUB_COORD_MODEL` | `gpt-5.6-sol` | Model used to run Sub-Coordinators |
+| `SUB_COORD_MODEL` | `gpt-6.1-sol` | Model used to run Sub-Coordinators |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before a non-completing Sub-Coordinator raises a stall alert |
 | `STATUS_POLL_SECONDS` | `10` | Pool status polling cadence |
 | `MAX_AGENT_FALLBACKS` | `2` | Capability-failure retry budget per worker role |

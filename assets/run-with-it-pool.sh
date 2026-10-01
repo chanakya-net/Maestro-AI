@@ -9,7 +9,7 @@ ASSET_ROOT="${ASSETS_DEST:-}"
 STATE_FILE="$(pwd -P)/.run-with-it/main-state.json"
 PARALLEL_JOBS=""
 SUB_COORD_AGENT="${SUB_COORD_AGENT:-codex}"
-SUB_COORD_MODEL="${SUB_COORD_MODEL:-gpt-5.6-sol}"
+SUB_COORD_MODEL="${SUB_COORD_MODEL:-gpt-6.1-sol}"
 STATUS_FILE="${RUN_WITH_IT_STATUS_FILE:-$(pwd -P)/.run-with-it/status/current.txt}"
 EVENTS_LOG="${RUN_WITH_IT_EVENTS_LOG:-$(pwd -P)/.run-with-it/status/events.log}"
 MAIN_LOG="$(pwd -P)/.run-with-it/main/main.log"
@@ -45,7 +45,7 @@ usage() {
   cat <<'EOF'
 Usage:
   run-with-it-pool.sh --state-file .run-with-it/main-state.json \
-    --parallel-jobs 4 --agent codex --model gpt-5.6-sol
+    --parallel-jobs 4 --agent codex --model gpt-6.1-sol
 
 Modes:
   --dry-run        Print the initial dispatch commands without spawning.

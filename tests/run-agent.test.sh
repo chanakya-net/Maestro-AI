@@ -168,7 +168,7 @@ for model_id, catalog_entry in model_catalog.items():
 
 expected_codex_models = [
     "gpt-6-astra",
-    "gpt-5.6-sol",
+    "gpt-6.1-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
     "gpt-5.5",
@@ -182,23 +182,23 @@ check(codex_model.get("pricing_basis") == "subscription", "codex declares subscr
 check(codex_model.get("metered_api_cost") is False, "codex is not treated as API-metered")
 for model_id in expected_codex_models:
     check(model_id in model_catalog, f"codex model catalog includes {model_id}")
-expected_gpt56 = {
+expected_openai_tiers = {
     "gpt-5.6-luna": ("balanced", 3, "easy"),
     "gpt-5.6-terra": ("advanced", 5, "medium"),
-    "gpt-5.6-sol": ("frontier", 7, "medium-hard"),
+    "gpt-6.1-sol": ("frontier", 7, "medium-hard"),
 }
-for model_id, (ability, weight, min_band) in expected_gpt56.items():
+for model_id, (ability, weight, min_band) in expected_openai_tiers.items():
     entry = model_catalog[model_id]
     assert entry["ability"] == ability
     assert entry["complexity_weight"] == weight
     assert entry["min_band"] == min_band
-    assert entry["context_window"] == 372000
+    assert entry["context_window"] == (1050000 if model_id == "gpt-6.1-sol" else 372000)
     assert entry["reasoning_effort"] == "high"
 
 assert model_catalog["gpt-5.5"].get("explicit_only") is not True
 assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["complex"]
 assert "gpt-5.5" not in registry["model_routing"]["band_required_models"]["holy-fuck"]
-assert "gpt-5.6-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
+assert "gpt-6.1-sol" in registry["model_routing"]["band_required_models"]["holy-fuck"]
 check(model_catalog["gpt-5.3-codex-spark"].get("routing_disabled") is not True, "Codex Spark is enabled in the model catalog")
 check("routing_cost_overrides" not in codex_model, "codex model metadata omits cost overrides")
 
@@ -214,9 +214,9 @@ expected_policy = {
     "quite-easy": {"models": ["gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.6-luna", "claude-sonnet-5", "claude-haiku-4-5"], "providers": ["google"]},
     "easy": {"models": ["gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.6-luna", "claude-sonnet-5", "claude-haiku-4-5"], "providers": ["google"]},
     "medium": {"models": ["gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5"], "providers": []},
-    "medium-hard": {"models": ["gpt-5.5", "gpt-5.6-sol", "claude-opus-5"], "providers": []},
-    "complex": {"models": ["gpt-5.6-sol", "claude-opus-5"], "providers": []},
-    "holy-fuck": {"models": ["gpt-5.6-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1"], "providers": []},
+    "medium-hard": {"models": ["gpt-5.5", "gpt-6.1-sol", "claude-opus-5"], "providers": []},
+    "complex": {"models": ["gpt-6.1-sol", "claude-opus-5"], "providers": []},
+    "holy-fuck": {"models": ["gpt-6.1-sol", "gpt-6-astra", "claude-opus-5", "claude-fable-5-1"], "providers": []},
 }
 assert model_routing["non_complexity_band_policy"] == expected_policy
 expected_targets = {
@@ -648,7 +648,7 @@ assert_contains "${agy_dry_run_output}" "--dangerously-skip-permissions" "agy dr
 claude_dry_run_output="$("${RUNNER_PATH}" --agent claude --model claude-sonnet-4-6 --context-file "${CONTEXT_FILE}" --prompt-file "${PROMPT_FILE}" --dry-run --unattended)"
 assert_contains "${claude_dry_run_output}" "claude --dangerously-skip-permissions --model claude-sonnet-4-6 --print" "claude dry-run uses supported print/model/permission flags"
 
-for model in gpt-6-astra gpt-5.6-luna gpt-5.6-terra gpt-5.6-sol; do
+for model in gpt-6-astra gpt-5.6-luna gpt-5.6-terra gpt-6.1-sol; do
   output="$("${RUNNER_PATH}" \
     --agent codex \
     --model "${model}" \
@@ -662,7 +662,7 @@ done
 
 codex_xhigh_output="$(${RUNNER_PATH} \
   --agent codex \
-  --model gpt-5.6-sol \
+  --model gpt-6.1-sol \
   --effort xhigh \
   --context-file "${CONTEXT_FILE}" \
   --prompt-file "${PROMPT_FILE}" \
@@ -705,7 +705,7 @@ assert_not_contains "${claude_default_output}" "--effort" "Haiku uses provider-d
 precedence_output="$(AGENT_EXTRA_ARGS='-c model_reasoning_effort=medium' \
   "${RUNNER_PATH}" \
   --agent codex \
-  --model gpt-5.6-sol \
+  --model gpt-6.1-sol \
   --context-file "${CONTEXT_FILE}" \
   --prompt-file "${PROMPT_FILE}" \
   --dry-run \
