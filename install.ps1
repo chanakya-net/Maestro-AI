@@ -117,21 +117,41 @@ function Install-Assets {
 
     New-Item -ItemType Directory -Force -Path $ASSETS_DEST | Out-Null
 
+    # -TimeoutSec bounds a blackholed CDN address: raw.githubusercontent.com
+    # resolves to several IPs and a dropped SYN otherwise stalls the whole run.
+    # Retry manually rather than with -MaximumRetryCount, which Windows
+    # PowerShell 5.1 does not support.
+    $total = $files.Count
+    $i     = 0
     foreach ($f in $files) {
+        $i++
         $url  = "$baseUrl/$f"
         $tmp  = "$ASSETS_DEST\$f.tmp"
         $dest = "$ASSETS_DEST\$f"
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $tmp -ErrorAction Stop
-            Move-Item -Force $tmp $dest
+
+        Note "  [$i/$total] $f"
+
+        $ok = $false
+        foreach ($attempt in 1..3) {
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $tmp -TimeoutSec 20 -ErrorAction Stop
+                $ok = $true
+                break
+            }
+            catch {
+                Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+                if ($attempt -lt 3) { Start-Sleep -Seconds 1 }
+            }
         }
-        catch {
-            Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+
+        if (-not $ok) {
             $FAILED.Add("assets")
             Err "  failed to download $url"
             Write-Host ""
             return
         }
+
+        Move-Item -Force $tmp $dest
     }
 
     $INSTALLED.Add("assets")
