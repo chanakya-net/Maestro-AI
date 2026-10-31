@@ -159,3 +159,16 @@ def test_oversized_status_line_never_emits_partial_event_records(tmp_path, capsy
     provider_lines=[line for line in lines if 'payload=' in line]
     assert provider_lines == []
     assert capsys.readouterr().out == ''
+
+
+@pytest.mark.parametrize('code',[0,7])
+def test_managed_runner_reports_process_exit_without_done_or_worker_success(tmp_path,code):
+    config=fixture_config(tmp_path,f'import sys;sys.exit({code})').replace(dispatcher_managed=True,
+        state_file=tmp_path/'state.json',result_file=tmp_path/'result.json',run_id='run-7',attempt_id='attempt-1')
+    result=run_agent(config)
+    assert result.return_code==code
+    assert not config.done_file.exists()
+    events=config.events_log.read_text()
+    assert f'type=provider-exit|issue=unknown|role=agent|agent=fake|model=fixture|return_code={code}' in events
+    assert 'type=worker-done|' not in events
+    assert 'type=agent-complete|' not in events

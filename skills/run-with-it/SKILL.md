@@ -6,7 +6,7 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 <!-- NATIVE_AUTHORITY_START: keep this compaction-safe authority block synchronized in all four coordinator documents. -->
 - **Authority after compaction:** re-read maintained rules, main/issue state, exact worker identities and role artifacts from disk; never reconstruct a paid attempt from memory or logs.
 - **Independent selectors:** `SUB_COORD_AGENT` / `SUB_COORD_MODEL` select only the Sub-Coordinator. `FORCED_AGENT` / `FORCED_MODEL` select routed workers only when explicitly requested; ambient aliases never cross that boundary.
-- **Verification and artifacts:** a done hint, process exit, commit, log line or synthesized artifact never proves verified success. Require role-valid machine artifacts and passing verification; preserve unverified work as `artifact-recovery-required`.
+- **Verification and artifacts:** consume the validated outcome bound to the exact attempt, never raw process success. Managed DONE is dispatcher-owned after shutdown and report validation. Success requires role-valid artifacts and passing verification; failed/blocked/interrupted attempts publish failure even without a commit via the shared `artifact-protocol.md`. Negative coordinator issue outcomes are valid handoffs and never satisfy dependencies.
 - **Check-in ownership:** implementation/modification workers commit only in their assigned issue worktree; Sub-Coordinators coordinate and own normal merge attempts; Main owns intake/state/GitHub; merge recovery owns conflict resolution.
 - **Availability and review:** keep cumulative unavailable-route exclusions and separate infrastructure/capability budgets. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
 - **Identity and recovery:** a live or unknown owned attempt is never relaunched. Persist in-flight identities before compaction handoff; stop pool admission and verify every owned tree is dead before destructive cleanup.
@@ -511,8 +511,8 @@ Emit parseable one-line status messages:
 - sub-coordinator spawn: `STATUS|type=sub-coord-spawn|issue=<n>|agent=<name>|model=<model>|report_file=<path>|log_file=<path>|pool_size=<n>|parallel_jobs=<PARALLEL_JOBS>`
 - sub-coordinator pid-tracked: `STATUS|type=sub-coord-pid|issue=<n>|pid=<pid>|done_file=<path>|report_file=<path>`
 - live agent start: `STATUS|type=agent-start|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>`
-- live agent complete: `STATUS|type=agent-complete|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|status=<success|failed>`
-- worker done: `STATUS|type=worker-done|issue=<n>|role=<complexity|plan|impl|review|modify>|phase=<phase>|source=<agent|runner-exit>`
+- managed provider exit: `STATUS|type=provider-exit|issue=<n>|role=<sub-coord|complexity|impl|review|modify>|agent=<name>|model=<model>|return_code=<n>` — process observation only
+- validated handoff: `STATUS|type=dispatch-complete|issue=<n>|role=<role>|status=completed|result_file=<path>|run_id=<run>|attempt_id=<attempt>` — managed terminal decision; use the bound outcome journal
 - sub-coordinator complete: `STATUS|type=sub-coord-complete|issue=<n>|outcome=<completed|failed-review|merge_failed|blocked>|report_file=<path>|commit_sha=<sha-or-none>`
 - merge start: `STATUS|type=merge-start|issue=<n>|branch=<issue_branch>|target=<feature_branch>`
 - merge complete: `STATUS|type=merge-complete|issue=<n>|merge_sha=<sha>|pushed=<true|false>`

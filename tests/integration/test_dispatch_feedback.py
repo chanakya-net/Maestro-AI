@@ -295,11 +295,9 @@ raise SystemExit(dispatch._detached(sys.argv[2]))
 
 def test_bootstrap_uncertain_shutdown_is_unknown_and_prohibits_relaunch(tmp_path, monkeypatch):
     from types import SimpleNamespace
-    from ai_skills.processes import Liveness, ProcessIdentity, StopResult
+    from ai_skills.processes import Liveness, ProcessIdentity, ProcessSupervisor, StopResult
     config = worker_config(tmp_path, '', detach=True)
-    class InaccessibleOwner:
-        def __init__(self, directory):
-            self.directory = directory
+    class InaccessibleOwner(ProcessSupervisor):
         def start(self, spec, *, run_id, attempt_id):
             return SimpleNamespace(identity=ProcessIdentity(987654321, 1, socket.gethostname(), run_id, attempt_id),
                                    close=lambda: StopResult('unknown', reason='owner inspection inaccessible'))
@@ -368,3 +366,188 @@ def test_finished_pool_watch_drains_large_backlog_before_terminal_without_replay
     assert delivered == records
     assert watch_run(config).lines == ()
     assert watch_run(config).result == 'pool-empty'
+
+
+def test_runner_return_without_confirmed_tree_death_stays_nonterminal(tmp_path,monkeypatch):
+    from ai_skills.processes import Liveness,ProcessIdentity,ProcessSupervisor
+    from ai_skills.runner import AgentRunResult
+    config=worker_config(tmp_path,'pass')
+    def fake_run(run):
+        identity=ProcessIdentity(987654321,1,socket.gethostname(),run.run_id,run.attempt_id)
+        write_json_atomic(Path(run.process_state_file),{'identity':identity.__dict__,'record_directory':str(tmp_path/'records')})
+        return AgentRunResult(0,run.agent,run.model)
+    monkeypatch.setattr(dispatch,'run_agent',fake_run)
+    monkeypatch.setattr(ProcessSupervisor,'inspect',lambda self,identity:Liveness('unknown',reason='inaccessible'))
+    result=dispatch_worker(config)
+    assert (result.state,result.return_code)==('unknown',3)
+    state=json.loads(config.state_file.read_text())
+    assert state.get('alive') is not False
+    assert json.loads(dispatch.outcome_path(config.state_file).read_text())['status']=='pending'
+    assert not config.agent_run.done_file.exists()
+
+
+def test_confirmed_interrupt_records_interrupted_outcome(tmp_path,monkeypatch):
+    from ai_skills.processes import ProcessIdentity,ProcessSupervisor,StopResult
+    config=worker_config(tmp_path,'''import os,time
+from pathlib import Path
+Path('ready').touch()
+while not Path('release').exists():time.sleep(.01)
+''',hard_limit_seconds=.1)
+    real_stop=dispatch._stop_provider
+    def interrupted(config,grace=.1):
+        result=real_stop(config,grace)
+        assert result.state=='dead'
+        raise KeyboardInterrupt
+    monkeypatch.setattr(dispatch,'_stop_provider',interrupted)
+    # The second stop confirms the already stopped tree without another signal.
+    calls=[0]
+    def stop(config,grace=.1):
+        calls[0]+=1
+        return interrupted(config,grace) if calls[0]==1 else real_stop(config,grace)
+    monkeypatch.setattr(dispatch,'_stop_provider',stop)
+    result=dispatch_worker(config)
+    assert (result.state,result.return_code,result.reason)==('interrupted',130,'interrupted')
+    outcome=json.loads(dispatch.outcome_path(config.state_file).read_text())
+    assert outcome['status']=='interrupted' and outcome['worker_return_code']==130
+    assert dispatch.inspect_worker(config).liveness=='dead'
+
+
+@pytest.mark.parametrize('liveness',['alive','unknown'])
+def test_adoption_cannot_repair_terminal_publication_under_live_or_unknown_wrapper(tmp_path,monkeypatch,liveness):
+    from ai_skills.processes import Liveness,ProcessIdentity,ProcessSupervisor
+    config=worker_config(tmp_path,"import os;from pathlib import Path;Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')")
+    dispatch_worker(config)
+    record=json.loads(Path(str(config.state_file)+'.config.json').read_text())
+    run=record['agent_run']
+    wrapper=ProcessIdentity(987654321,1,socket.gethostname(),run['run_id']+'-dispatcher',run['attempt_id'])
+    write_json_atomic(Path(str(config.state_file)+'.dispatcher.process.json'),{'identity':wrapper.__dict__,'record_directory':str(tmp_path/'records')})
+    config.agent_run.done_file.unlink()
+    real_inspect=ProcessSupervisor.inspect
+    monkeypatch.setattr(ProcessSupervisor,'inspect',lambda self,identity:Liveness(liveness) if identity.pid==wrapper.pid else real_inspect(self,identity))
+    result=dispatch.adopt_worker(config.state_file)
+    assert result.state==('running' if liveness=='alive' else 'unknown')
+    assert not config.agent_run.done_file.exists()
+
+
+@pytest.mark.parametrize(('forced','status','code'),[('hard-limit-exceeded','failed',124),('interrupted','interrupted',130)])
+def test_forced_stop_survives_terminal_outcome_write_failure_and_zero_provider_exit(tmp_path,monkeypatch,forced,status,code):
+    config=worker_config(tmp_path,'''import json,os,signal,time
+from pathlib import Path
+signal.signal(signal.SIGTERM,lambda *_:exit(0))
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
+Path('provider-ready').touch()
+while True:time.sleep(.01)
+''',hard_limit_seconds=.4)
+    real_write=dispatch.write_json_atomic
+    def fail_terminal_outcome(path,value):
+        if str(path).endswith('.outcome.json') and value.get('status')!='pending':
+            raise OSError('injected terminal outcome failure')
+        return real_write(path,value)
+    monkeypatch.setattr(dispatch,'write_json_atomic',fail_terminal_outcome)
+    real_stop=dispatch._stop_provider
+    calls=[0]
+    def stop(selected,grace=.1):
+        calls[0]+=1
+        if forced=='interrupted' and calls[0]==1:raise KeyboardInterrupt
+        return real_stop(selected,grace)
+    monkeypatch.setattr(dispatch,'_stop_provider',stop)
+    with pytest.raises(OSError,match='injected terminal outcome'):dispatch_worker(config)
+    assert (tmp_path/'provider-ready').exists()
+    saved=dispatch.WorkerConfig.from_record(json.loads(Path(str(config.state_file)+'.config.json').read_text()))
+    process,supervisor=dispatch._provider_record(saved)
+    from ai_skills.processes import ProcessIdentity
+    assert supervisor.return_code(ProcessIdentity(**process['identity']))==0
+    assert json.loads(dispatch.outcome_path(config.state_file).read_text())['status']=='pending'
+    monkeypatch.setattr(dispatch,'write_json_atomic',real_write)
+    state=json.loads(config.state_file.read_text())
+    state['launcher_identity']['created_at']+=1  # Prior dispatcher lifetime has died.
+    real_write(config.state_file,state)
+    result=dispatch.adopt_worker(config.state_file)
+    assert (result.state,result.return_code,result.reason)==(status,code,forced)
+    outcome=json.loads(dispatch.outcome_path(config.state_file).read_text())
+    assert (outcome['status'],outcome['worker_return_code'],outcome['provider_return_code'],outcome['reason'])==(status,code,0,forced)
+    assert json.loads(config.state_file.read_text())['stop_intent']['reason']==forced
+    assert f'status={status}' in config.agent_run.done_file.read_text()
+    assert 'type=dispatch-complete|' not in config.agent_run.events_log.read_text()
+
+
+@pytest.mark.parametrize(('owner','expected','reason'),[('alive','running','launcher-ownership-alive'),('unknown','unknown','launcher-ownership-unknown')])
+def test_active_foreground_dispatcher_keeps_finalization_ownership_after_provider_exit(tmp_path,monkeypatch,owner,expected,reason):
+    config=worker_config(tmp_path,"import os;from pathlib import Path;Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')")
+    real_finalize=dispatch._finalize_attempt
+    checked=[False]
+    def finalize(selected,**kwargs):
+        if not checked[0]:
+            checked[0]=True
+            before=json.loads(selected.state_file.read_text())
+            if owner=='unknown':
+                changed={**before,'launcher_identity':{**before['launcher_identity'],'host':'unreachable-host'}}
+                write_json_atomic(selected.state_file,changed)
+            script='import json,sys;sys.path.insert(0,sys.argv[1]);from dataclasses import asdict;from ai_skills.dispatch import adopt_worker;print(json.dumps(asdict(adopt_worker(sys.argv[2])),default=str))'
+            child=subprocess.run([sys.executable,'-c',script,str(Path(dispatch.__file__).resolve().parents[1]),str(selected.state_file)],capture_output=True,text=True,check=True)
+            result=json.loads(child.stdout)
+            assert (result['state'],result['reason'])==(expected,reason)
+            write_json_atomic(selected.state_file,before)
+            assert json.loads(dispatch.outcome_path(selected.state_file).read_text())['status']=='pending'
+            assert not selected.agent_run.done_file.exists()
+        return real_finalize(selected,**kwargs)
+    monkeypatch.setattr(dispatch,'_finalize_attempt',finalize)
+    assert dispatch_worker(config).state=='completed'
+    assert dispatch.adopt_worker(config.state_file).state=='completed'
+
+
+def test_stop_intent_storage_failure_does_not_signal_provider(tmp_path,monkeypatch):
+    config=worker_config(tmp_path,'import time;time.sleep(20)',hard_limit_seconds=.15)
+    real_write,real_stop=dispatch.write_json_atomic,dispatch._stop_provider
+    def fail_intent(path,value):
+        if 'stop_intent' in value:raise OSError('injected stop intent failure')
+        return real_write(path,value)
+    monkeypatch.setattr(dispatch,'write_json_atomic',fail_intent)
+    monkeypatch.setattr(dispatch,'_stop_provider',lambda *args,**kwargs:pytest.fail('signal before durable intent'))
+    try:
+        with pytest.raises(OSError,match='injected stop intent'):dispatch_worker(config)
+        assert dispatch.inspect_worker(config).liveness=='alive'
+        assert json.loads(dispatch.outcome_path(config.state_file).read_text())['status']=='pending'
+        assert not config.agent_run.done_file.exists()
+    finally:
+        monkeypatch.setattr(dispatch,'write_json_atomic',real_write)
+        monkeypatch.setattr(dispatch,'_stop_provider',real_stop)
+        if Path(str(config.state_file)+'.process.json').exists():real_stop(config)
+
+
+@pytest.mark.parametrize('field',['run_id','attempt_id','state_file','status','worker_return_code','provider_identity'])
+def test_corrupt_stop_intent_is_not_replaced_or_accepted_as_completion(tmp_path,field):
+    config=worker_config(tmp_path,"import os;from pathlib import Path;Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')")
+    dispatch_worker(config)
+    selected=dispatch.WorkerConfig.from_record(json.loads(Path(str(config.state_file)+'.config.json').read_text()))
+    state=json.loads(config.state_file.read_text())
+    intent={'schema_version':1,'run_id':selected.agent_run.run_id,'attempt_id':selected.agent_run.attempt_id,
+        'issue':'7','role':'fixture','state_file':str(selected.state_file),'recorded_at':time.time(),
+        'reason':'hard-limit-exceeded','status':'failed','worker_return_code':124,
+        'provider_identity':state['provider_identity']}
+    intent[field]=999 if field=='worker_return_code' else {} if field=='provider_identity' else 'foreign'
+    state['stop_intent']=intent
+    write_json_atomic(config.state_file,state)
+    before=config.state_file.read_bytes()
+    result=dispatch.adopt_worker(config.state_file)
+    assert (result.state,result.return_code)==('unknown',3)
+    assert config.state_file.read_bytes()==before
+
+
+@pytest.mark.parametrize('provider_reason',['cannot-proceed','artifact-recovery-required'])
+def test_forced_stop_decision_cannot_be_replaced_by_typed_failure_reason(tmp_path,provider_reason):
+    config=worker_config(tmp_path,'''import json,os,signal,time
+from pathlib import Path
+signal.signal(signal.SIGTERM,lambda *_:exit(0))
+payload={'schema_version':1,'artifact_kind':'role_failure','run_id':os.environ['RUN_WITH_IT_RUN_ID'],'attempt_id':os.environ['RUN_WITH_IT_ATTEMPT_ID'],'issue':'7','role':'plan','status':'blocked','reason':REASON,'summary':'Provider could not continue'}
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps(payload))
+while True:time.sleep(.01)
+'''.replace('REASON',repr(provider_reason)),hard_limit_seconds=.4)
+    config=replace(config,agent_run=config.agent_run.replace(role='plan',issue_dir=tmp_path))
+    result=dispatch_worker(config)
+    assert (result.state,result.return_code,result.reason)==('failed',124,'hard-limit-exceeded')
+    outcome=json.loads(dispatch.outcome_path(config.state_file).read_text())
+    assert (outcome['status'],outcome['provider_return_code'],outcome['worker_return_code'])==('failed',0,124)
+    payload=json.loads(config.agent_run.result_file.read_text())
+    assert payload['status']=='blocked' and payload['reason']==provider_reason
+    assert not (tmp_path/'plan.md').exists()

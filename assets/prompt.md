@@ -1,5 +1,7 @@
 # IMPLEMENTATION INSTRUCTIONS
 
+For dispatcher-managed attempts, follow the appended `artifact-protocol.md`: publish failure even without a commit. Managed DONE is dispatcher-owned; publish your role report and leave terminal markers to the dispatcher.
+
 ## Role
 
 This prompt is implementation-only for already assigned work.
@@ -101,9 +103,9 @@ Run tests before declaring work complete. All tests must pass. Do not mark work 
 
 1. Run the narrowest test scope that covers the changed code first.
 2. Then run the full test suite.
-3. Fix any failures before reporting completion — do not report results and move on.
+3. Fix failures within the assigned work before claiming success. If they prevent completion, publish the typed failure result with evidence.
 
-**Out-of-scope test failures**: If tests outside your assigned scope are failing, fix them. Your changes may have introduced regressions or side effects that broke previously passing tests. Scope is not a reason to leave tests red — a broken test suite is a broken test suite regardless of where the failure originates.
+**Out-of-scope test failures**: Investigate whether your changes introduced regressions. If a required gate stays red, publish the shared protocol failed or blocked report with exact evidence and preserve the work for coordinator attribution; never manufacture success or omit the handoff.
 
 Examples:
 
@@ -124,20 +126,20 @@ Commit sequence:
 Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 **If there is nothing to commit** (no files changed), there are two distinct cases:
-- **You did not actually implement the slice** (incomplete work, gave up, or could not finish) → emit `IMPL_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
+- **You did not actually implement the slice** (incomplete work, gave up, or could not finish) → emit `IMPL_COMMIT_SHA=NONE` and publish a typed failure per the shared protocol; never omit the result.
 - **The acceptance criteria are already fully satisfied upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `IMPL_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}` (see Result Artifact → *Verified no-op variant*). The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite — never use it to skip real work.
 
-**Do not write the done file until the commit is made (or the verified no-op result artifact is written per the Verified no-op variant) and the result JSON is written.** The output report must include the commit SHA and a list of all committed files.
+**Success handoff requires the commit (or the verified no-op result) and valid result JSON.** Include the canonical commit SHA and committed files on the commit-based success path. Failure uses the shared protocol without a commit.
 
 ## Result Artifact
 
-If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable implementation handoff.
+On the success path, write `RUN_WITH_IT_RESULT_FILE` after the commit succeeds (or use the verified no-op variant). On failure publish the shared protocol role failure at that same path, even without a commit. This JSON is the machine-readable implementation handoff.
 
 On a verified no-op (`IMPL_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
-- Write the done sentinel exactly to `RUN_WITH_IT_DONE_FILE`.
+- Leave `RUN_WITH_IT_DONE_FILE` to the dispatcher.
 - Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
 - Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
 - When a plan was provided (`RUN_WITH_IT_PLAN_FILE`), populate `plan_deviations` with one entry per deviation — `{ "slice": "<order or name>", "reason": "why the plan was wrong here", "what_changed": "what you did instead" }`. Leave it `[]` when you followed the plan exactly or no plan was present.
@@ -146,13 +148,6 @@ Path safety:
 - Never write implementation handoff JSON to SUB_COORD_REPORT_FILE.
 - Never write implementation handoff JSON to `.run-with-it/issues/<n>/report.json`.
 - If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins.
-Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
-
-```text
-ai-skills artifact write-json --role impl --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
-```
-
-Never write a successful artifact with failed verification or a commit from another worktree.
 Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
 
 ```text
@@ -209,14 +204,11 @@ Use this **only** when the acceptance criteria are already fully met upstream an
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made (or the verified no-op result artifact is written per the Verified no-op variant), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This marker is advisory; the Sub-Coordinator still waits for owned-tree shutdown and validates the result.
-After the role artifact validates, use file tools to write the specified `DONE|issue=<n>|role=<role>|status=success|source=agent` sentinel. Write it last. The native runner also records exit-based completion; neither marker bypasses validation or owned-tree shutdown.
-
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
+The dispatcher publishes managed DONE after validating the actual role outcome. Always publish the success or typed failure result first; failing verification is a reason to publish failure, never to omit the report.
 
 ## Output Contract
 
-Do not output this report until all tests pass and the mandatory commit is made (or the verified no-op result artifact is written). If tests are failing, fix them first.
+For verified success, output the report below after passing tests and the mandatory commit (or verified no-op). If verification cannot pass or work cannot finish, publish the shared protocol failure report instead, with actual commands/errors and preserved work paths.
 
 Report:
 

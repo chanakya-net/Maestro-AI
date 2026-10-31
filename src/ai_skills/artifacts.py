@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+from ai_skills.outcomes import review_instructions_file
 from ai_skills.git import git_output, git_success, current_head, repo_available, working_tree_clean, commit_exists, resolve_commit, is_ancestor, abort_cherry_pick, commit_salvaged_tree
 
 
@@ -72,7 +73,31 @@ def load_json(path: str) -> tuple[Any | None, str | None]:
         return None, "invalid-json"
 
 
-from ai_skills.storage import write_json_atomic
+from ai_skills.storage import replace_file_atomic, write_json_atomic
+
+
+def role_failure_reason(payload: object, *, issue: str, role: str, run_id: str, attempt_id: str) -> str:
+    """Validate a failure report, independently of substantive success proof."""
+    if not isinstance(payload, dict) or payload.get('artifact_kind') != 'role_failure':
+        return 'invalid-role-failure-artifact'
+    if type(payload.get('schema_version')) is not int or payload['schema_version'] != 1:
+        return 'invalid-role-failure-schema'
+    for key, expected in (('run_id', run_id), ('attempt_id', attempt_id), ('role', role)):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip() or value != expected:
+            return 'role-failure-identity-mismatch'
+    if str(payload.get('issue')) != str(issue):
+        return 'role-failure-identity-mismatch'
+    if payload.get('status') not in ('failed', 'blocked', 'interrupted'):
+        return 'invalid-role-failure-status'
+    if any(not isinstance(payload.get(key), str) or not payload[key].strip() for key in ('reason', 'summary')):
+        return 'invalid-role-failure-reason'
+    if 'verification' in payload:
+        if not isinstance(payload['verification'], dict) or payload['verification'].get('passed') is True:
+            return 'invalid-role-failure-verification'
+    if 'evidence' in payload and (not isinstance(payload['evidence'], list) or any(not isinstance(item, str) for item in payload['evidence'])):
+        return 'invalid-role-failure-evidence'
+    return ''
 
 
 def issue_report_path(args: argparse.Namespace) -> Path | None:
@@ -384,12 +409,6 @@ def repair_protected_nitpicks(payload: Any) -> Any | None:
     repaired = dict(payload)
     repaired["comments"] = repaired_comments
     return repaired
-
-
-def review_instructions_file(result_file: str) -> str:
-    if result_file.endswith("-status.json"):
-        return f"{result_file[:-len('-status.json')]}-instructions.json"
-    return ""
 
 
 def canonical_review_retry_status_file(result_file: str) -> str:
@@ -744,7 +763,14 @@ def write_json(args: argparse.Namespace) -> int:
     try:
         write_json_atomic(str(validated_path), payload)
         reason = ""
-        if args.role in {"impl", "modify"}:
+        if payload.get('artifact_kind') == 'role_failure':
+            managed = os.environ.get('RUN_WITH_IT_DISPATCHER_MANAGED') == '1'
+            reason = role_failure_reason(payload, issue=str(args.issue), role=args.role,
+                run_id=os.environ.get('RUN_WITH_IT_RUN_ID','') if managed else payload.get('run_id',''),
+                attempt_id=os.environ.get('RUN_WITH_IT_ATTEMPT_ID','') if managed else payload.get('attempt_id',''))
+            if managed and (os.environ.get('RUN_WITH_IT_ROLE') != args.role or os.environ.get('RUN_WITH_IT_ISSUE') != str(args.issue)):
+                reason = 'role-failure-identity-mismatch'
+        elif args.role in {"impl", "modify"}:
             reason = implementation_result_reason(validation_args, payload)
         elif args.role == "complexity" and not valid_complexity_payload(payload):
             reason = "invalid-complexity-result-artifact"
@@ -754,10 +780,12 @@ def write_json(args: argparse.Namespace) -> int:
             reason = "invalid-review-status-artifact"
         elif args.role == "review-instructions" and not valid_review_instructions(payload):
             reason = "invalid-review-instructions-artifact"
+        elif args.role in {"sub-coord", "merge-recovery"}:
+            reason = terminal_report_reason(args.role, payload)
         if reason:
             print(reason, file=sys.stderr)
             return 1
-        os.replace(validated_path, target)
+        replace_file_atomic(validated_path, target)
         return 0
     finally:
         try:
@@ -793,6 +821,7 @@ def build_parser() -> argparse.ArgumentParser:
             "review-instructions",
             "artifact-recovery",
             "merge-recovery",
+            "sub-coord",
         ],
     )
     writer.add_argument("--issue", required=True)
@@ -839,10 +868,31 @@ class ArtifactDecision:
     canonical_commit: str | None = None
 
 
+def terminal_report_reason(role: str, payload: object) -> str:
+    """A negative issue outcome can still be a complete coordinator handoff."""
+    outcomes = ({'completed', 'blocked', 'failed-merge'} if role == 'merge-recovery'
+                else {'completed', 'blocked', 'failed-review', 'merge_failed', 'failed-merge'})
+    if not isinstance(payload, dict):
+        return 'invalid-terminal-report'
+    outcome = payload.get('outcome')
+    if not isinstance(outcome, str) or outcome not in outcomes:
+        return 'invalid-terminal-report-outcome'
+    if not isinstance(payload.get('summary'), str) or not payload['summary'].strip():
+        return 'missing-terminal-report-summary'
+    reasons = payload.get('blocking_reasons', [])
+    if not isinstance(reasons, list) or any(not isinstance(item, str) or not item.strip() for item in reasons):
+        return 'invalid-terminal-report-blocking-reasons'
+    if outcome == 'blocked' and not reasons:
+        return 'missing-terminal-report-blocking-reasons'
+    return ''
+
+
 def validate_artifact(role: str, payload: object, evidence: GitEvidence) -> ArtifactDecision:
     """Validate captured evidence; this function never edits Git or artifact files."""
     reason = ""
-    if evidence.result_is_report and role in {"impl", "modify"}:
+    if isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure':
+        reason = 'role-failure-report'
+    elif evidence.result_is_report and role in {"impl", "modify"}:
         reason = "worker-result-path-is-sub-coordinator-report"
     elif role in {"impl", "modify"}:
         if not isinstance(payload, dict) or str(payload.get("issue")) != str(evidence.issue) or payload.get("role") != role:
@@ -878,6 +928,8 @@ def validate_artifact(role: str, payload: object, evidence: GitEvidence) -> Arti
     elif role == "review":
         reason = review_payload_reason(payload, None, evidence.review_instructions,
             "missing" if evidence.review_instructions is None else None)
+    elif role in {"sub-coord", "merge-recovery"}:
+        reason = terminal_report_reason(role, payload)
     elif not isinstance(payload, dict):
         reason = "invalid-result-artifact"
     return ArtifactDecision(not reason, reason, evidence.canonical_commit)

@@ -1,5 +1,7 @@
 # Review Prompt
 
+For dispatcher-managed attempts, follow the appended `artifact-protocol.md`: publish failure even without a commit. Managed DONE is dispatcher-owned; publish your role report and leave terminal markers to the dispatcher.
+
 ## Role
 
 This prompt is review-only guidance for `run-with-it`.
@@ -69,7 +71,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 8. Write the status file to `REVIEWER_STATUS_FILE`.
 9. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
 10. If `RUN_WITH_IT_ARTIFACT_HELPER` is present, validate the review artifacts with it and fix any reported reason before continuing.
-11. If `RUN_WITH_IT_DONE_FILE` is present, write it after both JSON files are valid.
+11. Leave managed DONE to the dispatcher after both success JSON files validate. If review cannot finish, publish the shared protocol failure at the primary result path without instructions.
 12. Stop.
 
 ## Review Completeness
@@ -122,8 +124,8 @@ Write exactly **two** JSON files.
 Path contract:
 - `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `ai-skills worker dispatch`.
 - Write the full actionable review JSON exactly to `REVIEWER_INSTRUCTIONS_FILE`.
-- When `RUN_WITH_IT_ARTIFACT_HELPER` is set, run it before the done sentinel and treat any non-empty failure reason as invalid output to fix, not as a warning to ignore.
-- Write `RUN_WITH_IT_DONE_FILE` only after both JSON files exist and parse as valid JSON.
+- When `RUN_WITH_IT_ARTIFACT_HELPER` is set, run it to validate the success artifacts and treat any non-empty failure reason as invalid output to fix, not as a warning to ignore.
+- The dispatcher owns `RUN_WITH_IT_DONE_FILE`; publish both JSON files for successful review.
 - Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.
 - Build each JSON payload in a temporary file, then install it atomically with `ai-skills artifact write-json`: use `--role review` for the status payload and `--role review-instructions` for the instructions payload. Pass `--issue "$RUN_WITH_IT_ISSUE"`, the temporary `--payload-file`, and the final `--result-file`. Never generate Python source strings to quote JSON into place.
 
@@ -227,14 +229,10 @@ The `comments` array must include every distinct actionable finding from the com
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after both JSON files are valid and fully flushed to disk:
-
-Validate both status and instructions at their exact configured paths:
+The dispatcher owns managed DONE. Validate successful review status and instructions at the exact configured paths:
 
 ```text
 ai-skills artifact failure-reason --role review --issue <issue> --result-file <review-status-file>
 ```
 
-An empty reason is required before writing the done sentinel with file tools. A positive comment count without complete instructions is never approved.
-
-Do not write the done file before `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` both exist, parse as valid JSON, and pass `RUN_WITH_IT_ARTIFACT_HELPER` validation when that helper is available.
+A positive comment count without complete instructions is never approved. If the review cannot be completed, publish a typed role failure at the primary status path per the shared protocol; no instructions companion is required for failure.

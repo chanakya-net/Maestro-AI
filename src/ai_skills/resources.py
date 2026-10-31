@@ -6,6 +6,7 @@ from pathlib import Path
 RESOURCE_NAMES = (
     "agent-registry.json",
     "artifact-recovery-prompt.md",
+    "artifact-protocol.md",
     "complexity-prompt.md",
     "coordinator-rules.md",
     "main-orchestrator-rules.md",

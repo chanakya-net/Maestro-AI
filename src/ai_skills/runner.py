@@ -28,6 +28,7 @@ import uuid
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.resources import resource_path
+from ai_skills.outcomes import canonical_path, role_artifact_paths
 from ai_skills.storage import write_json_atomic
 
 
@@ -62,6 +63,7 @@ class AgentRunConfig:
     record_directory: Path | None = None
     stream_directory: Path | None = None
     scrub_ambient_aliases: bool = False
+    dispatcher_managed: bool = False
 
     def replace(self, **values):
         return replace(self, **values)
@@ -107,9 +109,15 @@ def runner_environment(config):
                        'RUN_WITH_IT_EVENTS_LOG':config.events_log, 'RUN_WITH_IT_LOG_FILE':config.log_file,
                        'RUN_WITH_IT_DONE_FILE':config.done_file, 'RUN_WITH_IT_RESULT_FILE':config.result_file,
                        'RUN_WITH_IT_STATE_FILE':config.state_file, 'RUN_WITH_IT_ISSUE_DIR':config.issue_dir,
-                       'RUN_WITH_IT_ROLE':config.role, 'RUN_WITH_IT_ISSUE':config.issue, 'RUN_WITH_IT_CYCLE':config.cycle}.items():
+                       'RUN_WITH_IT_ROLE':config.role, 'RUN_WITH_IT_ISSUE':config.issue, 'RUN_WITH_IT_CYCLE':config.cycle,
+                       'RUN_WITH_IT_RUN_ID':config.run_id, 'RUN_WITH_IT_ATTEMPT_ID':config.attempt_id,
+                       'RUN_WITH_IT_DISPATCHER_MANAGED':'1' if config.dispatcher_managed else '0'}.items():
         if value is not None:
             env[key] = str(value)
+    if config.dispatcher_managed and config.role == 'review' and config.result_file:
+        from ai_skills.artifacts import review_instructions_file
+        env['REVIEWER_STATUS_FILE'] = str(config.result_file)
+        env['REVIEWER_INSTRUCTIONS_FILE'] = review_instructions_file(str(config.result_file))
     return env
 
 
@@ -131,7 +139,17 @@ def _payload(config):
         raise ValueError('prompt file is required')
     context = Path(config.context_file).read_text(encoding='utf-8')
     prompt = Path(config.prompt_file).read_text(encoding='utf-8')
-    return (context + '\nInstructions:\n\n' + prompt + '\n').rstrip('\n')
+    payload = (context + '\nInstructions:\n\n' + prompt + '\n').rstrip('\n')
+    if config.dispatcher_managed:
+        metadata = {'run_id':config.run_id, 'attempt_id':config.attempt_id,
+            'issue':str(config.issue), 'role':config.role,
+            'state_file':canonical_path(config.state_file),
+            'expected_artifacts':role_artifact_paths(role=config.role,
+                result_file=config.result_file, issue_dir=config.issue_dir)}
+        protocol = resource_path('artifact-protocol.md').read_text(encoding='utf-8')
+        payload += '\n\n' + protocol.rstrip('\n') + '\n\nAuthoritative attempt metadata:\n'
+        payload += json.dumps(metadata, ensure_ascii=False, sort_keys=True) + '\n\n'
+    return payload.rstrip('\n')
 
 
 def _template_tokens(template, substitutions):
@@ -345,7 +363,7 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         raise ValueError('heartbeat_seconds must be nonnegative and finite')
     bus = EventBus(status_file=config.status_file, events_log=config.events_log, log_file=config.log_file)
     fields = {'issue':config.issue, 'role':config.role, 'agent':name, 'model':model}
-    if config.done_file:
+    if config.done_file and not config.dispatcher_managed:
         Path(config.done_file).parent.mkdir(parents=True, exist_ok=True)
         Path(config.done_file).unlink(missing_ok=True)
     bus.emit('agent-start', fields)
@@ -428,12 +446,15 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
     status = 'success' if code == 0 else 'failed'
     if reason:
         bus.emit('agent-unavailable', {**fields, 'reason':reason, 'action':'exclude-route'})
-    if config.done_file:
-        done = 'DONE|' + '|'.join(f'{key}={normalize(value)}' for key, value in {**fields, 'status':status, 'source':'runner-exit', 'completed_at':datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}.items())
-        EventBus.append(Path(config.done_file), done + '\n')
-        EventBus.append(bus.log_file, done + '\n')
-    bus.emit('worker-done', {**fields, 'status':status})
-    bus.emit('agent-complete', {**fields, 'status':status})
+    if config.dispatcher_managed:
+        bus.emit('provider-exit', {**fields, 'return_code':code})
+    else:
+        if config.done_file:
+            done = 'DONE|' + '|'.join(f'{key}={normalize(value)}' for key, value in {**fields, 'status':status, 'source':'runner-exit', 'completed_at':datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}.items())
+            EventBus.append(Path(config.done_file), done + '\n')
+            EventBus.append(bus.log_file, done + '\n')
+        bus.emit('worker-done', {**fields, 'status':status})
+        bus.emit('agent-complete', {**fields, 'status':status})
     telemetry = {'agent':name, 'model':model, 'input_tokens':'unknown', 'output_tokens':'unknown', 'cache_hit_tokens':'unknown', 'status':status, 'source':'runner-default'}
     # Telemetry is a log/console record, not a replacement for terminal status.
     from ai_skills.events import emit_status

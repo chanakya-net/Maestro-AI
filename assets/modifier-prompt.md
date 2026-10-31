@@ -1,5 +1,7 @@
 # Modifier Prompt
 
+For dispatcher-managed attempts, follow the appended `artifact-protocol.md`: publish failure even without a commit. Managed DONE is dispatcher-owned; publish your role report and leave terminal markers to the dispatcher.
+
 ## Role
 
 This prompt is modification-only guidance for `run-with-it`.
@@ -66,7 +68,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 4. Run the required verification commands supplied by the coordinator.
 5. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
 6. Re-run verification until all required checks pass.
-7. Produce the final output report only after verification passes.
+7. Produce a verified success report after verification passes; otherwise publish the typed failure report with actual evidence.
 
 ## Code Size & Maintainability
 
@@ -116,26 +118,26 @@ Use the assigned issue worktree as the explicit working directory for Git. Compa
 
 ## Mandatory Commit Before Handoff
 
-**You MUST commit all your changes before writing the done file (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
+**A successful modification MUST commit all changes (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
 
 Commit sequence (after verification passes and all reviewer comments are addressed):
 Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 **If there is nothing to commit** (no files changed), there are two distinct cases:
-- **You did not apply the requested fixes** (incomplete, gave up, or could not finish) → emit `MODIFY_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
+- **You did not apply the requested fixes** (incomplete, gave up, or could not finish) → emit `MODIFY_COMMIT_SHA=NONE` and publish the shared protocol typed failure; never omit the result.
 - **Every review comment is already addressed upstream and the full verification suite passes with no changes needed** → this is a **verified no-op**. Emit `MODIFY_COMMIT_SHA=NONE` and write the result artifact with `"no_op": true` and `"verification": {"passed": true, ...}`. The dispatcher accepts a verified no-op as success instead of forcing an empty commit or failing. Only claim a no-op **after** actually running the verification suite and confirming each comment is resolved — never use it to skip real work.
 
-**Do not write the done file until the commit is made (or the verified no-op result artifact is written per the verified no-op contract) and the result JSON is written.** The output report must include the commit SHA and list of committed files.
+**Successful modification requires the commit (or verified no-op) and valid result JSON.** Include the canonical SHA and committed files; publish a typed failure without a commit when success prerequisites fail.
 
 ## Result Artifact
 
-If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable modification handoff.
+On the success path, write `RUN_WITH_IT_RESULT_FILE` after the commit succeeds (or use the verified no-op variant). On failure publish the shared protocol role failure at that same path, even without a commit. This JSON is the machine-readable modification handoff.
 
 On a verified no-op (`MODIFY_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
-- Write the done sentinel exactly to `RUN_WITH_IT_DONE_FILE`.
+- Leave `RUN_WITH_IT_DONE_FILE` to the dispatcher.
 - Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
 - Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
 
@@ -150,15 +152,6 @@ ai-skills artifact write-json --role modify --issue <issue> --payload-file paylo
 ```
 
 Never write a successful artifact with failed verification or a commit from another worktree.
-Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
-
-```text
-ai-skills artifact write-json --role modify --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
-```
-
-Never write a successful artifact with failed verification or a commit from another worktree.
-
-### Normal verified result schema
 
 ```json
 {
@@ -226,10 +219,7 @@ Use this **only** when every review comment is already addressed upstream and th
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made (or the verified no-op result artifact is written per the verified no-op contract), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready.
-After the role artifact validates, use file tools to write the specified `DONE|issue=<n>|role=<role>|status=success|source=agent` sentinel. Write it last. The native runner also records exit-based completion; neither marker bypasses validation or owned-tree shutdown.
-
-Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
+The dispatcher publishes managed DONE after validating the actual role outcome. Always publish the success or typed failure result first; failing verification is a reason to publish failure, never to omit the report.
 
 ## Verification
 
@@ -237,7 +227,7 @@ You must run tests after addressing reviewer comments.
 
 1. Run every verification command supplied by the coordinator.
 2. If those commands are incomplete or absent, run the narrowest relevant test scope first, then the full suite when practical.
-3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`ai-skills artifact`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and do not set `verification.passed=false` for failures you are not responsible for.
+3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`ai-skills artifact`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and publish a typed failed/blocked report if a required gate cannot pass. Never mark a command passing when it failed.
 4. Re-run the failing command after each fix until it passes.
 
 Do not report completion while tests you are responsible for are failing. A failing test suite caused by this change is a failed modification.
@@ -246,7 +236,7 @@ Do not report completion while tests you are responsible for are failing. A fail
 
 ## Output Contract
 
-Do not output this report until all required verification passes and the mandatory commit is made (or the verified no-op result artifact is written).
+For verified success, output the report below after required verification passes and the mandatory commit (or verified no-op). Otherwise publish the shared protocol failure report with actual verification evidence and preserved work paths.
 
 Report:
 

@@ -20,7 +20,8 @@ import uuid
 
 import psutil
 
-from ai_skills import state as state_policy
+from ai_skills import state as state_policy, artifacts
+from ai_skills.outcomes import outcome_path, outcome_reason, role_artifact_paths
 from ai_skills.dispatch import WorkerConfig, WorkerResult, adopt_worker, dispatch_worker
 from ai_skills.events import EventBus
 from ai_skills.github import GitHubUpdateRequest, update_github
@@ -240,15 +241,11 @@ def reconcile_attempts(state: dict, processes: ProcessSupervisor) -> Reconciliat
                     active[issue] = WorkerResult('running',0,path,'dispatcher-bootstrap-in-progress',wrapper['identity'])
                     continue
                 if status.state != 'dead': raise ValueError('dispatcher ownership unknown')
-            if snapshot.get('state') in ('completed','failed','artifact-recovery-required') and not snapshot.get('provider_identity'):
-                result = WorkerResult(snapshot['state'],int(snapshot.get('return_code',1)),path,snapshot.get('reason',''))
-            elif snapshot.get('state') == 'launching' and provider is None and wrapper is None:
-                # A dead previous pool persisted admission but never called
-                # start(): absence of both exclusive process records proves it.
-                write_json_atomic(path,{**snapshot,'state':'failed','return_code':1,'reason':'dispatch-bootstrap-failed'})
-                result = WorkerResult('failed',1,path,'dispatch-bootstrap-failed')
-            else:
-                result = adopt_worker(path)
+            if not config_path.exists():
+                # A pool intent binds admission even if the config publication
+                # failed. Never replace an existing or corrupt config.
+                write_json_atomic(config_path,worker.to_record())
+            result = adopt_worker(path)
             if result.state == 'unknown': unknown[issue] = result.reason
             elif result.state in ('running','starting'): active[issue] = result
             else: finished[issue] = result
@@ -422,13 +419,16 @@ class PoolSupervisor:
         if self.stop_requested():
             return None
         worker = worker or self.worker(issue)
-        # Archive shared terminal outputs, preserving sub-state/workers for resume.
+        # The new intent must own shared paths before old evidence is archived.
+        # If publication fails, the previous current attempt remains adoptable.
+        self._intent(issue, worker)
         directory = str(worker.agent_run.issue_dir)
         if worker.agent_run.role == 'merge-recovery':
             state_policy.quarantine_artifacts(directory,[str(worker.agent_run.result_file)],'merge-predispatch-'+uuid.uuid4().hex)
         else:
             state_policy.quarantine_artifacts(directory,state_policy.sub_coord_terminal_marker_paths(directory),'predispatch-'+uuid.uuid4().hex)
-        self._intent(issue, worker)
+        if Path(worker.agent_run.result_file).exists():
+            raise OSError('could not preserve prior provider report before dispatch')
         try:
             result = dispatch_worker(worker)
         except (OSError, ValueError, RuntimeError) as error:
@@ -460,19 +460,46 @@ class PoolSupervisor:
     def _github(self, issue, outcome, report):
         update_github(GitHubUpdateRequest(str(self.config.state_file),str(self.config.run_root),str(issue),outcome,str(report)))
 
-    def finalize(self, issue, worker):
-        args = SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),report_file=str(worker.agent_run.result_file),quiet=True,pool_attempt_id=worker.agent_run.attempt_id)
+    def validated_report(self, worker, result):
+        """Consume only the exact attempt's validated runtime handoff decision."""
+        if result.state != 'completed' or result.return_code != 0:
+            return None
+        run = worker.agent_run
+        try:
+            journal = load_json(outcome_path(worker.state_file))
+            reason = outcome_reason(journal, run_id=run.run_id, attempt_id=run.attempt_id,
+                issue=str(run.issue), role=run.role, state_file=worker.state_file,
+                expected_artifacts=role_artifact_paths(role=run.role,
+                    result_file=run.result_file, issue_dir=run.issue_dir))
+            report, error = artifacts.load_json(str(run.result_file))
+            valid = artifacts.validate_artifact(run.role, report, artifacts.GitEvidence(issue=str(run.issue))).valid
+            if not reason and journal['status'] == 'success' and not error and valid:
+                if journal.get('issue_outcome') == report.get('outcome'):
+                    return report
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise ValueError('completed handoff has no bound validated outcome') from error
+        raise ValueError('completed handoff conflicts with its bound validated outcome')
+
+    def write_policy_report(self, worker, payload):
+        """Keep the immutable attempt artifact in place during pool finalization."""
+        report_file = Path(str(worker.state_file) + '.policy-report.json')
+        write_json_atomic(report_file,payload)
+        return report_file
+
+    def finalize(self, issue, worker, *, report_file=None):
+        report_file = report_file or worker.agent_run.result_file
+        args = SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),report_file=str(report_file),quiet=True,pool_attempt_id=worker.agent_run.attempt_id)
         if worker.agent_run.role == 'merge-recovery':
             state_policy.finalize_merge_recovery(args)
         else:
             state_policy.finalize_issue(args)
         self.active.pop(str(issue),None)
         outcome=self.read()['issue_registry'][str(issue)]['status']
-        self.emit('sub-coord-complete',issue=issue,outcome=outcome,report_file=worker.agent_run.result_file)
+        self.emit('sub-coord-complete',issue=issue,outcome=outcome,report_file=str(report_file))
         if outcome == 'merge_recovery':
             self.launch_merge_recovery(issue)
         else:
-            self._github(issue,outcome,worker.agent_run.result_file)
+            self._github(issue,outcome,report_file)
 
     def launch_merge_recovery(self, issue):
         entry=self.read()['issue_registry'][str(issue)]
@@ -486,6 +513,7 @@ class PoolSupervisor:
         wait_since=entry.get('worker_wait_since') or time.time()
         self.store.transaction(lambda value:value['issue_registry'][str(issue)].setdefault('worker_wait_since',wait_since))
         args=SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),report_file=str(worker.agent_run.result_file),
+            accept_terminal_report=False,
             max_attempts=self.config.max_recovery_attempts,max_compaction_handoffs=self.config.max_compaction_handoffs,
             worker_stale_seconds=self.config.worker_stale_seconds,worker_dead_pid_grace_seconds=60,
             wait_elapsed_seconds=int(time.time()-wait_since),max_wait_seconds=self.config.max_worker_wait_seconds)
@@ -506,9 +534,11 @@ class PoolSupervisor:
             self.store.transaction(lambda value:value['issue_registry'][str(issue)].pop('worker_wait_since',None))
             self.launch(issue,self.worker(issue,context=context))
             return
-        write_json_atomic(Path(worker.agent_run.result_file),{'outcome':'blocked','summary':'Sub-coordinator recovery could not continue','blocking_reasons':[reason]})
+        report_file = self.write_policy_report(worker,{'outcome':'blocked',
+            'summary':'Sub-coordinator recovery could not continue','blocking_reasons':[reason]})
+        args.report_file = str(report_file)
         state_policy.mark_sub_coord_recovery_dispatch_failed(args)
-        self.finalize(issue,worker)
+        self.finalize(issue,worker,report_file=report_file)
 
     def board(self):
         state=self.read();completed=state_policy.completed_issue_numbers(state)
@@ -563,10 +593,17 @@ class PoolSupervisor:
                 failure=self.bootstrap_failed(issue,worker,result.reason)
                 if failure:return failure
                 continue
-            if worker.agent_run.role=='merge-recovery':
-                if result.return_code and state_policy.load_report(str(worker.agent_run.result_file)).get('outcome')=='completed':
-                    write_json_atomic(Path(worker.agent_run.result_file),{'outcome':'blocked','blocking_reasons':['merge recovery dispatcher failed']})
+            try:
+                report = self.validated_report(worker,result)
+            except ValueError as error:
+                return PoolResult('ownership-unknown',3,str(error),tuple(self.active))
+            if report is not None:
                 self.finalize(issue,worker)
+            elif worker.agent_run.role=='merge-recovery':
+                report_file = self.write_policy_report(worker,{'outcome':'blocked',
+                    'summary':'Merge recovery report handoff failed',
+                    'blocking_reasons':['merge recovery dispatcher failed: ' + (result.reason or 'unvalidated-outcome')]})
+                self.finalize(issue,worker,report_file=report_file)
             else: self.recover(issue,worker)
         if self.stop_requested():
             self.emit('pool-stopped', state_file=self.config.state_file)

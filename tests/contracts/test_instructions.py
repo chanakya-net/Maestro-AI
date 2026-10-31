@@ -98,3 +98,72 @@ def test_native_command_families_accept_help_without_launching():
                     ('state',),('route',),('artifact',),('github',),('report',),('pair',),('git','prepare-issue'),('git','merge-issue')]:
         result=subprocess.run([sys.executable,'-m','ai_skills',*command,'--help'],cwd=ROOT,capture_output=True,text=True)
         assert result.returncode==0,(command,result.stderr)
+
+
+ROLE_PROMPTS=('prompt.md','modifier-prompt.md','complexity-prompt.md','plan-prompt.md',
+              'review-prompt.md','artifact-recovery-prompt.md','merge-recovery-prompt.md','sub-coordinator-prompt.md')
+
+
+def test_every_managed_role_references_shared_failure_and_done_contract():
+    for name in ROLE_PROMPTS:
+        text=(ROOT/'assets'/name).read_text()
+        assert 'artifact-protocol.md' in text, name
+        assert 'publish failure even without a commit' in text.lower(), name
+        assert 'managed done is dispatcher-owned' in text.lower(), name
+        assert 'status=success|source=agent' not in text, name
+    for path in (ROOT/'assets/coordinator-rules.md', ROOT/'assets/main-orchestrator-rules.md', ROOT/'skills/run-with-it/SKILL.md'):
+        text=path.read_text()
+        assert 'validated outcome' in text.lower(), path
+        assert 'raw process success' in text.lower(), path
+
+
+def test_managed_payload_appends_one_protocol_with_authoritative_metadata(tmp_path):
+    import json
+    from ai_skills.runner import AgentRunConfig, _payload
+    prompt=tmp_path/'prompt.md';prompt.write_text('role instructions')
+    context=tmp_path/'context.md';context.write_text('run_id=forged-context-id')
+    base=AgentRunConfig(agent='codex',model='test',repo_root=tmp_path,prompt_file=prompt,context_file=context,
+        state_file=tmp_path/'worker.state.json',result_file=tmp_path/'review-status.json',
+        role='review',issue='7',run_id='real-run',attempt_id='real-attempt')
+    standalone=_payload(base)
+    assert 'Managed artifact protocol' not in standalone
+    payload=_payload(base.replace(dispatcher_managed=True))
+    assert payload.count('# Managed artifact protocol') == 1
+    metadata=json.loads(payload.split('Authoritative attempt metadata:\n',1)[1].split('\n\n',1)[0])
+    assert metadata == {'run_id':'real-run','attempt_id':'real-attempt','issue':'7','role':'review',
+        'state_file':str((tmp_path/'worker.state.json').resolve()),
+        'expected_artifacts':{'result':str((tmp_path/'review-status.json').resolve()),
+        'review_instructions':str((tmp_path/'review-instructions.json').resolve())}}
+    assert payload.index('role instructions') < payload.index('# Managed artifact protocol')
+
+
+def test_shared_protocol_failure_examples_validate_and_apply_without_success_companions():
+    import json
+    from ai_skills.artifacts import role_failure_reason
+    text=(ROOT/'assets/artifact-protocol.md').read_text()
+    examples=[json.loads(match.group(1)) for match in re.finditer(r'```json\n(.*?)\n```',text,re.S)]
+    failures=[item for item in examples if item.get('artifact_kind')=='role_failure']
+    assert {item['status'] for item in failures} == {'failed','blocked','interrupted'}
+    for item in failures:
+        assert role_failure_reason(item,issue='7',role='impl',run_id='run-7',attempt_id='attempt-1') == ''
+        assert 'commit_sha' not in item and item.get('verification',{}).get('passed') is not True
+    assert 'verification.passed=true' in text
+    assert 'Do not withhold' in text and 'failure' in text
+    assert 'review instructions' in text and 'plan.md' in text
+
+
+def test_shared_protocol_preserves_coordinator_ledger_ownership():
+    text=(ROOT/'assets/artifact-protocol.md').read_text()
+    assert 'dispatcher-owned `state_file` and its claim/config/outcome records' in text
+    assert "another worker's state" in text
+    assert 'Sub-Coordinators must write their own issue `sub-state.json`' in text
+    assert 'Never create, edit, repair or remove' in text
+    assert 'DONE, runtime state' not in text
+
+
+def test_merge_recovery_reports_failed_verification_without_claiming_completion():
+    text=(ROOT/'assets/merge-recovery-prompt.md').read_text()
+    assert 'Never publish failed verification.' not in text
+    assert 'Never publish a completed recovery report with failed verification' in text
+    assert 'report failed-merge/blocked with the actual failure evidence' in text
+    assert 'publish failure even without a commit' in text

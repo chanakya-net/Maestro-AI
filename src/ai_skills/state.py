@@ -716,6 +716,7 @@ def finalize_issue(args: argparse.Namespace) -> int:
     complete_pool_attempt(state, args)
     entry = issue_entry(state, args.issue)
     entry["status"] = status
+    entry["report_file"] = args.report_file
     report_blocking_reasons = report.get("blocking_reasons", [])
     if not isinstance(report_blocking_reasons, list):
         report_blocking_reasons = []
@@ -803,7 +804,7 @@ def finalize_issue(args: argparse.Namespace) -> int:
 def sub_coord_recovery_decision(args: argparse.Namespace) -> dict:
     from ai_skills.recovery import RecoveryEvidence, RecoveryPolicy, decide_recovery
     state = load_json(args.state_file)
-    report = load_report(args.report_file)
+    report = load_report(args.report_file) if getattr(args, "accept_terminal_report", True) else {}
     entry = state.get("issue_registry", {}).get(str(args.issue), {})
     issue_dir = issue_dir_for_report(state, args.issue, args.report_file)
     sub_state_file = str(Path(issue_dir) / "sub-state.json") if issue_dir else ""
@@ -972,6 +973,7 @@ def finalize_merge_recovery(args: argparse.Namespace) -> int:
     complete_pool_attempt(state, args)
     entry = issue_entry(state, args.issue)
     entry["status"] = status
+    entry["report_file"] = args.report_file
     entry["merge_recovery_report_file"] = args.report_file
     if status == "completed":
         entry["blocking_reasons"] = [

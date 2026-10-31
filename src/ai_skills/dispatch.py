@@ -20,15 +20,18 @@ import socket
 import psutil
 import sys
 import threading
+import tempfile
 import time
 from types import SimpleNamespace
 import uuid
 
 from ai_skills import artifacts, git
-from ai_skills.events import EventBus
+from ai_skills.outcomes import role_artifact_paths
+from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
-from ai_skills.runner import AgentRunConfig, AgentRunResult, build_invocation, load_registry, run_agent
-from ai_skills.storage import DirectoryLock, load_json, write_json_atomic
+from ai_skills.runner import AgentRunConfig, AgentRunResult, build_invocation, load_registry, run_agent, classify_unavailable
+from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
+from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, outcome_reason
 
 
 @dataclass(frozen=True)
@@ -78,8 +81,9 @@ class WorkerConfig:
                 agent_values[key] = env['FORCED_' + key.upper()]
         agent_values.setdefault('agent', '')
         agent_values.setdefault('unattended', True)
-        if isinstance(agent_values.get('unattended'), str):
-            agent_values['unattended'] = agent_values['unattended'] == '1'
+        for name in ('unattended', 'dispatcher_managed'):
+            if isinstance(agent_values.get(name), str):
+                agent_values[name] = agent_values[name] == '1'
         agent_values['environment'] = dict(env)
         if isinstance(agent_values.get('heartbeat_seconds'), str):
             agent_values['heartbeat_seconds'] = float(agent_values['heartbeat_seconds'])
@@ -159,6 +163,73 @@ def _artifact_args(config, *, from_stall=False):
                            issue_dir=str(run.issue_dir or ''), repo_root=str(run.repo_root), pre_spawn_head=config.pre_spawn_head, from_stall=from_stall)
 
 
+def expected_artifact_paths(config: WorkerConfig) -> dict[str, str]:
+    """Compatibility adapter over the neutral role-path contract."""
+    run = config.agent_run
+    return role_artifact_paths(role=run.role, result_file=run.result_file, issue_dir=run.issue_dir)
+
+
+def _paths_collide(first: Path, second: Path) -> bool:
+    if first == second or first in second.parents or second in first.parents:
+        return True
+    try:
+        return first.samefile(second)
+    except FileNotFoundError:
+        return False
+
+
+def _preflight_paths(config: WorkerConfig) -> dict[str, str]:
+    """Reject aliases before the first claim; never modify a previous artifact."""
+    run = config.agent_run
+    if run.role != 'sub-coord' and run.issue_dir and run.result_file:
+        report = (Path(run.issue_dir)/'report.json').resolve()
+        if _paths_collide(Path(run.result_file).resolve(), report):
+            raise ValueError('worker result path is reserved for sub-coordinator report')
+    expected = expected_artifact_paths(config)
+    outputs = {name: Path(path) for name, path in expected.items()}
+    if run.done_file:
+        outputs['done'] = Path(run.done_file).resolve()
+    state = Path(config.state_file).resolve()
+    runtime = {'state': state, 'config': Path(str(state)+'.config.json'), 'outcome': outcome_path(state),
+               'process': Path(run.process_state_file).resolve(),
+               'dispatcher_process': Path(str(state)+'.dispatcher.process.json'),
+               'dispatcher_log': Path(str(state)+'.dispatcher.log')}
+    if config.tail_state_file:
+        runtime['tail_state'] = Path(config.tail_state_file).resolve()
+    inputs = {name: Path(getattr(run, name)).resolve() for name in ('context_file', 'prompt_file', 'registry_file')
+              if getattr(run, name)}
+    destinations = {name: Path(getattr(run, name)).resolve() for name in ('events_log', 'status_file', 'log_file')
+                    if getattr(run, name)}
+    directories = {'streams': Path(run.stream_directory).resolve(),
+                   'records': Path(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes')).resolve(),
+                   'state_lock': Path(str(state)+'.lock')}
+
+    def reject_aliases(left, right, *, same_group=False):
+        for name, path in left.items():
+            for other, other_path in right.items():
+                if same_group and name == other:
+                    continue
+                if _paths_collide(path, other_path):
+                    raise ValueError(f'path collision: {name} and {other}')
+
+    reject_aliases(outputs, outputs, same_group=True)
+    reject_aliases(outputs, {**runtime, **inputs, **destinations, **directories})
+    reject_aliases(runtime, runtime, same_group=True)
+    reject_aliases(runtime, {**inputs, **destinations, **directories})
+    reject_aliases(destinations, {**inputs, **directories})
+    reject_aliases(directories, inputs)
+    reject_aliases({'state_lock': directories['state_lock']},
+                   {name: directories[name] for name in ('streams', 'records')})
+    for name, path in {**runtime, **{name:path for name,path in outputs.items() if name not in ('plan', 'done')}}.items():
+        if path.exists() or path.is_symlink():
+            raise RuntimeError(f'occupied {name} path prohibits a new attempt: {path}')
+    supervisor = ProcessSupervisor(directories['records'])
+    for run_id in (run.run_id, run.run_id+'-dispatcher'):
+        if supervisor.lookup_attempt(run_id, run.attempt_id) is not None:
+            raise RuntimeError('existing supervisor claim prohibits a new attempt')
+    return expected
+
+
 def _artifact_reason(config):
     # Inspection must never synthesize, canonicalize, commit or cherry-pick.
     run = config.agent_run
@@ -181,7 +252,7 @@ def _artifact_reason(config):
     evidence = artifacts.GitEvidence(issue=str(run.issue),repo_available=available,head=head,
         pre_spawn_head=config.pre_spawn_head,canonical_commit=commit,
         canonical_pre_spawn_head=git.resolve_commit(str(run.repo_root),config.pre_spawn_head) if available and config.pre_spawn_head else None,
-        result_is_report=report,plan_file_present=not run.issue_dir or (Path(run.issue_dir)/'plan.md').is_file(),review_instructions=instructions)
+        result_is_report=report,plan_file_present=bool(run.issue_dir and (Path(run.issue_dir)/'plan.md').is_file() and (Path(run.issue_dir)/'plan.md').stat().st_size > 0),review_instructions=instructions)
     return artifacts.validate_artifact(run.role,payload,evidence).reason
 
 
@@ -189,7 +260,7 @@ def inspect_worker(config: WorkerConfig) -> WorkerSnapshot:
     state = _optional(config.state_file)
     process = _process_record(config)
     identity = process.get('identity')
-    liveness = 'dead' if state.get('state') in ('completed','failed','artifact-recovery-required') else 'unknown'
+    liveness = 'unknown'
     if identity:
         liveness = ProcessSupervisor(Path(process['record_directory'])).inspect(ProcessIdentity(**identity)).state
     log = Path(config.agent_run.log_file) if config.agent_run.log_file else None
@@ -208,8 +279,6 @@ def inspect_worker(config: WorkerConfig) -> WorkerSnapshot:
         tail_hash = hashlib.sha256(tail.encode('utf-8')).hexdigest() if text else 'none'
         previous = _optional(config.tail_state_file).get('tail_hash') if config.tail_state_file else None
         log_tail_changed = bool(text and tail_hash != previous)
-        if config.tail_state_file and log_tail_changed:
-            write_json_atomic(Path(config.tail_state_file),{'schema_version':1,'tail_hash':tail_hash})
     reason = _artifact_reason(config)
     done = bool(config.agent_run.done_file and Path(config.agent_run.done_file).is_file() and Path(config.agent_run.done_file).stat().st_size)
     return WorkerSnapshot(liveness, fresh, not reason, reason, done, activity, state.get('state','unknown'), identity, log_present, log_tail_changed, tail_hash)
@@ -278,6 +347,7 @@ def _work(config):
             limits = [(config.hard_limit_seconds,'hard-limit-exceeded'), (config.timeout_seconds,'dispatch-timeout')]
             timeout_reason = next((reason for limit,reason in limits if limit and elapsed>=limit), '')
             if timeout_reason and provider_identity:
+                _record_stop_intent(config, timeout_reason)
                 stop = _stop_provider(config)
                 if stop.state != 'dead':
                     timeout_reason = 'shutdown-identity-unknown'
@@ -286,38 +356,31 @@ def _work(config):
             time.sleep(config.poll_seconds if provider_identity else min(.03, config.poll_seconds))
     except KeyboardInterrupt:
         timeout_reason = 'interrupted'
+        _record_stop_intent(config, timeout_reason)
         _stop_provider(config)
     thread.join(timeout=5)
-    if thread.is_alive():
-        state, code, reason = 'failed', 3, 'shutdown-identity-unknown'
+    if thread.is_alive() or timeout_reason == 'shutdown-identity-unknown':
+        return _unknown_attempt(config, 'shutdown-identity-unknown')
+    process, supervisor = _provider_record(config)
+    if process.get('identity'):
+        identity = ProcessIdentity(**process['identity'])
+        if supervisor.inspect(identity).state != 'dead':
+            return _unknown_attempt(config, 'shutdown-identity-unknown', process['identity'])
+        code = supervisor.return_code(identity)
+        if code is None:
+            return _unknown_attempt(config, 'provider-exit-status-unknown', process['identity'])
+        prelaunch = False
     else:
-        result = results[0] if results else AgentRunResult(1,run.agent,run.model)
-        reason = timeout_reason or (errors[0] if errors else '')
-        code = 124 if timeout_reason in ('hard-limit-exceeded','dispatch-timeout') else result.return_code
-        if timeout_reason == 'interrupted':
-            code = 130
-        if _artifact_reason(config):
-            args = _artifact_args(config, from_stall=bool(timeout_reason))
-            synthesized = any(function(args) for function in (artifacts.synthesize_implementation, artifacts.synthesize_review, artifacts.synthesize_complexity))
-            if synthesized:
-                bus.emit('result-artifact-synthesized', common)
-        artifact_reason = _artifact_reason(config)
-        reason = reason or artifact_reason
-        if artifact_reason == 'artifact-recovery-required' and timeout_reason != 'shutdown-identity-unknown':
-            reason = artifact_reason
-            state, code = 'artifact-recovery-required', 75
-        elif code or reason:
-            state, code = 'failed', code or 1
-        else:
-            state = 'completed'
-    process = _process_record(config)
-    base.update(state=state,return_code=code,exit_code=code,reason=reason,completed_at=time.time(),
-                provider_identity=process.get('identity'),alive=False,
-                failure_class='infrastructure' if results and results[0].unavailable_reason else 'capability')
-    write_json_atomic(Path(config.state_file),base)
-    bus.emit('dispatch-complete' if state=='completed' else 'dispatch-recovery-required' if state=='artifact-recovery-required' else 'dispatch-failed',
-             {**common,'status':state,'reason':reason,'result_file':str(run.result_file or '')})
-    return WorkerResult(state,code,Path(config.state_file),reason,process.get('identity'))
+        # A finished runner and absence of its exclusive start record prove no
+        # provider was launched. Incomplete handshake claims are never absent.
+        if process:
+            return _unknown_attempt(config, 'provider-launch-identity-unknown')
+        code, prelaunch = None, True
+    result = results[0] if results else AgentRunResult(1, run.agent, run.model)
+    reason = (result.unavailable_reason or 'dispatch-bootstrap-failed') if prelaunch else timeout_reason or result.unavailable_reason or (errors[0] if errors else '')
+    return _finalize_attempt(config, provider_return_code=code, reason=reason,
+        failure_class='infrastructure' if result.unavailable_reason else 'capability',
+        prelaunch_failure=prelaunch)
 
 
 def dispatch_worker(config: WorkerConfig) -> WorkerResult:
@@ -329,11 +392,16 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     state_file = Path(config.state_file).resolve()
     directory = state_file.parent
     directory.mkdir(parents=True, exist_ok=True)
-    run = replace(config.agent_run, state_file=state_file, scrub_ambient_aliases=True,
+    run = replace(config.agent_run, state_file=state_file, scrub_ambient_aliases=True, dispatcher_managed=True,
                   process_state_file=config.agent_run.process_state_file or Path(str(state_file)+'.process.json'),
                   stream_directory=config.agent_run.stream_directory or Path(str(state_file)+'.streams'),
                   run_id=config.agent_run.run_id or f'worker-{config.agent_run.issue}-{config.agent_run.role}-{uuid.uuid4().hex}',
                   attempt_id=config.agent_run.attempt_id or uuid.uuid4().hex)
+    # Bind the paths used by the provider to the exact paths preflight checks.
+    run = replace(run, **{name: Path(getattr(run, name)).resolve() for name in (
+        'repo_root', 'context_file', 'prompt_file', 'registry_file', 'issue_dir', 'result_file',
+        'done_file', 'log_file', 'events_log', 'status_file', 'process_state_file',
+        'stream_directory', 'record_directory') if getattr(run, name) is not None})
     pre_head = config.pre_spawn_head
     if not pre_head and git.repo_available(str(run.repo_root)):
         try:
@@ -341,13 +409,17 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
         except (OSError, subprocess.CalledProcessError):
             pre_head = ''
     config = replace(config,agent_run=run,state_file=state_file,pre_spawn_head=pre_head)
+    config_path = Path(str(state_file)+'.config.json')
     with DirectoryLock(state_file):
         old = _optional(state_file)
         if old:
             raise RuntimeError('existing worker state prohibits relaunch; inspect or create a new attempt')
-        write_json_atomic(state_file,{'schema_version':1,'state':'launching','run_id':run.run_id,'attempt_id':run.attempt_id})
-    config_path = Path(str(state_file)+'.config.json')
-    write_json_atomic(config_path,config.to_record())
+        expected = _preflight_paths(config)
+        write_json_atomic(state_file,{'schema_version':1,'state':'launching','run_id':run.run_id,'attempt_id':run.attempt_id,
+            'launcher_identity':{'pid':os.getpid(),'created_at':psutil.Process().create_time(),'host':socket.gethostname()}})
+        write_json_atomic(config_path,config.to_record())
+        write_json_atomic(outcome_path(state_file),pending_outcome(run_id=run.run_id,attempt_id=run.attempt_id,
+            issue=str(run.issue),role=run.role,state_file=state_file,expected_artifacts=expected))
     if not config.detach:
         return _work(config)
     supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
@@ -366,10 +438,14 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     deadline = time.monotonic()+config.bootstrap_seconds+probe_seconds+10
     while time.monotonic()<deadline:
         state = _optional(state_file)
-        if state.get('state') in ('running','quiet','stalled','completed','failed','artifact-recovery-required'):
+        if state.get('state') in ('running','quiet','stalled'):
             return WorkerResult(state['state'],int(state.get('return_code',0)),state_file,state.get('reason',''),state.get('provider_identity'))
         if supervisor.inspect(owned.identity).state=='dead':
-            break
+            # A terminal state can precede DONE or fail its publication. Only
+            # dead-wrapper adoption replays the complete publication contract.
+            if owned.close().state != 'dead':
+                return _unknown_attempt(config,'shutdown-identity-unknown',state.get('provider_identity'))
+            return adopt_worker(state_file)
         time.sleep(min(.03,config.poll_seconds))
     # Admission may be incomplete. Stop both nested provider and wrapper; never
     # authorize another attempt merely because the handshake timed out.
@@ -379,68 +455,341 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     # current provider identity before classifying this attempt as retryable.
     provider_stop = _stop_provider(config)
     state = _optional(state_file)
-    if wrapper_stop.state != 'dead' or provider_stop.state != 'dead':
-        state.update(state='unknown',return_code=3,reason='shutdown-identity-unknown')
-        write_json_atomic(state_file,state)
-        return WorkerResult('unknown',3,state_file,'shutdown-identity-unknown',state.get('provider_identity'))
-    state.update(state='failed',return_code=1,reason='dispatch-bootstrap-failed')
-    write_json_atomic(state_file,state)
-    return WorkerResult('failed',1,state_file,'dispatch-bootstrap-failed')
+    process, _ = _provider_record(config)
+    if wrapper_stop.state != 'dead' or (process and provider_stop.state != 'dead'):
+        return _unknown_attempt(config,'shutdown-identity-unknown',state.get('provider_identity'))
+    return adopt_worker(state_file)
+
+
+def _provider_record(config):
+    """Resolve a lost handshake through the exclusive supervisor record."""
+    run = config.agent_run
+    supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
+    process = _process_record(config)
+    if not process.get('identity'):
+        raw = supervisor.lookup_attempt(run.run_id, run.attempt_id)
+        if raw is not None:
+            process = {**raw, 'record_directory': str(supervisor.directory)}
+    elif process.get('record_directory'):
+        supervisor = ProcessSupervisor(Path(process['record_directory']))
+    if process.get('identity'):
+        identity = ProcessIdentity(**process['identity'])
+        if identity.run_id != run.run_id or identity.attempt_id != run.attempt_id:
+            raise ValueError('provider identity binding mismatch')
+    return process, supervisor
+
+
+def _unknown_attempt(config, reason, identity=None):
+    state = _optional(config.state_file)
+    state.update(state='unknown', return_code=3, reason=reason)
+    # A previous terminal hint cannot establish tree death after uncertainty.
+    state.pop('alive', None)
+    state.pop('completed_at', None)
+    write_json_atomic(Path(config.state_file), state)
+    return WorkerResult('unknown', 3, Path(config.state_file), reason, identity)
+
+
+def write_text_atomic(path, text):
+    """Publish DONE with the same replacement and fsync discipline as JSON."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                prefix=f'.{path.name}.', suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        replace_file_atomic(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _read_bound_outcome(config):
+    run = config.agent_run
+    missing = object()
+    payload = load_json(outcome_path(config.state_file), missing=missing)
+    if payload is not missing:
+        reason = outcome_reason(payload, run_id=run.run_id, attempt_id=run.attempt_id,
+            issue=str(run.issue), role=run.role, state_file=config.state_file,
+            expected_artifacts=expected_artifact_paths(config))
+        if reason:
+            raise ValueError(reason)
+    return None if payload is missing else payload
+
+
+def _safe_synthesis(config, reason):
+    """Only absent outputs may be reconstructed; never erase provider bytes."""
+    paths = expected_artifact_paths(config)
+    run = config.agent_run
+    # Review repair can overwrite both files. Preserve any malformed existing
+    # companion, and only use the existing repair rules for an absent output.
+    for path in paths.values():
+        if Path(path).exists():
+            payload, error = artifacts.load_json(path)
+            if error or not isinstance(payload, dict):
+                return False
+    if run.role == 'review':
+        if Path(paths['result']).exists() and Path(paths['review_instructions']).exists():
+            return False
+        if Path(paths['result']).exists():
+            payload, _ = artifacts.load_json(paths['result'])
+            if not artifacts.valid_review_status(payload):
+                return False
+        if Path(paths['review_instructions']).exists():
+            payload, _ = artifacts.load_json(paths['review_instructions'])
+            if not artifacts.valid_review_instructions(payload):
+                return False
+    elif Path(paths['result']).exists():
+        return False
+    args = _artifact_args(config, from_stall=reason in ('interrupted','hard-limit-exceeded','dispatch-timeout'))
+    if run.role in ('impl','modify') and config.pre_spawn_head and git.repo_available(str(run.repo_root)):
+        try:
+            args.from_stall = args.from_stall or git.current_head(str(run.repo_root)) != config.pre_spawn_head
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return any(function(args) for function in (artifacts.synthesize_implementation,
+        artifacts.synthesize_review, artifacts.synthesize_complexity))
+
+
+def _availability_reason(config):
+    process, supervisor = _provider_record(config)
+    raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+    text = ''
+    for key, stream_key in (('stdout_file','stdout'),('stderr_file','stderr')):
+        path = process.get(key) or raw.get('spec',{}).get(stream_key)
+        if path:
+            with Path(path).open('rb') as stream:
+                stream.seek(max(0, Path(path).stat().st_size - 65536))
+                text += stream.read().decode('utf-8', errors='replace')
+    return classify_unavailable(text)
+
+
+def _launcher_state(state):
+    owner = state.get('launcher_identity')
+    if not isinstance(owner,dict) or owner.get('host') != socket.gethostname():
+        return 'unknown'
+    if type(owner.get('pid')) is not int or owner['pid'] <= 0 or type(owner.get('created_at')) not in (int,float) or not math.isfinite(owner['created_at']) or owner['created_at'] <= 0:
+        return 'unknown'
+    try:
+        process = psutil.Process(owner['pid'])
+        return 'dead' if process.create_time() != owner['created_at'] or process.status() == psutil.STATUS_ZOMBIE else 'alive'
+    except psutil.NoSuchProcess:
+        return 'dead'
+    except (OSError, psutil.AccessDenied):
+        return 'unknown'
+
+
+def _bound_stop_intent(config, state):
+    """A stop decision is durable provenance, not tree-death evidence."""
+    intent = state.get('stop_intent')
+    if intent is None:
+        return None
+    run = config.agent_run
+    binding = {'schema_version':1,'run_id':run.run_id,'attempt_id':run.attempt_id,
+        'issue':str(run.issue),'role':run.role,'state_file':canonical_path(config.state_file)}
+    if not isinstance(intent,dict) or any(intent.get(key) != value for key,value in binding.items()):
+        raise ValueError('stop-intent-binding-mismatch')
+    expected = {'hard-limit-exceeded':('failed',124),'dispatch-timeout':('failed',124),
+        'interrupted':('interrupted',130)}.get(intent.get('reason'))
+    if expected is None or (intent.get('status'),intent.get('worker_return_code')) != expected:
+        raise ValueError('invalid-stop-intent-decision')
+    if type(intent.get('schema_version')) is not int or type(intent.get('worker_return_code')) is not int or type(intent.get('recorded_at')) not in (float,int) or not math.isfinite(intent['recorded_at']) or intent['recorded_at'] < 0:
+        raise ValueError('invalid-stop-intent-schema')
+    process, _ = _provider_record(config)
+    if 'provider_identity' not in intent or (intent['provider_identity'] is not None and intent['provider_identity'] != process.get('identity')):
+        raise ValueError('stop-intent-provider-binding-mismatch')
+    return intent
+
+
+def _record_stop_intent(config, reason):
+    """Persist the forced decision before any signal can change process exit."""
+    run = config.agent_run
+    status, code = ('interrupted',130) if reason == 'interrupted' else ('failed',124)
+    with DirectoryLock(config.state_file):
+        state = load_json(Path(config.state_file))
+        if state.get('run_id') != run.run_id or state.get('attempt_id') != run.attempt_id:
+            raise ValueError('worker-state-binding-mismatch')
+        _read_bound_outcome(config)
+        _bound_stop_intent(config,state)
+        process, _ = _provider_record(config)
+        state['stop_intent'] = {'schema_version':1,'run_id':run.run_id,'attempt_id':run.attempt_id,
+            'issue':str(run.issue),'role':run.role,'state_file':canonical_path(config.state_file),
+            'recorded_at':time.time(),'reason':reason,'status':status,'worker_return_code':code,
+            'provider_identity':process.get('identity')}
+        write_json_atomic(Path(config.state_file),state)
+
+
+def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
+                      reason: str = '', failure_class: str = 'capability',
+                      prelaunch_failure: bool = False) -> WorkerResult:
+    """Journal one decision after callers prove owned death or no launch.
+
+    Outcome -> state -> DONE -> event. A storage failure propagates, retaining
+    the claim and any committed journal so adoption can repair publication.
+    """
+    run = config.agent_run
+    with DirectoryLock(config.state_file):
+        state = load_json(Path(config.state_file))
+        if any(key in state and state[key] != value for key, value in
+                (('run_id',run.run_id),('attempt_id',run.attempt_id))):
+            return WorkerResult('unknown',3,Path(config.state_file),'worker-state-binding-mismatch')
+        try:
+            previous = _read_bound_outcome(config)
+            stop_intent = _bound_stop_intent(config,state)
+        except (ValueError, TypeError):
+            return WorkerResult('unknown',3,Path(config.state_file),'invalid-or-conflicting-outcome')
+        if provider_return_code is None and not prelaunch_failure:
+            return WorkerResult('unknown',3,Path(config.state_file),'provider-exit-status-unknown')
+        terminal = previous is not None and previous['status'] != 'pending'
+        if terminal:
+            # Only runtime stop reasons change the provider's actual exit code.
+            if previous['reason'] in ('interrupted','hard-limit-exceeded','dispatch-timeout','dispatch-bootstrap-failed'):
+                reason = previous['reason']
+            elif prelaunch_failure:
+                reason = reason or previous['reason']
+            if previous['failure_class'] == 'infrastructure':
+                reason = reason or _availability_reason(config)
+                failure_class = 'infrastructure'
+        if stop_intent:
+            reason = stop_intent['reason']
+        payload, error = artifacts.load_json(str(run.result_file))
+        typed = isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure'
+        status, issue_outcome = 'failed', None
+        if typed:
+            invalid = artifacts.role_failure_reason(payload, issue=str(run.issue), role=run.role,
+                run_id=run.run_id, attempt_id=run.attempt_id)
+            if invalid:
+                reason, code = invalid, provider_return_code or 1
+            else:
+                status, reason = payload['status'], payload['reason']
+                code = 130 if status == 'interrupted' else provider_return_code or 1
+        else:
+            artifact_reason = _artifact_reason(config)
+            if artifact_reason and not terminal and not prelaunch_failure:
+                _safe_synthesis(config, reason)
+                artifact_reason = _artifact_reason(config)
+            if artifact_reason == 'artifact-recovery-required':
+                reason, code = artifact_reason, 75
+            elif prelaunch_failure:
+                reason = reason or 'dispatch-bootstrap-failed'
+                code = 127 if reason == 'missing-command' else 1
+            elif reason == 'interrupted':
+                status, code = 'interrupted', 130
+            elif reason in ('hard-limit-exceeded','dispatch-timeout'):
+                code = 124
+            else:
+                reason = reason or artifact_reason
+                code = provider_return_code or (1 if reason else 0)
+                if code and not reason:
+                    reason = 'provider-exit-nonzero'
+                if not code:
+                    status = 'success'
+                    if run.role in ('sub-coord','merge-recovery') and isinstance(payload,dict):
+                        issue_outcome = payload.get('outcome')
+        if stop_intent and not (not typed and code == 75 and reason == 'artifact-recovery-required'):
+            # Provider reports remain untouched, but cannot erase a forced stop.
+            status, code, reason = (stop_intent['status'],stop_intent['worker_return_code'],stop_intent['reason'])
+            issue_outcome = None
+        decision = {'status':status,'provider_return_code':provider_return_code,
+            'worker_return_code':code,'reason':reason,'failure_class':failure_class}
+        if issue_outcome:
+            decision['issue_outcome'] = issue_outcome
+        if terminal:
+            if any(previous.get(key) != value for key,value in decision.items()) or previous.get('issue_outcome') != issue_outcome:
+                return WorkerResult('unknown',3,Path(config.state_file),'conflicting-terminal-outcome')
+            outcome = previous
+        else:
+            outcome = previous or pending_outcome(run_id=run.run_id,attempt_id=run.attempt_id,
+                issue=str(run.issue),role=run.role,state_file=config.state_file,
+                expected_artifacts=expected_artifact_paths(config))
+            outcome = {**outcome, **decision, 'finished_at':time.time()}
+            write_json_atomic(outcome_path(config.state_file),outcome)
+        worker_state = ('completed' if status == 'success' else 'interrupted' if status == 'interrupted'
+            else 'artifact-recovery-required' if not typed and code == 75 and reason == 'artifact-recovery-required' else 'failed')
+        process, _ = _provider_record(config)
+        state.update(state=worker_state,return_code=code,exit_code=code,reason=reason,
+            completed_at=outcome['finished_at'],alive=False,provider_identity=process.get('identity'),
+            failure_class=failure_class)
+        write_json_atomic(Path(config.state_file),state)
+        if run.done_file:
+            fields = {'issue':run.issue,'role':run.role,'agent':run.agent,'model':run.model,
+                'status':status,'source':'dispatcher','scope':'role-handoff',
+                'run_id':run.run_id,'attempt_id':run.attempt_id,'completed_at':outcome['finished_at']}
+            if issue_outcome:
+                fields['issue_outcome'] = issue_outcome
+            write_text_atomic(run.done_file, 'DONE|' + '|'.join(f'{key}={normalize(value)}' for key,value in fields.items()) + '\n')
+        bus = EventBus(status_file=run.status_file,events_log=run.events_log,log_file=run.log_file)
+        bus.emit('dispatch-complete' if worker_state=='completed' else 'dispatch-recovery-required' if worker_state=='artifact-recovery-required' else 'dispatch-failed',
+            {'issue':run.issue,'role':run.role,'status':worker_state,'reason':reason,
+             'result_file':str(run.result_file),'run_id':run.run_id,'attempt_id':run.attempt_id})
+        return WorkerResult(worker_state,code,Path(config.state_file),reason,process.get('identity'))
 
 
 def adopt_worker(state_file) -> WorkerResult:
-    """Reconcile an admitted attempt after dispatcher loss; never launch work."""
-    state_file=Path(state_file)
-    config=WorkerConfig.from_record(load_json(Path(str(state_file)+'.config.json')))
-    state=load_json(state_file)
-    process=_process_record(config)
-    if not process.get('identity'):
-        if state.get('state') in ('failed','artifact-recovery-required'):
-            return WorkerResult(state['state'],int(state.get('return_code',1)),state_file,state.get('reason',''))
-        return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
-    identity=ProcessIdentity(**process['identity'])
-    supervisor=ProcessSupervisor(Path(process['record_directory']))
-    liveness=supervisor.inspect(identity)
-    if liveness.state!='dead':
-        return WorkerResult('running' if liveness.state=='alive' else 'unknown',0 if liveness.state=='alive' else 3,
-                            state_file,liveness.reason,process['identity'])
-    if state.get('state') in ('completed','failed','artifact-recovery-required'):
-        return WorkerResult(state['state'],int(state.get('return_code',1)),state_file,state.get('reason',''),process['identity'])
-    wrapper=_optional(Path(str(state_file)+'.dispatcher.process.json'))
-    if wrapper.get('identity'):
-        owner_status=ProcessSupervisor(Path(wrapper['record_directory'])).inspect(ProcessIdentity(**wrapper['identity']))
-        if owner_status.state!='dead':
-            return WorkerResult('running' if owner_status.state=='alive' else 'unknown',0 if owner_status.state=='alive' else 3,state_file,'dispatcher-finalizing',process['identity'])
-    code=supervisor.return_code(identity)
-    exit_deadline=time.monotonic()+.5
-    while code is None and time.monotonic()<exit_deadline:
-        time.sleep(.02)
-        code=supervisor.return_code(identity)
-    if code is None:
-        return WorkerResult('unknown',3,state_file,'provider-exit-status-unknown',process['identity'])
-    run=config.agent_run
-    reason=_artifact_reason(config)
-    if reason:
-        args=_artifact_args(config)
-        # A confirmed committed HEAD can be reconstructed after wrapper loss,
-        # but adoption never commits an unverified dirty tree.
-        if run.role in ('impl','modify') and config.pre_spawn_head and git.repo_available(str(run.repo_root)):
-            try:
-                args.from_stall=git.current_head(str(run.repo_root))!=config.pre_spawn_head
-            except (OSError, subprocess.CalledProcessError):
-                args.from_stall=False
-        any(function(args) for function in (artifacts.synthesize_implementation,artifacts.synthesize_review,artifacts.synthesize_complexity))
-        reason=_artifact_reason(config)
-    final='artifact-recovery-required' if reason=='artifact-recovery-required' else 'failed' if code or reason else 'completed'
-    code=75 if final=='artifact-recovery-required' else code or (1 if reason else 0)
-    with DirectoryLock(state_file):
-        latest=load_json(state_file)
-        latest.update(state=final,return_code=code,exit_code=code,reason=reason,alive=False,completed_at=time.time(),provider_identity=process['identity'])
-        write_json_atomic(state_file,latest)
-    EventBus(status_file=run.status_file,events_log=run.events_log,log_file=run.log_file).emit(
-        'dispatch-complete' if final=='completed' else 'dispatch-recovery-required' if final=='artifact-recovery-required' else 'dispatch-failed',
-        {'issue':run.issue,'role':run.role,'status':final,'reason':reason,'source':'dispatcher-adoption'})
-    return WorkerResult(final,code,state_file,reason,process['identity'])
+    """Reconcile only after provider and dispatcher death; never launch work."""
+    state_file = Path(state_file)
+    config = WorkerConfig.from_record(load_json(Path(str(state_file)+'.config.json')))
+    if canonical_path(config.state_file) != canonical_path(state_file) or (config.agent_run.state_file is not None and canonical_path(config.agent_run.state_file) != canonical_path(state_file)):
+        return WorkerResult('unknown',3,state_file,'worker-config-state-binding-mismatch')
+    state = load_json(state_file)
+    try:
+        journal = _read_bound_outcome(config)
+        _bound_stop_intent(config,state)
+        process, supervisor = _provider_record(config)
+        run = config.agent_run
+        wrapper = _optional(Path(str(state_file)+'.dispatcher.process.json'))
+        if not wrapper.get('identity'):
+            raw = supervisor.lookup_attempt(run.run_id+'-dispatcher',run.attempt_id)
+            if raw is not None:
+                wrapper = {**raw,'record_directory':str(supervisor.directory)}
+        if wrapper:
+            if not wrapper.get('identity'):
+                return WorkerResult('unknown',3,state_file,'dispatcher-launch-identity-unknown')
+            identity = ProcessIdentity(**wrapper['identity'])
+            if identity.run_id != run.run_id+'-dispatcher' or identity.attempt_id != run.attempt_id:
+                raise ValueError('dispatcher identity binding mismatch')
+            owner = ProcessSupervisor(Path(wrapper['record_directory'])).inspect(identity)
+            if owner.state != 'dead':
+                return WorkerResult('running' if owner.state=='alive' else 'unknown',
+                    0 if owner.state=='alive' else 3,state_file,'dispatcher-finalizing',process.get('identity'))
+        if not process.get('identity'):
+            if process:
+                return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
+            if not wrapper:
+                launcher = _launcher_state(state)
+                if launcher != 'dead':
+                    return WorkerResult('running' if launcher=='alive' else 'unknown',
+                        0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher)
+                if state.get('state') not in ('launching','starting') and state.get('reason') not in ('dispatch-bootstrap-failed','missing-command','cli-unsupported'):
+                    return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
+            return _finalize_attempt(config,provider_return_code=None,
+                reason=state.get('reason') or 'dispatch-bootstrap-failed',
+                failure_class=state.get('failure_class','capability'),prelaunch_failure=True)
+        identity = ProcessIdentity(**process['identity'])
+        liveness = supervisor.inspect(identity)
+        if liveness.state != 'dead':
+            return WorkerResult('running' if liveness.state=='alive' else 'unknown',
+                0 if liveness.state=='alive' else 3,state_file,liveness.reason,process['identity'])
+        if not wrapper and (journal is None or journal['status']=='pending'):
+            launcher = _launcher_state(state)
+            if launcher != 'dead':
+                return WorkerResult('running' if launcher=='alive' else 'unknown',
+                    0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher,process['identity'])
+        code = supervisor.return_code(identity)
+        exit_deadline = time.monotonic()+.5
+        while code is None and time.monotonic()<exit_deadline:
+            time.sleep(.02)
+            code = supervisor.return_code(identity)
+        if code is None:
+            return WorkerResult('unknown',3,state_file,'provider-exit-status-unknown',process['identity'])
+        reason = _availability_reason(config) if code else ''
+        return _finalize_attempt(config,provider_return_code=code,reason=reason,
+            failure_class='infrastructure' if reason else 'capability')
+    except (ValueError,TypeError,KeyError) as error:
+        return WorkerResult('unknown',3,state_file,str(error))
 
 
 def _detached(path):

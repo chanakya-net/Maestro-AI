@@ -76,3 +76,25 @@ def test_sdist_rebuild_and_installed_entrypoints_outside_checkout(distributions,
         metadata = run(python, "-c", 'from importlib.metadata import version; print(version("ai-skills"))', cwd=work, env=env).stdout.strip()
         assert version == f"ai-skills {metadata}"
     assert list(work.iterdir()) == []
+
+
+def test_installed_managed_payload_loads_shared_protocol_outside_checkout(distributions, tmp_path):
+    wheel=next(distributions.glob('*.whl'))
+    target=tmp_path/'installed'
+    run(sys.executable,'-m','pip','install','--no-deps','--target',target,wheel,cwd=tmp_path)
+    work=tmp_path/'unrelated';work.mkdir()
+    script='''from pathlib import Path
+from ai_skills.runner import AgentRunConfig, _payload
+from ai_skills.resources import resource_path
+Path('context.md').write_text('task')
+Path('prompt.md').write_text('role')
+config=AgentRunConfig(agent='fixture',model='fixture',repo_root=Path.cwd(),prompt_file=Path('prompt.md'),context_file=Path('context.md'),state_file=Path('worker.state.json'),result_file=Path('result.json'),role='impl',issue='7',run_id='run-7',attempt_id='attempt-1',dispatcher_managed=True)
+payload=_payload(config)
+assert payload.count('# Managed artifact protocol')==1
+assert 'artifact_kind="role_failure"' in payload
+assert resource_path('artifact-protocol.md').is_file()
+assert 'Authoritative attempt metadata:' in payload
+assert 'run-7' in payload
+'''
+    env=dict(os.environ,PYTHONPATH=str(target))
+    run(sys.executable,'-c',script,cwd=work,env=env)

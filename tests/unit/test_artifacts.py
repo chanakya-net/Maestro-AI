@@ -12,6 +12,70 @@ import subprocess
 import pytest
 from ai_skills import artifacts
 
+
+def role_failure(**patch):
+    return dict({'schema_version':1, 'artifact_kind':'role_failure', 'run_id':'run-7',
+                 'attempt_id':'attempt-1', 'issue':'7', 'role':'impl', 'status':'failed',
+                 'reason':'tests-failed', 'summary':'The tests did not pass.'}, **patch)
+
+
+@pytest.mark.parametrize('status', ['failed','blocked','interrupted'])
+def test_failure_writer_accepts_failure_without_commit(tmp_path, monkeypatch, status):
+    monkeypatch.setenv('RUN_WITH_IT_DISPATCHER_MANAGED','1')
+    monkeypatch.setenv('RUN_WITH_IT_RUN_ID','run-7')
+    monkeypatch.setenv('RUN_WITH_IT_ATTEMPT_ID','attempt-1')
+    monkeypatch.setenv('RUN_WITH_IT_ROLE','impl')
+    monkeypatch.setenv('RUN_WITH_IT_ISSUE','7')
+    payload=tmp_path/'payload.json'; payload.write_text(json.dumps(role_failure(status=status)))
+    result=tmp_path/'result.json'
+    assert artifacts.main(['write-json','--role','impl','--issue','7','--payload-file',str(payload),'--result-file',str(result)]) == 0
+    assert json.loads(result.read_text()) == role_failure(status=status)
+    # Failure publication is never accepted as successful substantive work.
+    assert not validate_artifact('impl',json.loads(result.read_text()),GitEvidence(issue='7')).valid
+
+
+@pytest.mark.parametrize('patch', [
+    {'schema_version':2}, {'schema_version':True}, {'run_id':'other'}, {'attempt_id':'other'},
+    {'issue':'8'}, {'role':'review'}, {'status':'success'}, {'reason':' '}, {'summary':''},
+    {'verification':{'passed':True}}, {'verification':[]}, {'evidence':['ok',1]}, {'evidence':'log'},
+])
+def test_failure_validator_rejects_invalid_or_unbound_payload(patch):
+    assert artifacts.role_failure_reason(role_failure(**patch), issue='7', role='impl',run_id='run-7',attempt_id='attempt-1')
+
+
+def test_review_failure_needs_no_companion_and_writer_binds_managed_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv('RUN_WITH_IT_DISPATCHER_MANAGED','1')
+    monkeypatch.setenv('RUN_WITH_IT_RUN_ID','run-7')
+    monkeypatch.setenv('RUN_WITH_IT_ATTEMPT_ID','attempt-1')
+    monkeypatch.setenv('RUN_WITH_IT_ROLE','review')
+    monkeypatch.setenv('RUN_WITH_IT_ISSUE','7')
+    result=tmp_path/'review-status.json'; payload=tmp_path/'payload.json'
+    failure=role_failure(role='review',verification={'passed':False},evidence=['test.log'])
+    payload.write_text(json.dumps(failure))
+    arguments=['write-json','--role','review','--issue','7','--payload-file',str(payload),'--result-file',str(result)]
+    assert artifacts.main(arguments) == 0
+    assert not (tmp_path/'review-instructions.json').exists()
+    before=result.read_bytes()
+    payload.write_text(json.dumps(dict(failure,attempt_id='stale')))
+    assert artifacts.main(arguments) == 1
+    assert result.read_bytes() == before
+
+
+@pytest.mark.parametrize('key,value',[('RUN_WITH_IT_ROLE','review'),('RUN_WITH_IT_ISSUE','8')])
+def test_failure_writer_rejects_managed_role_and_issue_mismatch(tmp_path,monkeypatch,key,value):
+    for name, content in {'RUN_WITH_IT_DISPATCHER_MANAGED':'1','RUN_WITH_IT_RUN_ID':'run-7',
+        'RUN_WITH_IT_ATTEMPT_ID':'attempt-1','RUN_WITH_IT_ROLE':'impl','RUN_WITH_IT_ISSUE':'7',key:value}.items():
+        monkeypatch.setenv(name,content)
+    payload=tmp_path/'payload.json';payload.write_text(json.dumps(role_failure()))
+    result=tmp_path/'result.json'
+    assert artifacts.main(['write-json','--role','impl','--issue','7','--payload-file',str(payload),'--result-file',str(result)]) == 1
+    assert not result.exists()
+
+
+@pytest.mark.parametrize('role',['sub-coord','artifact-recovery','merge-recovery'])
+def test_failure_payload_is_never_substantive_success_for_generic_roles(role):
+    assert not validate_artifact(role,role_failure(role=role),GitEvidence(issue='7')).valid
+
 BASE={"issue":"7","role":"impl","status":"success","commit_sha":"a"*40,"files_committed":["feature.txt"],"verification":{"passed":True}}
 EVIDENCE=GitEvidence(issue="7",repo_available=True,head="a"*40,pre_spawn_head="b"*40,canonical_commit="a"*40,canonical_pre_spawn_head="b"*40)
 
@@ -148,3 +212,32 @@ def test_planning_stage_requires_successful_matching_plan_and_markdown(patch,pre
     payload={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Implement the slice','complexity_level':'easy','slices':[{'id':1}]}
     payload.update(patch)
     assert validate_artifact('plan',payload,GitEvidence(issue='7',plan_file_present=present)).reason==reason
+
+
+@pytest.mark.parametrize('role', ['sub-coord', 'merge-recovery'])
+@pytest.mark.parametrize('payload', [None, {}, {'outcome':'surprise','summary':'x'},
+    {'outcome':'blocked','summary':'x'}, {'outcome':'blocked','summary':'x','blocking_reasons':[]},
+    {'outcome':'blocked','summary':'x','blocking_reasons':['']},
+    {'outcome':'blocked','summary':'x','blocking_reasons':[1]},
+    {'outcome':'completed','summary':' '}, {'outcome':['completed'],'summary':'x'}])
+def test_terminal_coordinator_reports_fail_closed(role, payload):
+    assert not validate_artifact(role, payload, GitEvidence(issue='7')).valid
+
+
+@pytest.mark.parametrize('outcome', ['completed','blocked','failed-review','merge_failed','failed-merge'])
+def test_supported_subcoordinator_terminal_reports(outcome):
+    payload={'outcome':outcome,'summary':'Concrete terminal explanation', 'blocking_reasons':['test failure']}
+    assert validate_artifact('sub-coord', payload, GitEvidence(issue='7')).valid
+
+
+@pytest.mark.parametrize('outcome', ['completed','blocked','failed-merge'])
+def test_supported_merge_recovery_terminal_reports(outcome):
+    assert validate_artifact('merge-recovery', {'outcome':outcome,'summary':'Recovery stopped',
+        'blocking_reasons':['verification failed']}, GitEvidence(issue='7')).valid
+
+
+def test_coordinator_writer_rejects_malformed_report_atomically(tmp_path):
+    source=tmp_path/'payload.json';source.write_text(json.dumps({'outcome':'blocked','summary':'No reason'}))
+    target=tmp_path/'report.json'
+    assert artifacts.main(['write-json','--role','sub-coord','--issue','7','--payload-file',str(source),'--result-file',str(target)]) == 1
+    assert not target.exists()

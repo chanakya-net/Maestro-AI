@@ -1,9 +1,11 @@
 # Sub-Coordinator Instructions
 
+For dispatcher-managed attempts, follow the appended `artifact-protocol.md`: publish failure even without a commit. Managed DONE is dispatcher-owned; publish your role report and leave terminal markers to the dispatcher.
+
 <!-- NATIVE_AUTHORITY_START: keep this compaction-safe authority block synchronized in all four coordinator documents. -->
 - **Authority after compaction:** re-read maintained rules, main/issue state, exact worker identities and role artifacts from disk; never reconstruct a paid attempt from memory or logs.
 - **Independent selectors:** `SUB_COORD_AGENT` / `SUB_COORD_MODEL` select only the Sub-Coordinator. `FORCED_AGENT` / `FORCED_MODEL` select routed workers only when explicitly requested; ambient aliases never cross that boundary.
-- **Verification and artifacts:** a done hint, process exit, commit, log line or synthesized artifact never proves verified success. Require role-valid machine artifacts and passing verification; preserve unverified work as `artifact-recovery-required`.
+- **Verification and artifacts:** consume the validated outcome bound to the exact attempt, never raw process success. Managed DONE is dispatcher-owned after shutdown and report validation. Success requires role-valid artifacts and passing verification; failed/blocked/interrupted attempts publish failure even without a commit via the shared `artifact-protocol.md`. Negative coordinator issue outcomes are valid handoffs and never satisfy dependencies.
 - **Check-in ownership:** implementation/modification workers commit only in their assigned issue worktree; Sub-Coordinators coordinate and own normal merge attempts; Main owns intake/state/GitHub; merge recovery owns conflict resolution.
 - **Availability and review:** keep cumulative unavailable-route exclusions and separate infrastructure/capability budgets. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
 - **Identity and recovery:** a live or unknown owned attempt is never relaunched. Persist in-flight identities before compaction handoff; stop pool admission and verify every owned tree is dead before destructive cleanup.
@@ -759,14 +761,14 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 - `.run-with-it/issues/<n>/workers/modify/cycle-<cycle>.done`
 - `.run-with-it/issues/<n>/workers/artifact-recovery/cycle-<cycle>-<role>-recovery.done`
 
-The worker may write this file when its required artifacts are complete. The native dispatcher delegates stale sentinel cleanup and fallback `DONE|...|source=runner-exit` writes to `ai-skills agent run`. Treat the done file as a phase-transition hint only after required output artifacts are valid:
+The dispatcher alone writes managed DONE after report validation and confirmed owned-tree shutdown. The worker never writes it. Consume the bound validated outcome and required success artifacts before a successful phase transition:
 
-- complexity: valid `COMPLEXITY|` line and JSON blob are available from the worker stream/log
+- complexity: the required machine-readable score JSON validates; logs are diagnostic only
 - plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `ai-skills artifact failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
 - impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `ai-skills artifact`
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
-When a valid done file and valid artifacts are both present, emit `STATUS|type=worker-done|issue=<n>|role=<role>|phase=<phase>|source=<agent|runner-exit>` to `$SUB_COORD_LOG_FILE` and the live status bus, then proceed to the next phase. Do not wait for unrelated CLI cleanup once the role's required artifacts are valid.
+Advance only after dispatcher finalization records a validated success and owned-tree cleanup is complete. Do not emit duplicate worker-done events. Typed role failures follow the existing bounded role recovery; failure needs no success companions. A valid negative coordinator issue report is a successful report handoff, not issue completion.
 
 ### Compact Report JSON (MANDATORY)
 
@@ -866,7 +868,7 @@ For `blocked` outcomes caused by worker artifact failures, `evidence` is mandato
 - `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<missing-result-artifact|invalid-result-artifact|process-exited-missing-done-or-result|alive-but-silent>|action=<retry|artifact-recovery|blocked>`
 - `STATUS|type=worker-artifact-recovery|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|dirty=<true|false>|patch_file=<path-or-none>|status_file=<path-or-none>`
 - `STATUS|type=artifact-recovery-result|issue=<n>|failed_role=<impl|modify>|cycle=<n>|decision=<synthesized-result|requeue|blocked>|result_file=<path>`
-- `STATUS|type=agent-complete|issue=<n>|role=<complexity|plan|impl|review|modify|artifact-recovery>|agent=<name>|model=<model-id>|status=<success|failed>`
+- `STATUS|type=provider-exit|issue=<n>|role=<role>|agent=<name>|model=<model-id>|return_code=<n>` — process observation only; use the bound validated outcome and dispatcher finalization for phase transitions
 - `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 - `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 - `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`

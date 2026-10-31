@@ -158,7 +158,7 @@ def test_plan_example_is_a_valid_nonempty_plan_and_remains_read_only():
     assert 'Do NOT run tests' in text
     assert 'Do NOT edit, stage, or commit any code' in text
     assert 'plan.json' in text and 'plan.md' in text
-    assert 'then the done sentinel' in text
+    assert 'dispatcher validates both before publishing managed DONE' in text
 
 
 def test_review_schema_vocabulary_matches_runtime_and_includes_plan_coverage():
@@ -227,7 +227,7 @@ def test_modifier_verification_and_noop_baseline_are_scoped_to_review_cycle():
     assert 'caused by the reviewed change before reporting completion' in text
     assert 'applies only to failures outside those required commands' in text
     assert 'verification.passed=true' in text
-    assert 'If tests outside your assigned scope are failing, fix them' in resource('prompt.md')
+    assert 'If a required gate stays red, publish the shared protocol failed or blocked report' in resource('prompt.md')
 
 
 @pytest.mark.parametrize('name',['save-tokens','tdd-implementation'])

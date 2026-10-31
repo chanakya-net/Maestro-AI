@@ -230,3 +230,172 @@ def test_intent_only_restart_restores_persisted_worker_overrides_and_current_env
     assert launches[0]['run_root'] == str(tmp_path)
     assert launches[0]['current_env'] == 'current-secret-only'
     assert 'current-secret-only' not in Path(config.state_file).read_text()
+
+
+def test_claim_only_restart_finalizes_through_bound_outcome(tmp_path):
+    config,supervisor,worker=prepared_intent(tmp_path)
+    write_json_atomic(worker.state_file,{'state':'launching','run_id':worker.agent_run.run_id,'attempt_id':worker.agent_run.attempt_id,
+        'launcher_identity':{'pid':999999999,'created_at':1,'host':socket.gethostname()}})
+    result=reconcile_attempts(supervisor.read(),EmptyProcesses(tmp_path))
+    assert result.finished['1'].reason=='dispatch-bootstrap-failed'
+    outcome=load_json(Path(str(worker.state_file)+'.outcome.json'))
+    assert outcome['status']=='failed' and outcome['provider_return_code'] is None
+    assert outcome['worker_return_code']==1
+    assert 'status=failed' in Path(worker.agent_run.done_file).read_text()
+
+
+def test_terminal_state_without_provider_proof_is_not_pool_completion(tmp_path):
+    config,supervisor,worker=prepared_intent(tmp_path)
+    write_json_atomic(worker.state_file,{'state':'completed','return_code':0})
+    result=reconcile_attempts(supervisor.read(),EmptyProcesses(tmp_path))
+    assert '1' in result.unknown and not result.finished and not result.launchable
+
+
+@pytest.mark.parametrize('stage',['claim','config','pending'])
+def test_dead_launcher_reconciles_each_prelaunch_publication_stage(tmp_path,stage):
+    from ai_skills.outcomes import pending_outcome
+    from ai_skills.dispatch import expected_artifact_paths
+    config,supervisor,worker=prepared_intent(tmp_path)
+    write_json_atomic(worker.state_file,{'state':'launching','run_id':worker.agent_run.run_id,'attempt_id':worker.agent_run.attempt_id,
+        'launcher_identity':{'pid':999999999,'created_at':1,'host':socket.gethostname()}})
+    if stage!='claim':write_json_atomic(Path(str(worker.state_file)+'.config.json'),worker.to_record())
+    if stage=='pending':
+        run=worker.agent_run
+        write_json_atomic(Path(str(worker.state_file)+'.outcome.json'),pending_outcome(run_id=run.run_id,attempt_id=run.attempt_id,
+            issue=run.issue,role=run.role,state_file=worker.state_file,expected_artifacts=expected_artifact_paths(worker)))
+    result=reconcile_attempts(supervisor.read(),EmptyProcesses(tmp_path))
+    assert not result.launchable and not result.unknown and not result.active
+    assert (result.finished['1'].state,result.finished['1'].return_code,result.finished['1'].reason)==('failed',1,'dispatch-bootstrap-failed')
+    assert load_json(Path(str(worker.state_file)+'.outcome.json'))['status']=='failed'
+
+
+def test_unknown_launcher_reconciliation_never_finalizes_or_relaunches(tmp_path):
+    config,supervisor,worker=prepared_intent(tmp_path)
+    write_json_atomic(worker.state_file,{'state':'launching','run_id':worker.agent_run.run_id,'attempt_id':worker.agent_run.attempt_id,
+        'launcher_identity':{'pid':999999999,'created_at':1,'host':'unreachable-host'}})
+    result=reconcile_attempts(supervisor.read(),EmptyProcesses(tmp_path))
+    assert '1' in result.unknown and not result.finished and not result.launchable
+    assert not Path(str(worker.state_file)+'.outcome.json').exists()
+
+
+class PoolTransitionCrash(RuntimeError):
+    pass
+
+
+def real_failed_pool_worker(tmp_path, monkeypatch, *, role='sub-coord', allow_recovery=False):
+    from ai_skills.dispatch import dispatch_worker
+    from pool_support import real_pool_fixture
+    import ai_skills.pool as pool
+    config=replace(real_pool_fixture(tmp_path,delay=0),max_recovery_attempts=2 if allow_recovery else 0)
+    script=tmp_path/'provider.py'
+    source=script.read_text()
+    start=source.index('result.write_text(json.dumps(')
+    end=source.index("\nprint('STATUS",start)
+    replacement="""report={'outcome':'completed','summary':'recovered fixture','verification':{'passed':True}}
+if not recovery:
+    report={'schema_version':1,'artifact_kind':'role_failure','run_id':os.environ['RUN_WITH_IT_RUN_ID'],'attempt_id':os.environ['RUN_WITH_IT_ATTEMPT_ID'],'issue':issue,'role':role,'status':'blocked','reason':'verification-unavailable','summary':'External verification is unavailable','verification':{'passed':False}}
+    (Path(os.environ['RUN_WITH_IT_ISSUE_DIR'])/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[]}))
+result.write_text(json.dumps(report))"""
+    script.write_text((source[:start]+replacement+source[end:]).replace("if not recovery:\n    report=", "if not recovery or role=='merge-recovery':\n    report="))
+    supervisor=PoolSupervisor(config);assert supervisor.initialize() is None
+    worker=replace(supervisor.worker('1',kind=role),detach=False)
+    supervisor._intent('1',worker)
+    result=dispatch_worker(worker)
+    assert result.state=='failed' and result.return_code==1
+    supervisor._registered('1',worker,result)
+    monkeypatch.setattr(pool,'update_github',lambda request:None)
+    return config,supervisor,worker
+
+
+@pytest.mark.parametrize('role',['sub-coord','merge-recovery'])
+@pytest.mark.parametrize('stage',['report-write','report-published','finalize-before','finalize-after'])
+def test_real_failed_handoff_policy_transition_restarts_without_rebinding_artifact(tmp_path,monkeypatch,role,stage):
+    import ai_skills.pool as pool
+    from ai_skills.dispatch import adopt_worker
+    config,first,worker=real_failed_pool_worker(tmp_path,monkeypatch,role=role)
+    original=Path(worker.agent_run.result_file).read_bytes()
+    original_journal=Path(str(worker.state_file)+'.outcome.json').read_bytes()
+    with monkeypatch.context() as patch:
+        if stage.startswith('report'):
+            actual=pool.write_json_atomic
+            def interrupted(path,payload):
+                if isinstance(payload,dict) and payload.get('summary') in ('Sub-coordinator recovery could not continue','Merge recovery report handoff failed'):
+                    if stage=='report-published':actual(path,payload)
+                    raise OSError('injected policy report storage boundary')
+                return actual(path,payload)
+            patch.setattr(pool,'write_json_atomic',interrupted)
+        else:
+            name='finalize_issue' if role=='sub-coord' else 'finalize_merge_recovery'
+            actual=getattr(pool.state_policy,name)
+            def interrupted(args):
+                if stage=='finalize-after':actual(args)
+                raise PoolTransitionCrash('injected pool finalization boundary')
+            patch.setattr(pool.state_policy,name,interrupted)
+        with pytest.raises((OSError,PoolTransitionCrash)):
+            first.tick()
+    assert Path(worker.agent_run.result_file).read_bytes()==original
+    assert Path(str(worker.state_file)+'.outcome.json').read_bytes()==original_journal
+    assert adopt_worker(worker.state_file).reason=='verification-unavailable'
+    assert run_pool(config).state=='pool-empty'
+    saved=first.read()
+    assert saved['issue_registry']['1']['status']=='blocked'
+    assert saved['pool_attempts']['1']['status']=='finalized'
+    assert len((tmp_path/'launches.log').read_text().splitlines())==1
+    selected=saved['issue_registry']['1']['report_file']
+    assert selected != str(worker.agent_run.result_file)
+    assert json.loads(Path(selected).read_text())['outcome']=='blocked'
+
+
+@pytest.mark.parametrize('stage',['intent-before','intent-after','quarantine-after','quarantine-storage'])
+def test_real_recovery_intent_precedes_shared_quarantine_and_restarts_once(tmp_path,monkeypatch,stage):
+    import ai_skills.pool as pool
+    from ai_skills.dispatch import adopt_worker
+    config,first,worker=real_failed_pool_worker(tmp_path,monkeypatch,allow_recovery=True)
+    original=Path(worker.agent_run.result_file).read_bytes()
+    with monkeypatch.context() as patch:
+        if stage.startswith('intent'):
+            actual=first._intent
+            def interrupted(issue,next_worker):
+                if stage=='intent-after':actual(issue,next_worker)
+                raise PoolTransitionCrash('injected next intent boundary')
+            patch.setattr(first,'_intent',interrupted)
+        else:
+            actual=pool.state_policy.quarantine_artifacts
+            def interrupted(*args):
+                if stage=='quarantine-storage':return None
+                actual(*args)
+                raise PoolTransitionCrash('injected quarantine boundary')
+            patch.setattr(pool.state_policy,'quarantine_artifacts',interrupted)
+        with pytest.raises((OSError,PoolTransitionCrash)):
+            first.tick()
+    saved=first.read()
+    if stage=='intent-before':
+        assert saved['pool_attempts']['1']['attempt_id']==worker.agent_run.attempt_id
+        assert Path(worker.agent_run.result_file).read_bytes()==original
+        assert adopt_worker(worker.state_file).reason=='verification-unavailable'
+    else:
+        assert saved['pool_attempts']['1']['attempt_id']!=worker.agent_run.attempt_id
+        assert saved['pool_attempts']['1']['status']=='launch-intent'
+    assert len((tmp_path/'launches.log').read_text().splitlines())==1
+    assert run_pool(config).state=='pool-empty'
+    assert first.read()['issue_registry']['1']['status']=='completed'
+    assert len((tmp_path/'launches.log').read_text().splitlines())==2
+    reports=list(Path(worker.agent_run.issue_dir).glob('recovery/predispatch-*/report.json'))
+    assert reports and any(path.read_bytes()==original for path in reports)
+
+
+def test_pending_policy_report_never_overrides_unknown_worker_journal(tmp_path,monkeypatch):
+    import ai_skills.pool as pool
+    config,first,worker=real_failed_pool_worker(tmp_path,monkeypatch)
+    with monkeypatch.context() as patch:
+        patch.setattr(first,'finalize',lambda *args,**kwargs:(_ for _ in ()).throw(PoolTransitionCrash('before policy finalization')))
+        with pytest.raises(PoolTransitionCrash):first.tick()
+    assert Path(str(worker.state_file)+'.policy-report.json').exists()
+    journal_path=Path(str(worker.state_file)+'.outcome.json')
+    journal=json.loads(journal_path.read_text());journal['attempt_id']='foreign'
+    write_json_atomic(journal_path,journal)
+    before=journal_path.read_bytes()
+    assert run_pool(config).state=='ownership-unknown'
+    assert journal_path.read_bytes()==before
+    assert first.read()['issue_registry']['1']['status']=='in_progress'
+    assert len((tmp_path/'launches.log').read_text().splitlines())==1

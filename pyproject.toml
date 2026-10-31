@@ -30,6 +30,7 @@ include = ["/pyproject.toml", "/README.md", "/LICENSE", "/explainer.html", "/src
 
 [tool.hatch.build.targets.wheel.force-include]
 "assets/agent-registry.json" = "ai_skills/data/agent-registry.json"
+"assets/artifact-protocol.md" = "ai_skills/data/artifact-protocol.md"
 "assets/artifact-recovery-prompt.md" = "ai_skills/data/artifact-recovery-prompt.md"
 "assets/complexity-prompt.md" = "ai_skills/data/complexity-prompt.md"
 "assets/coordinator-rules.md" = "ai_skills/data/coordinator-rules.md"

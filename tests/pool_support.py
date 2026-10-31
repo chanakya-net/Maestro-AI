@@ -28,8 +28,16 @@ class FakePoolDriver:
             if outcome in ('crash','compaction'):
                 write_json_atomic(Path(config.agent_run.issue_dir)/'sub-state.json',{'phase':'impl','in_flight_agents':[], 'compaction_requested':outcome=='compaction'})
             else:
-                write_json_atomic(Path(config.agent_run.result_file),{'outcome':outcome,'summary':'fixture '+outcome,'verification':{'passed':outcome=='completed'},'blocking_reasons':[]})
+                write_json_atomic(Path(config.agent_run.result_file),{'outcome':outcome,'summary':'fixture '+outcome,'verification':{'passed':outcome=='completed'},'blocking_reasons':['fixture blocker'] if outcome=='blocked' else []})
             write_json_atomic(Path(path),{'state':'failed' if outcome in ('crash','compaction') else 'completed','return_code':1 if outcome in ('crash','compaction') else 0})
+        if outcome not in ('crash','compaction'):
+            from ai_skills.outcomes import pending_outcome, outcome_path, role_artifact_paths
+            import time
+            run=config.agent_run
+            journal=pending_outcome(run_id=run.run_id,attempt_id=run.attempt_id,issue=str(run.issue),role=run.role,
+                state_file=path,expected_artifacts=role_artifact_paths(role=run.role,result_file=run.result_file,issue_dir=run.issue_dir))
+            journal.update(status='success',finished_at=time.time(),provider_return_code=0,worker_return_code=0,issue_outcome=outcome)
+            write_json_atomic(outcome_path(path),journal)
         return WorkerResult('failed' if outcome in ('crash','compaction') else 'completed',1 if outcome in ('crash','compaction') else 0,Path(path))
 
 
@@ -73,7 +81,7 @@ if mode in ('crash','compaction') and not recovery:
     path.write_text(json.dumps({'phase':'impl','in_flight_agents':[],'compaction_requested':mode=='compaction'}))
     raise SystemExit(1)
 result=Path(os.environ['RUN_WITH_IT_RESULT_FILE']);result.parent.mkdir(parents=True,exist_ok=True)
-result.write_text(json.dumps({'outcome':'completed' if recovery else mode,'summary':'real fake provider','verification':{'passed':True,'evidence':'fixture'}}))
+result.write_text(json.dumps({'outcome':'completed' if recovery else mode,'summary':'real fake provider','verification':{'passed':True,'evidence':'fixture'},'blocking_reasons':['fixture blocker'] if mode=='blocked' and not recovery else []}))
 print('STATUS|type=heartbeat|issue='+issue+'|role='+role+'|progress=done',flush=True)
 ''')
     registry=tmp_path/'registry.json';registry.write_text(json.dumps({'agents':{'fake':{'invocation':{'command':sys.executable,'args_template':[str(script),'{{prompt}}']},'permission_modes':{'default':''},'model':{'default':'fixture','flag_template':''}}}}))

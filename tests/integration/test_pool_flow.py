@@ -178,3 +178,108 @@ def test_admission_deferrals_emit_only_on_change_outside_state_lock(tmp_path,mon
     deferrals=[line for line in events if 'type=pool-admission-deferred|' in line]
     assert len(deferrals)==1
     assert '|count=1|deferrals=2:concurrency-conflict-with-1' in deferrals[0]
+
+
+@pytest.mark.parametrize('outcome', ['blocked','failed-review','failed-merge'])
+def test_real_terminal_negative_report_handoff_never_satisfies_dependency_or_relaunches(tmp_path, monkeypatch, outcome):
+    from pool_support import real_pool_fixture
+    config=real_pool_fixture(tmp_path,mode=outcome)
+    state=json.loads(Path(config.state_file).read_text())
+    state['issue_registry']['2']={'status':'pending','deps':[1],'context_file':str(tmp_path/'context-1.md')}
+    state['execution_plan']['topo_order']=[1,2]
+    Path(config.state_file).write_text(json.dumps(state))
+    assert run_pool(config).state=='pool-empty'
+    state=json.loads(Path(config.state_file).read_text())
+    assert state['issue_registry']['1']['status']==outcome
+    assert state['issue_registry']['2']['status']=='pending'
+    launches=[json.loads(line) for line in (tmp_path/'launches.log').read_text().splitlines()]
+    assert len(launches)==1
+    worker=state['pool_attempts']['1']['worker_config']
+    journal=json.loads(Path(worker['state_file']+'.outcome.json').read_text())
+    assert journal['status']=='success' and journal['issue_outcome']==outcome
+    assert journal['worker_return_code']==0
+
+
+@pytest.mark.parametrize('mode', ['malformed-terminal','explicit-failure'])
+def test_failed_handoff_with_raw_completed_report_recovers_without_false_issue_completion(tmp_path, monkeypatch, mode):
+    from pool_support import real_pool_fixture
+    config=real_pool_fixture(tmp_path,mode=mode)
+    script=tmp_path/'provider.py'
+    source=script.read_text()
+    old="result.write_text(json.dumps({'outcome':'completed' if recovery else mode,'summary':'real fake provider','verification':{'passed':True,'evidence':'fixture'},'blocking_reasons':['fixture blocker'] if mode=='blocked' and not recovery else []}))"
+    new="""report={'outcome':'completed','summary':'real fake provider','verification':{'passed':True,'evidence':'fixture'}}
+if not recovery:
+    (Path(os.environ['RUN_WITH_IT_ISSUE_DIR'])/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[]}))
+    if mode=='malformed-terminal': report={'outcome':'completed'}
+    else: report.update(schema_version=1,artifact_kind='role_failure',run_id=os.environ['RUN_WITH_IT_RUN_ID'],attempt_id=os.environ['RUN_WITH_IT_ATTEMPT_ID'],issue=issue,role=role,status='blocked',reason='verification-unavailable',verification={'passed':False})
+result.write_text(json.dumps(report))"""
+    assert old in source
+    script.write_text(source.replace(old,new))
+    assert run_pool(config).state=='pool-empty'
+    launches=(tmp_path/'launches.log').read_text().splitlines()
+    assert len(launches)==2
+    state=json.loads(Path(config.state_file).read_text())
+    assert state['issue_registry']['1']['status']=='completed'
+    assert state['issue_registry']['1']['sub_coord_recovery_attempts']==1
+    reports=list((tmp_path/'.run-with-it/issues/1/recovery').rglob('report.json'))
+    assert reports and any(json.loads(path.read_text()).get('outcome')=='completed' for path in reports)
+
+
+@pytest.mark.parametrize('damage', ['missing','foreign-attempt','wrong-path'])
+def test_pool_never_consumes_unbound_success_sidecar(tmp_path, monkeypatch, damage):
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import write_json_atomic
+    config=pool_fixture(tmp_path,{1:{},2:{'deps':[1]}})
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    original=driver.adopt
+    def corrupted(path):
+        result=original(path)
+        journal_path=outcome_path(path)
+        if result.state=='completed':
+            journal=json.loads(journal_path.read_text())
+            if damage=='missing':journal_path.unlink()
+            elif damage=='foreign-attempt':
+                journal['attempt_id']='foreign';write_json_atomic(journal_path,journal)
+            else:
+                journal['expected_artifacts']['result']=str(tmp_path/'foreign.json');write_json_atomic(journal_path,journal)
+        return result
+    monkeypatch.setattr('ai_skills.pool.adopt_worker',corrupted)
+    assert run_pool(config).state=='ownership-unknown'
+    assert len(driver.started)==1
+    state=json.loads(Path(config.state_file).read_text())
+    assert state['issue_registry']['2']['status']=='pending'
+
+
+@pytest.mark.parametrize('role', ['sub-coord','merge-recovery'])
+def test_failed_dispatch_cannot_finalize_raw_completed_report(tmp_path, monkeypatch, role):
+    from ai_skills.dispatch import WorkerResult
+    config=pool_fixture(tmp_path,{1:{}})
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    supervisor=PoolSupervisor(config);supervisor.initialize()
+    worker=supervisor.worker('1',kind=role)
+    supervisor.launch('1',worker)
+    driver.adopt(worker.state_file)
+    monkeypatch.setattr('ai_skills.pool.adopt_worker',lambda path:WorkerResult('failed',1,Path(path),'provider-exit-nonzero'))
+    supervisor.tick()
+    state=supervisor.read()
+    assert state['issue_registry']['1']['status']=='blocked'
+    assert json.loads(Path(worker.agent_run.result_file).read_text())['outcome']=='completed'
+    policy=Path(state['issue_registry']['1']['report_file'])
+    assert policy != Path(worker.agent_run.result_file)
+    assert json.loads(policy.read_text())['outcome']=='blocked'
+
+
+def test_policy_report_storage_failure_never_overwrites_provider_bytes(tmp_path, monkeypatch):
+    from ai_skills.dispatch import WorkerResult
+    config=pool_fixture(tmp_path,{1:{}})
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    supervisor=PoolSupervisor(config);supervisor.initialize()
+    worker=supervisor.worker('1',kind='merge-recovery')
+    supervisor.launch('1',worker);driver.adopt(worker.state_file)
+    original=Path(worker.agent_run.result_file).read_bytes()
+    monkeypatch.setattr('ai_skills.pool.adopt_worker',lambda path:WorkerResult('failed',1,Path(path),'provider-exit-nonzero'))
+    monkeypatch.setattr(supervisor,'write_policy_report',lambda *args:(_ for _ in ()).throw(OSError('policy report storage failure')))
+    with pytest.raises(OSError,match='policy report storage'):
+        supervisor.tick()
+    assert Path(worker.agent_run.result_file).read_bytes()==original
+    assert len(driver.started)==1
