@@ -32,7 +32,7 @@ for name in ('one','two'):
         subprocess.run(argv, check=True)
     from ai_skills.processes import ProcessIdentity
     supervisor = Supervisor(tmp_path)
-    records = [json.loads(p.read_text()) for p in tmp_path.glob('*.json')]
+    records = supervisor.attempt_records()
     identities = [ProcessIdentity(**r['identity']) for r in records]
     assert len(identities) == 2
     try:
@@ -55,8 +55,8 @@ def test_owner_death_has_explicit_recovery(tmp_path, mode):
         members = json.loads(marker.read_text())
         if mode == 'exit-leader':
             wait_for(lambda: not alive(owned.identity.pid))
-        wait_for(lambda: len(json.loads(owned.record_path.read_text()).get('members', [])) >= (2 if mode == 'exit-leader' else 3))
-        owner_pid = json.loads(owned.record_path.read_text())['owner']['pid']
+        wait_for(lambda: len(supervisor.lookup_attempt('run', 'one').get('members', [])) >= (2 if mode == 'exit-leader' else 3))
+        owner_pid = supervisor.lookup_attempt('run', 'one')['owner']['pid']
         import psutil
         psutil.Process(owner_pid).kill()
         wait_for(lambda: not alive(owner_pid))
