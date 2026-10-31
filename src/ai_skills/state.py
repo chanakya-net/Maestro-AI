@@ -1086,18 +1086,23 @@ def issue_stage(entry: dict[str, Any], completed: set[int]) -> str:
             return "blocked:" + ",".join(pending) if pending else "queued"
         return "ready"
     if status == "in_progress":
-        sub_state_file = entry.get("sub_coord_state_file") or (
-            os.path.join(entry.get("issue_dir", ""), "sub-state.json") if entry.get("issue_dir") else ""
+        # Pool registration may point at dispatcher liveness rather than the
+        # coordinator's semantic state. Prefer explicit stage evidence, then
+        # consult the canonical coordinator state without changing ownership.
+        sub_state_files = (
+            entry.get("sub_coord_state_file"),
+            os.path.join(entry["issue_dir"], "sub-state.json") if entry.get("issue_dir") else "",
         )
-        sub = load_optional_json(sub_state_file)
-        phase = sub.get("phase") if isinstance(sub.get("phase"), str) else None
-        in_flight = sub.get("in_flight_agents") if isinstance(sub.get("in_flight_agents"), list) else []
-        if in_flight and isinstance(in_flight[0], dict):
-            role = in_flight[0].get("role") or phase or "running"
-            cycle = in_flight[0].get("cycle")
-            return f"{role}(cyc{cycle})" if isinstance(cycle, int) else str(role)
-        if phase:
-            return phase
+        for sub_state_file in sub_state_files:
+            sub = load_optional_json(sub_state_file)
+            phase = sub.get("phase") if isinstance(sub.get("phase"), str) else None
+            in_flight = sub.get("in_flight_agents") if isinstance(sub.get("in_flight_agents"), list) else []
+            if in_flight and isinstance(in_flight[0], dict):
+                role = in_flight[0].get("role") or phase or "running"
+                cycle = in_flight[0].get("cycle")
+                return f"{role}(cyc{cycle})" if isinstance(cycle, int) else str(role)
+            if phase:
+                return phase
         return "running"
     return str(status or "unknown")
 

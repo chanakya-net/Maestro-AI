@@ -9,6 +9,8 @@ from ai_skills import cli
 
 
 def test_existing_run_overrides_new_active_runtime(tmp_path, monkeypatch):
+    monkeypatch.delenv('AI_SKILLS_RUN_ROOT', raising=False)
+    monkeypatch.chdir(tmp_path)
     active = tmp_path / 'assets'
     active.mkdir()
     new_python = tmp_path / 'new-python'

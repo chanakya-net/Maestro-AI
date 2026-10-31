@@ -99,6 +99,65 @@ def test_read_only_status_and_unreachable_cone(tmp_path,capsys):
     assert "total=4" in capsys.readouterr().out
     assert path.read_bytes()==before
 
+@pytest.mark.parametrize("sub_state,expected",[
+    ({"phase":"plan","in_flight_agents":[{"role":"plan","cycle":1}]}, "plan(cyc1)"),
+    ({"phase":"impl","in_flight_agents":[{"role":"impl","cycle":2}]}, "impl(cyc2)"),
+    ({"phase":"impl","in_flight_agents":[]}, "impl"),
+])
+def test_status_boards_read_coordinator_stage_with_pool_worker_metadata(tmp_path,monkeypatch,capsys,sub_state,expected):
+    from ai_skills.pool import PoolSupervisor
+    from pool_support import pool_fixture,FakePoolDriver,install_fake
+
+    config=pool_fixture(tmp_path,{1:{}})
+    install_fake(monkeypatch,FakePoolDriver())
+    supervisor=PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    supervisor.launch("1")
+    entry=supervisor.read()["issue_registry"]["1"]
+    # Keep the actual pool registration: this path is dispatcher liveness,
+    # while the coordinator publishes its semantic stage under issue_dir.
+    assert Path(entry["sub_coord_state_file"]).name=="worker.state.json"
+    (Path(entry["issue_dir"])/"sub-state.json").write_text(json.dumps(sub_state))
+    before=config.state_file.read_bytes()
+
+    assert state.issue_stage(entry,set())==expected
+    command(config.state_file,"status-board","--oneline")
+    assert capsys.readouterr().out.strip()==f"#1 {expected}"
+    supervisor.board()
+    events=supervisor.config.events_log.read_text().splitlines()
+    assert [line for line in events if "type=run-board|" in line]==[
+        f"STATUS|type=run-board|board=#1 {expected}"]
+    assert config.state_file.read_bytes()==before
+
+@pytest.mark.parametrize("custom_state,expected",[
+    ({"phase":"review","in_flight_agents":[]}, "review"),
+    ({"in_flight_agents":[{"role":"modify","cycle":3}]}, "modify(cyc3)"),
+])
+def test_status_board_prefers_explicit_coordinator_stage(tmp_path,capsys,custom_state,expected):
+    custom=tmp_path/"custom-coordinator.json"
+    custom.write_text(json.dumps(custom_state))
+    (tmp_path/"sub-state.json").write_text(json.dumps({"phase":"plan"}))
+    path=state_file(tmp_path,{"7":{"status":"in_progress","issue_dir":str(tmp_path),
+        "sub_coord_state_file":str(custom)}})
+
+    command(path,"status-board","--oneline")
+    assert capsys.readouterr().out.strip()==f"#7 {expected}"
+
+@pytest.mark.parametrize("canonical_state",[None,"{","[]",'{"state":"running"}',
+    '{"phase":42,"in_flight_agents":[null]}'])
+def test_status_board_keeps_running_without_coordinator_stage(tmp_path,capsys,canonical_state):
+    worker=tmp_path/"worker.state.json"
+    worker.write_text(json.dumps({"state":"running","alive":True}))
+    if canonical_state is not None:
+        (tmp_path/"sub-state.json").write_text(canonical_state)
+    path=state_file(tmp_path,{"7":{"status":"in_progress","issue_dir":str(tmp_path),
+        "sub_coord_state_file":str(worker)}})
+    before=path.read_bytes()
+
+    command(path,"status-board","--oneline")
+    assert capsys.readouterr().out.strip()=="#7 running"
+    assert path.read_bytes()==before
+
 def test_compaction_handoff_does_not_spend_failure_budget(tmp_path):
     path=state_file(tmp_path,{"7":{"status":"in_progress","context_file":"original.md","sub_coord_recovery_attempts":2}})
     command(path,"mark-sub-coord-recovery-started","--issue",7,"--attempt",3,"--reason","sub-coordinator-context-exhausted","--context-file","recovery.md")
