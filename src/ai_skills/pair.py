@@ -300,21 +300,30 @@ class PairRun:
 
     def identities(self, record):
         """Read admission records directly, including pre-handshake crashes."""
-        proofs = []
-        key = hashlib.sha256(json.dumps([self.state['run_id'], record['attempt_id']]).encode()).hexdigest()
         for kind in ('workers', 'processes'):
             supervisor = self.supervisor(kind)
-            path = supervisor.directory / (key + '.json')
-            if path.exists():
-                data = _object(path).get('identity')
-                proofs.append((supervisor, ProcessIdentity(**data) if data else None))
-        return proofs
+            admission = supervisor.lookup_attempt(self.state['run_id'], record['attempt_id'])
+            if admission is not None:
+                data = admission.get('identity')
+                identity = ProcessIdentity(**data) if data else None
+                if identity and (identity.run_id != self.state['run_id'] or identity.attempt_id != record['attempt_id'] or
+                                 identity.host != admission.get('host')):
+                    raise PairError('admission identity mismatch; refusing recovery', 4)
+                yield supervisor, identity
 
     def probe(self, record):
         if record.get('host') != socket.gethostname(): return 'unknown'
-        proofs = self.identities(record)
-        states = [supervisor.inspect(identity).state if identity else 'unknown' for supervisor, identity in proofs]
-        if 'alive' in states: return 'alive'
+        states = []
+        try:
+            for supervisor, identity in self.identities(record):
+                state = supervisor.inspect(identity).state if identity else 'unknown'
+                # The worker can be creating its provider's exclusive admission
+                # file right now. A verified live worker already proves busy;
+                # do not parse that in-progress provider claim unnecessarily.
+                if state == 'alive': return 'alive'
+                states.append(state)
+        except (OSError, ValueError, TypeError, KeyError, PairError):
+            return 'unknown'
         if 'unknown' in states: return 'unknown'
         if states: return 'dead'
         # A manifest allocated before a crash without any admission record
@@ -324,7 +333,7 @@ class PairRun:
     def stop(self, record):
         # Stop the detached provider before its worker; the outer worker is not
         # a process-tree parent of the provider's separate ownership session.
-        for supervisor, identity in reversed(self.identities(record)):
+        for supervisor, identity in reversed(list(self.identities(record))):
             if identity is None: raise PairError('attempt ownership unknown; refusing termination', 4)
             stopped = supervisor.stop(identity)
             if stopped.state != 'dead': raise PairError('attempt ownership unknown or still alive; refusing another launch', 4)

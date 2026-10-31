@@ -439,7 +439,8 @@ def _clean_interrupted(prefix):
     if owner.get('owner') != OWNER or owner.get('prefix') != str(prefix) or not DirectoryLock._proven_dead(owner):
         raise ValueError(f'incomplete runtime has a live or unknown owner: {prefix}')
     for child in prefix.rglob('*'):
-        if child.is_symlink() and not re.fullmatch(r'python(?:3(?:\.\d+)?)?', child.name):
+        if (child.is_symlink() and not child.resolve().is_relative_to(prefix.resolve())
+                and not re.fullmatch(r'python(?:3(?:\.\d+)?)?', child.name)):
             raise ValueError(f'escaped interrupted staging directory: {child}')
     shutil.rmtree(prefix)
 

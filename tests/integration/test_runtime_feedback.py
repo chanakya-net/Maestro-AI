@@ -66,3 +66,15 @@ def test_interrupted_cleanup_still_refuses_unexpected_symlinks(tmp_path):
         installation._clean_interrupted(prefix)
     assert outside.read_text() == 'preserve me'
     assert prefix.is_dir()
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX venv lib64 compatibility link')
+def test_interrupted_real_venv_allows_internal_library_alias(tmp_path):
+    prefix = tmp_path/'runtime'
+    venv.EnvBuilder(with_pip=False).create(prefix)
+    library = prefix/'lib'; library.mkdir(exist_ok=True)
+    alias = prefix/'lib64'
+    if not alias.exists(): alias.symlink_to('lib', target_is_directory=True)
+    write_json_atomic(prefix / '.installing.json', {'owner': installation.OWNER, 'prefix': str(prefix), 'host': socket.gethostname(), 'pid': os.getpid(), 'create_time': psutil.Process().create_time() - 100, 'token': 'abandoned'})
+    installation._clean_interrupted(prefix)
+    assert not prefix.exists()

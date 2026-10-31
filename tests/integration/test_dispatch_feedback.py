@@ -187,6 +187,7 @@ if '--help' in sys.argv:
     time.sleep(.3)
     print('--fixture-protocol')
 else:
+    while not Path('initialize-provider').exists(): time.sleep(.01)
     with Path('paid-attempts').open('a') as stream: stream.write('one\\n')
     while not Path('release-provider').exists(): time.sleep(.01)
     Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
@@ -198,8 +199,16 @@ else:
         result = dispatch_worker(config)
         assert result.state in ('running', 'quiet', 'stalled'), result.reason
         assert result.identity is not None
+        # Admission confirms the process identity, before its Python application
+        # necessarily executes. Release initialization, then await its own ack.
+        (tmp_path / 'initialize-provider').touch()
+        deadline = time.monotonic() + 10
+        while not (tmp_path / 'paid-attempts').is_file() or (tmp_path / 'paid-attempts').read_text().splitlines() != ['one']:
+            assert time.monotonic() < deadline, 'provider did not acknowledge initialization'
+            time.sleep(.01)
         assert (tmp_path / 'paid-attempts').read_text().splitlines() == ['one']
     finally:
+        (tmp_path / 'initialize-provider').touch()
         (tmp_path / 'release-provider').touch()
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:

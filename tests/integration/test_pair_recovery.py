@@ -21,14 +21,20 @@ from test_pair import pair_fixture, invoke, decision_file
 
 def background(run):
     source = 'import sys;from ai_skills.pair import main;sys.exit(main(sys.argv[1:]))'
-    return subprocess.Popen([sys.executable, '-c', source, 'run-round', '--run-dir', str(run)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    error_log = run / 'coordinator-stderr.log'
+    with error_log.open('wb') as errors:
+        process = subprocess.Popen([sys.executable, '-c', source, 'run-round', '--run-dir', str(run)], stdout=subprocess.DEVNULL, stderr=errors)
+    process.coordinator_error_log = error_log
+    return process
 
 
 def await_started(root, process=None):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if (root / 'one-r1.count').exists() and (root / 'two-r1.count').exists(): return
-        if process and process.poll() is not None: pytest.fail('coordinator exited before providers started')
+        if process and process.poll() is not None:
+            errors = process.coordinator_error_log.read_text(encoding='utf-8', errors='replace')
+            pytest.fail(f'coordinator exited before providers started (exit={process.returncode}); stderr: {errors}')
         time.sleep(.03)
     pytest.fail('providers never started')
 
@@ -252,3 +258,113 @@ def test_real_legacy_config_is_pinned_before_launch_and_keeps_original_backup(pa
     importing_python.unlink()
     with pytest.raises(ValueError, match='pinned.*missing'):
         resolve_runtime(run, assets_dest=active)
+
+
+def test_background_coordinator_failure_retains_actual_stderr(tmp_path):
+    run = tmp_path / 'invalid-run'
+    run.mkdir()
+    (run / 'state.json').write_text('[]', encoding='utf-8')
+    process = background(run)
+    try:
+        assert process.wait(timeout=5) == 2
+        with pytest.raises(pytest.fail.Exception, match='expected JSON object') as error:
+            await_started(tmp_path, process)
+        assert 'exit=2' in str(error.value)
+        assert 'pair-colleague: error:' in str(error.value)
+        assert str(run / 'state.json') in str(error.value)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+
+
+def test_pair_keeps_live_worker_busy_during_provider_exclusive_admission(pair_fixture, monkeypatch, capsys):
+    start, root, _ = pair_fixture
+    hooks = root / 'admission-hook'
+    hooks.mkdir()
+    (hooks / 'sitecustomize.py').write_text('''import json,os,time
+from pathlib import Path
+root=Path(os.environ['PAIR_TEST_ADMISSION_ROOT'])
+dump=json.dump
+load=json.load
+def pause_admission(value, stream, *args, **kwargs):
+ path=Path(str(getattr(stream,'name','')))
+ if path.parent.name=='processes' and path.suffix=='.json' and value.get('state')=='starting':
+  (root/('admission-'+path.stem+'.ready')).touch()
+  deadline=time.monotonic()+10
+  while not (root/'admissions.release').exists():
+   if time.monotonic()>deadline: raise RuntimeError('test admission gate timed out')
+   time.sleep(.01)
+ return dump(value,stream,*args,**kwargs)
+def observe_admission(stream,*args,**kwargs):
+ path=Path(str(getattr(stream,'name','')))
+ if path.parent.name=='processes' and path.suffix=='.json' and path.stat().st_size==0:
+  (root/'admission-observed').touch()
+ if path.parent.name=='workers' and path.suffix=='.json' and len(list(root.glob('admission-*.ready')))==2:
+  (root/'live-workers-observed').touch()
+ return load(stream,*args,**kwargs)
+json.dump=pause_admission
+json.load=observe_admission
+''', encoding='utf-8')
+    source = str(Path(__file__).resolve().parents[2] / 'src')
+    monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(hooks), source, os.environ.get('PYTHONPATH', '')]))
+    monkeypatch.setenv('PAIR_TEST_ADMISSION_ROOT', str(root))
+    monkeypatch.setenv('FAKE_MODE', 'gated')
+    run = start()
+    process = background(run)
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if len(list(root.glob('admission-*.ready'))) == 2 and any((root / name).exists() for name in ('admission-observed', 'live-workers-observed')):
+                break
+            time.sleep(.01)
+        assert len(list(root.glob('admission-*.ready'))) == 2, process.coordinator_error_log.read_text()
+        assert any((root / name).exists() for name in ('admission-observed', 'live-workers-observed'))
+        try:
+            process.wait(timeout=.25)
+        except subprocess.TimeoutExpired:
+            pass
+        assert process.poll() is None, process.coordinator_error_log.read_text()
+        assert list((run / 'processes').glob('*.json'))
+        assert all(path.stat().st_size == 0 for path in (run / 'processes').glob('*.json'))
+        process.kill()
+        process.wait(timeout=5)
+        code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+        assert code == 4, error
+    finally:
+        (root / 'admissions.release').touch()
+        (root / 'providers.release').touch()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        await_started(root)
+        await_owned_attempts_completed(run)
+        invoke(capsys, 'reap', '--run-dir', str(run), '--force')
+    assert (root / 'one-r1.count').read_text() == '1'
+    assert (root / 'two-r1.count').read_text() == '1'
+
+
+@pytest.mark.parametrize('admission', ['empty', 'corrupt', 'mismatched-identity'])
+def test_pair_unverified_admission_without_live_worker_is_unknown(pair_fixture, admission):
+    from ai_skills.processes import ProcessSpec
+    start, root, _ = pair_fixture
+    run = start()
+    pair = PairRun(PairConfig(run_dir=run))
+    pair.load()
+    supervisor = pair.supervisor()
+    attempt = {'attempt_id': 'expected', 'host': socket.gethostname(), 'state': 'running'}
+    path = supervisor._path(pair.state['run_id'], 'expected')
+    owned = None
+    try:
+        if admission == 'mismatched-identity':
+            owned = supervisor.start(ProcessSpec((sys.executable, '-c', 'import time;time.sleep(30)'), root, {}), run_id=pair.state['run_id'], attempt_id='foreign')
+            record = json.loads(owned.record_path.read_text())
+            record['attempt_id'] = 'expected'
+            write_json_atomic(path, record)
+        else:
+            path.write_text('' if admission == 'empty' else '{broken', encoding='utf-8')
+        assert pair.probe(attempt) == 'unknown'
+        if owned:
+            assert supervisor.inspect(owned.identity).state == 'alive'
+    finally:
+        if owned: owned.close(grace_seconds=0)
