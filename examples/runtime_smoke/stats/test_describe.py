@@ -1,6 +1,6 @@
 import unittest
 import math
-from describe import describe_readings
+from examples.runtime_smoke.stats.describe import describe_readings
 
 
 class TestDescribeReadings(unittest.TestCase):
