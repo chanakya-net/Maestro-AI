@@ -430,7 +430,9 @@ def test_adoption_cannot_repair_terminal_publication_under_live_or_unknown_wrapp
 
 
 @pytest.mark.parametrize(('forced','status','code'),[('hard-limit-exceeded','failed',124),('interrupted','interrupted',130)])
-def test_forced_stop_survives_terminal_outcome_write_failure_and_zero_provider_exit(tmp_path,monkeypatch,forced,status,code):
+def test_forced_stop_survives_terminal_outcome_write_failure_with_native_provider_exit(tmp_path,monkeypatch,forced,status,code):
+    """POSIX handles SIGTERM with exit 0; Windows terminates the Job with exit 1."""
+    expected_provider_code=1 if os.name=='nt' else 0
     config=worker_config(tmp_path,'''import json,os,signal,time
 from pathlib import Path
 signal.signal(signal.SIGTERM,lambda *_:exit(0))
@@ -456,7 +458,7 @@ while True:time.sleep(.01)
     saved=dispatch.WorkerConfig.from_record(json.loads(Path(str(config.state_file)+'.config.json').read_text()))
     process,supervisor=dispatch._provider_record(saved)
     from ai_skills.processes import ProcessIdentity
-    assert supervisor.return_code(ProcessIdentity(**process['identity']))==0
+    assert supervisor.return_code(ProcessIdentity(**process['identity']))==expected_provider_code
     assert json.loads(dispatch.outcome_path(config.state_file).read_text())['status']=='pending'
     monkeypatch.setattr(dispatch,'write_json_atomic',real_write)
     state=json.loads(config.state_file.read_text())
@@ -465,7 +467,7 @@ while True:time.sleep(.01)
     result=dispatch.adopt_worker(config.state_file)
     assert (result.state,result.return_code,result.reason)==(status,code,forced)
     outcome=json.loads(dispatch.outcome_path(config.state_file).read_text())
-    assert (outcome['status'],outcome['worker_return_code'],outcome['provider_return_code'],outcome['reason'])==(status,code,0,forced)
+    assert (outcome['status'],outcome['worker_return_code'],outcome['provider_return_code'],outcome['reason'])==(status,code,expected_provider_code,forced)
     assert json.loads(config.state_file.read_text())['stop_intent']['reason']==forced
     assert f'status={status}' in config.agent_run.done_file.read_text()
     assert 'type=dispatch-complete|' not in config.agent_run.events_log.read_text()
@@ -536,6 +538,8 @@ def test_corrupt_stop_intent_is_not_replaced_or_accepted_as_completion(tmp_path,
 
 @pytest.mark.parametrize('provider_reason',['cannot-proceed','artifact-recovery-required'])
 def test_forced_stop_decision_cannot_be_replaced_by_typed_failure_reason(tmp_path,provider_reason):
+    """Native provider exit is POSIX handler 0 or Windows Job termination 1."""
+    expected_provider_code=1 if os.name=='nt' else 0
     config=worker_config(tmp_path,'''import json,os,signal,time
 from pathlib import Path
 signal.signal(signal.SIGTERM,lambda *_:exit(0))
@@ -547,7 +551,7 @@ while True:time.sleep(.01)
     result=dispatch_worker(config)
     assert (result.state,result.return_code,result.reason)==('failed',124,'hard-limit-exceeded')
     outcome=json.loads(dispatch.outcome_path(config.state_file).read_text())
-    assert (outcome['status'],outcome['provider_return_code'],outcome['worker_return_code'])==('failed',0,124)
+    assert (outcome['status'],outcome['provider_return_code'],outcome['worker_return_code'])==('failed',expected_provider_code,124)
     payload=json.loads(config.agent_run.result_file.read_text())
     assert payload['status']=='blocked' and payload['reason']==provider_reason
     assert not (tmp_path/'plan.md').exists()
