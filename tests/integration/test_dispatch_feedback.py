@@ -141,8 +141,14 @@ def test_unreadable_pool_ownership_does_not_authorize_event_terminal(tmp_path, l
     assert watch_run(config).result == 'pool-dead'
 
 
-def test_provider_silence_states_ignore_wrapper_heartbeats_and_resume_on_output(tmp_path):
+def test_provider_silence_states_ignore_wrapper_heartbeats_and_resume_on_output(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+    # Advance only the dispatch observer's silence clock. Runner heartbeats,
+    # owned process admission, provider streams and polling still use real time.
+    observed_time = [0.0]
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(
+        monotonic=lambda: observed_time[0], time=time.time, sleep=time.sleep))
     config = worker_config(tmp_path, '''import os,time
 from pathlib import Path
 Path('provider-ready').touch()
@@ -151,33 +157,46 @@ print('provider activity', flush=True)
 while not Path('release-provider').exists(): time.sleep(.01)
 Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
 ''', quiet_seconds=.08, stall_seconds=.2, hard_limit_seconds=5)
-    def wait_for_state(expected):
+    def wait_for_state(expected, event=None, minimum_heartbeats=0):
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline:
             state = json.loads(config.state_file.read_text()) if config.state_file.exists() else {}
-            if state.get('state') == expected:
-                return state
+            text = config.agent_run.events_log.read_text() if config.agent_run.events_log.exists() else ''
+            events = ''.join(line for line in text.splitlines(keepends=True) if line.endswith('\n'))
+            if (state.get('state') == expected
+                    and (event is None or f'type={event}|' in events)
+                    and events.count('type=wrapper-heartbeat|') >= minimum_heartbeats):
+                return state, events
             time.sleep(.01)
-        pytest.fail(f'worker did not reach {expected}; latest state: {state}')
+        pytest.fail(f'worker did not reach {expected}/{event}; latest state: {state}; events: {text}')
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(dispatch_worker, config)
         try:
-            state = wait_for_state('stalled')
+            _, events = wait_for_state('running', minimum_heartbeats=1)
+            observed_time[0] = .1
+            state, events = wait_for_state('quiet', 'worker-quiet',
+                minimum_heartbeats=events.count('type=wrapper-heartbeat|') + 1)
+            assert state['stall_reason'] == 'alive-but-quiet'
+            observed_time[0] = .3
+            state, events = wait_for_state('stalled', 'worker-stalled',
+                minimum_heartbeats=events.count('type=wrapper-heartbeat|') + 1)
             assert state['stall_reason'] == 'alive-but-silent'
             assert not future.done()
             snapshot = dispatch.inspect_worker(config)
             assert snapshot.liveness == 'alive'
-            events = config.agent_run.events_log.read_text()
             assert 'type=wrapper-heartbeat' in events
             assert events.count('type=worker-quiet|') == 1
             assert events.count('type=worker-stalled|') == 1
             (tmp_path / 'emit-output').touch()
-            state = wait_for_state('running')
+            state, _ = wait_for_state('running')
             assert state['stall_reason'] == ''
         finally:
             (tmp_path / 'emit-output').touch()
             (tmp_path / 'release-provider').touch()
         assert future.result(timeout=7).state == 'completed'
+    events = config.agent_run.events_log.read_text()
+    assert events.count('type=worker-quiet|') == 1
+    assert events.count('type=worker-stalled|') == 1
 
 
 def test_detach_bootstrap_allows_capability_probe_before_provider_handshake(tmp_path):

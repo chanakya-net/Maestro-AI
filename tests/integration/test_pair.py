@@ -151,13 +151,29 @@ def test_read_only_model_detection_and_empty_task_refused(pair_fixture, capsys):
 
 
 def test_frozen_snapshot_and_output_hash_protect_context(pair_fixture, capsys):
+    import time
     start, root, _ = pair_fixture
     run = start()
     snapshot = run / 'rounds/round-01/snapshot.md'; snapshot.write_text(snapshot.read_text() + 'changed')
     assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 2
     assert not (root / 'one-r1.count').exists()
     run = start()
-    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    deadline = time.monotonic() + 15
+    observations = []
+    while True:
+        code, values, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+        observations.append((code, values, error))
+        # Exit 4 asks the consumer to observe the same owned attempt again;
+        # hard errors must fail immediately rather than start another attempt.
+        if code != 4 or time.monotonic() >= deadline:
+            break
+        time.sleep(.05)
+    assert code == 0, {
+        'observations': observations, 'state': (run / 'state.json').read_text(),
+        'stderr': {p.name: p.read_text(errors='replace')
+                   for p in (run / 'rounds/round-01').glob('*-stderr.log')}}
+    for model in ('one', 'two'):
+        assert (root / f'{model}-r1.count').read_text() == '1'
     output = run / 'rounds/round-01/agent-1-output.md'; output.write_text(output.read_text() + 'changed')
     assert invoke(capsys, 'record-decision', '--run-dir', str(run), '--decision-file', str(decision_file(root, 'CONTINUE')))[0] == 2
     assert not (run / 'rounds/round-02/snapshot.md').exists()
