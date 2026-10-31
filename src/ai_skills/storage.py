@@ -53,6 +53,10 @@ class LockTimeoutError(TimeoutError):
     """The lock remained busy or its owner could not safely be identified."""
 
 
+class LockReleaseError(RuntimeError):
+    """An owned lock could not be released; the caller must not assume success."""
+
+
 class DirectoryLock:
     """A local-filesystem directory lock; unknown owners require manual recovery.
 
@@ -72,6 +76,8 @@ class DirectoryLock:
         self.poll_interval_seconds = poll_interval_seconds
         self.token = uuid.uuid4().hex
         self._held = False
+        self._directory_identity: tuple[int, int] | None = None
+        self._owner_removed = False
 
     def __enter__(self) -> DirectoryLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +106,9 @@ class DirectoryLock:
                 self.path.rmdir()
                 raise
             self._held = True
+            directory_stat = self.path.stat()
+            self._directory_identity = (directory_stat.st_dev, directory_stat.st_ino)
+            self._owner_removed = False
             return self
 
     @staticmethod
@@ -157,15 +166,46 @@ class DirectoryLock:
     def __exit__(self, exc_type, exc, tb) -> None:
         if not self._held:
             return
-        self._held = False
-        try:
-            owner = load_json(self.path / "owner.json")
-            if not isinstance(owner, dict) or owner.get("token") != self.token:
+        deadline = time.monotonic() + self.timeout_seconds
+        missing_owner = object()
+        while True:
+            try:
+                directory_stat = self.path.stat()
+                if (directory_stat.st_dev, directory_stat.st_ino) != self._directory_identity:
+                    self._held = False
+                    return
+                owner_path = self.path / "owner.json"
+                owner = load_json(owner_path, missing=missing_owner)
+                if owner is missing_owner:
+                    if not self._owner_removed:
+                        raise LockReleaseError(f"owned lock metadata disappeared: {self.path}")
+                elif not isinstance(owner, dict) or not isinstance(owner.get("token"), str):
+                    raise LockReleaseError(f"owned lock metadata is invalid: {self.path}")
+                elif owner["token"] != self.token:
+                    self._held = False
+                    return
+                else:
+                    owner_path.unlink()
+                    self._owner_removed = True
+                # Windows can deny unlink while another contender reads owner.json,
+                # or deny rmdir just after unlink. Retry both operations, retaining
+                # proof of our directory and rechecking any replacement token.
+                self.path.rmdir()
+                self._held = False
                 return
-            (self.path / "owner.json").unlink()
-            self.path.rmdir()
-        except (OSError, ValueError):
-            return
+            except FileNotFoundError as error:
+                if self.path.exists():
+                    raise LockReleaseError(f"owned lock metadata disappeared: {self.path}") from error
+                self._held = False
+                return
+            except PermissionError as error:
+                release_error = error
+            except (OSError, ValueError) as error:
+                raise LockReleaseError(f"could not release owned lock {self.path}") from error
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LockReleaseError(f"timed out releasing owned lock {self.path}") from release_error
+            time.sleep(min(remaining, self.poll_interval_seconds))
 
 
 class StateStore:

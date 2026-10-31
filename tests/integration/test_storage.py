@@ -254,3 +254,120 @@ os._exit(0)
         assert load_json(path) == {"recovered": True}
     finally:
         owner.wait(timeout=5)
+
+
+def test_release_retries_transient_owner_sharing_violation(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    unlink = Path.unlink
+    attempts = []
+    def temporarily_shared(candidate, *args, **kwargs):
+        if candidate.name == "owner.json":
+            attempts.append(candidate)
+            if len(attempts) < 3:
+                raise PermissionError("Windows sharing violation: owner.json is read-open")
+        return unlink(candidate, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", temporarily_shared)
+    with DirectoryLock(path, timeout_seconds=.2, poll_interval_seconds=.001):
+        pass
+    assert len(attempts) == 3
+    assert not Path(f"{path}.lock").exists()
+    StateStore(path, timeout_seconds=.05).transaction(lambda state: state.update(count=1))
+
+
+def test_release_retries_rmdir_after_owner_file_was_removed(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    lock_path = Path(f"{path}.lock")
+    rmdir = Path.rmdir
+    attempts = []
+    def temporarily_busy(candidate):
+        if candidate == lock_path:
+            attempts.append(candidate)
+            assert not (candidate / "owner.json").exists()
+            if len(attempts) < 3:
+                raise PermissionError("directory sharing violation")
+        return rmdir(candidate)
+    monkeypatch.setattr(Path, "rmdir", temporarily_busy)
+    with DirectoryLock(path, timeout_seconds=.2, poll_interval_seconds=.001):
+        pass
+    assert len(attempts) == 3
+    assert not lock_path.exists()
+
+
+def test_persistent_release_failure_is_explicit_and_can_be_retried(tmp_path, monkeypatch):
+    from ai_skills.storage import LockReleaseError
+    path = tmp_path / "state.json"
+    lock = DirectoryLock(path, timeout_seconds=.03, poll_interval_seconds=.001)
+    lock.__enter__()
+    unlink = Path.unlink
+    def always_shared(candidate, *args, **kwargs):
+        if candidate.name == "owner.json":
+            raise PermissionError("persistent sharing violation")
+        return unlink(candidate, *args, **kwargs)
+    started = time.monotonic()
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", always_shared)
+        with pytest.raises(LockReleaseError, match="timed out releasing"):
+            lock.__exit__(None, None, None)
+    assert time.monotonic() - started < 1
+    assert load_json(lock.path / "owner.json")["token"] == lock.token
+    lock.__exit__(None, None, None)
+    assert not lock.path.exists()
+
+
+def test_release_retry_rechecks_replacement_owner_token(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    lock = DirectoryLock(path, timeout_seconds=.2, poll_interval_seconds=.001)
+    lock.__enter__()
+    unlink = Path.unlink
+    def replace_owner(candidate, *args, **kwargs):
+        if candidate.name == "owner.json":
+            write_json_atomic(candidate, _owner(token="replacement"))
+            raise PermissionError("owner replaced during denied unlink")
+        return unlink(candidate, *args, **kwargs)
+    monkeypatch.setattr(Path, "unlink", replace_owner)
+    lock.__exit__(None, None, None)
+    assert load_json(lock.path / "owner.json")["token"] == "replacement"
+
+
+def test_release_retry_rechecks_directory_identity_after_owner_removal(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    lock = DirectoryLock(path, timeout_seconds=.2, poll_interval_seconds=.001)
+    lock.__enter__()
+    moved = tmp_path / "old-lock"
+    replacement = None
+    rmdir = Path.rmdir
+    def replace_directory(candidate):
+        nonlocal replacement
+        if candidate == lock.path and replacement is None:
+            assert not (candidate / "owner.json").exists()
+            candidate.rename(moved)
+            replacement = DirectoryLock(path)
+            replacement.__enter__()
+            raise PermissionError("directory replaced during denied rmdir")
+        return rmdir(candidate)
+    monkeypatch.setattr(Path, "rmdir", replace_directory)
+    lock.__exit__(None, None, None)
+    assert replacement is not None
+    assert load_json(replacement.path / "owner.json")["token"] == replacement.token
+    replacement.__exit__(None, None, None)
+    assert not replacement.path.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-open files deny deletion")
+def test_windows_release_waits_for_read_open_owner_handle(tmp_path):
+    import threading
+    path = tmp_path / "state.json"
+    lock = DirectoryLock(path, timeout_seconds=2, poll_interval_seconds=.005)
+    lock.__enter__()
+    reader = (lock.path / "owner.json").open("r", encoding="utf-8")
+    def close_reader():
+        time.sleep(.05)
+        reader.close()
+    closer = threading.Thread(target=close_reader)
+    closer.start()
+    try:
+        lock.__exit__(None, None, None)
+    finally:
+        closer.join(timeout=2)
+        reader.close()
+    assert not lock.path.exists()
