@@ -47,6 +47,7 @@ def terminate(session, grace_seconds, anchors):
     for sig, delay in ((signal.SIGTERM, grace_seconds), (signal.SIGKILL, 3.0)):
         deadline = time.monotonic() + delay
         first = True
+        signalled = set()
         while first or time.monotonic() < deadline:
             anchored = _anchor_exists(anchors, session)
             current = members(session)
@@ -56,11 +57,15 @@ def terminate(session, grace_seconds, anchors):
                 raise PermissionError('session has no verified creation-time anchor')
             anchors = current
             for member in current:
+                identity = (member['pid'], member['created_at'])
+                if identity in signalled:
+                    continue
                 try:
                     process = psutil.Process(member['pid'])
                     if process.create_time() != member['created_at']:
                         raise PermissionError('process identity changed before signal')
                     process.send_signal(sig)
+                    signalled.add(identity)
                 except psutil.NoSuchProcess:
                     pass
             first = False

@@ -125,6 +125,16 @@ class ProcessSupervisor:
                 pass
         self._reap_owners()
         path.with_suffix('.stdin').unlink(missing_ok=True)
+        # Cleanup is authorized only by the same confirmed-dead identity.
+        # A request for a different lifetime/attempt (or unreadable evidence)
+        # must remain untouched.
+        request = path.with_suffix('.stop')
+        try:
+            command = _read(request)
+            if isinstance(command, dict) and command.get('identity') == asdict(identity):
+                request.unlink(missing_ok=True)
+        except (OSError, ValueError, TypeError):
+            pass
         return Liveness('dead')
 
     def _path(self, run_id, attempt_id):
@@ -207,12 +217,23 @@ class ProcessSupervisor:
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             record = _read(path)
+            exited = False
+            if 'identity' not in record and owner.poll() is not None:
+                # Completion may publish the handshake between our first read
+                # and poll. Exiting does not invalidate its durable identity.
+                record = _read(path)
+                exited = True
             if record['state'] == 'failed':
                 owner.wait(timeout=3)
                 raise RuntimeError('process launch failed: ' + record.get('error', 'unknown error'))
             if 'identity' in record:
-                return OwnedProcess(self, ProcessIdentity(**record['identity']), path)
-            if owner.poll() is not None:
+                identity = ProcessIdentity(**record['identity'])
+                if (record.get('schema_version') != 1 or record.get('run_id') != run_id or
+                        record.get('attempt_id') != attempt_id or identity.run_id != run_id or
+                        identity.attempt_id != attempt_id or identity.host != socket.gethostname()):
+                    raise ValueError('unrecognized or mismatched handshake identity')
+                return OwnedProcess(self, identity, path)
+            if exited:
                 raise RuntimeError('owner launch failed before durable handshake; ownership unknown')
             time.sleep(.03)
         raise RuntimeError('owner launch handshake timed out; ownership unknown')
@@ -297,6 +318,8 @@ class ProcessSupervisor:
                 return StopResult(status.state, status.members, status.reason)
             try:
                 remaining = terminate(identity.pid, grace_seconds, [record['identity'], *record.get('members', [])])
+                if not remaining:
+                    self._dead(identity)
                 return StopResult('alive' if remaining else 'dead', tuple(m['pid'] for m in remaining))
             except (OSError, psutil.Error) as error:
                 return StopResult('unknown', reason=str(error))
@@ -357,11 +380,20 @@ def _own(path):
                                                          record['run_id'], record['attempt_id'])),
                           owner={'pid': os.getpid(), 'created_at': psutil.Process().create_time()},
                           state='alive')
+            published = None
+            published_at = 0.0
             while True:
                 current = group.members()
                 code = group.return_code() if current else _terminal_return_code(group)
-                record.update(members=current, updated_at=time.time(), state='alive' if current else 'dead', return_code=code)
-                write_json_atomic(path, record)
+                state = 'alive' if current else 'dead'
+                # Creation-time membership anchors and exit evidence are urgent;
+                # unchanged owners need only a bounded heartbeat (Windows allows 5s).
+                evidence = (frozenset((member['pid'], member['created_at']) for member in current), state, code)
+                now = time.monotonic()
+                if evidence != published or now - published_at >= 1.0:
+                    record.update(members=current, updated_at=time.time(), state=state, return_code=code)
+                    write_json_atomic(path, record)
+                    published, published_at = evidence, now
                 if not current:
                     break
                 request = path.with_suffix('.stop')

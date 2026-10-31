@@ -439,7 +439,7 @@ def _clean_interrupted(prefix):
     if owner.get('owner') != OWNER or owner.get('prefix') != str(prefix) or not DirectoryLock._proven_dead(owner):
         raise ValueError(f'incomplete runtime has a live or unknown owner: {prefix}')
     for child in prefix.rglob('*'):
-        if child.is_symlink() and child.name not in ('python', 'python3', 'python3.12', 'python3.13', 'python3.14'):
+        if child.is_symlink() and not re.fullmatch(r'python(?:3(?:\.\d+)?)?', child.name):
             raise ValueError(f'escaped interrupted staging directory: {child}')
     shutil.rmtree(prefix)
 
@@ -650,18 +650,26 @@ def _selected_runtime(record, *, pinned):
     return _absolute(python)
 
 
+def pair_runtime_pin(run_dir: Path) -> dict | None:
+    """Recognize an explicit pair pin without reserving project config.json."""
+    config = load_json(_absolute(run_dir) / 'config.json', missing=None)
+    if not isinstance(config, dict) or 'engine_runtime' not in config:
+        return None
+    pin = config['engine_runtime']
+    if not isinstance(pin, dict):
+        raise ValueError('invalid pinned pair runtime')
+    return pin
+
+
 def resolve_runtime(run_dir: Path | None = None, *, assets_dest: Path | None = None) -> Path:
     """Select a pinned runtime before the active default; never resolve venv links."""
     if run_dir is not None:
         run = _absolute(run_dir)
         engine = run / '.run-with-it/engine.json'
         if engine.exists(): return _selected_runtime(_object(engine), pinned=True)
-        pair = run / 'config.json'
-        if pair.exists():
-            config = _object(pair)
-            if 'engine_runtime' in config:
-                if not isinstance(config['engine_runtime'], dict): raise ValueError('invalid pinned pair runtime')
-                return _selected_runtime(config['engine_runtime'], pinned=True)
+        pin = pair_runtime_pin(run)
+        if pin is not None:
+            return _selected_runtime(pin, pinned=True)
     manifest = _absolute(assets_dest or default_assets_dest()) / 'runtime.json'
     if manifest.exists(): return _selected_runtime(_object(manifest), pinned=False)
     return _absolute(sys.executable)

@@ -89,6 +89,8 @@ python -m ai_skills run stop --run-root .
 python -m ai_skills state status-board --state-file .run-with-it/main-state.json
 ```
 
+A watch result of `running` can also mean buffered events remain to be delivered. Repeat the watch call until `pool-empty` so the final completion events are included.
+
 `git merge-issue` accepts `--verification-file` containing a JSON list of argument lists, for example `[["python", "-m", "pytest", "-q"]]`. Commands run without a shell. Supply the project's actual verification commands; the default Git whitespace check alone does not establish project correctness. Pushing requires explicit `--push`.
 
 Provider selection follows explicit configuration, environment overrides, then registry defaults. `SUB_COORD_AGENT`/`SUB_COORD_MODEL` select coordinator execution; `FORCED_AGENT`/`FORCED_MODEL` constrain worker routing independently. Deprecated ambient `AGENT`/`MODEL` aliases remain available for direct agent execution, while dispatchers clear them before launching providers. Credentials are inherited at execution time and are not serialized into runtime records.

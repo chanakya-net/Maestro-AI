@@ -21,6 +21,7 @@ def test_watch_byte_cursor_retains_partial_event_and_resets_after_replacement(tm
     with events.open('ab') as stream: stream.write(b' completed\n')
     assert watch_run(config).lines==('partial completed',)
     replacement=tmp_path/'replacement'; replacement.write_text('STATUS|type=pool-empty\n'); replacement.replace(events)
+    write_json_atomic(state,{'engine':'python','state':'pool-empty','host':'fixture','pool_pid':1,'pool_created_at':1})
     assert watch_run(config).result=='pool-empty'
     assert watch_run(config).result=='pool-empty'
 

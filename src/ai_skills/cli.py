@@ -52,7 +52,8 @@ def runtime_command(arguments: list[str]) -> list[str] | None:
             raise ValueError('agent_run must be an object')
         candidate = option('--repo-root') or agent_run.get('repo_root') or Path.cwd()
     target = Path(os.path.abspath(candidate))
-    pair_pin = arguments[0] == 'pair' and (target / 'config.json').is_file()
+    from .installation import pair_runtime_pin, resolve_runtime
+    pair_pin = arguments[0] == 'pair' and pair_runtime_pin(target) is not None
     if not pair_pin:
         for directory in (target, *target.parents):
             if (directory / '.run-with-it').is_dir():
@@ -71,7 +72,6 @@ def runtime_command(arguments: list[str]) -> list[str] | None:
             for item in state.get('issue_registry', {}).values() if isinstance(item, dict))
         if active:
             raise ValueError('legacy run must be quiescent before switching engines')
-    from .installation import resolve_runtime
     selected = resolve_runtime(target)
     if os.path.normcase(os.path.abspath(selected)) == os.path.normcase(os.path.abspath(sys.executable)):
         return None

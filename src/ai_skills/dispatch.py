@@ -47,6 +47,8 @@ class WorkerConfig:
     tail_lines: int = 5
 
     def __post_init__(self):
+        if type(self.detach) is not bool:
+            raise ValueError('detach must be a boolean')
         if type(self.tail_lines) is not int or self.tail_lines < 1:
             raise ValueError('tail_lines must be a positive integer')
         for key in ('poll_seconds', 'quiet_seconds', 'stall_seconds', 'timeout_seconds', 'hard_limit_seconds', 'bootstrap_seconds'):
@@ -98,6 +100,11 @@ class WorkerConfig:
             if value is None:
                 value = env.get(env_names.get(key, key.upper()))
             if value is not None:
+                if key == 'detach' and isinstance(value, str):
+                    normalized = value.strip().lower()
+                    if normalized not in ('0', 'false', 'no', 'off', '1', 'true', 'yes', 'on'):
+                        raise ValueError('detach must be a boolean')
+                    value = normalized in ('1', 'true', 'yes', 'on')
                 values[key] = float(value) if key.endswith('_seconds') else int(value) if key=='tail_lines' else value
         return cls(**values)
 
@@ -169,7 +176,8 @@ def _artifact_reason(config):
     report = bool(run.issue_dir and Path(run.result_file).resolve() == (Path(run.issue_dir)/'report.json').resolve())
     instructions = None
     if run.role == 'review':
-        instructions, _ = artifacts.load_json(artifacts.review_instructions_file(str(run.result_file)))
+        instructions, error = artifacts.load_json(artifacts.review_instructions_file(str(run.result_file)))
+        return artifacts.review_payload_reason(payload, None, instructions, error)
     evidence = artifacts.GitEvidence(issue=str(run.issue),repo_available=available,head=head,
         pre_spawn_head=config.pre_spawn_head,canonical_commit=commit,
         canonical_pre_spawn_head=git.resolve_commit(str(run.repo_root),config.pre_spawn_head) if available and config.pre_spawn_head else None,
@@ -234,13 +242,38 @@ def _work(config):
     started = time.monotonic()
     timeout_reason = ''
     provider_identity = None
+    last_output = started
+    stream_sizes = {}
     try:
         while thread.is_alive():
             record = _process_record(config)
             if record.get('identity') and provider_identity is None:
                 provider_identity = record['identity']
                 base.update(state='running',provider_identity=provider_identity)
+                last_output = time.monotonic()
                 write_json_atomic(Path(config.state_file),base)
+            if provider_identity:
+                # Wrapper heartbeats share the user log, so measure silence
+                # against the provider's raw streams instead of log mtime.
+                for key in ('stdout_file', 'stderr_file'):
+                    if record.get(key):
+                        path = Path(record[key])
+                        try:
+                            size = path.stat().st_size
+                        except OSError:
+                            continue
+                        if size != stream_sizes.get(key, 0):
+                            last_output = time.monotonic()
+                        stream_sizes[key] = size
+                silence = time.monotonic() - last_output
+                observed = 'stalled' if silence >= config.stall_seconds else 'quiet' if silence >= config.quiet_seconds else 'running'
+                if observed != base['state']:
+                    stall_reason = 'alive-but-silent' if observed == 'stalled' else 'alive-but-quiet' if observed == 'quiet' else ''
+                    base.update(state=observed, stall_reason=stall_reason, seconds_since_last_output=silence)
+                    write_json_atomic(Path(config.state_file), base)
+                    if observed in ('quiet','stalled'):
+                        bus.emit('worker-' + observed, {**common, 'reason':stall_reason, 'silence_seconds':silence,
+                                                       'state_file':str(config.state_file)})
             elapsed = time.monotonic()-started
             limits = [(config.hard_limit_seconds,'hard-limit-exceeded'), (config.timeout_seconds,'dispatch-timeout')]
             timeout_reason = next((reason for limit,reason in limits if limit and elapsed>=limit), '')
@@ -269,7 +302,8 @@ def _work(config):
                 bus.emit('result-artifact-synthesized', common)
         artifact_reason = _artifact_reason(config)
         reason = reason or artifact_reason
-        if reason == 'artifact-recovery-required':
+        if artifact_reason == 'artifact-recovery-required' and timeout_reason != 'shutdown-identity-unknown':
+            reason = artifact_reason
             state, code = 'artifact-recovery-required', 75
         elif code or reason:
             state, code = 'failed', code or 1
@@ -287,7 +321,8 @@ def _work(config):
 
 def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     # Complete input validation before writing launch state or starting a child.
-    build_invocation(config.agent_run, load_registry(config.agent_run.registry_file))
+    registry = load_registry(config.agent_run.registry_file)
+    build_invocation(config.agent_run, registry)
     if not config.agent_run.result_file:
         raise ValueError('result_file is required')
     state_file = Path(config.state_file).resolve()
@@ -323,10 +358,14 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     # Store the wrapper identity separately. Provider process_state_file is the
     # authority for nested session shutdown, including after dispatcher loss.
     write_json_atomic(Path(str(state_file)+'.dispatcher.process.json'),{'schema_version':1,'identity':asdict(owned.identity),'record_directory':str(supervisor.directory)})
-    deadline = time.monotonic()+config.bootstrap_seconds
+    agent = registry.get('aliases', {}).get(run.agent, run.agent)
+    probe_seconds = 10 if registry['agents'][agent].get('invocation', {}).get('required_cli_flags') else 0
+    # The bootstrap interval covers dispatcher setup. The runner then has a
+    # separately bounded capability probe (when required) and owner handshake.
+    deadline = time.monotonic()+config.bootstrap_seconds+probe_seconds+10
     while time.monotonic()<deadline:
         state = _optional(state_file)
-        if state.get('state') in ('running','completed','failed','artifact-recovery-required'):
+        if state.get('state') in ('running','quiet','stalled','completed','failed','artifact-recovery-required'):
             return WorkerResult(state['state'],int(state.get('return_code',0)),state_file,state.get('reason',''),state.get('provider_identity'))
         if supervisor.inspect(owned.identity).state=='dead':
             break
@@ -334,8 +373,15 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     # Admission may be incomplete. Stop both nested provider and wrapper; never
     # authorize another attempt merely because the handshake timed out.
     _stop_provider(config)
-    owned.close()
+    wrapper_stop = owned.close()
+    # Admission may publish while wrapper shutdown is in flight. Recheck the
+    # current provider identity before classifying this attempt as retryable.
+    provider_stop = _stop_provider(config)
     state = _optional(state_file)
+    if wrapper_stop.state != 'dead' or provider_stop.state != 'dead':
+        state.update(state='unknown',return_code=3,reason='shutdown-identity-unknown')
+        write_json_atomic(state_file,state)
+        return WorkerResult('unknown',3,state_file,'shutdown-identity-unknown',state.get('provider_identity'))
     state.update(state='failed',return_code=1,reason='dispatch-bootstrap-failed')
     write_json_atomic(state_file,state)
     return WorkerResult('failed',1,state_file,'dispatch-bootstrap-failed')
@@ -378,7 +424,10 @@ def adopt_worker(state_file) -> WorkerResult:
         # A confirmed committed HEAD can be reconstructed after wrapper loss,
         # but adoption never commits an unverified dirty tree.
         if run.role in ('impl','modify') and config.pre_spawn_head and git.repo_available(str(run.repo_root)):
-            args.from_stall=git.current_head(str(run.repo_root))!=config.pre_spawn_head
+            try:
+                args.from_stall=git.current_head(str(run.repo_root))!=config.pre_spawn_head
+            except (OSError, subprocess.CalledProcessError):
+                args.from_stall=False
         any(function(args) for function in (artifacts.synthesize_implementation,artifacts.synthesize_review,artifacts.synthesize_complexity))
         reason=_artifact_reason(config)
     final='artifact-recovery-required' if reason=='artifact-recovery-required' else 'failed' if code or reason else 'completed'
@@ -416,6 +465,7 @@ class WatchConfig:
 
 @dataclass(frozen=True)
 class WatchResult:
+    """`running` also covers bounded catchup of a finished pool's event log."""
     result: str
     lines: tuple[str,...]
     return_code: int = 0
@@ -426,8 +476,17 @@ def _drain_events(config):
     cursor_path = Path(config.cursor_file) if config.cursor_file else events.parent/'watch-cursor.json'
     with DirectoryLock(cursor_path):
         cursor = _optional(cursor_path)
+        pool = _optional(config.pool_state_file)
+        pool_identity = None
+        if (pool.get('engine') == 'python' and isinstance(pool.get('host'), str) and pool['host']
+                and type(pool.get('pool_pid')) is int and pool['pool_pid'] > 0
+                and type(pool.get('pool_created_at')) in (int, float)
+                and math.isfinite(pool['pool_created_at']) and pool['pool_created_at'] > 0):
+            pool_identity = [pool['host'], pool['pool_pid'], pool['pool_created_at']]
+        elif (pool.get('identity') or pool.get('pool_identity')) and pool.get('record_directory'):
+            pool_identity = [pool['record_directory'], pool.get('identity') or pool['pool_identity']]
         if not events.exists():
-            return (), False
+            return (), False, False
         stat = events.stat()
         identity = [stat.st_dev,stat.st_ino]
         offset = cursor.get('offset',0)
@@ -447,10 +506,24 @@ def _drain_events(config):
         end=data.rfind(b'\n')+1
         complete=data[:end]
         lines=tuple(line.decode('utf-8',errors='replace').rstrip('\r') for line in complete.splitlines())
-        terminal=cursor.get('pool_empty',False) or any(line.startswith('STATUS|') and 'type=pool-empty' in line.split('|') for line in lines)
+        same_pool = pool_identity is not None and cursor.get('pool_identity') == pool_identity
+        terminal = bool(same_pool and cursor.get('pool_empty',False))
+        if pool.get('engine') == 'python':
+            # The event history is shared by successive leases. A running new
+            # lease can have unread pool-empty events from its predecessor;
+            # only this lease's terminal publication proves it is drained.
+            terminal = pool_identity is not None and pool.get('state') == 'pool-empty'
+        else:
+            terminal = terminal or bool(pool_identity is not None and any(
+                line.startswith('STATUS|') and 'type=pool-empty' in line.split('|') for line in lines))
+        # A terminal lease can predate this reader by many bounded chunks.
+        # Deliver its pending records before exposing completion to callers.
+        terminal_backlog = terminal and offset + len(data) < stat.st_size
+        terminal = terminal and not terminal_backlog
         write_json_atomic(cursor_path,{'schema_version':1,'identity':identity,'offset':offset+end,
-                                      'prefix_length':prefix_length,'prefix_digest':digest,'pool_empty':terminal})
-        return lines,terminal
+                                      'prefix_length':prefix_length,'prefix_digest':digest,'pool_empty':terminal,
+                                      'pool_identity':pool_identity})
+        return lines,terminal,terminal_backlog
 
 
 def _pool_alive(config):
@@ -475,14 +548,18 @@ def watch_run(config: WatchConfig) -> WatchResult:
     deadline=time.monotonic()+config.wait_seconds
     seen=[]
     while True:
-        lines,empty=_drain_events(config)
+        lines,empty,terminal_backlog=_drain_events(config)
         seen.extend(lines)
         if empty:
             return WatchResult('pool-empty',tuple(seen))
+        if terminal_backlog:
+            return WatchResult('running',tuple(seen))
         alive=_pool_alive(config)
         if alive!='alive':
-            lines,empty=_drain_events(config)
+            lines,empty,terminal_backlog=_drain_events(config)
             seen.extend(lines)
+            if terminal_backlog:
+                return WatchResult('running',tuple(seen))
             return WatchResult('pool-empty' if empty else 'pool-dead',tuple(seen),0 if empty else 3)
         remaining=deadline-time.monotonic()
         if remaining<=0:

@@ -428,8 +428,7 @@ class PoolSupervisor:
             state_policy.quarantine_artifacts(directory,[str(worker.agent_run.result_file)],'merge-predispatch-'+uuid.uuid4().hex)
         else:
             state_policy.quarantine_artifacts(directory,state_policy.sub_coord_terminal_marker_paths(directory),'predispatch-'+uuid.uuid4().hex)
-        if worker is not None:
-            self._intent(issue, worker)
+        self._intent(issue, worker)
         try:
             result = dispatch_worker(worker)
         except (OSError, ValueError, RuntimeError) as error:
@@ -620,7 +619,12 @@ class PoolSupervisor:
         while True:
             result=self.tick()
             if result:return finish(result)
-            time.sleep(self.config.poll_seconds)
+            deadline=time.monotonic()+self.config.poll_seconds
+            while not self.stop_requested():
+                remaining=deadline-time.monotonic()
+                if remaining<=0:break
+                # Poll cadence controls scheduling, not stop acknowledgement.
+                time.sleep(min(1.0,remaining))
 
 
 def run_pool(config: PoolConfig) -> PoolResult:
@@ -701,12 +705,12 @@ def main(argv=None):
     for old,new in (('agent','sub_coord_agent'),('model','sub_coord_model')):
         value=args.pop(old)
         if value is not None:args[new]=value
-    if record:
-        saved=PoolConfig.from_record(load_json(Path(record))).to_record();saved.pop('schema_version')
-        saved.update({key:value for key,value in args.items() if value is not None});args=saved
     try:
+        if record:
+            saved=PoolConfig.from_record(load_json(Path(record))).to_record();saved.pop('schema_version')
+            saved.update({key:value for key,value in args.items() if value is not None});args=saved
         result=run_pool(PoolConfig.from_sources(args,os.environ))
-    except (OSError,ValueError,KeyError,TypeError) as error:
+    except (OSError,ValueError,KeyError,TypeError,RuntimeError) as error:
         print(f'runpool: {error}',file=sys.stderr);return 2
     if result.return_code:print(f'runpool: {result.state}: {result.detail}',file=sys.stderr)
     return result.return_code
