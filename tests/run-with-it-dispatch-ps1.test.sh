@@ -157,7 +157,12 @@ foreach ($key in $scores.Keys) { $rationale[$key] = "fixture" }
   Write-Output
 New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
 Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=complexity|status=success|source=agent" -Encoding UTF8
-Start-Sleep -Seconds 4
+# Keep the worker alive until synthesis, rather than racing PowerShell startup
+# and polling overhead against a four-second natural exit on slower CI hosts.
+$waiting = [Diagnostics.Stopwatch]::StartNew()
+while (-not (Test-Path $env:RUN_WITH_IT_RESULT_FILE) -and $waiting.Elapsed.TotalSeconds -lt 30) {
+  Start-Sleep -Milliseconds 100
+}
 PS1
 
 cat > "${SMOKE_ASSET_ROOT}/agent-registry.json" <<JSON
