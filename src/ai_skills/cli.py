@@ -80,6 +80,12 @@ def runtime_command(arguments: list[str]) -> list[str] | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        # Actual CLI streams carry UTF-8 tasks and machine-readable output on
+        # every platform. Explicit-argv library calls retain caller ownership.
+        for stream in (sys.stdin, sys.stdout, sys.stderr):
+            if reconfigure := getattr(stream, 'reconfigure', None):
+                reconfigure(encoding='utf-8')
     arguments = list(sys.argv[1:] if argv is None else argv)
     try:
         if command := runtime_command(arguments):

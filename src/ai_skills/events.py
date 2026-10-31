@@ -120,8 +120,16 @@ class EventBus:
             self.status(line)
         if not suppress_console and not line.startswith('STATUS|type=heartbeat|'):
             target = sys.stdout if channel == 'stdout' else sys.stderr
-            target.write(text)
-            target.flush()
+            buffer = getattr(target, 'buffer', None)
+            if buffer is not None:
+                # Provider/status output is a UTF-8 wire format, including when
+                # a library caller's redirected console uses a legacy codec.
+                target.flush()
+                buffer.write(text.encode('utf-8'))
+                buffer.flush()
+            else:
+                target.write(text)
+                target.flush()
 
     def emit(self, kind, fields):
         self.forward(emit_status(kind, fields))
