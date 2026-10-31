@@ -371,3 +371,37 @@ def test_windows_release_waits_for_read_open_owner_handle(tmp_path):
         closer.join(timeout=2)
         reader.close()
     assert not lock.path.exists()
+
+
+def test_acquisition_retries_delete_pending_directory(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    lock_path = Path(f"{path}.lock")
+    mkdir = Path.mkdir
+    attempts = []
+    def delete_pending(candidate, *args, **kwargs):
+        if candidate == lock_path:
+            attempts.append(candidate)
+            if len(attempts) < 3:
+                raise PermissionError("Windows directory deletion is pending")
+        return mkdir(candidate, *args, **kwargs)
+    monkeypatch.setattr(Path, "mkdir", delete_pending)
+    with DirectoryLock(path, timeout_seconds=.2, poll_interval_seconds=.001):
+        assert load_json(lock_path / "owner.json")["pid"] == os.getpid()
+    assert not lock_path.exists()
+
+
+def test_acquisition_access_denial_stays_bounded(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    lock_path = Path(f"{path}.lock")
+    mkdir = Path.mkdir
+    def denied(candidate, *args, **kwargs):
+        if candidate == lock_path:
+            raise PermissionError("persistent access denial")
+        return mkdir(candidate, *args, **kwargs)
+    monkeypatch.setattr(Path, "mkdir", denied)
+    started = time.monotonic()
+    with pytest.raises(LockTimeoutError):
+        with DirectoryLock(path, timeout_seconds=.03, poll_interval_seconds=.001):
+            pytest.fail("acquired inaccessible lock")
+    assert time.monotonic() - started < 1
+    assert not lock_path.exists()

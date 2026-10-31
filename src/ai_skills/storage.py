@@ -89,7 +89,10 @@ class DirectoryLock:
             attempted = True
             try:
                 self.path.mkdir()
-            except FileExistsError:
+            except (FileExistsError, PermissionError):
+                # Windows can report access denied while the preceding owner
+                # directory is delete-pending. Treat it as bounded contention;
+                # inaccessible ownership never authorizes reclamation.
                 if self._reclaim_dead_owner():
                     continue
                 remaining = deadline - time.monotonic()
