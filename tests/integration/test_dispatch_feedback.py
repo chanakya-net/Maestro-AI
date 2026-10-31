@@ -218,6 +218,62 @@ else:
         dispatch._stop_provider(config)
 
 
+def test_detach_long_poll_publishes_provider_before_bootstrap_expires(tmp_path, monkeypatch):
+    from ai_skills.processes import ProcessIdentity, ProcessSupervisor
+    config = replace(worker_config(tmp_path, '''import os,time
+from pathlib import Path
+with Path('paid-attempts').open('a') as stream: stream.write('one\\n')
+while not Path('release-provider').exists(): time.sleep(.01)
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
+''', detach=True, bootstrap_seconds=.08), poll_seconds=20)
+    real_start = ProcessSupervisor.start
+    def start_after_initial_observation(supervisor, spec, *, run_id, attempt_id):
+        if run_id.endswith('-dispatcher'):
+            # Coordinate the real detached runner with its first empty read.
+            # This reproduces the publication race without scheduler timing.
+            bootstrap = '''import sys,threading
+sys.path.insert(0,sys.argv[1])
+from ai_skills import dispatch
+initial_observation = threading.Event()
+real_record, real_run = dispatch._process_record, dispatch.run_agent
+def record(config):
+    value = real_record(config)
+    if not value.get('identity'): initial_observation.set()
+    return value
+def run(config):
+    if not initial_observation.wait(5): raise RuntimeError('startup observation missing')
+    return real_run(config)
+dispatch._process_record, dispatch.run_agent = record, run
+raise SystemExit(dispatch._detached(sys.argv[2]))
+'''
+            spec = replace(spec, argv=(*spec.argv[:2], bootstrap, *spec.argv[3:]))
+        return real_start(supervisor, spec, run_id=run_id, attempt_id=attempt_id)
+    monkeypatch.setattr(ProcessSupervisor, 'start', start_after_initial_observation)
+    try:
+        result = dispatch_worker(config)
+        deadline = time.monotonic() + 5
+        while not (tmp_path / 'paid-attempts').is_file() or (tmp_path / 'paid-attempts').read_text().splitlines() != ['one']:
+            assert time.monotonic() < deadline, 'provider did not execute'
+            time.sleep(.01)
+        assert (tmp_path / 'paid-attempts').read_text().splitlines() == ['one']
+        assert result.state == 'running', result.reason
+        process = json.loads(Path(str(config.state_file) + '.process.json').read_text())
+        assert result.identity == process['identity']
+        assert dispatch.inspect_worker(config).liveness == 'alive'
+        with pytest.raises(RuntimeError, match='prohibits relaunch'):
+            dispatch_worker(config)
+        assert (tmp_path / 'paid-attempts').read_text().splitlines() == ['one']
+    finally:
+        (tmp_path / 'release-provider').touch()
+        if Path(str(config.state_file) + '.process.json').exists():
+            assert dispatch._stop_provider(config).state == 'dead'
+        wrapper_path = Path(str(config.state_file) + '.dispatcher.process.json')
+        if wrapper_path.exists():
+            wrapper = json.loads(wrapper_path.read_text())
+            assert ProcessSupervisor(Path(wrapper['record_directory'])).stop(
+                ProcessIdentity(**wrapper['identity']), grace_seconds=.1).state == 'dead'
+
+
 def test_bootstrap_uncertain_shutdown_is_unknown_and_prohibits_relaunch(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from ai_skills.processes import Liveness, ProcessIdentity, StopResult

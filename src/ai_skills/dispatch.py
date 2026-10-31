@@ -282,7 +282,8 @@ def _work(config):
                 if stop.state != 'dead':
                     timeout_reason = 'shutdown-identity-unknown'
                 break
-            time.sleep(config.poll_seconds)
+            # Admission must not wait for the steady-state observation cadence.
+            time.sleep(config.poll_seconds if provider_identity else min(.03, config.poll_seconds))
     except KeyboardInterrupt:
         timeout_reason = 'interrupted'
         _stop_provider(config)
