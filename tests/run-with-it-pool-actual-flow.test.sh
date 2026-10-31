@@ -516,11 +516,24 @@ cat > "$LATECTX_PROJECT/.run-with-it/main-state.json" <<JSON
   "ledger_rows": []
 }
 JSON
-( sleep 3; write_context "$LATECTX_PROJECT" 52 completed ) &
+latectx_events="$LATECTX_PROJECT/.run-with-it/status/events.log"
+(
+  # Release the context after observing the state under test, so slow startup
+  # cannot turn this into an ordinary context-present admission on CI.
+  for ((late_wait = 0; late_wait < 300; late_wait++)); do
+    if grep -Fq "STATUS|type=pool-waiting-context|count=1" "$latectx_events" 2>/dev/null; then
+      write_context "$LATECTX_PROJECT" 52 completed
+      exit 0
+    fi
+    sleep 0.1
+  done
+  # Unblock the foreground pool before reporting a missing observation.
+  write_context "$LATECTX_PROJECT" 52 completed
+  exit 1
+) &
 LATE_WRITER_PID=$!
 POOL_HEARTBEAT_SECONDS=2 run_pool "$LATECTX_ROOT" 2
-wait "$LATE_WRITER_PID" 2>/dev/null || true
-latectx_events="$LATECTX_PROJECT/.run-with-it/status/events.log"
+wait "$LATE_WRITER_PID" || fail "pool never reported waiting-context before the bounded fixture deadline"
 assert_json_status "$LATECTX_PROJECT/.run-with-it/main-state.json" 51 completed
 assert_json_status "$LATECTX_PROJECT/.run-with-it/main-state.json" 52 completed
 assert_file_contains "$latectx_events" "STATUS|type=pool-waiting-context|count=1" "pool surfaces the issue waiting on its context file"
