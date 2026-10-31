@@ -116,6 +116,7 @@ def test_process_identity_persists_without_overwriting_dispatcher_state(tmp_path
 
 
 def test_listing_model_configuration_and_gui_thin_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv('RUN_AGENT_BOOTSTRAP_PATH', '1')
     config = fixture_config(tmp_path, '')
     home = tmp_path/'home'
     bindir = home/'.local'/'bin'
