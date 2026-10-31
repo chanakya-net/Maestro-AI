@@ -233,15 +233,24 @@ class ProcessSupervisor:
             if owner_state == 'unknown':
                 return Liveness('unknown', reason='owner identity inaccessible')
             if os.name != 'nt':
-                from ai_skills.platforms.posix import members
-                current = members(identity.pid)
-                if not current:
-                    return self._dead(identity)
-                anchors = [record['identity'], *record.get('members', [])]
-                if not any(_match(a) == 'alive' and a in current for a in
-                           ({'pid': x['pid'], 'created_at': x['created_at']} for x in anchors)):
-                    return Liveness('unknown', reason='session has no verified creation-time anchor')
-                return Liveness('alive', tuple(m['pid'] for m in current))
+                from ai_skills.platforms.posix import _anchor_exists, members
+                # Enumeration and anchor verification are separate observations.
+                # A leader can exit between them, while its owner publishes a
+                # descendant anchor. Retry with fresh durable evidence; never
+                # turn unanchored members into ownership by their numeric PID.
+                for observation in range(3):
+                    if observation:
+                        time.sleep(.01)
+                        record = self._record(identity)
+                    current = members(identity.pid)
+                    if not current:
+                        return self._dead(identity)
+                    anchors = [record['identity'], *record.get('members', [])]
+                    # The common POSIX check also recognizes an unreaped leader
+                    # whose verified creation time still reserves this session.
+                    if _anchor_exists(anchors, identity.pid):
+                        return Liveness('alive', tuple(m['pid'] for m in current))
+                return Liveness('unknown', reason='session has no verified creation-time anchor')
             if record['state'] == 'dead':
                 return self._dead(identity)
             if owner_state == 'alive':

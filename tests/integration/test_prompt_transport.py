@@ -15,6 +15,7 @@ from ai_skills.runner import AgentRunConfig, build_invocation, load_registry, ru
 def configuration(tmp_path, agent='codex', *, response="print('done')"):
     script = tmp_path/'provider.py'
     script.write_text('''import json, pathlib, sys
+sys.stdout.reconfigure(encoding='utf-8')
 if '--help' in sys.argv:
  print('--input-format --output-format'); raise SystemExit(0)
 data = sys.stdin.buffer.read()

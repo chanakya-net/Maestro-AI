@@ -321,3 +321,55 @@ def test_owner_publishes_terminal_exit_after_empty_tree_or_fails_bounded(tmp_pat
         assert result == 0
         assert record['state'] == 'dead'
         assert record['return_code'] == exit_code
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX session observation')
+@pytest.mark.parametrize(('observation', 'expected'), [
+    ('exited-after-scan', 'dead'),
+    ('published-descendant-anchor', 'alive'),
+    ('unreaped-leader', 'alive'),
+    ('unanchored-members', 'unknown'),
+    ('reused-leader-pid', 'unknown'),
+    ('inaccessible-session', 'unknown'),
+])
+def test_posix_inspection_reconciles_observation_races_conservatively(tmp_path, monkeypatch, observation, expected):
+    import socket
+    from ai_skills import processes
+    from ai_skills.platforms import posix
+    from ai_skills.storage import write_json_atomic
+    supervisor = processes.ProcessSupervisor(tmp_path / 'records')
+    identity = processes.ProcessIdentity(73101, 1.0, socket.gethostname(), 'run', 'one')
+    leader = {'pid': identity.pid, 'created_at': identity.created_at}
+    descendant = {'pid': 73102, 'created_at': 2.0}
+    path = supervisor._path('run', 'one')
+    record = {'schema_version': 1, 'state': 'alive', 'host': identity.host, 'run_id': 'run', 'attempt_id': 'one',
+              'identity': dataclasses.asdict(identity), 'owner': {'pid': 73103, 'created_at': 3.0}, 'members': []}
+    write_json_atomic(path, record)
+    scans = 0
+    def members(session):
+        nonlocal scans
+        scans += 1
+        if observation == 'inaccessible-session':
+            raise PermissionError('session enumeration is inaccessible')
+        if observation == 'exited-after-scan':
+            return [leader] if scans == 1 else []
+        if observation == 'published-descendant-anchor' and scans == 1:
+            write_json_atomic(path, {**record, 'members': [descendant]})
+        return [descendant]
+    class ObservedProcess:
+        def __init__(self, pid):
+            self.pid = pid
+            if pid == identity.pid and observation not in ('unreaped-leader', 'reused-leader-pid'):
+                raise psutil.NoSuchProcess(pid)
+        def create_time(self):
+            return 99.0 if observation == 'reused-leader-pid' and self.pid == identity.pid else 1.0 if self.pid == identity.pid else 2.0
+        def status(self):
+            return psutil.STATUS_ZOMBIE if self.pid == identity.pid else psutil.STATUS_RUNNING
+    monkeypatch.setattr(posix, 'members', members)
+    monkeypatch.setattr(posix.psutil, 'Process', ObservedProcess)
+    monkeypatch.setattr(posix.os, 'getsid', lambda pid: identity.pid)
+    monkeypatch.setattr(processes, '_match', lambda member: 'dead' if member['pid'] == identity.pid else 'alive')
+    status = supervisor.inspect(identity)
+    assert status.state == expected, status.reason
+    if expected == 'alive':
+        assert status.members == (descendant['pid'],)
