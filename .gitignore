@@ -144,6 +144,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 .run-with-it/
+.ai-skills/
 .worktrees/
 .codegraph/config.json
 .codegraph/codegraph.db
