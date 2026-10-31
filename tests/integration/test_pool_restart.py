@@ -19,7 +19,7 @@ from threading import Event
 import pytest
 from ai_skills.pool import PoolSupervisor,reconcile_attempts
 from ai_skills.dispatch import WorkerResult
-from ai_skills.storage import write_json_atomic
+from ai_skills.storage import load_json, write_json_atomic
 from pool_support import FakePoolDriver,pool_fixture,install_fake
 
 class EmptyProcesses:
@@ -139,17 +139,17 @@ def test_real_detached_pool_preserves_options_and_worker_overrides(tmp_path,monk
         assert result.state=='detached'
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
-            current=json.loads(Path(config.state_file).read_text())
+            current=load_json(Path(config.state_file))
             if current['issue_registry']['1']['status']=='completed':break
             time.sleep(.03)
         assert current['issue_registry']['1']['status']=='completed'
-        record=json.loads(Path(str(resolved.pool_state_file)+'.config.json').read_text())
+        record=load_json(Path(str(resolved.pool_state_file)+'.config.json'))
         assert record['effort']=='xhigh' and record['quiet_seconds']==3 and record['stall_seconds']==7
         assert record['max_compaction_handoffs']==9
         assert 'SECRET_TOKEN' not in json.dumps(record)
         launch=json.loads((tmp_path/'launches.log').read_text().splitlines()[0])
         assert launch['forced_agent']=='worker-selector' and launch['forced_model']=='worker-model'
-        process=json.loads(Path(str(resolved.pool_state_file)+'.process.json').read_text())
+        process=load_json(Path(str(resolved.pool_state_file)+'.process.json'))
         supervisor=ProcessSupervisor(Path(process['record_directory']));identity=ProcessIdentity(**process['identity'])
         while time.monotonic()<deadline and supervisor.inspect(identity).state!='dead':time.sleep(.03)
         assert supervisor.inspect(identity).state=='dead'

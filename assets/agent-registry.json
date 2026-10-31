@@ -752,9 +752,9 @@
           "{{model_flag}}",
           "{{extra_args}}",
           "{{model_settings}}",
-          "{{prompt}}"
+          "-"
         ],
-        "prompt_argument_template": "{{prompt}}"
+        "prompt_transport": "stdin"
       },
       "liveness": {
         "streaming_output": true,
@@ -814,10 +814,9 @@
           "{{model_flag}}",
           "{{model_settings}}",
           "{{extra_args}}",
-          "--print",
-          "{{prompt}}"
+          "--print"
         ],
-        "prompt_argument_template": "{{prompt}}"
+        "prompt_transport": "stdin"
       },
       "liveness": {
         "streaming_output": false,
@@ -921,10 +920,9 @@
           "run",
           "{{permission_mode}}",
           "{{model_flag}}",
-          "{{extra_args}}",
-          "{{prompt}}"
+          "{{extra_args}}"
         ],
-        "prompt_argument_template": "{{prompt}}"
+        "prompt_transport": "stdin"
       },
       "permission_modes": {
         "default": "--dangerously-skip-permissions",
@@ -969,10 +967,17 @@
           "{{permission_mode}}",
           "{{model_flag}}",
           "{{extra_args}}",
-          "--print",
-          "{{prompt}}"
+          "--input-format",
+          "stream-json",
+          "--output-format",
+          "stream-json"
         ],
-        "prompt_argument_template": "{{prompt}}"
+        "prompt_transport": "agy-stream-json",
+        "required_cli_flags": [
+          "--input-format",
+          "--output-format"
+        ],
+        "protocol_documentation": "https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin"
       },
       "liveness": {
         "streaming_output": false,

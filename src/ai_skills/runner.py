@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -176,12 +177,20 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
         elif name == 'claude':
             settings = ('--effort', effort)
     invocation = agent.get('invocation', {})
+    transport = invocation.get('prompt_transport', 'argv')
+    if transport not in ('argv', 'stdin', 'agy-stream-json'):
+        raise ValueError(f'unsupported prompt transport: {transport}')
+    input_bytes = None
+    if transport == 'stdin':
+        input_bytes = payload.encode('utf-8')
+    elif transport == 'agy-stream-json':
+        input_bytes = (json.dumps({'event':'user', 'message':{'content':payload}}, ensure_ascii=False) + '\n').encode('utf-8')
     command = invocation.get('command')
     if not command:
         raise ValueError(f'agent has no invocation command: {name}')
     expansions = {'permission_mode':_template_tokens(mode, {}), 'model_flag':model_flag,
                   'extra_args':config.extra_args, 'model_settings':settings}
-    substitutions = {'repo_root':root, 'prompt':payload, 'permission_mode':mode,
+    substitutions = {'repo_root':root, 'prompt':payload if transport == 'argv' else '', 'permission_mode':mode,
                      'model_flag':' '.join(model_flag), 'extra_args':' '.join(config.extra_args), 'model_settings':' '.join(settings)}
     argv = [command]
     for token in invocation.get('args_template', []):
@@ -190,9 +199,7 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
             argv.extend(expansions[key])
         else:
             argv.append(_render(token, substitutions))
-    if len(payload.encode('utf-8')) > 131072:
-        print('warn: prompt exceeds 128KB; may be truncated in sandboxed contexts', file=sys.stderr)
-    return ProcessSpec(tuple(argv), root, env, unset_env=('AGENT','MODEL') if config.scrub_ambient_aliases else ())
+    return ProcessSpec(tuple(argv), root, env, unset_env=('AGENT','MODEL') if config.scrub_ambient_aliases else (), stdin=input_bytes)
 
 
 def resolve_executable(argv, environment, *, windows=None):
@@ -257,6 +264,67 @@ class _Tail:
         self.stream.close()
 
 
+def read_provider_output(path, *, transport='argv'):
+    """Recover narrative from raw streams using the registered wire protocol.
+
+    AGY step deltas can repeat final text and include tool output. Only the
+    terminal result is authoritative, including when the wrapper died early.
+    """
+    if transport != 'agy-stream-json':
+        return Path(path).read_text(encoding='utf-8', errors='replace')
+    result = None
+    with Path(path).open(encoding='utf-8') as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if isinstance(event, dict) and event.get('event') == 'result':
+                if result is not None:
+                    raise ValueError('AGY returned multiple results for a single prompt')
+                result = event.get('result')
+    if not isinstance(result, dict) or not isinstance(result.get('response'), str):
+        raise ValueError('AGY stream ended without a complete terminal result.response')
+    if result.get('status') != 'SUCCESS':
+        raise ValueError('AGY result failed: ' + str(result.get('error') or result.get('status')))
+    return result['response']
+
+
+class _AgyTail(_Tail):
+    def __init__(self, path, channel, bus):
+        super().__init__(path, channel, bus)
+        self.path = path
+
+    def drain(self, *, final=False):
+        # Raw NDJSON remains in the durable stream file. Do not mistake tool
+        # deltas or JSON-escaped status strings for colleague narrative.
+        data = self.stream.read(65536)
+        self.recent = (self.recent + self.decoder.decode(data, final=final and not data))[-65536:]
+        return bool(data)
+
+    def finish(self):
+        response = read_provider_output(self.path, transport='agy-stream-json')
+        for line in response.splitlines(keepends=True):
+            self.bus.forward(line.rstrip('\r\n'), 'stdout', newline=line.endswith('\n'),
+                             record_status=len(line) <= 65536)
+
+
+class _CLIUnsupported(ValueError):
+    pass
+
+
+def _check_cli_capabilities(argv, spec, invocation):
+    required = invocation.get('required_cli_flags', [])
+    if required:
+        try:
+            help_result = subprocess.run((*argv, '--help'), cwd=spec.cwd, env=spec.env,
+                                         stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+            help_text = (help_result.stdout + help_result.stderr).decode('utf-8', errors='replace')
+        except (subprocess.TimeoutExpired, OSError) as error:
+            raise _CLIUnsupported(f'Cannot verify provider stdin capabilities; upgrade the CLI: {error}') from error
+        if help_result.returncode or any(flag not in help_text for flag in required):
+            raise _CLIUnsupported('Upgrade AGY CLI: this runner requires --input-format stream-json and --output-format stream-json; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
+
+
 def classify_unavailable(text):
     text = text.lower()
     for reason, phrases in [('auth', ('failed to authenticate', 'invalid authentication credentials', 'api error: 401', 'authentication failed')),
@@ -270,6 +338,7 @@ def classify_unavailable(text):
 def run_agent(config: AgentRunConfig) -> AgentRunResult:
     registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
+    invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
     spec = build_invocation(config, registry)
     if not math.isfinite(config.heartbeat_seconds) or config.heartbeat_seconds < 0:
@@ -289,12 +358,14 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         output, errors = directory/'stdout', directory/'stderr'
         with output.open('xb'), errors.open('xb'):
             pass
-        tails = [_Tail(output, 'stdout', bus), _Tail(errors, 'stderr', bus)]
+        output_tail = _AgyTail if invocation.get('prompt_transport') == 'agy-stream-json' else _Tail
+        tails = [output_tail(output, 'stdout', bus), _Tail(errors, 'stderr', bus)]
         owned = None
         try:
             argv = resolve_executable(spec.argv, spec.env)
+            _check_cli_capabilities(argv, spec, invocation)
             supervisor = ProcessSupervisor(config.record_directory or (Path(config.repo_root)/'.ai-skills'/'processes'))
-            owned = supervisor.start(ProcessSpec(argv, spec.cwd, spec.env, output, errors, spec.unset_env),
+            owned = supervisor.start(replace(spec, argv=argv, stdout=output, stderr=errors),
                                      run_id=config.run_id or 'agent-' + uuid.uuid4().hex,
                                      attempt_id=config.attempt_id or uuid.uuid4().hex)
             state = {'schema_version':1, 'identity':asdict(owned.identity), 'record_directory':str(supervisor.directory), 'state':'alive', 'stdout_file':str(output), 'stderr_file':str(errors)}
@@ -332,14 +403,20 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             for tail in tails:
                 while tail.drain(final=True):
                     pass
+            if code == 0 and isinstance(tails[0], _AgyTail):
+                tails[0].finish()
             reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
             if config.process_state_file:
                 write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
         except FileNotFoundError as error:
             code, reason = 127, 'missing-command'
             bus.forward(str(error))
+        except _CLIUnsupported as error:
+            code, reason = 1, 'cli-unsupported'
+            bus.forward(str(error))
         except (RuntimeError, ValueError, OSError) as error:
             code = 1
+            reason = classify_unavailable(str(error))
             bus.forward(str(error))
         except KeyboardInterrupt:
             code = 130

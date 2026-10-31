@@ -155,8 +155,21 @@ def test_force_reap_stops_native_process_tree(pair_fixture, monkeypatch, capsys)
         invoke(capsys, 'reap', '--run-dir', str(run), '--force')
 
 
-def test_killed_agent_worker_recovers_provider_output_without_another_launch(pair_fixture, monkeypatch, capsys):
-    start, root, _ = pair_fixture
+@pytest.mark.parametrize('transport', ['argv', 'agy-stream-json'])
+def test_killed_agent_worker_recovers_provider_output_without_another_launch(pair_fixture, monkeypatch, capsys, transport):
+    start, root, registry_path = pair_fixture
+    if transport == 'agy-stream-json':
+        registry = json.loads(registry_path.read_text())
+        invocation = registry['agents']['fake']['invocation']
+        invocation['prompt_transport'] = transport
+        invocation['args_template'].remove('{{prompt}}')
+        invocation['args_template'].extend(['--input-format', 'stream-json', '--output-format', 'stream-json'])
+        registry_path.write_text(json.dumps(registry))
+        script = root/'provider.py'
+        source = script.read_text().replace('payload=sys.argv[-1]', "payload=json.loads(sys.stdin.buffer.read())['message']['content']")
+        source = source.replace('sections=', 'import io\nsys.stdout=io.StringIO()\nsections=')
+        source += "\nresponse=sys.stdout.getvalue();sys.stdout=sys.__stdout__;print(json.dumps({'event':'result','result':{'status':'SUCCESS','response':response}}))\n"
+        script.write_text(source, encoding='utf-8')
     monkeypatch.setenv('FAKE_MODE', 'gated')
     run = start(); process = background(run)
     try:

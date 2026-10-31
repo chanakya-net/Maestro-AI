@@ -32,4 +32,18 @@ jobs:
       - name: Native CLI and cutover contracts
         run: python -m pytest tests/contracts/test_cli.py tests/contracts/test_python_cutover.py -q
       - name: Native suite, artifact contents, and outside-checkout installation
-        run: python -m pytest -q
+        run: python -m pytest -q --basetemp=.pytest-runtime
+      - name: Preserve fixture state when native validation fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.os }}-${{ matrix.python }}
+          if-no-files-found: ignore
+          retention-days: 3
+          include-hidden-files: true
+          path: |
+            .pytest-runtime/**/worker*.json
+            .pytest-runtime/**/main-state.json
+            .pytest-runtime/**/report.json
+            .pytest-runtime/**/merge-recovery-report.json
+            .pytest-runtime/**/*.log

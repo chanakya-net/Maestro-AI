@@ -25,7 +25,8 @@ def test_registry_command_preserves_exact_arguments(config):
     assert spec.argv == ('codex', 'exec', '-C', str(config.repo_root),
                          '--dangerously-bypass-approvals-and-sandbox', '--model', 'model with spaces',
                          '--empty', '', 'C:\\tail\\', '-c', 'model_reasoning_effort=xhigh',
-                         'Context λ\n\nInstructions:\n\nDo "work" & %PATH%')
+                         '-')
+    assert spec.stdin == 'Context λ\n\nInstructions:\n\nDo "work" & %PATH%'.encode('utf-8')
     assert spec.cwd == config.repo_root
 
 

@@ -600,7 +600,19 @@ def stop_run(run_root, *, grace_seconds=1, pool_state_file=None):
     records=collect_records()
     if isinstance(records,StopResult):
         return records
-    pool_paths=metadata_paths('pool.state.json')
+    # A pool may place its lease anywhere below the run root. Discover only
+    # this exact runtime filename, without parsing arbitrary project JSON.
+    pool_paths=set()
+    excluded={'.git','node_modules','.superpowers','.pytest_cache','.codegraph','__pycache__'}
+    def inaccessible(error):
+        raise error
+    try:
+        for directory, children, files in os.walk(root,onerror=inaccessible):
+            children[:]=[name for name in children if name not in excluded and not name.startswith('.venv')]
+            if 'pool.state.json' in files:
+                pool_paths.add(Path(directory)/'pool.state.json')
+    except OSError as error:
+        return StopResult('unknown',reason='pool lease discovery inaccessible: '+str(error))
     if pool_state_file:
         pool_paths.add(Path(pool_state_file))
     live_pools=[]

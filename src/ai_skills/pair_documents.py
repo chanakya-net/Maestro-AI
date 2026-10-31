@@ -12,6 +12,8 @@ import tempfile
 from typing import Any
 from pathlib import Path
 
+from ai_skills.storage import replace_file_atomic
+
 
 AGENT_SECTIONS = [
     "Candidate analysis",
@@ -534,7 +536,7 @@ def write_text_atomic(path: str | Path, text: str) -> None:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_file_atomic(temporary, path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

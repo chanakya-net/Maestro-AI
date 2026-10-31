@@ -202,3 +202,12 @@ def test_stop_preflights_unpublished_foreign_claim_before_stopping_owned_process
         assert supervisor.inspect(owned.identity).state == 'alive'
     finally:
         owned.close(grace_seconds=.02)
+
+
+def test_stop_discovers_custom_in_run_pool_lease_without_explicit_flag(tmp_path):
+    state = tmp_path / 'custom/pool.state.json'
+    write_json_atomic(state, {'engine': 'python', 'state': 'running',
+                             'host': 'foreign-host', 'pool_pid': 123, 'pool_created_at': 1})
+    result = stop_run(tmp_path, grace_seconds=.01)
+    assert result.state == 'unknown'
+    assert 'another host' in result.reason

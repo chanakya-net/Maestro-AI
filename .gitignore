@@ -154,6 +154,7 @@ __pycache__/
 # Python development and build outputs
 .venv*/
 .pytest_cache/
+.pytest-runtime/
 build/
 *.egg-info/
 

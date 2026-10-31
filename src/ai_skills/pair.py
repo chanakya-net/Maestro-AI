@@ -196,7 +196,11 @@ class PairRun:
         (self.path / 'processes').mkdir()
         documents.write_text_atomic(self.path / 'task.md', task.rstrip('\n') + '\n')
         created = documents.utc_now()
-        assets = {'prompt_template_sha256': documents.sha256_file(prompt), 'task_sha256': documents.sha256_file(self.path / 'task.md')}
+        # Freeze bytes before hashing: universal-newline reads would otherwise
+        # make a Windows CRLF checkout disagree with its LF snapshot.
+        frozen_prompt = self.path / 'agent-prompt-template.md'
+        shutil.copyfile(prompt, frozen_prompt)
+        assets = {'prompt_template_sha256': documents.sha256_file(frozen_prompt), 'task_sha256': documents.sha256_file(self.path / 'task.md')}
         self.config = {'schema_version': 3, 'engine_version': ENGINE_VERSION, 'created_at': created,
                        'coordinator': 'current invoking agent', 'workspace_root': str(workspace), 'agents': agents,
                        'engine_runtime': {'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': os.path.abspath(sys.executable)},
@@ -204,8 +208,6 @@ class PairRun:
                        'max_agent_attempts': cap, 'permission_mode': 'safe', 'prompt_template': str(Path(prompt).resolve()),
                        'registry_file': str(Path(options.registry_file).resolve()) if options.registry_file else '', 'assets': assets}
         write_json_atomic(self.path / 'config.json', self.config)
-        # Keep the prompt frozen: package upgrades must not change a resumed run.
-        documents.write_text_atomic(self.path / 'agent-prompt-template.md', Path(prompt).read_text(encoding='utf-8'))
         self.state = {'schema_version': 3, 'engine_version': ENGINE_VERSION, 'run_id': uuid.uuid4().hex,
                       'host': socket.gethostname(), 'run_dir': str(self.path), 'workspace_root': str(workspace),
                       'phase': 'awaiting-agents', 'round': 1, 'completed_rounds': 0, 'min_rounds': minimum,
@@ -348,8 +350,15 @@ class PairRun:
                     write_json_atomic(self.attempt_record(slot), record)
         raw_output = Path(str(prefix) + '-streams') / 'stdout'
         if raw_output.exists():
-            documents.write_text_atomic(output, raw_output.read_text(encoding='utf-8', errors='replace'))
-        if record.get('exit_code') == 0 and not record.get('timed_out') and not record.get('interrupted') and output.is_file():
+            from ai_skills.runner import _agent, load_registry, read_provider_output
+            registry = load_registry(self.config.get('registry_file') or None)
+            _, agent = _agent(registry, self.config['agents'][slot]['harness'])
+            transport = agent.get('invocation', {}).get('prompt_transport', 'argv')
+            try:
+                documents.write_text_atomic(output, read_provider_output(raw_output, transport=transport))
+            except ValueError as error:
+                errors.append(str(error))
+        if not errors and record.get('exit_code') == 0 and not record.get('timed_out') and not record.get('interrupted') and output.is_file():
             errors = documents.validate_agent_output(output)
             if not errors:
                 for suffix in ('output.md', 'stderr.log', 'run.json'):

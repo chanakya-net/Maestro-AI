@@ -12,6 +12,8 @@ The maintained runtime is Python on Windows, macOS, and Linux. The same commands
 
 The registry defines supported models and availability. Copilot runtime selection remains disabled while its configured plan is exhausted. The installer does not install Python, Node.js, or providers, and does not broaden their permissions.
 
+Maintained providers receive full prompts through stdin, avoiding operating-system command-line length limits. AGY requires a current CLI supporting `--input-format` and `--output-format`; the runtime checks these flags before launching a paid attempt and reports an upgrade instruction for older builds. Its [documented streaming protocol](https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin) is decoded back into the normal response text while retaining raw output for recovery. Custom registries retain argv input by default; set `invocation.prompt_transport` to `stdin` for a provider that supports plain stdin.
+
 ## Installation
 
 Clone this repository and create a Python environment. On macOS/Linux, select an installed Python 3.12 or newer:

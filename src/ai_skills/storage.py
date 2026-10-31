@@ -1,12 +1,14 @@
 """Strict authoritative JSON and durable same-directory replacement primitives."""
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
 from pathlib import Path
 import shutil
 import socket
+import sys
 import tempfile
 import time
 from typing import Callable, TypeVar
@@ -15,12 +17,36 @@ import uuid
 import psutil
 
 REQUIRED = object()
+T = TypeVar("T")
+
+
+def _retry_windows_sharing(operation: Callable[[], T]) -> T:
+    # CreateFile can report ACCESS_DENIED for a delete-pending file. FileIO's
+    # CRT open also loses winerror and exposes only EACCES. Both can be real
+    # permission errors, so exhaustion must raise rather than imply absence.
+    # Eight attempts and at most 450 ms of retry sleeps per operation.
+    delays = iter((.01, .02, .04, .08, .1, .1, .1))
+    while True:
+        try:
+            return operation()
+        except OSError as error:
+            winerror = getattr(error, "winerror", None)
+            retryable = winerror in (5, 32, 33, 303) or (winerror is None and error.errno == errno.EACCES)
+            delay = next(delays, None)
+            if sys.platform != "win32" or not retryable or delay is None:
+                raise
+            time.sleep(delay)
+
+
+def replace_file_atomic(source: Path, destination: Path) -> None:
+    """Replace a file atomically, allowing brief Windows sharing contention."""
+    _retry_windows_sharing(lambda: os.replace(source, destination))
 
 
 def load_json(path: Path, *, missing: object = REQUIRED) -> object:
     """Default only for an absent file; malformed or unreadable state is an error."""
     try:
-        with Path(path).open(encoding="utf-8") as handle:
+        with _retry_windows_sharing(lambda: Path(path).open(encoding="utf-8")) as handle:
             return json.load(handle)
     except FileNotFoundError:
         if missing is REQUIRED:
@@ -40,13 +66,10 @@ def write_json_atomic(path: Path, value: object) -> None:
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        replace_file_atomic(temporary, path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-
-
-T = TypeVar("T")
 
 
 class LockTimeoutError(TimeoutError):

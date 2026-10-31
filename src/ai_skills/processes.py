@@ -13,7 +13,7 @@ Windows owner death closes its Job Object and kills its members.
 from __future__ import annotations
 
 from contextlib import ExitStack
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
@@ -27,7 +27,7 @@ import time
 
 import psutil
 
-from ai_skills.storage import write_json_atomic
+from ai_skills.storage import load_json, write_json_atomic
 
 
 @dataclass(frozen=True)
@@ -47,8 +47,13 @@ class ProcessSpec:
     stdout: Path | None = None
     stderr: Path | None = None
     unset_env: tuple[str, ...] = ()
+    # Bytes stay in memory until admission, then travel in a private owned file.
+    # They never enter argv, the environment, or durable JSON records.
+    stdin: bytes | None = field(default=None, repr=False)
 
     def __post_init__(self):
+        if self.stdin is not None and not isinstance(self.stdin, bytes):
+            raise ValueError('stdin must be bytes or None')
         if not isinstance(self.unset_env, tuple) or any(not isinstance(name, str) or not name or "=" in name or "\0" in name for name in self.unset_env):
             raise ValueError("unset_env must be a tuple of valid environment variable names")
 
@@ -68,8 +73,7 @@ class StopResult:
 
 
 def _read(path):
-    with path.open(encoding='utf-8') as stream:
-        return json.load(stream)
+    return load_json(path)
 
 
 def _match(member):
@@ -120,6 +124,7 @@ class ProcessSupervisor:
             except subprocess.TimeoutExpired:
                 pass
         self._reap_owners()
+        path.with_suffix('.stdin').unlink(missing_ok=True)
         return Liveness('dead')
 
     def _path(self, run_id, attempt_id):
@@ -157,8 +162,10 @@ class ProcessSupervisor:
         if not run_id or not attempt_id or not spec.argv:
             raise ValueError('run_id, attempt_id and argv are required')
         path = self._path(run_id, attempt_id)
+        stdin_path = path.with_suffix('.stdin') if spec.stdin is not None else None
         record = {'schema_version': 1, 'state': 'starting', 'host': socket.gethostname(),
                   'run_id': run_id, 'attempt_id': attempt_id,
+                  'stdin_file': str(stdin_path) if stdin_path else None,
                   'spec': {'argv': list(spec.argv), 'cwd': str(Path(spec.cwd).resolve()),
                            'stdout': str(Path(spec.stdout).resolve()) if spec.stdout else None,
                            'stderr': str(Path(spec.stderr).resolve()) if spec.stderr else None,
@@ -180,11 +187,19 @@ class ProcessSupervisor:
         options = {'start_new_session': True} if os.name != 'nt' else {
             'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
         try:
+            if stdin_path is not None:
+                descriptor = os.open(stdin_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0), 0o600)
+                with os.fdopen(descriptor, 'wb') as stream:
+                    stream.write(spec.stdin)
+                    stream.flush()
+                    os.fsync(stream.fileno())
             bootstrap = 'import sys;sys.path.insert(0,sys.argv[1]);from ai_skills.processes import _own;from pathlib import Path;raise SystemExit(_own(Path(sys.argv[2])))'
             owner = subprocess.Popen([sys.executable, '-c', bootstrap, root, str(path)],
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL, env=env, **options)
         except OSError as error:
+            if stdin_path is not None:
+                stdin_path.unlink(missing_ok=True)
             record.update(state='failed', error=str(error))
             write_json_atomic(path, record)
             raise RuntimeError(f'owner launch failed: {error}') from error
@@ -308,6 +323,7 @@ def _own(path):
     record = _read(path)
     group = None
     stopping = False
+    input_quiescent = False
 
     def interrupted(_signum, _frame):
         nonlocal stopping
@@ -318,7 +334,7 @@ def _own(path):
     try:
         with ExitStack() as stack:
             spec = record.pop('spec')
-            stdin = stack.enter_context(open(os.devnull, 'rb'))
+            stdin = stack.enter_context(open(record.get('stdin_file') or os.devnull, 'rb'))
             stdout = stack.enter_context(open(spec['stdout'] or os.devnull, 'ab'))
             stderr = stack.enter_context(open(spec['stderr'] or os.devnull, 'ab'))
             environment = os.environ.copy()
@@ -327,6 +343,7 @@ def _own(path):
                 if name in unset or (os.name == 'nt' and name.casefold() in {key.casefold() for key in unset}):
                     environment.pop(name, None)
             group = platform.ProcessGroup(spec['argv'], spec['cwd'], environment, stdin, stdout, stderr)
+            stdin.close()  # The provider inherited its own handle; do not retain another.
             record.update(identity=asdict(ProcessIdentity(group.pid, group.created_at, record['host'],
                                                          record['run_id'], record['attempt_id'])),
                           owner={'pid': os.getpid(), 'created_at': psutil.Process().create_time()},
@@ -355,7 +372,7 @@ def _own(path):
     except BaseException as error:
         if group is not None:
             try:
-                group.stop(0)
+                input_quiescent = not group.stop(0)
             except BaseException:
                 pass
         record.update(state='failed', error=str(error), updated_at=time.time())
@@ -364,6 +381,10 @@ def _own(path):
     finally:
         if group is not None:
             group.close()
+        # ExitStack has closed our handle. Only a verified terminal tree permits
+        # removal; a failed/unknown stop must retain input for its live owner.
+        if record.get('state') == 'dead' or group is None or input_quiescent:
+            path.with_suffix('.stdin').unlink(missing_ok=True)
     return 0
 
 
