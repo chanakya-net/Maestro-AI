@@ -159,3 +159,10 @@ build/
 
 # pair-colleague run artifacts (task text, agent transcripts, decisions)
 .pair-colleague/
+
+# Local execution plans, reviews, and generated analysis
+.superpowers/
+
+# Local skill installation mirrors; maintained sources live in skills/
+/.agents/skills/
+/skills-lock.json

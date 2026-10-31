@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ai-skills"
 version = "0.1.0.dev0"
-description = "Experimental native Python runtime foundation for AI-Skills"
+description = "Native cross-platform orchestration runtime for AI-Skills"
 readme = "README.md"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE"]
@@ -26,7 +26,7 @@ pythonpath = ["src"]
 packages = ["src/ai_skills"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/pyproject.toml", "/README.md", "/LICENSE", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json"]
+include = ["/pyproject.toml", "/README.md", "/LICENSE", "/explainer.html", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json", "/skills/**/*.md", "/examples/*.py"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "assets/agent-registry.json" = "ai_skills/data/agent-registry.json"
@@ -41,3 +41,5 @@ include = ["/pyproject.toml", "/README.md", "/LICENSE", "/src/ai_skills", "/test
 "assets/prompt.md" = "ai_skills/data/prompt.md"
 "assets/review-prompt.md" = "ai_skills/data/review-prompt.md"
 "assets/sub-coordinator-prompt.md" = "ai_skills/data/sub-coordinator-prompt.md"
+
+"skills" = "ai_skills/skills"

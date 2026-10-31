@@ -660,7 +660,7 @@
           "agy"
         ]
       },
-      "_note": "Subscription usage targets are enforced by run-with-it-router.py. Overall default target reflects current usable subscriptions: Codex 60%, Claude 35%, Agy 5%. GitHub Copilot is disabled because the current plan is exhausted. Complexity scoring intentionally routes about half of scoring work to Agy, with quite-easy scoring capped around 25% Agy. Implementation, review, and recovery keep Codex/Claude primary."
+      "_note": "Subscription usage targets are enforced by ai_skills.routing. Overall default target reflects current usable subscriptions: Codex 60%, Claude 35%, Agy 5%. GitHub Copilot is disabled because the current plan is exhausted. Complexity scoring intentionally routes about half of scoring work to Agy, with quite-easy scoring capped around 25% Agy. Implementation, review, and recovery keep Codex/Claude primary."
     },
     "provider_routing_rules": {
       "google": {

@@ -95,3 +95,6 @@ class ProcessGroup:
 
     def close(self):
         self.process.poll()
+
+    def return_code(self):
+        return self.process.poll()

@@ -40,6 +40,8 @@ def test_built_artifacts_exclude_legacy_executables_and_generated_docs(distribut
     with tarfile.open(next(distributions.glob("*.tar.gz"))) as archive:
         members = [name.partition("/")[2] for name in archive.getnames()]
         assert "LICENSE" in members
+        assert "examples/add_two_numbers.py" in members
+        assert "explainer.html" in members
         assert "tests/fixtures/legacy_states/main-state-v4.json" in members
         assert not any(name.startswith(("docs/", ".superpowers/", ".run-with-it/", ".pair-colleague/"))
                        or name.endswith((".sh", ".ps1")) for name in members)

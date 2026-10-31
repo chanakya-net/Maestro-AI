@@ -78,15 +78,16 @@ Prefer the GitHub CLI for all tracker writes.
 
 Before publishing any PRD or implementation issue, check whether `gh` can be used. If it fails in sandbox, try executing it outside the sandbox to confirm:
 
-```bash
-command -v gh >/dev/null 2>&1 && gh repo view >/dev/null 2>&1
+```text
+gh --version
+gh repo view
 ```
 
 If that succeeds, use `gh issue create` for the PRD parent issue and every implementation slice issue.
 
 Use body files so multiline Markdown is preserved:
 
-```bash
+```text
 gh issue create --title "<PRD title>" --body-file <prd-body-file>.md --label enhancement --label needs-triage
 gh issue create --title "<slice title>" --body-file <slice-body-file>.md --label enhancement --label ready-for-agent
 ```

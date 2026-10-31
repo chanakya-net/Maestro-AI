@@ -46,6 +46,11 @@ class ProcessSpec:
     env: dict[str, str]
     stdout: Path | None = None
     stderr: Path | None = None
+    unset_env: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if not isinstance(self.unset_env, tuple) or any(not isinstance(name, str) or not name or "=" in name or "\0" in name for name in self.unset_env):
+            raise ValueError("unset_env must be a tuple of valid environment variable names")
 
 
 @dataclass(frozen=True)
@@ -121,6 +126,32 @@ class ProcessSupervisor:
         key = hashlib.sha256(json.dumps([run_id, attempt_id]).encode()).hexdigest()
         return self.directory / (key + '.json')
 
+    def lookup_attempt(self, run_id: str, attempt_id: str) -> dict | None:
+        """Read launch evidence; corrupt or inaccessible evidence is never absent."""
+        try:
+            record = _read(self._path(run_id, attempt_id))
+        except FileNotFoundError:
+            return None
+        if not isinstance(record, dict) or record.get('schema_version') != 1 or record.get('run_id') != run_id or record.get('attempt_id') != attempt_id:
+            raise ValueError('invalid attempt record')
+        return record
+
+    def attempt_records(self) -> list[dict]:
+        """List durable admissions in a directory owned exclusively by a run.
+
+        Shared directories require lookup_attempt with an exact known key.
+        Incomplete claims remain visible; malformed claims raise, never vanish.
+        """
+        records = []
+        for path in self.directory.glob('*.json'):
+            if len(path.stem) != 64 or any(c not in '0123456789abcdef' for c in path.stem):
+                continue
+            record = _read(path)
+            if not isinstance(record, dict) or self._path(record['run_id'], record['attempt_id']) != path:
+                raise ValueError('admission filename does not match attempt identity')
+            records.append(self.lookup_attempt(record['run_id'], record['attempt_id']))
+        return records
+
     def start(self, spec: ProcessSpec, *, run_id: str, attempt_id: str) -> OwnedProcess:
         self._reap_owners()
         if not run_id or not attempt_id or not spec.argv:
@@ -130,7 +161,8 @@ class ProcessSupervisor:
                   'run_id': run_id, 'attempt_id': attempt_id,
                   'spec': {'argv': list(spec.argv), 'cwd': str(Path(spec.cwd).resolve()),
                            'stdout': str(Path(spec.stdout).resolve()) if spec.stdout else None,
-                           'stderr': str(Path(spec.stderr).resolve()) if spec.stderr else None}}
+                           'stderr': str(Path(spec.stderr).resolve()) if spec.stderr else None,
+                           'unset_env': list(spec.unset_env)}}
         # Exclusive creation is the per-attempt admission lock. Even corrupt or
         # unfinished records block another launch; a timeout is not permission.
         try:
@@ -246,6 +278,27 @@ class ProcessSupervisor:
                 return StopResult('unknown', reason=str(error))
         return StopResult('unknown', status.members, 'Windows owner is unavailable')
 
+    def return_code(self, identity: ProcessIdentity) -> int | None:
+        """Return the durable leader exit status, or None while unavailable."""
+        try:
+            value = self._record(identity).get('return_code')
+            return value if type(value) is int else None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+
+def _terminal_return_code(group):
+    # An empty session/job can precede the leader's waitable exit status.
+    # Publish completion only after observing it, within the runner's 3s wait.
+    deadline = time.monotonic() + 1
+    code = group.return_code()
+    while code is None:
+        if time.monotonic() >= deadline:
+            raise RuntimeError('leader exit status unavailable after process tree shutdown')
+        time.sleep(.01)
+        code = group.return_code()
+    return code
+
 
 def _own(path):
     if os.name == 'nt':
@@ -269,6 +322,10 @@ def _own(path):
             stdout = stack.enter_context(open(spec['stdout'] or os.devnull, 'ab'))
             stderr = stack.enter_context(open(spec['stderr'] or os.devnull, 'ab'))
             environment = os.environ.copy()
+            unset = spec.get('unset_env', [])
+            for name in tuple(environment):
+                if name in unset or (os.name == 'nt' and name.casefold() in {key.casefold() for key in unset}):
+                    environment.pop(name, None)
             group = platform.ProcessGroup(spec['argv'], spec['cwd'], environment, stdin, stdout, stderr)
             record.update(identity=asdict(ProcessIdentity(group.pid, group.created_at, record['host'],
                                                          record['run_id'], record['attempt_id'])),
@@ -276,7 +333,8 @@ def _own(path):
                           state='alive')
             while True:
                 current = group.members()
-                record.update(members=current, updated_at=time.time(), state='alive' if current else 'dead')
+                code = group.return_code() if current else _terminal_return_code(group)
+                record.update(members=current, updated_at=time.time(), state='alive' if current else 'dead', return_code=code)
                 write_json_atomic(path, record)
                 if not current:
                     break
@@ -289,7 +347,8 @@ def _own(path):
                         stopping = True
                 if stopping:
                     remaining = group.stop(grace)
-                    record.update(members=remaining, updated_at=time.time(), state='alive' if remaining else 'dead')
+                    code = group.return_code() if remaining else _terminal_return_code(group)
+                    record.update(members=remaining, updated_at=time.time(), state='alive' if remaining else 'dead', return_code=code)
                     write_json_atomic(path, record)
                     break
                 time.sleep(.05)

@@ -252,3 +252,72 @@ def test_natural_exit_reaps_owned_supervisor(tmp_path):
     owner_pid = json.loads(owned.record_path.read_text())['owner']['pid']
     wait_for(lambda: supervisor.inspect(owned.identity).state == 'dead')
     assert not psutil.pid_exists(owner_pid), 'completed owner was not reaped'
+
+
+@pytest.mark.parametrize('code', [0, 7])
+def test_return_code_is_durable_for_restarted_supervisor(tmp_path, code):
+    Spec, Supervisor = api()
+    directory = tmp_path / 'records'
+    supervisor = Supervisor(directory)
+    owned = supervisor.start(Spec((sys.executable, '-c', f'raise SystemExit({code})'), tmp_path, {}), run_id='run', attempt_id='exit')
+    wait_for(lambda: supervisor.inspect(owned.identity).state == 'dead')
+    restarted = Supervisor(directory)
+    wait_for(lambda: restarted.return_code(owned.identity) is not None)
+    assert restarted.return_code(owned.identity) == code
+
+
+def test_attempt_lookup_distinguishes_missing_from_corrupt(tmp_path):
+    Spec, Supervisor = api()
+    supervisor = Supervisor(tmp_path)
+    assert supervisor.lookup_attempt('run', 'missing') is None
+    owned = supervisor.start(Spec((sys.executable, '-c', 'pass'), tmp_path, {}), run_id='run', attempt_id='known')
+    wait_for(lambda: supervisor.inspect(owned.identity).state == 'dead')
+    assert supervisor.lookup_attempt('run', 'known')['identity']['pid'] == owned.identity.pid
+    owned.record_path.write_text('{broken', encoding='utf-8')
+    with pytest.raises(ValueError):
+        supervisor.lookup_attempt('run', 'known')
+
+
+@pytest.mark.parametrize('exit_code', [0, 259, None])
+@pytest.mark.parametrize('stopping', [False, True])
+def test_owner_publishes_terminal_exit_after_empty_tree_or_fails_bounded(tmp_path, monkeypatch, exit_code, stopping):
+    import importlib
+    import socket
+    from types import SimpleNamespace
+    from ai_skills import processes
+    from ai_skills.storage import write_json_atomic
+    platform = importlib.import_module('ai_skills.platforms.windows' if os.name == 'nt' else 'ai_skills.platforms.posix')
+    identity = {'pid': os.getpid(), 'created_at': psutil.Process().create_time(), 'host': socket.gethostname(),
+                'run_id': 'run', 'attempt_id': 'one'}
+    class ExitingGroup:
+        def __init__(self, *args):
+            self.pid = identity['pid']; self.created_at = identity['created_at']; self.polls = 0
+        def members(self):
+            return [{'pid': self.pid, 'created_at': self.created_at}] if stopping else []
+        def return_code(self):
+            self.polls += 1
+            return None if self.polls <= 2 else exit_code
+        def stop(self, grace): return []
+        def close(self): pass
+    ticks = (number / 100 for number in range(1000))
+    monkeypatch.setattr(platform, 'ProcessGroup', ExitingGroup)
+    monkeypatch.setattr(processes, 'time', SimpleNamespace(monotonic=lambda: next(ticks), sleep=lambda seconds: None, time=time.time))
+    path = tmp_path / 'admission.json'
+    write_json_atomic(path, {'schema_version': 1, 'run_id': 'run', 'attempt_id': 'one', 'host': identity['host'],
+                            'state': 'starting', 'spec': {'argv': ['fake'], 'cwd': str(tmp_path), 'stdout': None, 'stderr': None}})
+    if stopping:
+        write_json_atomic(path.with_suffix('.stop'), {'identity': identity, 'grace_seconds': 0})
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        result = processes._own(path)
+    finally:
+        for sig, handler in handlers.items(): signal.signal(sig, handler)
+    record = json.loads(path.read_text())
+    if exit_code is None:
+        assert result == 1
+        assert record['state'] == 'failed'
+        assert 'exit status' in record['error']
+    else:
+        assert result == 0
+        assert record['state'] == 'dead'
+        assert record['return_code'] == exit_code

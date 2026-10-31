@@ -38,3 +38,29 @@ def resource_path(name: str) -> Traversable:
     if not path.is_file():
         raise FileNotFoundError(f"Missing maintained resource: {name}")
     return path
+
+
+SKILL_NAMES = (
+    'break-req', 'create-git-issue', 'help-me-debug', 'pair-colleague',
+    'run-with-it', 'save-tokens', 'tdd-implementation',
+)
+
+
+def skill_root() -> Traversable:
+    """Versioned skill definitions shipped alongside this engine's prompts."""
+    packaged = files('ai_skills').joinpath('skills')
+    if packaged.is_dir():
+        return packaged
+    checkout = Path(__file__).resolve().parents[2]
+    if (checkout / 'pyproject.toml').is_file() and (checkout / 'skills').is_dir():
+        return checkout / 'skills'
+    raise FileNotFoundError('AI-Skills packaged skill definitions are missing')
+
+
+def skill_path(name: str) -> Traversable:
+    if name not in SKILL_NAMES:
+        raise ValueError(f'Unknown maintained skill: {name!r}')
+    path = skill_root().joinpath(name, 'SKILL.md')
+    if not path.is_file():
+        raise FileNotFoundError(f'Missing maintained skill: {name}')
+    return path

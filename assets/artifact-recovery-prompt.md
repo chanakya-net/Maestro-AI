@@ -74,30 +74,15 @@ You may produce exactly one of these decisions:
 
 1. Verify the check-in target:
 
-```bash
-CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
-test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --show-toplevel)" = "$CHECKIN_REPO_ROOT"
-if [ -n "${RUN_WITH_IT_ISSUE_BRANCH:-}" ]; then
-  test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)" = "$RUN_WITH_IT_ISSUE_BRANCH"
-fi
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 2. Inspect structured state and worktree facts:
 
-```bash
-git -C "$CHECKIN_REPO_ROOT" status --short --untracked-files=all
-git -C "$CHECKIN_REPO_ROOT" log --oneline -5
-if [ -n "${FAILED_WORKER_STATE_FILE:-}" ]; then
-  python3 -m json.tool "$FAILED_WORKER_STATE_FILE" >/dev/null
-fi
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 3. For dirty work, inspect the diff directly:
 
-```bash
-git -C "$CHECKIN_REPO_ROOT" diff --stat
-git -C "$CHECKIN_REPO_ROOT" diff --cached --stat
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 4. Decide whether the failed worker's expected scope is complete.
 
@@ -105,11 +90,7 @@ For `FAILED_WORKER_ROLE=modify`, read `REVIEWER_INSTRUCTIONS_FILE` and verify ev
 
 5. If complete and dirty, commit the salvage:
 
-```bash
-git -C "$CHECKIN_REPO_ROOT" add -A
-git -C "$CHECKIN_REPO_ROOT" commit -m "fix(#${RUN_WITH_IT_ISSUE:-unknown}): recover ${FAILED_WORKER_ROLE:-worker} artifact"
-RECOVERED_COMMIT_SHA="$(git -C "$CHECKIN_REPO_ROOT" rev-parse HEAD)"
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 If complete and already committed, set `RECOVERED_COMMIT_SHA` to the current `HEAD`.
 
@@ -171,10 +152,7 @@ Schema:
 
 9. Write the done sentinel only after all required JSON artifacts are valid:
 
-```bash
-printf 'DONE|issue=%s|role=artifact-recovery|status=success|decision=%s|source=agent\n' \
-  "${RUN_WITH_IT_ISSUE:-unknown}" "$DECISION" > "$RUN_WITH_IT_DONE_FILE"
-```
+After the role artifact validates, use file tools to write the specified `DONE|issue=<n>|role=<role>|status=success|source=agent` sentinel. Write it last. The native runner also records exit-based completion; neither marker bypasses validation or owned-tree shutdown.
 
 ## Status Lines
 

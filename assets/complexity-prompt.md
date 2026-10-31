@@ -31,10 +31,7 @@ Scope
 
 File discovery instructions (read-only)
 
-- Use these read-only shell commands to identify relevant files:
-  - `grep -R --line-number --no-ignore-case -E "<KEYWORDS_FROM_ISSUE>" . || true`
-  - `find . -type f -name "*.md" -o -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go"` and then filter by content.
-  - `cat <file>` or Read tool to inspect file contents.
+- Use CodeGraph when initialized, otherwise read-only file search (`rg`/`rg --files` when available) and file-reading tools. These mechanisms must not edit the repository.
 - Do NOT run any command that writes, installs, compiles, or modifies anything.
 - The sub-agent MUST identify the files it considered before scoring ownership/architecture dimensions, using those paths as internal scoring context without adding extra output outside the required contract.
 
@@ -135,48 +132,15 @@ COMPLEXITY|score=<total>|level=<label>|d1=<n>|d2=<n>|d3=<n>|d4=<n>|d5=<n>|d6=<n>
 
 - If `RUN_WITH_IT_RESULT_FILE` is present in the environment, write that same JSON blob to exactly that path before exiting:
 
-```bash
-mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
-python3 - "$RUN_WITH_IT_RESULT_FILE" <<'PY'
-import json
-import sys
-
-payload = {
-  "total": 27,
-  "level": "medium-hard",
-  "scores": {
-    "dependency_complexity": 3,
-    "ownership_overlap_risk": 3,
-    "architecture_risk": 4,
-    "orchestration_burden": 3,
-    "verification_risk": 3,
-    "ambiguity_of_requirements": 3,
-    "integration_surface_breadth": 4,
-    "rollback_recovery_risk": 3,
-    "blast_radius": 3
-  },
-  "rationale": {
-    "dependency_complexity": "Replace with the actual rationale.",
-    "ownership_overlap_risk": "Replace with the actual rationale.",
-    "architecture_risk": "Replace with the actual rationale.",
-    "orchestration_burden": "Replace with the actual rationale.",
-    "verification_risk": "Replace with the actual rationale.",
-    "ambiguity_of_requirements": "Replace with the actual rationale.",
-    "integration_surface_breadth": "Replace with the actual rationale.",
-    "rollback_recovery_risk": "Replace with the actual rationale.",
-    "blast_radius": "Replace with the actual rationale."
-  }
-}
-with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
-PY
-```
+Use file tools to write the exact JSON object directly to `RUN_WITH_IT_RESULT_FILE`, the only permitted file write for this read-only role. Do not create a temporary payload elsewhere. The runner validates and records exit-based completion; do not write a done sentinel yourself.
 
 Example output (exact formatting not required, content required):
 
-```
+```text
 COMPLEXITY|score=27|level=medium-hard|d1=3|d2=3|d3=4|d4=3|d5=3|d6=3|d7=4|d8=3|d9=3
+```
+
+```json
 {
   "total": 27,
   "level": "medium-hard",

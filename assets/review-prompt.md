@@ -120,12 +120,12 @@ Raise a blocking finding when a realistic exploit, data leak, privilege boundary
 Write exactly **two** JSON files.
 
 Path contract:
-- `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `run-with-it-dispatch.sh`.
+- `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `ai-skills worker dispatch`.
 - Write the full actionable review JSON exactly to `REVIEWER_INSTRUCTIONS_FILE`.
 - When `RUN_WITH_IT_ARTIFACT_HELPER` is set, run it before the done sentinel and treat any non-empty failure reason as invalid output to fix, not as a warning to ignore.
 - Write `RUN_WITH_IT_DONE_FILE` only after both JSON files exist and parse as valid JSON.
 - Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.
-- Build each JSON payload in a temporary file, then install it atomically with `python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json`: use `--role review` for the status payload and `--role review-instructions` for the instructions payload. Pass `--issue "$RUN_WITH_IT_ISSUE"`, the temporary `--payload-file`, and the final `--result-file`. Never generate Python source strings to quote JSON into place.
+- Build each JSON payload in a temporary file, then install it atomically with `ai-skills artifact write-json`: use `--role review` for the status payload and `--role review-instructions` for the instructions payload. Pass `--issue "$RUN_WITH_IT_ISSUE"`, the temporary `--payload-file`, and the final `--result-file`. Never generate Python source strings to quote JSON into place.
 
 ### Status File — write to `REVIEWER_STATUS_FILE`
 
@@ -229,21 +229,12 @@ The `comments` array must include every distinct actionable finding from the com
 
 If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after both JSON files are valid and fully flushed to disk:
 
-```bash
-if [ -n "${RUN_WITH_IT_ARTIFACT_HELPER:-}" ]; then
-  artifact_reason="$(python3 "$RUN_WITH_IT_ARTIFACT_HELPER" failure-reason \
-    --role review \
-    --issue "${RUN_WITH_IT_ISSUE:-unknown}" \
-    --result-file "$REVIEWER_STATUS_FILE" \
-    --done-file "${RUN_WITH_IT_DONE_FILE:-}")"
-  if [ -n "$artifact_reason" ]; then
-    printf 'Review artifact invalid: %s\n' "$artifact_reason" >&2
-    exit 1
-  fi
-fi
+Validate both status and instructions at their exact configured paths:
 
-mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
-printf 'DONE|issue=%s|role=review|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+```text
+ai-skills artifact failure-reason --role review --issue <issue> --result-file <review-status-file>
 ```
+
+An empty reason is required before writing the done sentinel with file tools. A positive comment count without complete instructions is never approved.
 
 Do not write the done file before `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` both exist, parse as valid JSON, and pass `RUN_WITH_IT_ARTIFACT_HELPER` validation when that helper is available.

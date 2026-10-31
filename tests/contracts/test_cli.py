@@ -25,7 +25,7 @@ def test_help_without_provider_tools(tmp_path):
 
 
 def test_unknown_command_is_rejected(tmp_path):
-    result = invoke("agent", "run", cwd=tmp_path)
+    result = invoke("does-not-exist", cwd=tmp_path)
     assert result.returncode == 2
     assert "invalid choice" in result.stderr
     assert list(tmp_path.iterdir()) == []

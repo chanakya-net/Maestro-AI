@@ -555,7 +555,7 @@
     </div>
     <div class="card">
       <h4>Sub-Coordinator</h4>
-      <p>Spawned per issue via <code>run-agent.sh</code>. Handles complexity analysis,
+      <p>Spawned per issue via <code>ai-skills agent run</code>. Handles complexity analysis,
       agent routing, implementation, review, and modification. Writes a compact
       report JSON when done. Never touches GitHub. Each runs with
       <code>MAX_AGENT_DEPTH=1</code>.</p>
@@ -596,7 +596,7 @@
     <div style="font-size:0.75rem; color:var(--text-muted);">
       <span class="glossary-term">.run-with-it/main-state.json</span>
       <span class="glossary-term">compact report JSON</span>
-      <span class="glossary-term">run-agent.sh</span>
+      <span class="glossary-term">ai-skills agent run</span>
       <span class="glossary-term">sub-coordinator-prompt.md</span>
       <span class="glossary-term">agent-registry.json</span>
     </div>
@@ -661,7 +661,7 @@
     <div class="step">
       <span class="tag tag-pink">D</span>
       <span class="step-title">Spawn Sub-Coordinator</span>
-      <div class="step-desc"><code>run-agent.sh --prompt-file sub-coordinator-prompt.md</code> &rarr; monitored blocking loop &rarr; 3600s stall alert &rarr; shell watcher prints status line changes &rarr; waits for report JSON</div>
+      <div class="step-desc"><code>ai-skills agent run --prompt-file sub-coordinator-prompt.md</code> &rarr; monitored blocking loop &rarr; 3600s stall alert &rarr; native event watcher prints status changes &rarr; waits for report JSON</div>
     </div>
     <div class="arrow">&darr;</div>
 
@@ -706,29 +706,27 @@
   <div class="card-grid cols-2">
     <div class="card">
       <h4>Asset Discovery</h4>
-      <p>Resolve from <code>$ASSETS_DEST</code> &rarr; <code>~/.ai-skill-collections/assets</code> &rarr; <code>./assets</code>. Must find all 11 required files (<code>prompt.md</code>, <code>run-agent.sh</code>, <code>run-agent.ps1</code>, <code>worker-watch.sh</code>, <code>agent-registry.json</code>, <code>review-prompt.md</code>, <code>modifier-prompt.md</code>, <code>complexity-prompt.md</code>, <code>coordinator-rules.md</code>, <code>sub-coordinator-prompt.md</code>, <code>main-orchestrator-rules.md</code>).</p>
+      <p>The installed Python package contains all maintained prompts and the registry. <code>ai-skills doctor</code> validates these resources. Each run pins its immutable runtime; new installations update the default for new runs.</p>
     </div>
     <div class="card">
-      <h4>OS Detection</h4>
-      <p>Detect <code>uname -s</code> (macOS/Linux) vs <code>$env:OS = Windows_NT</code> (PowerShell). The Main Orchestrator passes the pre-detected <code>OS_FAMILY</code> down to Sub-Coordinators in their context configuration to bypass redundant OS checks, while adapting all shell commands (e.g., <code>mkdir -p</code> vs <code>New-Item</code>, <code>$HOME</code> vs <code>$env:USERPROFILE</code>, and <code>.sh</code> vs <code>.ps1</code> runners).</p>
+      <h4>Native Runtime</h4>
+      <p>Use the same <code>ai-skills</code> commands and JSON configuration on Windows, macOS, and Linux. Python owns paths, files, subprocess arguments, process supervision, and state updates; prompts contain no OS-specific orchestration algorithm.</p>
     </div>
     <div class="card">
       <h4>Agent &amp; Model Validation</h4>
-      <p>Verify <code>SUB_COORD_AGENT</code> is installed via <code>run-agent.sh --list-agents --detected-only</code>. Confirm <code>SUB_COORD_MODEL</code> is in that agent's <code>known_models</code> in <code>agent-registry.json</code>.</p>
+      <p>Verify <code>SUB_COORD_AGENT</code> is installed via <code>ai-skills agent list --detected-only</code>. Confirm <code>SUB_COORD_MODEL</code> is in that agent's <code>known_models</code> in <code>agent-registry.json</code>.</p>
     </div>
     <div class="card">
       <h4>Existing-State Detection</h4>
-      <p>If <code>.run-with-it/main-state.json</code> exists, prompt user: <code>resume</code> (continue previous run) or <code>discard</code> (delete and start fresh). On <code>resume</code>, <code>in_progress</code> issues reset to <code>pending</code> (Sub-Coordinators are ephemeral).</p>
+      <p>If <code>.run-with-it/main-state.json</code> exists, inspect the pinned engine and durable attempt identities before resuming. Reconcile owned attempts and completed artifacts; never reset active work blindly. Stop legacy runs before changing engines.</p>
     </div>
   </div>
 
   <p style="margin-top:0.5rem;">
-    <span class="tag tag-cyan">OS</span>
-    <span class="glossary-term">uname -s</span>
-    <span class="glossary-term">$env:OS</span>
-    <span class="glossary-term">Git Bash</span>
-    <span class="glossary-term">WSL</span>
-    <span class="glossary-term">MINGW*</span>
+    <span class="tag tag-cyan">Python 3.12+</span>
+    <span class="glossary-term">Windows</span>
+    <span class="glossary-term">macOS</span>
+    <span class="glossary-term">Linux</span>
   </p>
 </section>
 
@@ -791,7 +789,7 @@
       <tr>
         <td><span class="tag tag-pink">D</span></td>
         <td>Spawn Sub-Coordinator</td>
-        <td><code>run-agent.sh --prompt-file sub-coordinator-prompt.md</code> with <code>dangerouslyDisableSandbox: true</code>. Background + monitored loop. 3600s stall alert. Shell watcher prints only changed status lines. Never load logs into AI context.</td>
+        <td><code>ai-skills agent run --prompt-file sub-coordinator-prompt.md</code> with explicit provider permissions. Durable background ownership and monitored events. 3600s stall alert. Native event watcher prints only new status events. Never load logs into AI context.</td>
       </tr>
       <tr>
         <td><span class="tag tag-pink">E</span></td>
@@ -828,7 +826,7 @@
   <p>
     Each Sub-Coordinator is a self-contained agent session that handles exactly
     <strong>one issue</strong> end-to-end. It is spawned via
-    <code>run-agent.sh</code> with <code>MAX_AGENT_DEPTH=1</code> (children
+    <code>ai-skills agent run</code> with <code>MAX_AGENT_DEPTH=1</code> (children
     cannot spawn further sub-agents). It never touches GitHub and never updates
     <code>main-state.json</code>.
   </p>
@@ -859,7 +857,7 @@
     <div class="step">
       <span class="tag tag-green">3</span>
       <span class="step-title">Implementation</span>
-      <div class="step-desc">Spawn implementer worker-agent with <code>prompt.md</code> in the background, capture PID, persist worker metadata, and monitor with <code>worker-watch.sh</code>. Runs TDD discipline (red-green-refactor). Produces code with behaviour-first tests through public interfaces. Captures commit SHA, not diff text.</div>
+      <div class="step-desc">Spawn implementer worker-agent with <code>prompt.md</code> through <code>ai-skills worker dispatch</code>, persist attempt identities, and monitor with <code>ai-skills worker inspect</code>. Runs TDD discipline (red-green-refactor). Produces code with behaviour-first tests through public interfaces. Captures commit SHA, not diff text.</div>
     </div>
     <div class="arrow">&darr;</div>
 
@@ -1017,17 +1015,17 @@
   <table>
     <thead><tr><th>File</th><th>Role</th><th>Used By</th></tr></thead>
     <tbody>
-      <tr><td><code>agent-registry.json</code></td><td>Agent aliases, detection commands, invocation templates, model catalog, routing metadata (546 lines)</td><td>Sub-Coordinator routing</td></tr>
-      <tr><td><code>run-agent.sh</code></td><td>Bash runner — orchestrates agent CLI invocation, permission modes, dry-run (631 lines)</td><td>Main Orchestrator / Sub-Coordinator spawn</td></tr>
-      <tr><td><code>run-agent.ps1</code></td><td>PowerShell equivalent of <code>run-agent.sh</code></td><td>Windows path</td></tr>
-      <tr><td><code>worker-watch.sh</code></td><td>Reports background worker PID liveness, done-file presence, and log-tail changes without deciding completion</td><td>Sub-Coordinator worker monitoring</td></tr>
-      <tr><td><code>prompt.md</code></td><td>Shared execution prompt (84 lines)</td><td>Implementer worker-agent</td></tr>
-      <tr><td><code>review-prompt.md</code></td><td>Review prompt for quality gates (124 lines)</td><td>Reviewer worker-agent</td></tr>
-      <tr><td><code>modifier-prompt.md</code></td><td>Address review comments, re-run verification (86 lines)</td><td>Modifier worker-agent</td></tr>
-      <tr><td><code>complexity-prompt.md</code></td><td>9-dimension score rubric + mapping (189 lines)</td><td>Complexity sub-agent</td></tr>
-      <tr><td><code>sub-coordinator-prompt.md</code></td><td>Full Sub-Coordinator lifecycle instructions (588 lines)</td><td>Spawned child agent session</td></tr>
-      <tr><td><code>coordinator-rules.md</code></td><td>Hard constraints re-read before each phase (74 lines)</td><td>Sub-Coordinator</td></tr>
-      <tr><td><code>main-orchestrator-rules.md</code></td><td>Hard constraints re-read each loop (55 lines)</td><td>Main Orchestrator</td></tr>
+      <tr><td><code>agent-registry.json</code></td><td>Agent aliases, detection commands, invocation templates, model catalog, routing metadata</td><td>Sub-Coordinator routing</td></tr>
+      <tr><td><code>ai-skills agent run</code></td><td>Native provider invocation, permission selection, and dry-run</td><td>Main Orchestrator / Sub-Coordinator spawn</td></tr>
+      <tr><td><code>ai-skills worker dispatch</code></td><td>Durable attempt ownership, artifact validation, and recovery</td><td>All supported operating systems</td></tr>
+      <tr><td><code>ai-skills run watch</code></td><td>Cursor-based event observation with bounded waiting</td><td>Coordinator monitoring</td></tr>
+      <tr><td><code>prompt.md</code></td><td>Shared execution prompt</td><td>Implementer worker-agent</td></tr>
+      <tr><td><code>review-prompt.md</code></td><td>Review prompt for quality gates</td><td>Reviewer worker-agent</td></tr>
+      <tr><td><code>modifier-prompt.md</code></td><td>Address review comments, re-run verification</td><td>Modifier worker-agent</td></tr>
+      <tr><td><code>complexity-prompt.md</code></td><td>9-dimension score rubric + mapping</td><td>Complexity sub-agent</td></tr>
+      <tr><td><code>sub-coordinator-prompt.md</code></td><td>Full Sub-Coordinator lifecycle instructions</td><td>Spawned child agent session</td></tr>
+      <tr><td><code>coordinator-rules.md</code></td><td>Hard constraints re-read before each phase</td><td>Sub-Coordinator</td></tr>
+      <tr><td><code>main-orchestrator-rules.md</code></td><td>Hard constraints re-read each loop</td><td>Main Orchestrator</td></tr>
     </tbody>
   </table>
 </section>

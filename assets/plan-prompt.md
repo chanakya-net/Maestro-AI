@@ -86,69 +86,13 @@ If, after reading the code, the issue is trivial enough that a detailed plan add
 Mirror the result-file/done-file sequencing of the implementation worker. Write the result JSON, then the plan markdown, then the done sentinel — in that order. Do not write the done file until both artifacts are written.
 
 Resolve the result path (`RUN_WITH_IT_PLAN_RESULT_FILE` when set, else `RUN_WITH_IT_RESULT_FILE`):
+Write the complete JSON schema above to `payload.json` with file tools, then publish it through the same native validator on every OS:
 
-Bash:
-```bash
-PLAN_RESULT_FILE="${RUN_WITH_IT_PLAN_RESULT_FILE:-$RUN_WITH_IT_RESULT_FILE}"
-mkdir -p "$(dirname "$PLAN_RESULT_FILE")"
-python3 - "$PLAN_RESULT_FILE" "$RUN_WITH_IT_ISSUE" <<'PY'
-import json
-import sys
-
-path, issue = sys.argv[1], sys.argv[2]
-payload = {
-    "schema_version": 1,
-    "issue": issue,
-    "role": "plan",
-    "status": "success",
-    "approach": "REPLACE_WITH_1_TO_3_SENTENCE_APPROACH",
-    "complexity_level": "REPLACE_WITH_GROUNDED_BAND",
-    "files": [],
-    "slices": [
-        {
-            "order": 1,
-            "behavior": "REPLACE_WITH_SLICE_BEHAVIOR",
-            "test_target": "REPLACE_WITH_TEST_TARGET",
-            "files": [],
-        },
-    ],
-    "interfaces": [],
-    "risks": [],
-    "out_of_scope": [],
-}
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
-PY
-
-mkdir -p "$(dirname "$RUN_WITH_IT_PLAN_FILE")"
-# Write the human-readable plan.md (heredoc or Write tool), then the done sentinel:
-mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
-printf 'DONE|issue=%s|role=plan|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
+```text
+ai-skills artifact write-json --role plan --issue <issue> --payload-file payload.json --result-file <result-file>
 ```
 
-PowerShell:
-```powershell
-$planResultFile = if ($env:RUN_WITH_IT_PLAN_RESULT_FILE) { $env:RUN_WITH_IT_PLAN_RESULT_FILE } else { $env:RUN_WITH_IT_RESULT_FILE }
-$payload = @{
-  schema_version = 1
-  issue = $env:RUN_WITH_IT_ISSUE
-  role = "plan"
-  status = "success"
-  approach = "REPLACE_WITH_1_TO_3_SENTENCE_APPROACH"
-  complexity_level = "REPLACE_WITH_GROUNDED_BAND"
-  files = @()
-  slices = @(@{ order = 1; behavior = "REPLACE_WITH_SLICE_BEHAVIOR"; test_target = "REPLACE_WITH_TEST_TARGET"; files = @() })
-  interfaces = @()
-  risks = @()
-  out_of_scope = @()
-}
-New-Item -ItemType Directory -Force -Path (Split-Path $planResultFile) | Out-Null
-$payload | ConvertTo-Json -Depth 6 | Set-Content -Path $planResultFile
-# Write plan.md to $env:RUN_WITH_IT_PLAN_FILE, then the done sentinel:
-New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
-Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=plan|status=success|source=agent"
-```
+For a plan, write its required Markdown companion before the done sentinel. A success artifact must contain real evidence, never the example placeholders.
 
 Do not write the done file if `plan.json` is missing/invalid or `plan.md` was not written.
 

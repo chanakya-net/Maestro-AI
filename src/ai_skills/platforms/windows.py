@@ -11,6 +11,7 @@ import uuid
 import psutil
 import win32api
 import win32con
+import win32event
 import win32job
 import win32process
 
@@ -76,3 +77,8 @@ class ProcessGroup:
     def close(self):
         self.process.Close()
         self.job.Close()
+
+    def return_code(self):
+        if win32event.WaitForSingleObject(self.process, 0) == win32con.WAIT_OBJECT_0:
+            return win32process.GetExitCodeProcess(self.process)
+        return None

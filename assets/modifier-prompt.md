@@ -112,49 +112,14 @@ Do not emit periodic heartbeat or status-check lines while working. The dispatch
 The modifier worker is responsible for checking in its own completed review fixes. All edits, verification commands, `git add`, and `git commit` must happen in `RUN_WITH_IT_REPO_ROOT` / `REPO_ROOT`, which is the issue worktree. Never commit modification work to the parent repository worktree or to `RUN_WITH_IT_SHARED_FEATURE_BRANCH`.
 
 Before making the mandatory handoff commit, verify the target:
-
-Bash:
-```bash
-CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
-test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --show-toplevel)" = "$CHECKIN_REPO_ROOT"
-if [ -n "${RUN_WITH_IT_ISSUE_BRANCH:-}" ]; then
-  test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)" = "$RUN_WITH_IT_ISSUE_BRANCH"
-fi
-```
-
-PowerShell:
-```powershell
-$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
-if ((git -C $checkinRepoRoot rev-parse --show-toplevel).Trim() -ne $checkinRepoRoot) { throw "wrong check-in repo root" }
-if ($env:RUN_WITH_IT_ISSUE_BRANCH -and ((git -C $checkinRepoRoot rev-parse --abbrev-ref HEAD).Trim() -ne $env:RUN_WITH_IT_ISSUE_BRANCH)) { throw "wrong check-in branch" }
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 ## Mandatory Commit Before Handoff
 
 **You MUST commit all your changes before writing the done file (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
 
 Commit sequence (after verification passes and all reviewer comments are addressed):
-
-Bash:
-```bash
-CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
-# Stage all modified and new files
-git -C "$CHECKIN_REPO_ROOT" add -A
-# Commit with an issue-scoped and cycle-scoped message
-git -C "$CHECKIN_REPO_ROOT" commit -m "fix(#${RUN_WITH_IT_ISSUE:-unknown}): address review cycle ${RUN_WITH_IT_CYCLE:-?}"
-# Capture and print the SHA so the sub-coordinator can record it
-MODIFY_COMMIT_SHA=$(git -C "$CHECKIN_REPO_ROOT" rev-parse HEAD)
-printf 'MODIFY_COMMIT_SHA=%s\n' "$MODIFY_COMMIT_SHA"
-```
-
-PowerShell:
-```powershell
-$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
-git -C $checkinRepoRoot add -A
-git -C $checkinRepoRoot commit -m "fix(#$env:RUN_WITH_IT_ISSUE): address review cycle $env:RUN_WITH_IT_CYCLE"
-$modifyCommitSha = git -C $checkinRepoRoot rev-parse HEAD
-Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 **If there is nothing to commit** (no files changed), there are two distinct cases:
 - **You did not apply the requested fixes** (incomplete, gave up, or could not finish) → emit `MODIFY_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
@@ -166,7 +131,7 @@ Write-Host "MODIFY_COMMIT_SHA=$modifyCommitSha"
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable modification handoff.
 
-On a verified no-op (`MODIFY_COMMIT_SHA=NONE`), skip the commit-based builder below — it runs `git show` against the commit SHA and cannot handle `NONE` — and write the *Verified no-op variant* payload instead.
+On a verified no-op (`MODIFY_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
@@ -178,92 +143,60 @@ Path safety:
 - Never write modification handoff JSON to SUB_COORD_REPORT_FILE.
 - Never write modification handoff JSON to `.run-with-it/issues/<n>/report.json`.
 - If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins.
+Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
 
-Bash:
-```bash
-mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
-MODIFY_PAYLOAD_FILE="${RUN_WITH_IT_RESULT_FILE}.payload.$$"
-python3 - "$MODIFY_PAYLOAD_FILE" "$RUN_WITH_IT_ISSUE" "$MODIFY_COMMIT_SHA" <<'PY'
-import json
-import os
-import subprocess
-import sys
-
-path, issue, commit_sha = sys.argv[1], sys.argv[2], sys.argv[3]
-repo_root = os.environ.get("RUN_WITH_IT_REPO_ROOT") or os.environ["REPO_ROOT"]
-files = subprocess.check_output(
-    ["git", "-C", repo_root, "show", "--name-only", "--pretty=format:", commit_sha],
-    text=True,
-).splitlines()
-payload = {
-    "schema_version": 1,
-    "issue": issue,
-    "role": "modify",
-    "status": "success",
-    "commit_sha": commit_sha,
-    "files_committed": [item for item in files if item],
-    "review_comment_closure": [
-        {
-            "id": "R001",
-            "status": "addressed",
-            "action": "short description of the code/test change",
-            "files_changed": ["path/to/file"],
-            "verification": ["exact command or inspection proving closure"],
-        }
-    ],
-    "verification": {
-        "passed": True,
-        "commands": ["REPLACE_WITH_EXACT_COMMANDS_RUN"],
-    },
-}
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
-PY
-python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
-  --role modify --issue "$RUN_WITH_IT_ISSUE" \
-  --payload-file "$MODIFY_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
-  --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
-  --pre-spawn-head "${REVIEW_HEAD_SHA:-}" || { rm -f "$MODIFY_PAYLOAD_FILE"; exit 1; }
-rm -f "$MODIFY_PAYLOAD_FILE"
+```text
+ai-skills artifact write-json --role modify --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
 ```
 
-PowerShell:
-```powershell
-$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
-$filesCommitted = git -C $checkinRepoRoot show --name-only --pretty=format: $modifyCommitSha | Where-Object { $_ }
-$payload = @{
-  schema_version = 1
-  issue = $env:RUN_WITH_IT_ISSUE
-  role = "modify"
-  status = "success"
-  commit_sha = $modifyCommitSha
-  files_committed = @($filesCommitted)
-  review_comment_closure = @(
-    @{
-      id = "R001"
-      status = "addressed"
-      action = "short description of the code/test change"
-      files_changed = @("path/to/file")
-      verification = @("exact command or inspection proving closure")
+Never write a successful artifact with failed verification or a commit from another worktree.
+Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
+
+```text
+ai-skills artifact write-json --role modify --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
+```
+
+Never write a successful artifact with failed verification or a commit from another worktree.
+
+### Normal verified result schema
+
+```json
+{
+  "schema_version": 1,
+  "issue": "42",
+  "role": "modify",
+  "status": "success",
+  "commit_sha": "<canonical new issue-worktree SHA>",
+  "files_committed": [
+    "src/example.py"
+  ],
+  "review_comment_closure": [
+    {
+      "id": "R001",
+      "status": "addressed",
+      "action": "Describe the actual fix",
+      "files_changed": [
+        "src/example.py"
+      ],
+      "verification": [
+        "exact passing command or inspection"
+      ]
     }
-  )
-  verification = @{
-    passed = $true
-    commands = @("REPLACE_WITH_EXACT_COMMANDS_RUN")
+  ],
+  "verification": {
+    "passed": true,
+    "commands": [
+      "exact required verification command"
+    ]
   }
 }
-New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
-$payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
-$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
-& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role modify --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:REVIEW_HEAD_SHA"
-if ($LASTEXITCODE -ne 0) { throw "modification artifact validation failed" }
-Remove-Item -Force $payloadFile
 ```
+
+Replace the sample evidence with the actual canonical commit, committed files and commands. Publication must use `ai-skills artifact write-json`; success requires `verification.passed=true`.
 
 ### Verified no-op variant
 
-Use this **only** when every review comment is already addressed upstream and the full verification suite passes with no changes needed (no commit was made). Write this payload directly (do not run the commit-based builder above), then validate it with `write-json` using `--pre-spawn-head "${REVIEW_HEAD_SHA:-}"` — the validator confirms `HEAD` still equals the pre-spawn head, so a no-op with unexpected commits is rejected. Include one `review_comment_closure` entry per reviewer comment id, each with evidence that it is already resolved. The dispatcher accepts this as success; it rejects a no-op whose `verification.passed` is not `true`.
+Use this **only** when every review comment is already addressed upstream and the full verification suite passes with no changes needed (no commit was made). Write this payload with file tools, then validate with `ai-skills artifact write-json` and `--pre-spawn-head <saved-review-head-sha>` — the validator confirms `HEAD` still equals the pre-spawn head, so a no-op with unexpected commits is rejected. Include one `review_comment_closure` entry per reviewer comment id, each with evidence that it is already resolved. The dispatcher accepts this as success; it rejects a no-op whose `verification.passed` is not `true`.
 
 ```json
 {
@@ -294,18 +227,7 @@ Use this **only** when every review comment is already addressed upstream and th
 ## Completion Sentinel
 
 If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all reviewer comments are addressed, required verification passes, the mandatory commit has been made (or the verified no-op result artifact is written per the verified no-op contract), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready.
-
-Bash:
-```bash
-mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
-printf 'DONE|issue=%s|role=modify|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
-```
-
-PowerShell:
-```powershell
-New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
-Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=modify|status=success|source=agent"
-```
+After the role artifact validates, use file tools to write the specified `DONE|issue=<n>|role=<role>|status=success|source=agent` sentinel. Write it last. The native runner also records exit-based completion; neither marker bypasses validation or owned-tree shutdown.
 
 Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
@@ -315,7 +237,7 @@ You must run tests after addressing reviewer comments.
 
 1. Run every verification command supplied by the coordinator.
 2. If those commands are incomplete or absent, run the narrowest relevant test scope first, then the full suite when practical.
-3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`run-with-it-artifacts.py`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and do not set `verification.passed=false` for failures you are not responsible for.
+3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`ai-skills artifact`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and do not set `verification.passed=false` for failures you are not responsible for.
 4. Re-run the failing command after each fix until it passes.
 
 Do not report completion while tests you are responsible for are failing. A failing test suite caused by this change is a failed modification.

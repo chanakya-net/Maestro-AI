@@ -93,22 +93,7 @@ Do not emit periodic heartbeat or status-check lines while working. The dispatch
 The implementation worker is responsible for checking in its own completed code. All edits, verification commands, `git add`, and `git commit` must happen in `RUN_WITH_IT_REPO_ROOT` / `REPO_ROOT`, which is the issue worktree. Never commit implementation work to the parent repository worktree or to `RUN_WITH_IT_SHARED_FEATURE_BRANCH`, and never `git checkout` a different branch. Your `commit_sha` must be a **new commit you create on the issue branch in this run** — never report a pre-existing commit (e.g. one from a previous attempt or another branch) as your handoff. If the work already exists upstream and no new commit is needed, use the **verified no-op** path instead (see Mandatory Commit Before Handoff).
 
 Before making the mandatory handoff commit, verify the target:
-
-Bash:
-```bash
-CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
-test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --show-toplevel)" = "$CHECKIN_REPO_ROOT"
-if [ -n "${RUN_WITH_IT_ISSUE_BRANCH:-}" ]; then
-  test "$(git -C "$CHECKIN_REPO_ROOT" rev-parse --abbrev-ref HEAD)" = "$RUN_WITH_IT_ISSUE_BRANCH"
-fi
-```
-
-PowerShell:
-```powershell
-$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
-if ((git -C $checkinRepoRoot rev-parse --show-toplevel).Trim() -ne $checkinRepoRoot) { throw "wrong check-in repo root" }
-if ($env:RUN_WITH_IT_ISSUE_BRANCH -and ((git -C $checkinRepoRoot rev-parse --abbrev-ref HEAD).Trim() -ne $env:RUN_WITH_IT_ISSUE_BRANCH)) { throw "wrong check-in branch" }
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 ## Verification
 
@@ -136,27 +121,7 @@ Before running each required command, record `verification_applicability` as `ap
 **Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit on the issue worktree branch, the reviewer cannot isolate your changes.
 
 Commit sequence:
-
-Bash:
-```bash
-CHECKIN_REPO_ROOT="${RUN_WITH_IT_REPO_ROOT:-${REPO_ROOT:?REPO_ROOT is required}}"
-# Stage all modified and new files for this issue
-git -C "$CHECKIN_REPO_ROOT" add -A
-# Commit with an issue-scoped message
-git -C "$CHECKIN_REPO_ROOT" commit -m "impl(#${RUN_WITH_IT_ISSUE:-unknown}): implementation complete"
-# Capture and print the SHA so the sub-coordinator can record it
-IMPL_COMMIT_SHA=$(git -C "$CHECKIN_REPO_ROOT" rev-parse HEAD)
-printf 'IMPL_COMMIT_SHA=%s\n' "$IMPL_COMMIT_SHA"
-```
-
-PowerShell:
-```powershell
-$checkinRepoRoot = if ($env:RUN_WITH_IT_REPO_ROOT) { $env:RUN_WITH_IT_REPO_ROOT } else { $env:REPO_ROOT }
-git -C $checkinRepoRoot add -A
-git -C $checkinRepoRoot commit -m "impl(#$env:RUN_WITH_IT_ISSUE): implementation complete"
-$implCommitSha = git -C $checkinRepoRoot rev-parse HEAD
-Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
-```
+Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 **If there is nothing to commit** (no files changed), there are two distinct cases:
 - **You did not actually implement the slice** (incomplete work, gave up, or could not finish) → emit `IMPL_COMMIT_SHA=NONE`; the sub-coordinator treats a missing commit as a failure.
@@ -168,7 +133,7 @@ Write-Host "IMPL_COMMIT_SHA=$implCommitSha"
 
 If `RUN_WITH_IT_RESULT_FILE` is present in the run context or environment, write it after the commit succeeds and before writing `RUN_WITH_IT_DONE_FILE`. This JSON is the machine-readable implementation handoff.
 
-On a verified no-op (`IMPL_COMMIT_SHA=NONE`), skip the commit-based builder below — it runs `git show` against the commit SHA and cannot handle `NONE` — and write the *Verified no-op variant* payload instead.
+On a verified no-op (`IMPL_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
@@ -181,71 +146,44 @@ Path safety:
 - Never write implementation handoff JSON to SUB_COORD_REPORT_FILE.
 - Never write implementation handoff JSON to `.run-with-it/issues/<n>/report.json`.
 - If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins.
+Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
 
-Bash:
-```bash
-mkdir -p "$(dirname "$RUN_WITH_IT_RESULT_FILE")"
-IMPL_PAYLOAD_FILE="${RUN_WITH_IT_RESULT_FILE}.payload.$$"
-python3 - "$IMPL_PAYLOAD_FILE" "$RUN_WITH_IT_ISSUE" "$IMPL_COMMIT_SHA" <<'PY'
-import json
-import os
-import subprocess
-import sys
-
-path, issue, commit_sha = sys.argv[1], sys.argv[2], sys.argv[3]
-repo_root = os.environ.get("RUN_WITH_IT_REPO_ROOT") or os.environ["REPO_ROOT"]
-files = subprocess.check_output(
-    ["git", "-C", repo_root, "show", "--name-only", "--pretty=format:", commit_sha],
-    text=True,
-).splitlines()
-payload = {
-    "schema_version": 1,
-    "issue": issue,
-    "role": "impl",
-    "status": "success",
-    "commit_sha": commit_sha,
-    "files_committed": [item for item in files if item],
-    "plan_deviations": [],
-    "verification": {
-        "passed": True,
-        "commands": ["REPLACE_WITH_EXACT_COMMANDS_RUN"],
-    },
-}
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2)
-    handle.write("\n")
-PY
-python3 "$RUN_WITH_IT_ARTIFACT_HELPER" write-json \
-  --role impl --issue "$RUN_WITH_IT_ISSUE" \
-  --payload-file "$IMPL_PAYLOAD_FILE" --result-file "$RUN_WITH_IT_RESULT_FILE" \
-  --repo-root "${RUN_WITH_IT_REPO_ROOT:-$REPO_ROOT}" \
-  --pre-spawn-head "${ISSUE_BASE_SHA:-}" || { rm -f "$IMPL_PAYLOAD_FILE"; exit 1; }
-rm -f "$IMPL_PAYLOAD_FILE"
+```text
+ai-skills artifact write-json --role impl --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
 ```
 
-PowerShell:
-```powershell
-$filesCommitted = git -C $env:REPO_ROOT show --name-only --pretty=format: $implCommitSha | Where-Object { $_ }
-$payload = @{
-  schema_version = 1
-  issue = $env:RUN_WITH_IT_ISSUE
-  role = "impl"
-  status = "success"
-  commit_sha = $implCommitSha
-  files_committed = @($filesCommitted)
-  plan_deviations = @()
-  verification = @{
-    passed = $true
-    commands = @("REPLACE_WITH_EXACT_COMMANDS_RUN")
+Never write a successful artifact with failed verification or a commit from another worktree.
+Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
+
+```text
+ai-skills artifact write-json --role impl --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
+```
+
+Never write a successful artifact with failed verification or a commit from another worktree.
+
+### Normal verified result schema
+
+```json
+{
+  "schema_version": 1,
+  "issue": "42",
+  "role": "impl",
+  "status": "success",
+  "commit_sha": "<canonical new issue-worktree SHA>",
+  "files_committed": [
+    "src/example.py"
+  ],
+  "plan_deviations": [],
+  "verification": {
+    "passed": true,
+    "commands": [
+      "exact required verification command"
+    ]
   }
 }
-New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_RESULT_FILE) | Out-Null
-$payloadFile = "$env:RUN_WITH_IT_RESULT_FILE.payload.$PID"
-$payload | ConvertTo-Json -Depth 5 | Set-Content -Path $payloadFile
-& python3 $env:RUN_WITH_IT_ARTIFACT_HELPER write-json --role impl --issue $env:RUN_WITH_IT_ISSUE --payload-file $payloadFile --result-file $env:RUN_WITH_IT_RESULT_FILE --repo-root $checkinRepoRoot --pre-spawn-head "$env:ISSUE_BASE_SHA"
-if ($LASTEXITCODE -ne 0) { throw "implementation artifact validation failed" }
-Remove-Item -Force $payloadFile
 ```
+
+Replace the sample evidence with the actual canonical commit, committed files and commands. Publication must use `ai-skills artifact write-json`; success requires `verification.passed=true`.
 
 ### Verified no-op variant
 
@@ -271,19 +209,8 @@ Use this **only** when the acceptance criteria are already fully met upstream an
 
 ## Completion Sentinel
 
-If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made (or the verified no-op result artifact is written per the Verified no-op variant), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This file lets the Sub-Coordinator advance without waiting for unrelated CLI cleanup.
-
-Bash:
-```bash
-mkdir -p "$(dirname "$RUN_WITH_IT_DONE_FILE")"
-printf 'DONE|issue=%s|role=impl|status=success|source=agent\n' "${RUN_WITH_IT_ISSUE:-unknown}" > "$RUN_WITH_IT_DONE_FILE"
-```
-
-PowerShell:
-```powershell
-New-Item -ItemType Directory -Force -Path (Split-Path $env:RUN_WITH_IT_DONE_FILE) | Out-Null
-Set-Content -Path $env:RUN_WITH_IT_DONE_FILE -Value "DONE|issue=$env:RUN_WITH_IT_ISSUE|role=impl|status=success|source=agent"
-```
+If `RUN_WITH_IT_DONE_FILE` is present in the run context or environment, write it only after all required verification has passed, the mandatory commit has been made (or the verified no-op result artifact is written per the Verified no-op variant), `RUN_WITH_IT_RESULT_FILE` has been written when present, and your final report content is ready. This marker is advisory; the Sub-Coordinator still waits for owned-tree shutdown and validates the result.
+After the role artifact validates, use file tools to write the specified `DONE|issue=<n>|role=<role>|status=success|source=agent` sentinel. Write it last. The native runner also records exit-based completion; neither marker bypasses validation or owned-tree shutdown.
 
 Do not write the done file if tests are failing, verification is incomplete, the mandatory commit has not been made (and the result is not a verified no-op), the result JSON is missing when `RUN_WITH_IT_RESULT_FILE` is present, or the final report is not ready.
 
