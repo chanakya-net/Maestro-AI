@@ -54,6 +54,23 @@ Override the asset destination or the git ref the installer pulls from:
 ASSETS_DEST="$HOME/.my-ai-assets" ASSETS_REF=main bash install.sh
 ```
 
+## Experimental Python package
+
+The staged native runtime is opt-in and requires Python 3.12 or newer. This first milestone provides `ai-skills --help`, `ai-skills --version`, and read-only `ai-skills doctor` (`--json` for structured output), plus shared configuration, storage, and process primitives. Agent execution and orchestration remain on the existing scripts during migration.
+
+From a source checkout, use a separate environment:
+
+```bash
+python3.12 -m venv .venv-python
+.venv-python/bin/python -m pip install -e ".[dev]"
+.venv-python/bin/python -m ai_skills doctor
+.venv-python/bin/python -m pytest -q
+```
+
+On Windows, create it with `py -3.12 -m venv .venv-python` and use `.venv-python\Scripts\python.exe` for the remaining commands. `python -m ai_skills` and the environment's `ai-skills` console command are equivalent. Building with `python -m build` produces a wheel containing the maintained prompts and registry; the package does not include the legacy executables. Existing installation commands remain supported.
+
+The foundation uses `psutil` for process identity and Windows-only `pywin32` for Job Objects. State locks require a local filesystem with atomic directory creation and rename; unidentified lock owners require manual recovery. Process ownership covers cooperative CLI trees: POSIX descendants that create a new session can escape, and console-less Windows shutdown terminates the owned job rather than delivering a graceful console signal.
+
 ## Quick Start
 
 The skills run inside your coding agent — invoke them by slash command (e.g. `/break-req` in Claude Code) or in plain language. A full run from idea to merged PR chains four skills:

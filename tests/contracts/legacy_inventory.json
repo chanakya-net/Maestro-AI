@@ -1,0 +1,2079 @@
+{
+  "schema_version": 1,
+  "baseline": {
+    "commit": "954279082b10cde11fb6c85ad74d5ac0f453c05b",
+    "legacy_entrypoints": 24,
+    "python_helpers": 6,
+    "bash_scenario_groups": 31,
+    "milestone": "Tasks 1-3; mappings name future owners, not available commands"
+  },
+  "inventory_policy": "Frozen source-level compatibility surface. Flags include documented/accepted command options plus provider arguments referenced by each entrypoint. Environment includes referenced external inputs and shell context; wrappers must validate applicable inputs. JSON record shapes live in legacy_records.json and the maintained prompt/registry resources. Do not execute providers to refresh this fixture. Native PowerShell param-block names/aliases were read using PowerShell Parser.ParseFile AST without invoking scripts. Python commands/options are verified from constructed argparse parser choices, including loop-created commands and automatic help flags.",
+  "entrypoints": {
+    "add-two-numbers.sh": {
+      "replacement_task": 10,
+      "commands": [
+        "examples/add_two_numbers.py (two positional numeric arguments)"
+      ],
+      "legacy_subcommands": [],
+      "flags": [],
+      "environment": [],
+      "output": [
+        "error: stderr",
+        "numeric stdout"
+      ],
+      "exit_codes": {
+        "0": "sum emitted",
+        "1": "missing/invalid numeric input"
+      },
+      "json_records": []
+    },
+    "assets/pair-colleague-process.py": {
+      "replacement_task": 8,
+      "commands": [
+        "pair start",
+        "pair run-round",
+        "pair record-decision",
+        "pair finalize",
+        "pair status",
+        "pair reap"
+      ],
+      "legacy_subcommands": [
+        "action",
+        "create-run",
+        "identical",
+        "normalize-agent",
+        "probe-attempt",
+        "reap-attempt",
+        "render",
+        "run-pair",
+        "sha256",
+        "snapshot",
+        "state-apply",
+        "state-get",
+        "state-init",
+        "validate",
+        "verify",
+        "write-file"
+      ],
+      "flags": [
+        "--agent",
+        "--config",
+        "--default",
+        "--expect-completed-rounds",
+        "--expect-completion-reason",
+        "--expect-max-rounds",
+        "--expect-min-rounds",
+        "--expect-run-dir",
+        "--file",
+        "--grace",
+        "--help",
+        "--key",
+        "--kind",
+        "--left",
+        "--output",
+        "--patch",
+        "--path",
+        "--reason",
+        "--registry",
+        "--result",
+        "--right",
+        "--round",
+        "--run-dir",
+        "--run-root",
+        "--sha256",
+        "--spec",
+        "--template",
+        "--timestamp",
+        "--var",
+        "-h"
+      ],
+      "environment": [],
+      "output": [
+        "TBD",
+        "TODO",
+        "pair-colleague:"
+      ],
+      "exit_codes": {
+        "0": "success",
+        "1": "round incomplete/retry",
+        "2": "usage/config/validation/transition error",
+        "3": "infrastructure blocked",
+        "4": "lock busy or active agents"
+      },
+      "json_records": [
+        "pair-state",
+        "pair-config",
+        "pair-attempt"
+      ]
+    },
+    "assets/pair-colleague.sh": {
+      "replacement_task": 8,
+      "commands": [
+        "pair start",
+        "pair run-round",
+        "pair record-decision",
+        "pair finalize",
+        "pair status",
+        "pair reap"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--agent",
+        "--agent-",
+        "--agent-1-effort",
+        "--agent-1-harness",
+        "--agent-1-model",
+        "--agent-1-name",
+        "--agent-2-effort",
+        "--agent-2-harness",
+        "--agent-2-model",
+        "--agent-2-name",
+        "--bind-workspace",
+        "--break-lock",
+        "--config",
+        "--context-file",
+        "--decision-file",
+        "--default",
+        "--detected-only",
+        "--effort",
+        "--expect-completed-rounds",
+        "--expect-completion-reason",
+        "--expect-max-rounds",
+        "--expect-min-rounds",
+        "--expect-run-dir",
+        "--file",
+        "--final-file",
+        "--force",
+        "--grace",
+        "--help",
+        "--key",
+        "--kind",
+        "--left",
+        "--list-agents",
+        "--list-models",
+        "--max-rounds",
+        "--min-rounds",
+        "--model",
+        "--output",
+        "--patch",
+        "--path",
+        "--permission-mode",
+        "--prompt-file",
+        "--reason",
+        "--registry",
+        "--result",
+        "--right",
+        "--round",
+        "--run-dir",
+        "--run-root",
+        "--sha256",
+        "--show-toplevel",
+        "--spec",
+        "--template",
+        "--timeout-seconds",
+        "--timestamp",
+        "--var"
+      ],
+      "environment": [
+        "AGENT_1_EFFORT",
+        "AGENT_1_HARNESS",
+        "AGENT_1_MODEL",
+        "AGENT_1_NAME",
+        "AGENT_2_EFFORT",
+        "AGENT_2_HARNESS",
+        "AGENT_2_MODEL",
+        "AGENT_2_NAME",
+        "AGENT_REGISTRY_FILE",
+        "ALLOW_UNVERIFIED_SAFE",
+        "ASSETS_DEST",
+        "ASSET_DIR",
+        "BIND_WORKSPACE",
+        "BREAK_LOCK",
+        "COMMAND",
+        "DECISION_FILE",
+        "DETECTED_AGENTS_CACHE",
+        "EMIT_LIVE_AGENTS",
+        "EXIT_BLOCKED",
+        "EXIT_BUSY",
+        "EXIT_ERROR",
+        "EXIT_OK",
+        "EXIT_RETRY",
+        "FINAL_FILE",
+        "HOME",
+        "LOCK_DIR",
+        "LOCK_HELD",
+        "LOCK_TOKEN",
+        "MAX_AGENT_ATTEMPTS",
+        "MAX_AGENT_ATTEMPTS_ENV",
+        "MAX_ROUNDS",
+        "MIN_ROUNDS",
+        "PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE",
+        "PAIR_COLLEAGUE_ASSETS_DIR",
+        "PAIR_COLLEAGUE_PROCESS_HELPER",
+        "PAIR_COLLEAGUE_PROMPT_FILE",
+        "PAIR_COLLEAGUE_RUN_ROOT",
+        "PAIR_COLLEAGUE_TERMINATION_GRACE_SECONDS",
+        "PAIR_COLLEAGUE_UNAME_OVERRIDE",
+        "PWD",
+        "RANDOM",
+        "READ_ONLY_PROFILE",
+        "REAP_FORCE",
+        "RECONCILE_LIVE",
+        "RUN_AGENT_PATH",
+        "RUN_DIR",
+        "RUN_ROOT_FLAG",
+        "SCRIPT_DIR",
+        "SCRIPT_SOURCE",
+        "SUPPORTED_PLATFORMS",
+        "TASK_SOURCE",
+        "TERMINATION_GRACE_SECONDS",
+        "TIMEOUT_SECONDS",
+        "VALID_EFFORTS",
+        "WORKSPACE_ROOT"
+      ],
+      "output": [
+        "pair-colleague:"
+      ],
+      "exit_codes": {
+        "0": "success",
+        "1": "round incomplete/retry",
+        "2": "usage/config/validation/transition error",
+        "3": "infrastructure blocked",
+        "4": "lock busy or active agents"
+      },
+      "json_records": [
+        "pair-state",
+        "pair-config",
+        "pair-attempt"
+      ]
+    },
+    "assets/run-agent.ps1": {
+      "replacement_task": 4,
+      "commands": [
+        "agent run",
+        "agent list",
+        "agent models"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--agent",
+        "--allow-all",
+        "--allow-all-tools",
+        "--context-file",
+        "--context-payload-file",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--dangerously-skip-permissions",
+        "--detected-only",
+        "--dry-run",
+        "--effort",
+        "--extra-arg",
+        "--help",
+        "--list-agents",
+        "--list-models",
+        "--model",
+        "--permission-mode",
+        "--prompt-file",
+        "--sandbox",
+        "--unattended",
+        "--yolo"
+      ],
+      "environment": [
+        "AGENT",
+        "AGENT_EXTRA_ARGS",
+        "AGENT_PERMISSION_MODE",
+        "AGENT_REGISTRY_FILE",
+        "ANTIGRAVITY_APP",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CONTEXT_PAYLOAD_FILE",
+        "CURSOR_TRACE_ID",
+        "ELECTRON_RUN_AS_NODE",
+        "GUI_MODE",
+        "MODEL",
+        "MODEL_EFFORT",
+        "PATH",
+        "PRINT_PROMPT",
+        "PROMPT_FILE",
+        "REPO_ROOT",
+        "RUN_AGENT_BOOTSTRAP_PATH",
+        "RUN_WITH_IT_DONE_FILE",
+        "RUN_WITH_IT_EVENTS_LOG",
+        "RUN_WITH_IT_HEARTBEAT_SECONDS",
+        "RUN_WITH_IT_ISSUE",
+        "RUN_WITH_IT_LOG_FILE",
+        "RUN_WITH_IT_RESULT_FILE",
+        "RUN_WITH_IT_ROLE",
+        "RUN_WITH_IT_STATE_FILE",
+        "RUN_WITH_IT_STATUS_FILE",
+        "TERM_PROGRAM",
+        "UNATTENDED",
+        "USERPROFILE",
+        "VSCODE_PID"
+      ],
+      "output": [
+        "COMPLEXITY",
+        "DONE",
+        "ROUTE",
+        "STATUS"
+      ],
+      "exit_codes": {
+        "0": "success or diagnostic listing",
+        "1": "provider failure",
+        "2": "usage or configuration failure"
+      },
+      "json_records": [
+        "worker-state",
+        "worker-result"
+      ]
+    },
+    "assets/run-agent.sh": {
+      "replacement_task": 4,
+      "commands": [
+        "agent run",
+        "agent list",
+        "agent models"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--agent",
+        "--allow-all",
+        "--allow-all-tools",
+        "--arg",
+        "--autopilot",
+        "--context-file",
+        "--context-payload-file",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--dangerously-skip-permissions",
+        "--detected-only",
+        "--dry-run",
+        "--effort",
+        "--extra-arg",
+        "--help",
+        "--list-agents",
+        "--list-models",
+        "--model",
+        "--permission-mode",
+        "--prompt-file",
+        "--sandbox",
+        "--unattended",
+        "--yolo"
+      ],
+      "environment": [
+        "AGENT",
+        "AGENT_EXTRA_ARGS",
+        "AGENT_PERMISSION_MODE",
+        "AGENT_REGISTRY_FILE",
+        "ANTIGRAVITY_APP",
+        "BASHPID",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "CONTEXT_PAYLOAD_FILE",
+        "CURSOR_TRACE_ID",
+        "DETECTED_ONLY",
+        "DRY_RUN",
+        "ELECTRON_RUN_AS_NODE",
+        "GUI_MODE",
+        "HOME",
+        "JSON_PARSER",
+        "LIST_AGENTS",
+        "LIST_MODELS_AGENT",
+        "MODEL",
+        "MODEL_EFFORT",
+        "PATH",
+        "PAYLOAD_FILE",
+        "PERMANENTLY_BLOCKED_AGENT_REASON",
+        "PRINT_PROMPT",
+        "PROMPT_FILE",
+        "REPO_ROOT",
+        "RUN_AGENT_BOOTSTRAP_PATH",
+        "RUN_WITH_IT_DONE_FILE",
+        "RUN_WITH_IT_EVENTS_LOG",
+        "RUN_WITH_IT_HEARTBEAT_SECONDS",
+        "RUN_WITH_IT_ISSUE",
+        "RUN_WITH_IT_ISSUE_DIR",
+        "RUN_WITH_IT_LOG_FILE",
+        "RUN_WITH_IT_RESULT_FILE",
+        "RUN_WITH_IT_ROLE",
+        "RUN_WITH_IT_STATE_FILE",
+        "RUN_WITH_IT_STATUS_FILE",
+        "SCRIPT_DIR",
+        "TERM_PROGRAM",
+        "UNATTENDED",
+        "VSCODE_PID"
+      ],
+      "output": [
+        "DONE",
+        "FALSE",
+        "NO",
+        "STATUS",
+        "TRUE",
+        "YES"
+      ],
+      "exit_codes": {
+        "0": "success or diagnostic listing",
+        "1": "provider failure",
+        "2": "usage or configuration failure"
+      },
+      "json_records": [
+        "worker-state",
+        "worker-result"
+      ]
+    },
+    "assets/run-with-it-artifacts.py": {
+      "replacement_task": 7,
+      "commands": [
+        "artifact"
+      ],
+      "legacy_subcommands": [
+        "failure-class",
+        "failure-reason",
+        "synthesize",
+        "write-json"
+      ],
+      "flags": [
+        "--abort",
+        "--done-file",
+        "--from-stall",
+        "--help",
+        "--is-ancestor",
+        "--is-inside-work-tree",
+        "--issue",
+        "--issue-dir",
+        "--log-file",
+        "--name-only",
+        "--no-edit",
+        "--no-verify",
+        "--payload-file",
+        "--porcelain",
+        "--pre-spawn-head",
+        "--pretty",
+        "--repo-root",
+        "--result-file",
+        "--role",
+        "--verify",
+        "-h"
+      ],
+      "environment": [],
+      "output": [
+        "JSON",
+        "failure reason"
+      ],
+      "exit_codes": {
+        "0": "valid artifact or operation succeeded",
+        "1": "validation failed",
+        "2": "argparse usage"
+      },
+      "json_records": [
+        "worker-result"
+      ]
+    },
+    "assets/run-with-it-dispatch.ps1": {
+      "replacement_task": 5,
+      "commands": [
+        "worker dispatch"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--agent",
+        "--context-file",
+        "--done-file",
+        "--effort",
+        "--from-stall",
+        "--is-inside-work-tree",
+        "--issue",
+        "--issue-dir",
+        "--log-file",
+        "--model",
+        "--pre-spawn-head",
+        "--prompt-file",
+        "--repo-root",
+        "--result-file",
+        "--role",
+        "--unattended",
+        "-Agent",
+        "-AssetRoot",
+        "-AutoFailStalledRoles",
+        "-ContextFile",
+        "-Cycle",
+        "-Detach",
+        "-DetachedChild",
+        "-DispatchOutFile",
+        "-DoneFile",
+        "-DryRun",
+        "-Effort",
+        "-EventsLog",
+        "-HardLimitSeconds",
+        "-Issue",
+        "-IssueDir",
+        "-LogFile",
+        "-Model",
+        "-PollSeconds",
+        "-PromptFile",
+        "-QuietSeconds",
+        "-RepoRoot",
+        "-ResultFile",
+        "-Role",
+        "-StallSeconds",
+        "-StateFile",
+        "-StatusFile",
+        "-TailStateFile",
+        "-TimeoutSeconds",
+        "-ValidateOnly"
+      ],
+      "environment": [
+        "AGENT_REGISTRY_FILE",
+        "ASSETS_DEST",
+        "GUI_MODE",
+        "PYTHON_BIN",
+        "REPO_ROOT",
+        "RUN_WITH_IT_ARTIFACT_HELPER",
+        "RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES",
+        "RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS",
+        "RUN_WITH_IT_DONE_FILE",
+        "RUN_WITH_IT_EVENTS_LOG",
+        "RUN_WITH_IT_ISSUE",
+        "RUN_WITH_IT_ISSUE_DIR",
+        "RUN_WITH_IT_LOG_FILE",
+        "RUN_WITH_IT_RESULT_FILE",
+        "RUN_WITH_IT_ROLE",
+        "RUN_WITH_IT_STATE_FILE",
+        "RUN_WITH_IT_STATUS_FILE",
+        "RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS",
+        "RUN_WITH_IT_WORKER_QUIET_SECONDS",
+        "RUN_WITH_IT_WORKER_STALL_SECONDS",
+        "USERPROFILE",
+        "WORKER_POLL_SECONDS"
+      ],
+      "output": [
+        "DISPATCH",
+        "DONE",
+        "STATUS"
+      ],
+      "exit_codes": {
+        "0": "successful dispatch or validation",
+        "1": "worker/artifact failure",
+        "2": "usage or configuration failure"
+      },
+      "json_records": [
+        "worker-state",
+        "worker-result"
+      ],
+      "native_parameters": [
+        "-AssetRoot",
+        "-Role",
+        "-Issue",
+        "-Cycle",
+        "-Agent",
+        "-Model",
+        "-Effort",
+        "-ContextFile",
+        "-PromptFile",
+        "-LogFile",
+        "-DoneFile",
+        "-ResultFile",
+        "-StateFile",
+        "-RepoRoot",
+        "-IssueDir",
+        "-StatusFile",
+        "-EventsLog",
+        "-TailStateFile",
+        "-PollSeconds",
+        "-QuietSeconds",
+        "-StallSeconds",
+        "-TimeoutSeconds",
+        "-HardLimitSeconds",
+        "-AutoFailStalledRoles",
+        "-DispatchOutFile",
+        "-Detach",
+        "-DetachedChild",
+        "-DryRun",
+        "-ValidateOnly"
+      ],
+      "native_aliases": {}
+    },
+    "assets/run-with-it-dispatch.sh": {
+      "replacement_task": 5,
+      "commands": [
+        "worker dispatch"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--agent",
+        "--arg",
+        "--asset-root",
+        "--context-file",
+        "--cycle",
+        "--detach",
+        "--dispatch-out-file",
+        "--done-file",
+        "--dry-run",
+        "--effort",
+        "--events-log",
+        "--from-stall",
+        "--hard-limit-seconds",
+        "--help",
+        "--is-inside-work-tree",
+        "--issue",
+        "--issue-dir",
+        "--log-file",
+        "--model",
+        "--pid",
+        "--poll-seconds",
+        "--pre-spawn-head",
+        "--prompt-file",
+        "--quiet-seconds",
+        "--repo-root",
+        "--result-file",
+        "--role",
+        "--short",
+        "--stall-seconds",
+        "--state-file",
+        "--status-file",
+        "--tail-lines",
+        "--tail-state-file",
+        "--timeout-seconds",
+        "--unattended",
+        "--untracked-files",
+        "--validate-only"
+      ],
+      "environment": [
+        "AGENT_NAME",
+        "ASSETS_DEST",
+        "ASSET_ROOT",
+        "AUTO_FAIL_STALLED_ROLES",
+        "CYCLE",
+        "DISPATCH_OUT_FILE",
+        "DONE_FILE",
+        "GUI_MODE",
+        "HARD_LIMIT_SECONDS",
+        "ISSUE",
+        "LOG_FILE",
+        "MODEL_EFFORT",
+        "MODEL_NAME",
+        "PYTHON_BIN",
+        "QUIET_SECONDS",
+        "REPO_ROOT",
+        "REPO_ROOT_OVERRIDE",
+        "RESULT_FILE",
+        "ROLE",
+        "RUN_WITH_IT_AUTO_FAIL_STALLED_ROLES",
+        "RUN_WITH_IT_DETACHED_CHILD",
+        "RUN_WITH_IT_DETACH_BOOTSTRAP_SECONDS",
+        "RUN_WITH_IT_DISPATCH_TIMEOUT_SECONDS",
+        "RUN_WITH_IT_EVENTS_LOG",
+        "RUN_WITH_IT_ISSUE_DIR",
+        "RUN_WITH_IT_STATE_FILE",
+        "RUN_WITH_IT_STATUS_FILE",
+        "RUN_WITH_IT_TEST_FAIL_READY_STATE",
+        "RUN_WITH_IT_TEST_FAIL_STARTING_STATE",
+        "RUN_WITH_IT_WORKER_HARD_LIMIT_SECONDS",
+        "RUN_WITH_IT_WORKER_QUIET_SECONDS",
+        "RUN_WITH_IT_WORKER_STALL_SECONDS",
+        "STALL_SECONDS",
+        "STATE_FILE",
+        "WORKER_LOG_TAIL_LINES",
+        "WORKER_POLL_SECONDS"
+      ],
+      "output": [
+        "DISPATCH",
+        "DONE",
+        "STATUS"
+      ],
+      "exit_codes": {
+        "0": "successful dispatch or validation",
+        "1": "worker/artifact failure",
+        "2": "usage or configuration failure"
+      },
+      "json_records": [
+        "worker-state",
+        "worker-result"
+      ]
+    },
+    "assets/run-with-it-github-update.py": {
+      "replacement_task": 7,
+      "commands": [
+        "github update"
+      ],
+      "legacy_subcommands": [
+        "render-comment",
+        "update"
+      ],
+      "flags": [
+        "--body-file",
+        "--help",
+        "--issue",
+        "--outcome",
+        "--report-file",
+        "--run-root",
+        "--state-file",
+        "-h"
+      ],
+      "environment": [
+        "RUN_WITH_IT_GITHUB_UPDATES"
+      ],
+      "output": [
+        "JSON",
+        "STATUS",
+        "rendered Markdown"
+      ],
+      "exit_codes": {
+        "0": "update/render succeeded",
+        "1": "GitHub or data failure",
+        "2": "argparse usage"
+      },
+      "json_records": [
+        "main-state",
+        "issue-report"
+      ]
+    },
+    "assets/run-with-it-pool.ps1": {
+      "replacement_task": 6,
+      "commands": [
+        "run pool"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--attempt",
+        "--context-file",
+        "--done-file",
+        "--issue",
+        "--issue-dir",
+        "--limit",
+        "--log-file",
+        "--max-attempts",
+        "--max-compaction-handoffs",
+        "--max-wait-seconds",
+        "--outcome",
+        "--pid",
+        "--reason",
+        "--recovery-report-file",
+        "--report-file",
+        "--run-root",
+        "--state-file",
+        "--wait-elapsed-seconds",
+        "--worker-stale-seconds",
+        "-Agent",
+        "-AssetRoot",
+        "-Detach",
+        "-DryRun",
+        "-EventsLog",
+        "-HeartbeatSeconds",
+        "-MainLog",
+        "-MaxSpawnBootstrapAttempts",
+        "-MaxSubCoordCompactionHandoffs",
+        "-MaxSubCoordRecoveryAttempts",
+        "-MaxWorkerWaitSeconds",
+        "-Model",
+        "-ParallelJobs",
+        "-PollSeconds",
+        "-PoolStateFile",
+        "-StateFile",
+        "-StatusFile",
+        "-TimeoutSeconds",
+        "-ValidateOnly",
+        "-WaitStatusIntervalSeconds",
+        "-WorkerStaleSeconds"
+      ],
+      "environment": [
+        "ASSETS_DEST",
+        "MAX_SPAWN_BOOTSTRAP_ATTEMPTS",
+        "MAX_SUB_COORD_COMPACTION_HANDOFFS",
+        "MAX_SUB_COORD_RECOVERY_ATTEMPTS",
+        "MAX_WORKER_WAIT_SECONDS",
+        "OS",
+        "POOL_HEARTBEAT_SECONDS",
+        "PYTHON_BIN",
+        "RUN_WITH_IT_DISPATCH_PATTERN",
+        "RUN_WITH_IT_EVENTS_LOG",
+        "RUN_WITH_IT_POOL_PATTERN",
+        "RUN_WITH_IT_STATUS_FILE",
+        "RUN_WITH_IT_WORKER_STALE_SECONDS",
+        "STATUS_POLL_SECONDS",
+        "SUB_COORD_AGENT",
+        "SUB_COORD_MODEL",
+        "SUB_COORD_TIMEOUT_SECONDS",
+        "USERPROFILE",
+        "WAIT_STATUS_INTERVAL_SECONDS"
+      ],
+      "output": [
+        "PID",
+        "POOL",
+        "STATUS"
+      ],
+      "exit_codes": {
+        "0": "pool completed or validation succeeded",
+        "2": "usage or configuration failure"
+      },
+      "json_records": [
+        "main-state",
+        "sub-state",
+        "pool-state"
+      ],
+      "native_parameters": [
+        "-AssetRoot",
+        "-StateFile",
+        "-ParallelJobs",
+        "-Agent",
+        "-Model",
+        "-StatusFile",
+        "-EventsLog",
+        "-MainLog",
+        "-PollSeconds",
+        "-TimeoutSeconds",
+        "-MaxSubCoordRecoveryAttempts",
+        "-MaxSubCoordCompactionHandoffs",
+        "-MaxWorkerWaitSeconds",
+        "-WorkerStaleSeconds",
+        "-WaitStatusIntervalSeconds",
+        "-MaxSpawnBootstrapAttempts",
+        "-HeartbeatSeconds",
+        "-PoolStateFile",
+        "-DryRun",
+        "-ValidateOnly",
+        "-Detach"
+      ],
+      "native_aliases": {}
+    },
+    "assets/run-with-it-pool.sh": {
+      "replacement_task": 6,
+      "commands": [
+        "run pool"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--agent",
+        "--asset-root",
+        "--attempt",
+        "--context-file",
+        "--detach",
+        "--done-file",
+        "--dry-run",
+        "--events-log",
+        "--help",
+        "--issue",
+        "--issue-dir",
+        "--limit",
+        "--log-file",
+        "--main-log",
+        "--max-attempts",
+        "--max-compaction-handoffs",
+        "--max-wait-seconds",
+        "--model",
+        "--oneline",
+        "--outcome",
+        "--parallel-jobs",
+        "--pid",
+        "--poll-seconds",
+        "--pool-state-file",
+        "--prompt-file",
+        "--reason",
+        "--recovery-report-file",
+        "--report-file",
+        "--result-file",
+        "--role",
+        "--run-root",
+        "--state-file",
+        "--status-file",
+        "--sub-coord-state-file",
+        "--timeout-seconds",
+        "--validate-only",
+        "--wait-elapsed-seconds",
+        "--worker-stale-seconds"
+      ],
+      "environment": [
+        "ASSETS_DEST",
+        "ASSET_ROOT",
+        "FINAL_UNREACHABLE",
+        "MAX_SPAWN_BOOTSTRAP_ATTEMPTS",
+        "MAX_SUB_COORD_COMPACTION_HANDOFFS",
+        "MAX_SUB_COORD_RECOVERY_ATTEMPTS",
+        "MAX_WORKER_WAIT_SECONDS",
+        "PARALLEL_JOBS",
+        "POOL_HEARTBEAT_SECONDS",
+        "POOL_ISSUES",
+        "POOL_STATE_FILE",
+        "PYTHON_BIN",
+        "RUN_ROOT",
+        "RUN_WITH_IT_DISPATCH_PATTERN",
+        "RUN_WITH_IT_EVENTS_LOG",
+        "RUN_WITH_IT_POOL_DETACHED_CHILD",
+        "RUN_WITH_IT_POOL_PATTERN",
+        "RUN_WITH_IT_STATUS_FILE",
+        "RUN_WITH_IT_WORKER_STALE_SECONDS",
+        "STATE_FILE",
+        "STATUS_POLL_SECONDS",
+        "SUB_COORD_AGENT",
+        "SUB_COORD_MODEL",
+        "SUB_COORD_TIMEOUT_SECONDS",
+        "WAIT_STATUS_INTERVAL_SECONDS"
+      ],
+      "output": [
+        "POOL",
+        "STATUS"
+      ],
+      "exit_codes": {
+        "0": "pool completed or validation succeeded",
+        "2": "usage or configuration failure"
+      },
+      "json_records": [
+        "main-state",
+        "sub-state",
+        "pool-state"
+      ]
+    },
+    "assets/run-with-it-pr-body.py": {
+      "replacement_task": 7,
+      "commands": [
+        "report pr"
+      ],
+      "legacy_subcommands": [
+        "render"
+      ],
+      "flags": [
+        "--help",
+        "--state-file",
+        "-h"
+      ],
+      "environment": [],
+      "output": [
+        "rendered Markdown"
+      ],
+      "exit_codes": {
+        "0": "render succeeded",
+        "1": "data failure",
+        "2": "argparse usage"
+      },
+      "json_records": [
+        "main-state",
+        "issue-report"
+      ]
+    },
+    "assets/run-with-it-router.py": {
+      "replacement_task": 7,
+      "commands": [
+        "route"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--allowlist",
+        "--availability-file",
+        "--complexity-level",
+        "--complexity-score",
+        "--denylist",
+        "--detected-agents",
+        "--exclude-model",
+        "--forced-agent",
+        "--forced-model",
+        "--help",
+        "--ledger-file",
+        "--model-denylist",
+        "--prefer-model",
+        "--record",
+        "--registry-file",
+        "--role",
+        "-h"
+      ],
+      "environment": [
+        "RUN_WITH_IT_MODEL_AVAILABILITY_FILE",
+        "RUN_WITH_IT_MODEL_DENYLIST"
+      ],
+      "output": [
+        "JSON"
+      ],
+      "exit_codes": {
+        "0": "route selected",
+        "1": "no supported eligible route or invalid config",
+        "2": "argparse usage"
+      },
+      "json_records": [
+        "usage-ledger",
+        "registry"
+      ]
+    },
+    "assets/run-with-it-state.py": {
+      "replacement_task": 7,
+      "commands": [
+        "state"
+      ],
+      "legacy_subcommands": [
+        "active-pool-entries",
+        "admission-deferrals",
+        "analyze-sub-coord-failure",
+        "context-file-for",
+        "finalize-issue",
+        "finalize-merge-recovery",
+        "mark-in-progress",
+        "mark-merge-recovery-dispatch-failed",
+        "mark-sub-coord-recovery-dispatch-failed",
+        "mark-sub-coord-recovery-started",
+        "parallel-jobs",
+        "quarantine-sub-coord-markers",
+        "ready-issues",
+        "ready-missing-context-count",
+        "requeue",
+        "status-board",
+        "status-counts",
+        "unreachable-issues",
+        "write-merge-recovery-context",
+        "write-sub-coord-recovery-context"
+      ],
+      "flags": [
+        "--attempt",
+        "--context-file",
+        "--done-file",
+        "--help",
+        "--issue",
+        "--issue-dir",
+        "--label",
+        "--limit",
+        "--log-file",
+        "--max-attempts",
+        "--max-compaction-handoffs",
+        "--max-wait-seconds",
+        "--oneline",
+        "--pid",
+        "--reason",
+        "--recovery-report-file",
+        "--report-file",
+        "--state-file",
+        "--sub-coord-state-file",
+        "--wait-elapsed-seconds",
+        "--worker-dead-pid-grace-seconds",
+        "--worker-stale-seconds",
+        "-h"
+      ],
+      "environment": [],
+      "output": [
+        "JSON",
+        "STATUS",
+        "tab-separated records"
+      ],
+      "exit_codes": {
+        "0": "success",
+        "1": "invalid data or failed operation",
+        "2": "argparse usage"
+      },
+      "json_records": [
+        "main-state",
+        "sub-state",
+        "worker-state"
+      ]
+    },
+    "assets/run-with-it-stop.ps1": {
+      "replacement_task": 5,
+      "commands": [
+        "run stop"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "-MatchPattern",
+        "-PoolStateFile",
+        "-RunRoot",
+        "-TermWaitSeconds"
+      ],
+      "environment": [],
+      "output": [
+        "STOP"
+      ],
+      "exit_codes": {
+        "0": "clean stop",
+        "2": "usage or environment failure",
+        "3": "survivors remain"
+      },
+      "json_records": [
+        "main-state",
+        "pool-state"
+      ],
+      "native_parameters": [
+        "-RunRoot",
+        "-PoolStateFile",
+        "-TermWaitSeconds",
+        "-MatchPattern"
+      ],
+      "native_aliases": {}
+    },
+    "assets/run-with-it-stop.sh": {
+      "replacement_task": 5,
+      "commands": [
+        "run stop"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--help",
+        "--match-pattern",
+        "--pool-state-file",
+        "--run-root",
+        "--term-wait-seconds"
+      ],
+      "environment": [
+        "ALREADY_DEAD",
+        "PYTHON_BIN",
+        "RUN_ROOT",
+        "SIGNALED_PGIDS",
+        "SKIPPED_NOT_OURS",
+        "SURVIVORS",
+        "TARGET_PIDS",
+        "TERMINATED"
+      ],
+      "output": [
+        "STOP"
+      ],
+      "exit_codes": {
+        "0": "clean stop",
+        "2": "usage or environment failure",
+        "3": "survivors remain"
+      },
+      "json_records": [
+        "main-state",
+        "pool-state"
+      ]
+    },
+    "assets/run-with-it-watch.ps1": {
+      "replacement_task": 5,
+      "commands": [
+        "run watch"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "-CursorFile",
+        "-EventsLog",
+        "-MatchPattern",
+        "-PollSeconds",
+        "-PoolStateFile",
+        "-WaitSeconds"
+      ],
+      "environment": [
+        "OS",
+        "POOL_WATCH_SECONDS",
+        "RUN_WITH_IT_POOL_PATTERN",
+        "STATUS_POLL_SECONDS"
+      ],
+      "output": [
+        "WATCH"
+      ],
+      "exit_codes": {
+        "0": "pool-empty or bounded running window",
+        "2": "usage or environment failure",
+        "3": "pool-dead"
+      },
+      "json_records": [
+        "pool-state"
+      ],
+      "native_parameters": [
+        "-EventsLog",
+        "-PoolStateFile",
+        "-CursorFile",
+        "-WaitSeconds",
+        "-PollSeconds",
+        "-MatchPattern"
+      ],
+      "native_aliases": {}
+    },
+    "assets/run-with-it-watch.sh": {
+      "replacement_task": 5,
+      "commands": [
+        "run watch"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--cursor-file",
+        "--events-log",
+        "--help",
+        "--match-pattern",
+        "--poll-seconds",
+        "--pool-state-file",
+        "--wait-seconds"
+      ],
+      "environment": [
+        "EVENTS_LOG",
+        "POOL_STATE_FILE",
+        "POOL_WATCH_SECONDS",
+        "PYTHON_BIN",
+        "RUN_WITH_IT_POOL_PATTERN",
+        "STATUS_POLL_SECONDS"
+      ],
+      "output": [
+        "WATCH"
+      ],
+      "exit_codes": {
+        "0": "pool-empty or bounded running window",
+        "2": "usage or environment failure",
+        "3": "pool-dead"
+      },
+      "json_records": [
+        "pool-state"
+      ]
+    },
+    "assets/worker-watch.ps1": {
+      "replacement_task": 5,
+      "commands": [
+        "worker inspect"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "-DoneFile",
+        "-LogFile",
+        "-Pid",
+        "-ProcessId",
+        "-TailLines",
+        "-TailStateFile"
+      ],
+      "environment": [],
+      "output": [
+        "WORKER"
+      ],
+      "exit_codes": {
+        "0": "snapshot emitted; done and alive are independent",
+        "2": "invalid arguments"
+      },
+      "json_records": [],
+      "native_parameters": [
+        "-ProcessId",
+        "-DoneFile",
+        "-LogFile",
+        "-TailStateFile",
+        "-TailLines"
+      ],
+      "native_aliases": {
+        "-Pid": "-ProcessId"
+      }
+    },
+    "assets/worker-watch.sh": {
+      "replacement_task": 5,
+      "commands": [
+        "worker inspect"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--done-file",
+        "--log-file",
+        "--pid",
+        "--tail-lines",
+        "--tail-state-file"
+      ],
+      "environment": [
+        "DONE_FILE",
+        "LOG_FILE",
+        "PID",
+        "TAIL_LINES",
+        "TAIL_STATE_FILE"
+      ],
+      "output": [
+        "WORKER"
+      ],
+      "exit_codes": {
+        "0": "snapshot emitted; done and alive are independent",
+        "2": "invalid arguments"
+      },
+      "json_records": []
+    },
+    "install.ps1": {
+      "replacement_task": 9,
+      "commands": [
+        "install"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--consent",
+        "--global",
+        "--yes",
+        "-DryRun",
+        "-Help",
+        "-List",
+        "-NoColor",
+        "-Only"
+      ],
+      "environment": [
+        "ASSETS_DEST",
+        "ASSETS_REF",
+        "USERPROFILE"
+      ],
+      "output": [
+        "human install summary"
+      ],
+      "exit_codes": {
+        "0": "success, help, list, or dry-run",
+        "1": "installation/dependency failure"
+      },
+      "json_records": [],
+      "native_parameters": [
+        "-DryRun",
+        "-List",
+        "-NoColor",
+        "-Only",
+        "-Help"
+      ],
+      "native_aliases": {}
+    },
+    "install.sh": {
+      "replacement_task": 9,
+      "commands": [
+        "install"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--consent",
+        "--dry-run",
+        "--global",
+        "--help",
+        "--list",
+        "--no-color",
+        "--only",
+        "--yes"
+      ],
+      "environment": [
+        "ASSETS_DEST",
+        "ASSETS_REF",
+        "REPO"
+      ],
+      "output": [
+        "human install summary"
+      ],
+      "exit_codes": {
+        "0": "success, help, list, or dry-run",
+        "1": "installation/dependency failure"
+      },
+      "json_records": []
+    },
+    "uninstall.ps1": {
+      "replacement_task": 9,
+      "commands": [
+        "uninstall"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--global",
+        "-DryRun",
+        "-Help",
+        "-List",
+        "-NoColor",
+        "-Only"
+      ],
+      "environment": [
+        "ASSETS_DEST",
+        "USERPROFILE"
+      ],
+      "output": [
+        "human removal summary"
+      ],
+      "exit_codes": {
+        "0": "success, help, list, or dry-run",
+        "1": "uninstall/dependency failure"
+      },
+      "json_records": [],
+      "native_parameters": [
+        "-DryRun",
+        "-List",
+        "-NoColor",
+        "-Only",
+        "-Help"
+      ],
+      "native_aliases": {}
+    },
+    "uninstall.sh": {
+      "replacement_task": 9,
+      "commands": [
+        "uninstall"
+      ],
+      "legacy_subcommands": [],
+      "flags": [
+        "--dry-run",
+        "--global",
+        "--help",
+        "--list",
+        "--no-color",
+        "--only"
+      ],
+      "environment": [
+        "ASSETS_DEST"
+      ],
+      "output": [
+        "human removal summary"
+      ],
+      "exit_codes": {
+        "0": "success, help, list, or dry-run",
+        "1": "uninstall/dependency failure"
+      },
+      "json_records": []
+    }
+  },
+  "test_suites": {
+    "add-two-numbers.test.sh": {
+      "replacement_tasks": [
+        10
+      ],
+      "contract_kind": "behavior",
+      "scenarios": [
+        "add two numbers contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "break-req-contract.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "break req contract contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "create-git-issue-routing.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "create git issue routing contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "help-me-debug-contract.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "help me debug contract contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "install-assets-contract.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "install assets contract contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "install-assets-powershell-contract.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "install assets powershell contract contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "markdown-contract-consistency.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        7,
+        8
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "Documentation contract test: asserts the skill/asset Markdown matches the",
+        "behavior enforced by the runtime scripts and validators, and that the",
+        "compaction-safe twin files stay synchronized on key tokens.",
+        "Twins: skills/run-with-it/SKILL.md <-> assets/main-orchestrator-rules.md",
+        "assets/sub-coordinator-prompt.md <-> assets/coordinator-rules.md",
+        "Verified no-op contract (run-with-it-artifacts.py accepts no_op:true)",
+        "Iteration limit (no script reads MAX_ITERATIONS; cap is prompt-enforced)",
+        "Complexity fallback band (medium-hard, score=25)",
+        "Stall threshold (snippets pass 300 explicitly; 600 is the env fallback)",
+        "Terminal sets: orchestrator issue statuses include failed-merge...",
+        "...while sub-coordinator REPORT outcomes use merge_failed, never failed-merge",
+        "Auto-fail stalled roles (script default: complexity,impl,modify,plan)",
+        "Worker-watch ownership (pool runner/dispatcher own it, not the orchestrator)",
+        "Plan template must satisfy valid_plan_payload (non-empty slices)",
+        "Review schema includes every required coverage row",
+        "Complexity prompt acceptance checks describe the file truthfully",
+        "Merge-recovery bootstrap copy-paste leftovers",
+        "Modifier verification scoped to change-caused failures (implementer policy untouched)",
+        "Reviewer band bump owned by the router; manual table scoped to fallback",
+        "Review-skip keys documented in the compact report schema",
+        "Skill isolation permits the governing-prompt bootstrap",
+        "No-Git support claims scoped to what actually works without git",
+        "Stale references and typos",
+        "Review skip still merges back to the shared feature branch",
+        "Modifier no-op: dedicated variant, correct pre-spawn head",
+        "Verification exception uses a validator-supported representation",
+        "Stall env fallback scoped by platform (Bash 600, PowerShell 300)",
+        "failed-merge in the remaining enumerations (Resume Flow, final summary)",
+        "Task 7A: baseline confirm anchored to the issue worktree",
+        "Task 7B: review-skip gate rows must be mutually exclusive",
+        "Out-of-scope gate attribution (shared repo-global gates)",
+        "Slices that split one repo-global gate each fail it alone. Reporting every",
+        "slice as failed-review terminates all of them and strands their dependents",
+        "even though the scoped work was sound, so attribution is required first.",
+        "Compaction handoff is unattended-safe and separately budgeted",
+        "Unreachable-issue reporting reaches the operator",
+        "pair-colleague: docs must match the runtime contract",
+        "The coordinator is the invoking agent, agents launch only through run-agent.sh,",
+        "and the round bounds/exit codes documented here are the ones the script enforces.",
+        "The supported-platform claim, the busy exit code, and the safe-mode contract",
+        "must say the same thing in the runtime, the skill, and the README.",
+        "Result"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "pair-colleague.test.sh": {
+      "replacement_tasks": [
+        4,
+        8,
+        9
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "1a. start accepts a problem file",
+        "1b. start accepts a problem on stdin",
+        "2. missing configuration fails clearly",
+        "3. invalid effort, timeout, and round values fail",
+        "4. round bounds 2 <= MIN_ROUNDS <= MAX_ROUNDS <= 8 enforced",
+        "5. detection and model compatibility delegate to the injected runner",
+        "6. both invocations use the runner interface with safe permission mode",
+        "6b. maximum effort is normalized to max",
+        "7. no direct provider CLI invocation or arbitrary-command escape hatch",
+        "8. round 1 gives both agents byte-identical, agent-free context",
+        "9. neither agent sees the other's current-round response",
+        "12. rendered prompts contain no unresolved variables",
+        "15. a round cannot reach awaiting-coordinator until both outputs are valid",
+        "16. only the failed agent is retried against the unchanged snapshot",
+        "10 & 11. snapshots carry the previous round plus a bounded coordinator ledger",
+        "13. run directories and attempt artifacts never overwrite prior data",
+        "14. exact status parsing rejects malformed or trailing output",
+        "17. timeout terminates the process group and preserves diagnostics",
+        "17b. exhausted attempts stop the run as blocked, not falsely conclusive",
+        "18. ACCEPT is rejected before the minimum completed rounds",
+        "19. CONTINUE works after the minimum and before the maximum",
+        "21. the coordinator may accept despite advisory agent disagreement",
+        "20. CONTINUE is rejected after the maximum round",
+        "23. the final dossier validator requires every section and consistent metadata",
+        "22. a completed run cannot be advanced or finalized twice",
+        "24. coordinator decision template is generated for the coordinator",
+        "24b. the default agent timeout is 60 minutes and is persisted",
+        "25. config persists only non-secret effective configuration",
+        "26. help and status are side-effect free",
+        "27. missing assets are reported with the exact missing files",
+        "28. skill and prompt contracts",
+        "29. a second concurrent run-round never launches a duplicate agent",
+        "30. agents orphaned by a killed coordinator are recovered, not relaunched",
+        "31. a stale lock left by a dead process is cleared automatically",
+        "31b. a lock recorded on another host is refused until it is broken",
+        "32. signalling the supervisor kills the whole agent process tree",
+        "33. an interrupted transition converges on identical input and rejects a conflict",
+        "34. every round runs in the workspace the run was started in",
+        "35. a run with no recorded workspace must be bound explicitly",
+        "36. native Windows is refused before anything is launched",
+        "37. validation treats fenced Markdown as an example, not as structure",
+        "37b. an untouched coordinator template is rejected",
+        "38. an altered colleague response cannot be carried into the next round",
+        "39. a harness with no read-only profile is refused at start",
+        "39b. the registry resolves safe mode to a real write-denying flag",
+        "40. repository integration stays consistent"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-agent-ps1-status-bus.test.sh": {
+      "replacement_tasks": [
+        4
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "run agent ps1 status bus contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-agent-status-bus.test.sh": {
+      "replacement_tasks": [
+        4
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "A quiet non-streaming child receives wrapper-owned liveness heartbeats that",
+        "stop before the terminal event is written.",
+        "SIGKILL bypasses the runner EXIT trap. The heartbeat child must notice that",
+        "its parent disappeared instead of appending false liveness forever."
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-agent.test.sh": {
+      "replacement_tasks": [
+        4,
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "run agent contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-artifacts.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Missing log \u2192 capability (no infrastructure signal observed)",
+        "Ordinary worker output with no availability marker \u2192 capability",
+        "Runner emitted agent-unavailable (auth/quota) \u2192 infrastructure",
+        "A STALE bootstrap marker must NOT classify a later real failure as infrastructure.",
+        "The foreground bootstrap retry reuses the same log; if that retry then fails for a",
+        "real capability reason (no current agent-unavailable), the inherited bootstrap",
+        "marker must not exempt it from the fallback budget.",
+        "But a current agent-unavailable on the reused log is still infrastructure.",
+        "Fix C: dispatcher must not silently auto-approve dropped review comments",
+        "approve + comment_count=0 + missing instructions \u2192 safe to synthesize an empty approve.",
+        "approve + comment_count>0 + missing instructions \u2192 must NOT auto-approve (retry instead).",
+        "issue 653: dispatcher repairs protected-category nitpicks instead of hard-blocking",
+        "revise + protected-category nitpicks (test + security) \u2192 escalate to warnings, do NOT block.",
+        "approve + protected-category nitpick \u2192 must NOT be auto-repaired (the guardrail case).",
+        "Fix E: a verified no-op implementation is accepted as success",
+        "Run handoff reliability: canonical commits and mandatory verification",
+        "Fix B: stall salvage commits a dirty tree only with --from-stall",
+        "Without --from-stall (clean-exit path, no done sentinel) \u2192 no salvage.",
+        "With --from-stall \u2192 commit the dirty tree and synthesize a typed recovery result.",
+        "Atomic writer validates before replacing the destination"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-dispatch-ps1.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        7
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "A stalled complexity worker may have emitted valid JSON and the done sentinel",
+        "before hanging. Synthesis turns that log output into a complete result artifact;",
+        "PowerShell must accept it exactly as the Bash dispatcher does.",
+        "2: committed work is synthesized even when the worker exits NONZERO (parity with Bash)",
+        "1: agent-unavailable (auth) with no committed work \u2192 infrastructure failure class"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-dispatch.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Stay quiet past the stdout stall window, then finish valid work. Wrapper-owned",
+        "heartbeats must keep this non-streaming worker alive.",
+        "2: committed work is synthesized even when the worker exits NONZERO",
+        "(e.g. a provider auth/quota failure that kills the agent mid-run after it committed).",
+        "1: an agent-unavailable (auth/quota) failure with no committed work is classified",
+        "as infrastructure, so the coordinator can re-route without consuming the fallback budget."
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-helpers.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "ready-issues only admits issues whose context file exists on disk.",
+        "issue 5 context",
+        "Orphaned in-flight worker must never produce an unbounded wait",
+        "A worker state file is a snapshot its dispatcher rewrites every poll. When the",
+        "sub-coordinator dies it takes the dispatcher with it, freezing the file at",
+        "state=running forever. Trusting that frozen field wedged a real run for 8.5h.",
+        "Fresh snapshot (just written) still means \"wait\" \u2014 the fix must not turn every",
+        "genuinely running worker into a spurious recovery.",
+        "Same file, aged past the staleness bound: the dispatcher that maintains it is",
+        "provably gone, so the \"running\" claim is stale and recovery must be spawned.",
+        "A worker that stays demonstrably fresh still may not be waited on forever.",
+        "Compaction handoff is budgeted apart from failure recovery",
+        "A sub-coordinator that halts on its context budget did what it was told; that",
+        "must not consume the (deliberately tiny) failure-recovery budget.",
+        "Failure budget is already spent (2/2); the handoff budget is what applies.",
+        "Terminal non-completed issues must not silently strand their cone"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-log-harness.test.sh": {
+      "replacement_tasks": [
+        4,
+        5
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "run with it log harness contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-plan.test.sh": {
+      "replacement_tasks": [
+        5,
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Test 1 \u2014 dispatch --role plan sets RUN_WITH_IT_ROLE=plan, forwards --repo-root,",
+        "Test 2 \u2014 router --role plan strong-bumps the routing band (PLAN_BUMP).",
+        "Test 4 \u2014 plan.json artifact validity (well-formed accepted, malformed rejected).",
+        "Test 6 \u2014 hybrid complexity refinement: a valid plan complexity_level overrides",
+        "Test 2 \u2014 router strong-bumps the plan band",
+        "Test 4 \u2014 plan.json artifact validity",
+        "Test 1 \u2014 dispatch --role plan",
+        "Test 6 \u2014 hybrid complexity refinement",
+        "Test 3 \u2014 gate skips the plan below threshold",
+        "Test 5 \u2014 recovery does not re-spawn a valid plan"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-pool-actual-flow.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Orphaned in-flight worker: the sub-coordinator dies and takes its worker's",
+        "dispatcher with it, freezing the worker state file at state=running forever.",
+        "Before liveness gating the supervisor waited on that frozen field for as long",
+        "as the run lasted, so this scenario runs under a watchdog: a regression hangs",
+        "the pool, and the watchdog turns that hang into a clear failure.",
+        "Late-context rolling pool: an issue whose context file does not exist yet is",
+        "waiting-context \u2014 the pool must keep running, surface the wait, and dispatch",
+        "the issue as soon as the Main Orchestrator writes the context, without a",
+        "relaunch and without the missing file killing the supervisor."
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-pool-e2e.test.sh": {
+      "replacement_tasks": [
+        5,
+        6,
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "1. detach \u2192 watch \u2192 pool-empty",
+        "2. kill supervisor while a dispatcher runs \u2192 relaunch \u2192 reattach exactly",
+        "3. stale/recycled PID rejection during reattach",
+        "4. duplicate supervisor launch prevention"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-pool-ps1.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        6,
+        7
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "run with it pool ps1 contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-pool.test.sh": {
+      "replacement_tasks": [
+        5,
+        6
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Recovery wait must be bounded, informative, and not log-flooding",
+        "A frozen worker state file once produced ~6k identical wait lines over 8.5h",
+        "while the pool made no progress; the wait now carries a clock and a ceiling.",
+        "An issue whose recorded context file is missing on disk is waiting-context:",
+        "it must be held back from dispatch, not crash the pool at spawn time."
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-requeue-markers.test.sh": {
+      "replacement_tasks": [
+        6,
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Contract: a (re)dispatched sub-coordinator must never reuse a stale terminal",
+        "report. The dispatch chokepoint quarantines sub-coordinator terminal markers",
+        "(report.json, sub-coordinator.done, sub-coordinator.state.json,",
+        "sub-coordinator.dispatch.out) before launch, while PRESERVING resume state",
+        "(sub-state.json, workers/). Without this, a fresh runner finds the prior",
+        "\"blocked\" report, no-ops, and the control plane stamps a phantom",
+        "\"sub-coordinator recovery dispatcher failed\" (root cause of issues #653/#641).",
+        "Stale terminal markers (the no-op trigger).",
+        "Resume state that recovery MUST keep.",
+        "archive run",
+        "Terminal markers moved out of the live issue dir...",
+        "...and preserved under the archive dir.",
+        "Resume state is untouched so recovery continues instead of restarting.",
+        "idempotency: a clean dir moves nothing and prints empty",
+        "custom label",
+        "wiring: every dispatch chokepoint must call the guard",
+        "Both spawn functions (normal + recovery) must guard: expect two call sites."
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-router.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "sticky reviewer preference (issue 641): keep the same reviewer across cycles",
+        "Pick a viable-but-not-default candidate to prove the preference changes the winner.",
+        "Excluding the preferred model (artifact retry) must override the preference and fall back.",
+        "A preference for a model that is not a viable candidate must fall back gracefully."
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-routing-windows.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        6,
+        7,
+        9
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "run with it routing windows contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-routing.test.sh": {
+      "replacement_tasks": [
+        4,
+        5,
+        6,
+        7,
+        9
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Asset discovery",
+        "Complexity (delegated to sub-coordinator; main references Sub-Coordinator Context File)",
+        "Routing overrides (passed through to sub-coordinator)",
+        "Easy-route counterfactual: Codex availability alone must not force Sol.",
+        "Explicit model-only override: Sol remains available when the user forces it.",
+        "Sub-coordinator dispatch",
+        "Parallel (if documented)",
+        "State file schemas",
+        "Status messages (where documented)",
+        "No reset/clear instruction may survive anywhere an agent looks after",
+        "compression or on resume \u2014 stale copies of the old bulk-reset contract are",
+        "how detached dispatchers get duplicated.",
+        "issue 641 convergence fixes",
+        "Critical rules",
+        "Orchestrator rules file"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-state.test.sh": {
+      "replacement_tasks": [
+        7
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "ready-issues only admits issues whose context file exists on disk. The",
+        "admission fixtures below use bare relative paths like \"22.md\", so run from",
+        "WORK_DIR and materialize every referenced context file up front.",
+        "status-board: compact per-issue stage view",
+        "Fix G: requeue quarantines stale artifacts and resets to pending",
+        "Fix G: completing a dependency auto-unblocks a blocked dependent",
+        "Re-block 700 on 701 to test the auto-unblock path on finalize.",
+        "Safe parallel admission uses explicit metadata and active ownership locks",
+        "Under concurrency_policy=strict (required for newly generated plans), missing",
+        "metadata runs exclusively instead of failing open.",
+        "ready-issues is a read-only admission pass: it must not rewrite metadata.",
+        "Explicit parallel_safe=false stays exclusive, string \"true\" is accepted, and",
+        "glob scopes compare by their literal directory prefix instead of conflicting",
+        "with everything. Root and malformed metadata fail closed: root scopes overlap",
+        "everything, non-list scopes and non-canonical parallel_safe values are",
+        "malformed and never co-scheduled.",
+        "Malformed metadata still executes \u2014 exclusively: admitted alone into an empty",
+        "pool, and everything else defers behind it.",
+        "active-pool-entries lists in-flight members for supervisor re-attach.",
+        "A blocked handoff that cites a dependency already completed is stale-base",
+        "evidence and must be requeued instead of becoming durably blocked.",
+        "ready-issues defers issues whose recorded context file is missing on disk",
+        "status-counts: heartbeat counts line"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-stop.test.sh": {
+      "replacement_tasks": [
+        5
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Fake detached dispatcher: a session leader that spawns a \"runner\" child into",
+        "its own process group, mirroring `nohup run-agent ... &` inside a detached",
+        "dispatcher. With --orphan it exits after spawning, leaving the child behind.",
+        "Live dispatcher tree: leader + in-group runner child",
+        "Orphaned runner: dispatcher exited, runner recorded in a nested worker state",
+        "Not ours: live PID recorded in state whose command line fails the identity check",
+        "Pool supervisor entry pointing at a dead PID (stale lease)",
+        "Regression: an UNRECORDED group child that ignores TERM must still die.",
+        "The recorded dispatcher exits on TERM; verifying only recorded PIDs would",
+        "skip KILL and report clean while the child keeps running.",
+        "Only the dispatcher is recorded; the TERM-ignoring child is not.",
+        "Idempotent re-run: everything already dead except the not-ours PID",
+        "Static contract: discard flow uses the stop helpers and refuses on survivors"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "run-with-it-watch.test.sh": {
+      "replacement_tasks": [
+        5,
+        6
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "Stand-in for a live pool supervisor.",
+        "A running pool drains new lines and reports result=running",
+        "The cursor suppresses already-printed lines on the next call",
+        "pool-empty terminates the watch with the completion marker",
+        "A dead pool without pool-empty exits 3 with the pool-dead marker",
+        "PollSeconds=0 must not hang the bounded watch (regression: elapsed time",
+        "advanced by zero, so WaitSeconds was never reached; on Windows an unset",
+        "STATUS_POLL_SECONDS binds -PollSeconds as 0)",
+        "PowerShell watcher: functional parity (regression: status lines in the",
+        "success stream must not make `if (Drain-NewLines)` truthy and fake pool-empty)",
+        "Static contract: pool runner supports detach, re-attach, and deferral visibility"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "uninstall-contract.test.sh": {
+      "replacement_tasks": [
+        9
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "uninstall contract contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "worker-watch-ps1.test.sh": {
+      "replacement_tasks": [
+        5
+      ],
+      "contract_kind": "source",
+      "scenarios": [
+        "worker watch ps1 contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    },
+    "worker-watch.test.sh": {
+      "replacement_tasks": [
+        5
+      ],
+      "contract_kind": "mixed",
+      "scenarios": [
+        "worker watch contract assertions and regression scenarios"
+      ],
+      "source_assertions_policy": "Preserve the observable behavior; exact shell/PowerShell source strings are temporary legacy checks, not Python implementation requirements."
+    }
+  },
+  "record_contracts": {
+    "main-state": {
+      "schema_versions": [
+        2,
+        4
+      ],
+      "owner_task": 6,
+      "shape": "legacy_records.json: records.main-state",
+      "policy": "Preserve unknown fields and legacy permissive admission. New plans use explicit strict concurrency policy."
+    },
+    "sub-state": {
+      "schema_versions": [
+        1
+      ],
+      "owner_task": 6,
+      "shape": "legacy_records.json: records.sub-state",
+      "policy": "Preserve phase, immutable issue base, in-flight agent records, compaction/recovery counters, and review history."
+    },
+    "worker-state": {
+      "schema_versions": [
+        1
+      ],
+      "owner_task": 5,
+      "shape": "legacy_records.json: records.worker-state",
+      "states": [
+        "ready",
+        "starting",
+        "running",
+        "quiet",
+        "stalled",
+        "completed",
+        "failed",
+        "artifact-recovery-required"
+      ]
+    },
+    "worker-result": {
+      "schema_versions": [
+        1
+      ],
+      "owner_task": 7,
+      "shape": "legacy_records.json: records.worker-result",
+      "policy": "Role-specific artifacts; impl/modify require mandatory commit or verified no-op; plan requires valid JSON and nonempty plan.md. Details in assets prompts."
+    },
+    "pair-state": {
+      "schema_versions": [
+        2
+      ],
+      "owner_task": 8,
+      "shape": "legacy_records.json: records.pair-state"
+    },
+    "pair-config": {
+      "schema_versions": [
+        2
+      ],
+      "owner_task": 8,
+      "shape": "legacy_records.json: records.pair-config"
+    },
+    "pair-attempt": {
+      "schema_versions": [
+        "unversioned legacy"
+      ],
+      "owner_task": 8,
+      "shape": "legacy_records.json: records.pair-attempt",
+      "policy": "argv/cwd/process identity/timestamps/deadline/exit status; future ownership requires stronger identity checks."
+    },
+    "pool-state": {
+      "owner_task": 6,
+      "source": "assets/run-with-it-pool.sh and assets/run-with-it-pool.ps1",
+      "policy": "Preserve supervisor PID/start identity, state-file and event/status log references."
+    },
+    "usage-ledger": {
+      "schema_versions": [
+        1
+      ],
+      "owner_task": 7,
+      "source": "assets/run-with-it-router.py",
+      "policy": "Preserve history/usage counts and provider subscription target balance."
+    },
+    "registry": {
+      "schema_versions": [
+        1
+      ],
+      "owner_task": 2,
+      "source": "assets/agent-registry.json",
+      "policy": "Use maintained packaged registry; aliases, disabled routes, command argv profiles and model catalog remain data."
+    },
+    "issue-report": {
+      "schema_versions": [
+        1
+      ],
+      "owner_task": 7,
+      "source": "assets/sub-coordinator-prompt.md compact report contract",
+      "policy": "Outcome, files changed, verification, review summary, token/model usage remain compact report source of truth."
+    }
+  }
+}

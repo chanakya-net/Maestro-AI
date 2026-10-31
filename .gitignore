@@ -151,5 +151,11 @@ vite.config.ts.timestamp-*
 .codegraph/.dirty
 __pycache__/
 
+# Python development and build outputs
+.venv*/
+.pytest_cache/
+build/
+*.egg-info/
+
 # pair-colleague run artifacts (task text, agent transcripts, decisions)
 .pair-colleague/

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-skills"
+version = "0.1.0.dev0"
+description = "Experimental native Python runtime foundation for AI-Skills"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = ["psutil>=7", "pywin32>=308; sys_platform == 'win32'"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "build>=1.2", "hatchling>=1.27"]
+
+[project.scripts]
+ai-skills = "ai_skills.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_skills"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/pyproject.toml", "/README.md", "/LICENSE", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"assets/agent-registry.json" = "ai_skills/data/agent-registry.json"
+"assets/artifact-recovery-prompt.md" = "ai_skills/data/artifact-recovery-prompt.md"
+"assets/complexity-prompt.md" = "ai_skills/data/complexity-prompt.md"
+"assets/coordinator-rules.md" = "ai_skills/data/coordinator-rules.md"
+"assets/main-orchestrator-rules.md" = "ai_skills/data/main-orchestrator-rules.md"
+"assets/merge-recovery-prompt.md" = "ai_skills/data/merge-recovery-prompt.md"
+"assets/modifier-prompt.md" = "ai_skills/data/modifier-prompt.md"
+"assets/pair-colleague-agent-prompt.md" = "ai_skills/data/pair-colleague-agent-prompt.md"
+"assets/plan-prompt.md" = "ai_skills/data/plan-prompt.md"
+"assets/prompt.md" = "ai_skills/data/prompt.md"
+"assets/review-prompt.md" = "ai_skills/data/review-prompt.md"
+"assets/sub-coordinator-prompt.md" = "ai_skills/data/sub-coordinator-prompt.md"
