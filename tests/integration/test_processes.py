@@ -203,11 +203,11 @@ def test_windows_assignment_failure_never_executes_child(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.name != 'nt', reason='requires native Windows nested Job Objects')
 def test_windows_launch_inside_existing_job(tmp_path):
     import subprocess
-    code = '''import os,sys
+    code = '''import os,sys,uuid
 from pathlib import Path
 import win32api,win32job
 from ai_skills.processes import ProcessSpec,ProcessSupervisor
-job=win32job.CreateJobObject(None,None)
+job=win32job.CreateJobObject(None,'ai-skills-test-'+uuid.uuid4().hex)
 win32job.AssignProcessToJobObject(job,win32api.GetCurrentProcess())
 s=ProcessSupervisor(Path(sys.argv[1]))
 with s.start(ProcessSpec((sys.executable,sys.argv[2],'leaf',str(Path(sys.argv[1])/'ready')),Path(sys.argv[1]),{}),run_id='run',attempt_id='nested') as p:

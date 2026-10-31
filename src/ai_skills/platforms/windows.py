@@ -6,6 +6,7 @@ portable graceful console signal: stop immediately terminates their Job Object.
 """
 import msvcrt
 import subprocess
+import uuid
 
 import psutil
 import win32api
@@ -18,7 +19,7 @@ class ProcessGroup:
     def __init__(self, argv, cwd, env, stdin, stdout, stderr):
         if argv[0].lower().endswith(('.cmd', '.bat')):
             raise ValueError('batch launchers require a separate quoting adapter')
-        self.job = win32job.CreateJobObject(None, None)
+        self.job = win32job.CreateJobObject(None, f"ai-skills-{uuid.uuid4().hex}")
         self.process = None
         thread = None
         try:
