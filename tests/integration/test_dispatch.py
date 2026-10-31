@@ -4,6 +4,8 @@ from pathlib import Path
 import sys
 import time
 
+import pytest
+
 from ai_skills.dispatch import WorkerConfig, dispatch_worker, inspect_worker
 from ai_skills.runner import AgentRunConfig
 
@@ -147,28 +149,50 @@ subprocess.check_call(['git','commit','-m','implementation'])
     assert payload['status']=='artifact_recovery_required'
 
 
-def test_adopt_dead_dispatcher_never_relaunches_paid_attempt(tmp_path):
+@pytest.mark.parametrize('repetition',range(5))
+def test_adopt_dead_dispatcher_never_relaunches_paid_attempt(tmp_path,repetition):
     import psutil
     from ai_skills.dispatch import adopt_worker
+    from ai_skills.processes import ProcessIdentity,ProcessSupervisor
     config=worker_config(tmp_path, '''import os,time
 from pathlib import Path
 with Path('launch-count').open('a') as stream: stream.write('one\\n')
-time.sleep(.3)
+Path('provider-ready').touch()
+while not Path('release-provider').exists(): time.sleep(.01)
 Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
 ''',detach=True)
-    result=dispatch_worker(config)
-    wrapper=json.loads(Path(str(config.state_file)+'.dispatcher.process.json').read_text())
-    process=psutil.Process(wrapper['identity']['pid'])
-    assert process.create_time()==wrapper['identity']['created_at']
-    process.kill()
-    assert adopt_worker(config.state_file).state in ('running','completed')
-    deadline=time.monotonic()+5
-    while time.monotonic()<deadline:
-        result=adopt_worker(config.state_file)
-        if result.state!='running': break
-        time.sleep(.03)
-    assert result.state=='completed', result.reason
-    assert (tmp_path/'launch-count').read_text().splitlines()==['one']
+    process=None
+    try:
+        result=dispatch_worker(config)
+        deadline=time.monotonic()+15
+        while not (tmp_path/'provider-ready').exists():
+            assert time.monotonic()<deadline, 'provider did not acknowledge startup'
+            time.sleep(.01)
+        wrapper=json.loads(Path(str(config.state_file)+'.dispatcher.process.json').read_text())
+        process=psutil.Process(wrapper['identity']['pid'])
+        assert process.create_time()==wrapper['identity']['created_at']
+        process.kill()
+        process.wait(timeout=5)
+        # The provider's explicit release gate proves work remains in flight;
+        # startup and kill timing cannot accidentally test an already-dead run.
+        assert adopt_worker(config.state_file).state=='running'
+        (tmp_path/'release-provider').touch()
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            result=adopt_worker(config.state_file)
+            if result.state!='running': break
+            time.sleep(.03)
+        assert result.state=='completed', result.reason
+        assert (tmp_path/'launch-count').read_text().splitlines()==['one']
+    finally:
+        (tmp_path/'release-provider').touch()
+        provider_path=Path(str(config.state_file)+'.process.json')
+        if provider_path.exists():
+            record=json.loads(provider_path.read_text())
+            ProcessSupervisor(Path(record['record_directory'])).stop(ProcessIdentity(**record['identity']),grace_seconds=.05)
+        if process is not None and process.is_running():
+            try: process.kill();process.wait(timeout=5)
+            except psutil.NoSuchProcess: pass
 
 
 def test_nested_worker_selection_remains_pinned_against_ambient_forced_env(tmp_path):
