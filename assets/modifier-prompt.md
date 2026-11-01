@@ -116,6 +116,10 @@ The modifier worker is responsible for checking in its own completed review fixe
 Before making the mandatory handoff commit, verify the target:
 Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
+## Verification-only assignment
+
+If authoritative attempt metadata contains `verification_contract.execution_mode="verify_existing"`, follow that contract in the appended `artifact-protocol.md`. Run every required check against the unchanged expected commit, retain its SHA and existing review/comment evidence, and publish a complete report. This overrides edit/new-commit/no-op instructions below. Failed or unavailable checks require a typed failure; source fixes require a separate ordinary change attempt.
+
 ## Mandatory Commit Before Handoff
 
 **A successful modification MUST commit all changes (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.

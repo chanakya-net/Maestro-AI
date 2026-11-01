@@ -65,6 +65,7 @@ class AgentRunConfig:
     stream_directory: Path | None = None
     scrub_ambient_aliases: bool = False
     dispatcher_managed: bool = False
+    verification_context: dict | None = None
 
     def replace(self, **values):
         return replace(self, **values)
@@ -139,6 +140,8 @@ def _payload(config):
             'state_file':canonical_path(config.state_file),
             'expected_artifacts':role_artifact_paths(role=config.role,
                 result_file=config.result_file, issue_dir=config.issue_dir)}
+        if config.verification_context is not None:
+            metadata['verification_contract'] = config.verification_context
         protocol = resource_path('artifact-protocol.md').read_text(encoding='utf-8')
         payload += '\n\n' + protocol.rstrip('\n') + '\n\nAuthoritative attempt metadata:\n'
         payload += json.dumps(metadata, ensure_ascii=False, sort_keys=True) + '\n\n'
