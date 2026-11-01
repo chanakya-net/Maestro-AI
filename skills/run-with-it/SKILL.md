@@ -167,29 +167,25 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `MAX_SUB_COORD_COMPACTION_HANDOFFS` | `6` | Context-budget handoffs allowed per issue. Budgeted apart from `MAX_SUB_COORD_RECOVERY_ATTEMPTS` because a compaction stop is a contracted handoff, not a failure. |
 | `WAIT_STATUS_INTERVAL_SECONDS` | `300` | Minimum gap between repeats of an unchanged `sub-coord-recovery-wait` line. Changes in worker/role/reason always emit. |
 
-## Automatic Worker Model Matrix
+## Automatic Worker Routing Policy
 
-After calculating the effective routing band, every non-complexity automatic
-route uses this exact model set:
+The selected runtime's `agent-registry.json` is the single source of model
+membership, usage targets, and effort. Do not copy a model matrix into the
+orchestration instructions or select models from historical examples.
 
-| Effective band | Automatic models |
-|---|---|
-| quite-easy / easy | GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, eligible Gemini models exposed by Agy |
-| medium | GPT-5.6 Terra, Codex Spark, Claude Sonnet 5 |
-| medium-hard | GPT-5.5, GPT-6.1 Sol, Claude Opus 5 |
-| complex | GPT-6.1 Sol, Claude Opus 5 |
-| holy-fuck | GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5, Claude Fable 5.1 |
+Use `ai-skills.registry.load_registry(path)` to expand version 2 model entries,
+CLI definitions, and defaults into the router's policy. For each effective
+non-complexity band, the expanded
+`model_routing.non_complexity_band_policy` supplies the eligible models and
+provider additions. `model_routing.usage_distribution` supplies the global and
+role/band usage targets. `model_routing.effort_by_model_and_band` supplies effort
+overrides, falling back to each model's `reasoning_effort`.
 
-Complexity scoring is exempt from this automatic matrix and retains its
-independent weight-based routing. Review applies its existing one-band increase; planning applies its existing two-band increase before applying the matrix. Explicit `FORCED_MODEL` values bypass automatic membership but must still pass compatibility and availability checks.
-
-Effective-band effort:
-
-- Sol: `high` at medium-hard, `xhigh` at complex and holy-fuck.
-- Sonnet 5: `low`, `medium`, `medium` from quite-easy through medium.
-- Opus 5: `high` at medium-hard, `xhigh` at complex, `max` at holy-fuck.
-- Astra: `max` at holy-fuck.
-- Fable 5.1: `max` at holy-fuck.
+Complexity scoring keeps its separate weight/band policy. Review applies its
+one-band increase and planning its two-band increase before selecting a model.
+Explicit `FORCED_MODEL` values bypass automatic band membership but still pass
+compatibility and availability checks. Preserve the entire decision returned by
+`ai-skills route`; pass its agent, model, and effort to the worker unchanged.
 
 The generic route effort becomes Codex `model_reasoning_effort` or Claude Code
 `--effort`; Agy receives no effort flag.
