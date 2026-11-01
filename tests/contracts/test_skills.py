@@ -259,7 +259,8 @@ def test_platform_and_safe_permission_guidance_uses_native_runtime():
         assert 'Windows' in text and 'Linux' in text and 'macOS' in text
         assert 'ai-skills' in text
         assert 'Bash only' not in text
-    registry=json.loads(resource('agent-registry.json'))
+    from ai_skills.registry import load_registry
+    registry=load_registry()
     assert registry['agents']['codex']['permission_modes']['read_only']=='--sandbox=read-only'
     assert 'read-only' in skill('pair-colleague')
 

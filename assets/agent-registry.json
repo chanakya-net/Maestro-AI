@@ -1,101 +1,27 @@
 {
-  "schema_version": 1,
-  "description": "Shared run target registry for AI skill issue runners.",
-  "aliases": {
-    "codex-cli": "codex",
-    "claude-code": "claude",
-    "copilot": "github-copilot",
-    "github-copilot-cli": "github-copilot",
-    "open_code": "opencode",
-    "agy": "agy",
-    "agy-cli": "agy"
-  },
+  "schema_version": 2,
+  "description": "Editable models and routing policy. See README.md: Model routing configuration.",
+  "agent_definitions": "agent-definitions.json",
   "model_catalog": {
-    "claude-haiku-4-5": {
+    "claude-haiku-5-5": {
       "provider": "anthropic",
       "ability": "fast",
       "complexity_weight": 2,
       "exclude_from_complexity": true,
-      "context_window": 200000,
-      "strengths": [
-        "speed",
-        "high-throughput",
-        "cost-sensitive"
-      ]
-    },
-    "claude-haiku-4.5": {
-      "provider": "anthropic",
-      "ability": "fast",
-      "complexity_weight": 2,
-      "exclude_from_complexity": true,
-      "context_window": 200000,
-      "strengths": [
-        "speed",
-        "high-throughput",
-        "cost-sensitive"
-      ],
-      "_note": "GitHub Copilot CLI model ID for Haiku 4.5 (dot format). Same model as claude-haiku-4-5."
-    },
-    "claude-sonnet-4-6": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "complexity_weight": 6,
       "context_window": 1000000,
-      "strengths": [
-        "speed-intelligence-balance",
-        "coding",
-        "extended-thinking",
-        "1M-context"
-      ]
+      "agents": ["claude"],
+      "work_bands": ["quite-easy", "easy"]
     },
-    "claude-sonnet-4.6": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "complexity_weight": 6,
-      "context_window": 1000000,
-      "strengths": [
-        "speed-intelligence-balance",
-        "coding",
-        "extended-thinking",
-        "1M-context"
-      ],
-      "_note": "GitHub Copilot CLI model ID for Sonnet 4.6 (dot format). Same model as claude-sonnet-4-6."
-    },
-    "claude-sonnet-4-6[1m]": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "complexity_weight": 7,
-      "context_window": 1000000,
-      "strengths": [
-        "long-context",
-        "extended-thinking",
-        "agentic"
-      ]
-    },
-    "claude-opus-4-6": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "context_window": 1000000,
-      "strengths": [
-        "1M-context",
-        "long-doc-retrieval",
-        "coding",
-        "extended-thinking"
-      ]
-    },
-    "claude-opus-5": {
+    "claude-opus-5-5": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 9,
       "min_band": "medium-hard",
       "context_window": 1000000,
-      "strengths": [
-        "best-coding",
-        "agentic",
-        "adaptive-thinking",
-        "frontier"
-      ]
+      "agents": ["claude"],
+      "work_bands": ["medium-hard", "complex", "holy-fuck"],
+      "required_bands": ["holy-fuck"],
+      "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "max"}
     },
     "claude-fable-5-1": {
       "provider": "anthropic",
@@ -103,46 +29,19 @@
       "complexity_weight": 10,
       "min_band": "holy-fuck",
       "context_window": 1000000,
-      "strengths": [
-        "deepest-reasoning",
-        "long-horizon-agentic",
-        "adaptive-thinking",
-        "frontier"
-      ]
+      "agents": ["claude"],
+      "work_bands": ["holy-fuck"],
+      "required_bands": ["holy-fuck"],
+      "effort_by_band": {"holy-fuck": "max"}
     },
-    "claude-sonnet-5": {
+    "claude-sonnet-5-5": {
       "provider": "anthropic",
       "ability": "advanced",
       "complexity_weight": 7,
       "context_window": 1000000,
-      "strengths": [
-        "coding",
-        "agentic",
-        "adaptive-thinking",
-        "speed-intelligence-balance"
-      ]
-    },
-    "claude-opus-5-high": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": [
-        "high-reasoning-effort",
-        "frontier",
-        "complex-problems"
-      ]
-    },
-    "claude-opus-5-xhigh": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": [
-        "maximum-reasoning-effort",
-        "frontier",
-        "hardest-problems"
-      ]
+      "agents": ["claude"],
+      "work_bands": ["quite-easy", "easy", "medium"],
+      "effort_by_band": {"quite-easy": "low", "easy": "medium", "medium": "medium"}
     },
     "gpt-6-astra": {
       "provider": "openai",
@@ -151,867 +50,169 @@
       "min_band": "holy-fuck",
       "context_window": 1050000,
       "reasoning_effort": "high",
-      "strengths": [
-        "complex-reasoning",
-        "agentic-coding",
-        "computer-use",
-        "long-horizon-agentic"
-      ]
+      "agents": ["codex"],
+      "work_bands": ["holy-fuck"],
+      "required_bands": ["holy-fuck"],
+      "effort_by_band": {"holy-fuck": "max"}
     },
-    "gpt-5.6-luna": {
+    "gpt-6-luna": {
       "provider": "openai",
       "ability": "balanced",
       "complexity_weight": 3,
       "min_band": "easy",
-      "routing_bands": [
-        "easy"
-      ],
-      "context_window": 372000,
+      "context_window": 1050000,
       "reasoning_effort": "high",
-      "strengths": [
-        "clear-repeatable-work",
-        "high-throughput",
-        "cost-efficient"
-      ]
+      "agents": ["codex"],
+      "work_bands": ["quite-easy", "easy"],
+      "complexity_bands": ["quite-easy", "easy"]
     },
-    "gpt-5.6-terra": {
+    "gpt-6.1-terra": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 5,
       "min_band": "medium",
-      "routing_bands": [
-        "medium"
-      ],
-      "context_window": 372000,
+      "context_window": 1050000,
       "reasoning_effort": "high",
-      "strengths": [
-        "everyday-work",
-        "reasoning",
-        "tool-use"
-      ]
+      "agents": ["codex"],
+      "work_bands": ["medium"],
+      "complexity_bands": ["medium"]
     },
     "gpt-6.1-sol": {
       "provider": "openai",
       "ability": "frontier",
       "complexity_weight": 7,
       "min_band": "medium-hard",
-      "routing_bands": [
-        "medium-hard",
-        "complex",
-        "holy-fuck"
-      ],
       "context_window": 1050000,
       "reasoning_effort": "high",
-      "strengths": [
-        "complex-open-ended-work",
-        "agentic-coding",
-        "polish"
-      ]
+      "agents": ["codex"],
+      "work_bands": ["medium-hard", "complex", "holy-fuck"],
+      "required_bands": ["holy-fuck"],
+      "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
+      "complexity_bands": ["medium-hard", "complex", "holy-fuck"]
     },
     "gpt-5.4-mini": {
       "provider": "openai",
       "ability": "balanced",
       "complexity_weight": 4,
       "context_window": 400000,
-      "strengths": [
-        "coding",
-        "computer-use",
-        "subagents",
-        "cost-efficient"
-      ]
+      "agents": ["github-copilot"]
     },
     "gpt-5.3-codex": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 8,
       "context_window": 400000,
-      "strengths": [
-        "agentic-coding",
-        "swe-bench-pro",
-        "fast-codex",
-        "copilot-business-base"
-      ]
-    },
-    "gpt-5.3-codex-spark": {
-      "provider": "openai",
-      "ability": "advanced",
-      "complexity_weight": 6,
-      "context_window": 400000,
-      "strengths": [
-        "agentic-coding",
-        "code-speed",
-        "preferred-over-5.3-non-mini",
-        "easy-to-medium-hard-complexity"
-      ],
-      "_note": "Known Codex CLI model. Weekly Spark limit has reset, so this model is eligible for routing."
+      "agents": ["github-copilot"]
     },
     "gpt-5.4": {
       "provider": "openai",
       "ability": "frontier",
       "complexity_weight": 9,
       "context_window": 1050000,
-      "strengths": [
-        "complex-professional",
-        "variable-reasoning",
-        "computer-use",
-        "MCP",
-        "web-search",
-        "1M-context"
-      ]
-    },
-    "gpt-5.5": {
-      "provider": "openai",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "context_window": 922000,
-      "strengths": [
-        "best-coding",
-        "swe-bench-88.7pct",
-        "professional-work",
-        "computer-use",
-        "MCP",
-        "frontier"
-      ],
-      "_note": "GPT-5.5 is eligible for automatic medium-hard routing and remains forceable elsewhere."
+      "agents": ["github-copilot"],
+      "work_bands": ["quite-easy", "easy"]
     },
     "gemini-3-flash-preview": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 4,
       "context_window": 1048576,
-      "strengths": [
-        "multimodal",
-        "thinking",
-        "computer-use",
-        "code-execution",
-        "search-grounding"
-      ]
+      "agents": []
     },
     "gemini-3.1-flash-lite-preview": {
       "provider": "google",
       "ability": "fast",
       "complexity_weight": 3,
       "context_window": 1048576,
-      "strengths": [
-        "cost-efficient",
-        "translation",
-        "routing",
-        "fastest-gemini-3x"
-      ]
+      "agents": []
     },
     "gemini-3.1-pro-preview": {
       "provider": "google",
       "ability": "frontier",
       "complexity_weight": 6,
       "context_window": 1000000,
-      "strengths": [
-        "advanced-reasoning",
-        "agentic",
-        "multimodal",
-        "frontier-gemini"
-      ],
-      "_note": "Gemini 3.1 series is weighted for medium/medium-hard routing."
+      "agents": []
     },
     "gemini-3.5-flash-medium": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 6,
       "context_window": 1048576,
-      "strengths": [
-        "balanced",
-        "fast",
-        "multimodal"
-      ]
+      "agents": ["agy"]
     },
     "gemini-3.5-flash-high": {
       "provider": "google",
       "ability": "advanced",
       "complexity_weight": 8,
       "context_window": 1048576,
-      "strengths": [
-        "high-throughput",
-        "multimodal",
-        "fast-intelligence"
-      ]
+      "agents": ["agy"]
     },
     "gemini-3.1-pro-low": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 5,
       "context_window": 1000000,
-      "strengths": [
-        "reasoning",
-        "cost-sensitive",
-        "multimodal"
-      ]
+      "agents": ["agy"]
     },
     "gemini-3.1-pro-high": {
       "provider": "google",
       "ability": "frontier",
       "complexity_weight": 6,
       "context_window": 1000000,
-      "strengths": [
-        "frontier",
-        "advanced-coding",
-        "extended-thinking"
-      ]
-    },
-    "claude-sonnet-4.6-thinking": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "context_window": 1000000,
-      "strengths": [
-        "extended-reasoning",
-        "complex-coding",
-        "agentic"
-      ]
-    },
-    "claude-opus-4.6-thinking": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "strengths": [
-        "deep-thinking",
-        "hardest-problems",
-        "adaptive-reasoning"
-      ]
+      "agents": ["agy"]
     },
     "gpt-0ss-120b-medium": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 7,
       "context_window": 400000,
-      "strengths": [
-        "reasoning",
-        "open-weight",
-        "balanced-cost-speed"
-      ]
+      "agents": ["agy"]
     }
   },
   "model_routing": {
+    "selection_strategy": "usage-share-debt",
     "score_to_weight": [
-      {
-        "score_min": 8,
-        "score_max": 12,
-        "weight_min": 1,
-        "weight_max": 3,
-        "label": "quite-easy"
-      },
-      {
-        "score_min": 13,
-        "score_max": 17,
-        "weight_min": 2,
-        "weight_max": 4,
-        "label": "easy"
-      },
-      {
-        "score_min": 18,
-        "score_max": 22,
-        "weight_min": 4,
-        "weight_max": 6,
-        "label": "medium"
-      },
-      {
-        "score_min": 23,
-        "score_max": 27,
-        "weight_min": 6,
-        "weight_max": 7,
-        "label": "medium-hard"
-      },
-      {
-        "score_min": 28,
-        "score_max": 32,
-        "weight_min": 7,
-        "weight_max": 9,
-        "label": "complex"
-      },
-      {
-        "score_min": 33,
-        "score_max": 40,
-        "weight_min": 9,
-        "weight_max": 10,
-        "label": "holy-fuck"
-      }
+      {"score_min": 8, "score_max": 12, "weight_min": 1, "weight_max": 3, "label": "quite-easy"},
+      {"score_min": 13, "score_max": 17, "weight_min": 2, "weight_max": 4, "label": "easy"},
+      {"score_min": 18, "score_max": 22, "weight_min": 4, "weight_max": 6, "label": "medium"},
+      {"score_min": 23, "score_max": 27, "weight_min": 6, "weight_max": 7, "label": "medium-hard"},
+      {"score_min": 28, "score_max": 32, "weight_min": 7, "weight_max": 9, "label": "complex"},
+      {"score_min": 33, "score_max": 40, "weight_min": 9, "weight_max": 10, "label": "holy-fuck"}
     ],
     "non_complexity_band_policy": {
       "quite-easy": {
-        "models": [
-          "gpt-5.4",
-          "gpt-5.3-codex-spark",
-          "gpt-5.6-luna",
-          "claude-sonnet-5",
-          "claude-haiku-4-5"
-        ],
-        "providers": [
-          "google"
-        ]
+        "providers": ["google"]
       },
       "easy": {
-        "models": [
-          "gpt-5.4",
-          "gpt-5.3-codex-spark",
-          "gpt-5.6-luna",
-          "claude-sonnet-5",
-          "claude-haiku-4-5"
-        ],
-        "providers": [
-          "google"
-        ]
-      },
-      "medium": {
-        "models": [
-          "gpt-5.6-terra",
-          "gpt-5.3-codex-spark",
-          "claude-sonnet-5"
-        ],
-        "providers": []
-      },
-      "medium-hard": {
-        "models": [
-          "gpt-5.5",
-          "gpt-6.1-sol",
-          "claude-opus-5"
-        ],
-        "providers": []
-      },
-      "complex": {
-        "models": [
-          "gpt-6.1-sol",
-          "claude-opus-5"
-        ],
-        "providers": []
-      },
-      "holy-fuck": {
-        "models": [
-          "gpt-6.1-sol",
-          "gpt-6-astra",
-          "claude-opus-5",
-          "claude-fable-5-1"
-        ],
-        "providers": []
+        "providers": ["google"]
       }
     },
-    "effort_by_model_and_band": {
-      "gpt-6-astra": {
-        "holy-fuck": "max"
-      },
-      "gpt-6.1-sol": {
-        "medium-hard": "high",
-        "complex": "xhigh",
-        "holy-fuck": "xhigh"
-      },
-      "claude-sonnet-5": {
-        "quite-easy": "low",
-        "easy": "medium",
-        "medium": "medium"
-      },
-      "claude-opus-5": {
-        "medium-hard": "high",
-        "complex": "xhigh",
-        "holy-fuck": "max"
-      },
-      "claude-fable-5-1": {
-        "holy-fuck": "max"
-      }
-    },
-    "selection_strategy": "top-n-cheapest-random",
-    "selection_pool_size": 4,
-    "_strategy_note": "Sort candidates by complexity_weight and capability/context fit. Pricing fields are intentionally omitted because routing assumes subscription plans. Take the top selection_pool_size models, then randomly pick one from that pool.",
     "usage_distribution": {
-      "default_target_percent": {
-        "codex": 60,
-        "claude": 35,
-        "agy": 5
-      },
+      "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
       "role_target_percent": {
-        "complexity": {
-          "agy": 50,
-          "codex": 25,
-          "claude": 25
-        },
-        "impl": {
-          "codex": 65,
-          "claude": 30,
-          "agy": 5
-        },
-        "review": {
-          "claude": 60,
-          "codex": 35,
-          "agy": 5
-        },
-        "modify": {
-          "codex": 65,
-          "claude": 30,
-          "agy": 5
-        },
-        "artifact-recovery": {
-          "codex": 60,
-          "claude": 40,
-          "agy": 0
-        },
-        "merge-recovery": {
-          "codex": 60,
-          "claude": 40,
-          "agy": 0
-        },
-        "plan": {
-          "claude": 70,
-          "codex": 30,
-          "agy": 0
-        }
+        "complexity": {"agy": 50, "codex": 25, "claude": 25},
+        "impl": {"codex": 65, "claude": 30, "agy": 5},
+        "review": {"claude": 60, "codex": 35, "agy": 5},
+        "modify": {"codex": 65, "claude": 30, "agy": 5},
+        "artifact-recovery": {"codex": 60, "claude": 40, "agy": 0},
+        "merge-recovery": {"codex": 60, "claude": 40, "agy": 0},
+        "plan": {"claude": 70, "codex": 30, "agy": 0}
       },
       "non_complexity_band_target_percent": {
-        "quite-easy": {
-          "codex": 55,
-          "claude": 35,
-          "agy": 10
-        },
-        "easy": {
-          "codex": 55,
-          "claude": 40,
-          "agy": 5
-        },
-        "medium": {
-          "codex": 70,
-          "claude": 30,
-          "agy": 0
-        },
-        "medium-hard": {
-          "codex": 70,
-          "claude": 30,
-          "agy": 0
-        },
-        "complex": {
-          "codex": 70,
-          "claude": 30,
-          "agy": 0
-        },
-        "holy-fuck": {
-          "codex": 60,
-          "claude": 40,
-          "agy": 0
-        }
+        "default": {"codex": 70, "claude": 30, "agy": 0},
+        "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
+        "easy": {"codex": 55, "claude": 40, "agy": 5},
+        "holy-fuck": {"codex": 60, "claude": 40, "agy": 0}
       },
       "role_band_target_percent": {
         "complexity": {
-          "quite-easy": {
-            "codex": 40,
-            "claude": 35,
-            "agy": 25
-          },
-          "easy": {
-            "agy": 50,
-            "codex": 25,
-            "claude": 25
-          },
-          "medium": {
-            "agy": 50,
-            "codex": 25,
-            "claude": 25
-          },
-          "medium-hard": {
-            "agy": 50,
-            "codex": 25,
-            "claude": 25
-          },
-          "complex": {
-            "agy": 50,
-            "codex": 25,
-            "claude": 25
-          },
-          "holy-fuck": {
-            "agy": 50,
-            "codex": 25,
-            "claude": 25
-          }
+          "default": {"agy": 50, "codex": 25, "claude": 25},
+          "quite-easy": {"codex": 40, "claude": 35, "agy": 25}
         }
       },
       "role_agent_preference": {
-        "default": [
-          "codex",
-          "claude",
-          "agy"
-        ],
-        "complexity": [
-          "claude",
-          "codex",
-          "agy"
-        ],
-        "review": [
-          "codex",
-          "claude",
-          "agy"
-        ],
-        "artifact-recovery": [
-          "codex",
-          "claude",
-          "agy"
-        ],
-        "merge-recovery": [
-          "codex",
-          "claude",
-          "agy"
-        ],
-        "plan": [
-          "codex",
-          "claude",
-          "agy"
-        ]
-      },
-      "_note": "Subscription usage targets are enforced by ai_skills.routing. Overall default target reflects current usable subscriptions: Codex 60%, Claude 35%, Agy 5%. GitHub Copilot is disabled because the current plan is exhausted. Complexity scoring intentionally routes about half of scoring work to Agy, with quite-easy scoring capped around 25% Agy. Implementation, review, and recovery keep Codex/Claude primary."
-    },
-    "provider_routing_rules": {
-      "google": {
-        "automatic_routing": "all",
-        "preferred_agents": [
-          "agy"
-        ],
-        "fallback_agents": [
-          "agy"
-        ],
-        "_note": "Google/Gemini models may be used for any complexity band, but must be executed via AGY only."
-      },
-      "anthropic": {
-        "automatic_routing": "all",
-        "preferred_agents": [
-          "claude"
-        ],
-        "fallback_agents": [
-          "claude"
-        ],
-        "_note": "Anthropic models route through any available agent, preferring direct Claude for the active Claude subscription. claude-opus-5 is min_band=medium-hard and should not appear below that band; claude-fable-5-1 is min_band=holy-fuck. Opus routing uses only the Opus 5 series."
-      }
-    },
-    "hard_minimum_overrides": [
-      "dependency state unknown or conflicting → weight_min=9",
-      "heavy shared-file ownership conflict → weight_min=9",
-      "broad cross-module integration change → weight_min=7",
-      "explicit user request for deep/complex → weight_min=9"
-    ],
-    "band_required_models": {
-      "complex": [],
-      "holy-fuck": [
-        "gpt-6.1-sol",
-        "gpt-6-astra",
-        "claude-opus-5",
-        "claude-fable-5-1"
-      ],
-      "_note": "GPT-6.1 Sol, GPT-6 Astra, Claude Opus 5, and Claude Fable 5.1 are pinned into the holy-fuck pool regardless of subscription-neutral ranking. GPT-5.5 is eligible for automatic medium-hard routing and remains forceable elsewhere."
-    },
-    "interchangeable_agent_groups": [],
-    "agent_preference_rules": [
-      {
-        "models": [
-          "claude-opus-5",
-          "claude-fable-5-1"
-        ],
-        "preferred_agents": [
-          "claude"
-        ],
-        "_note": "When Opus or Fable is selected, use direct Claude. Direct Claude runs the native Anthropic model without any intermediary."
-      },
-      {
-        "models": [
-          "claude-haiku-4.5",
-          "claude-haiku-4-5"
-        ],
-        "preferred_agents": [
-          "claude"
-        ],
-        "_note": "If Haiku 4.5 is selected, use direct Claude while GitHub Copilot is disabled. claude-haiku-4.5 is retained as historical Copilot CLI metadata; claude-haiku-4-5-20251001 is the Claude CLI ID."
-      },
-      {
-        "provider": "anthropic",
-        "direct_agent": "claude",
-        "automatic_routing": "all",
-        "preferred_agents": [
-          "claude"
-        ],
-        "_note": "Direct Claude agent is preferred for Anthropic models under the current Claude subscription. claude-opus-5 is min_band=medium-hard and claude-fable-5-1 is min_band=holy-fuck; both are excluded from lower bands automatically. Opus routing uses only the Opus 5 series."
-      }
-    ]
-  },
-  "agents": {
-    "codex": {
-      "display_name": "Codex",
-      "detection": {
-        "command": "codex",
-        "args": [
-          "--version"
-        ]
-      },
-      "invocation": {
-        "command": "codex",
-        "args_template": [
-          "exec",
-          "-C",
-          "{{repo_root}}",
-          "{{permission_mode}}",
-          "{{model_flag}}",
-          "{{extra_args}}",
-          "{{model_settings}}",
-          "-"
-        ],
-        "prompt_transport": "stdin"
-      },
-      "liveness": {
-        "streaming_output": true,
-        "wrapper_heartbeat_required": true
-      },
-      "permission_modes": {
-        "default": "--dangerously-bypass-approvals-and-sandbox",
-        "read_only": "--sandbox=read-only",
-        "available": [
-          "--dangerously-bypass-approvals-and-sandbox",
-          "--sandbox=read-only",
-          "--sandbox=workspace-write"
-        ],
-        "_note": "read_only is the profile --permission-mode safe resolves to. Codex enforces it in its own sandbox; it must deny writes to the workspace."
-      },
-      "model": {
-        "default": "",
-        "flag_template": "--model {{model}}",
-        "known_models": [
-          "gpt-6-astra",
-          "gpt-6.1-sol",
-          "gpt-5.6-terra",
-          "gpt-5.6-luna",
-          "gpt-5.5",
-          "gpt-5.4",
-          "gpt-5.4-mini",
-          "gpt-5.3-codex-spark"
-        ],
-        "pricing_basis": "subscription",
-        "metered_api_cost": false,
-        "_note": "Codex automatic routing follows model_routing.non_complexity_band_policy. GPT-5.5 is medium-hard only; GPT-5.4 is limited to simple work."
-      },
-      "capability_band": "advanced",
-      "fallback_order": [
-        "agy",
-        "claude"
-      ],
-      "user_model_configuration": {
-        "requires_user_model_config": false,
-        "config_paths": [],
-        "skip_when_unconfigured": false,
-        "skip_message": ""
-      }
-    },
-    "claude": {
-      "display_name": "Claude Code",
-      "detection": {
-        "command": "claude",
-        "args": [
-          "--version"
-        ]
-      },
-      "invocation": {
-        "command": "claude",
-        "args_template": [
-          "{{permission_mode}}",
-          "{{model_flag}}",
-          "{{model_settings}}",
-          "{{extra_args}}",
-          "--print"
-        ],
-        "prompt_transport": "stdin"
-      },
-      "liveness": {
-        "streaming_output": false,
-        "wrapper_heartbeat_required": true
-      },
-      "permission_modes": {
-        "default": "--dangerously-skip-permissions",
-        "read_only": "--permission-mode=plan",
-        "available": [
-          "--dangerously-skip-permissions",
-          "--permission-mode=plan"
-        ],
-        "_note": "plan mode is Claude Code's write-denying mode: it may read and research but may not edit, write, or run mutating commands. It is what --permission-mode safe resolves to."
-      },
-      "model": {
-        "default": "claude-sonnet-4-6",
-        "flag_template": "--model {{model}}",
-        "known_models": [
-          "claude-fable-5-1",
-          "claude-opus-5",
-          "claude-sonnet-5",
-          "claude-sonnet-4-6",
-          "claude-haiku-4-5"
-        ],
-        "pricing_basis": "subscription",
-        "metered_api_cost": false,
-        "_note": "Claude CLI uses Anthropic model IDs: hyphens and full versioned names."
-      },
-      "capability_band": "advanced",
-      "fallback_order": [
-        "codex",
-        "agy"
-      ],
-      "user_model_configuration": {
-        "requires_user_model_config": false,
-        "config_paths": [],
-        "skip_when_unconfigured": false,
-        "skip_message": ""
-      }
-    },
-    "github-copilot": {
-      "routing_disabled": true,
-      "routing_disabled_reason": "GitHub Copilot plan is exhausted; keep blocked from automatic routing and direct run-agent use until explicitly re-enabled.",
-      "display_name": "GitHub Copilot",
-      "detection": {
-        "command": "copilot",
-        "args": [
-          "--version"
-        ]
-      },
-      "invocation": {
-        "command": "copilot",
-        "args_template": [
-          "{{permission_mode}}",
-          "{{model_flag}}",
-          "{{extra_args}}",
-          "-p",
-          "{{prompt}}"
-        ],
-        "prompt_argument_template": "{{prompt}}"
-      },
-      "permission_modes": {
-        "default": "--autopilot --yolo",
-        "available": [
-          "--autopilot --yolo",
-          "--autopilot"
-        ]
-      },
-      "model": {
-        "default": "gpt-5.3-codex",
-        "flag_template": "--model {{model}}",
-        "known_models": [
-          "claude-haiku-4.5",
-          "claude-sonnet-4.6",
-          "gpt-5.3-codex",
-          "gpt-5.4",
-          "gpt-5.4-mini"
-        ],
-        "_note": "gpt-5.3-codex-spark is not available through GitHub Copilot; Spark remains a Codex CLI model."
-      },
-      "capability_band": "balanced",
-      "fallback_order": [],
-      "user_model_configuration": {
-        "requires_user_model_config": false,
-        "config_paths": [],
-        "skip_when_unconfigured": false,
-        "skip_message": ""
-      }
-    },
-    "opencode": {
-      "display_name": "OpenCode",
-      "detection": {
-        "command": "opencode",
-        "args": [
-          "--version"
-        ]
-      },
-      "invocation": {
-        "command": "opencode",
-        "args_template": [
-          "run",
-          "{{permission_mode}}",
-          "{{model_flag}}",
-          "{{extra_args}}"
-        ],
-        "prompt_transport": "stdin"
-      },
-      "permission_modes": {
-        "default": "--dangerously-skip-permissions",
-        "available": [
-          "--dangerously-skip-permissions",
-          ""
-        ]
-      },
-      "model": {
-        "default": "",
-        "flag_template": "--model {{model}}",
-        "known_models": []
-      },
-      "capability_band": "balanced",
-      "fallback_order": [
-        "codex",
-        "agy",
-        "claude"
-      ],
-      "user_model_configuration": {
-        "requires_user_model_config": true,
-        "config_paths": [
-          "$HOME/.config/opencode/opencode.json",
-          "$HOME/.opencode.json",
-          "./opencode.json"
-        ],
-        "skip_when_unconfigured": true,
-        "skip_message": "OpenCode detected but no user model configuration was found; skipping OpenCode until a model is configured."
-      }
-    },
-    "agy": {
-      "display_name": "Agy",
-      "detection": {
-        "command": "agy",
-        "args": [
-          "help"
-        ]
-      },
-      "invocation": {
-        "command": "agy",
-        "args_template": [
-          "{{permission_mode}}",
-          "{{model_flag}}",
-          "{{extra_args}}",
-          "--input-format",
-          "stream-json",
-          "--output-format",
-          "stream-json"
-        ],
-        "prompt_transport": "agy-stream-json",
-        "required_cli_flags": [
-          "--input-format",
-          "--output-format"
-        ],
-        "protocol_documentation": "https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin"
-      },
-      "liveness": {
-        "streaming_output": false,
-        "wrapper_heartbeat_required": true
-      },
-      "permission_modes": {
-        "default": "--dangerously-skip-permissions",
-        "available": [
-          "--dangerously-skip-permissions"
-        ]
-      },
-      "model": {
-        "default": "gemini-3.5-flash-high",
-        "flag_template": "",
-        "known_models": [
-          "gemini-3.5-flash-high",
-          "gemini-3.5-flash-medium",
-          "gemini-3.1-pro-low",
-          "gemini-3.1-pro-high",
-          "claude-sonnet-4.6-thinking",
-          "claude-opus-4.6-thinking",
-          "gpt-0ss-120b-medium"
-        ]
-      },
-      "capability_band": "advanced",
-      "fallback_order": [
-        "agy",
-        "claude"
-      ],
-      "user_model_configuration": {
-        "requires_user_model_config": false,
-        "config_paths": [],
-        "skip_when_unconfigured": false,
-        "skip_message": ""
+        "default": ["codex", "claude", "agy"],
+        "complexity": ["claude", "codex", "agy"]
       }
     }
   }

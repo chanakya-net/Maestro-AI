@@ -26,9 +26,10 @@ pythonpath = ["src"]
 packages = ["src/ai_skills"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/pyproject.toml", "/README.md", "/LICENSE", "/explainer.html", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json", "/skills/**/*.md", "/examples/*.py"]
+include = ["/pyproject.toml", "/README.md", "/LICENSE", "/explainer.html", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json", "/assets/agent-definitions.json", "/skills/**/*.md", "/examples/*.py"]
 
 [tool.hatch.build.targets.wheel.force-include]
+"assets/agent-definitions.json" = "ai_skills/data/agent-definitions.json"
 "assets/agent-registry.json" = "ai_skills/data/agent-registry.json"
 "assets/artifact-protocol.md" = "ai_skills/data/artifact-protocol.md"
 "assets/artifact-recovery-prompt.md" = "ai_skills/data/artifact-recovery-prompt.md"

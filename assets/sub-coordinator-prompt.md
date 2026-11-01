@@ -20,7 +20,7 @@ Sole active authority for this session once invoked. No other skill may activate
 Before any other action (including reading files, routing, spawning workers, or writing status), attempt to invoke `save-tokens`.
 - Every child agent you spawn must be instructed to activate `save-tokens`.
 
-**GitHub Copilot disabled:** `github-copilot` is blocked in `agent-registry.json` because the Copilot plan is exhausted. Do not select, force, allowlist-only, or spawn GitHub Copilot. If it appears installed or detected, treat it as unavailable; the alias remains only so direct requests fail fast with a clear disabled-agent error.
+**GitHub Copilot disabled:** `github-copilot` is blocked in `agent-definitions.json` and the Python runtime because the Copilot plan is exhausted. Do not select, force, allowlist-only, or spawn GitHub Copilot. If it appears installed or detected, treat it as unavailable; the alias remains only so direct requests fail fast with a clear disabled-agent error.
 
 <!-- SYNC: this section is intentionally duplicated in assets/coordinator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/contracts/test_instructions.py asserts key tokens match. -->
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
@@ -206,13 +206,15 @@ Use `ai-skills route` for every worker route decision. Do not hand-roll random m
 
 The pool dispatcher's `--agent` and `--model` values configure this Sub-Coordinator process only. `SUB_COORD_AGENT` and `SUB_COORD_MODEL` must never select child workers. Ambient inherited `AGENT` and `MODEL` values are runner telemetry, not routing policy; use only explicit `FORCED_AGENT` and `FORCED_MODEL` values supplied in this context. The Main Orchestrator normalizes explicitly requested deprecated aliases before dispatch, and the dispatcher unconditionally removes `AGENT` and `MODEL` before launching this Sub-Coordinator.
 
-Usage target summary from `agent-registry.json`:
-- overall default: Codex 60%, Claude 35%, Agy 5%
-- complexity scoring: use Agy for about 50% overall, while quite-easy scoring uses Agy around 25% and leaves the rest to Codex/Claude
-- every non-complexity role prefers Codex first, Claude second, and Agy/Gemini third; review still excludes the implementation model when possible
-- quite-easy/easy routes use GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, or eligible Gemini models exposed by Agy
-- medium routes use GPT-5.6 Terra, Codex Spark, or Claude Sonnet 5; medium-hard routes use GPT-5.5, GPT-6.1 Sol, or Claude Opus 5
-- complex routes use GPT-6.1 Sol or Claude Opus 5; holy-fuck routes add GPT-6 Astra and Claude Fable 5.1; Sol uses high effort only at medium-hard and xhigh above it, while Opus uses high at medium-hard, xhigh at complex, and max at holy-fuck; Astra and Fable use max at holy-fuck
+Read model membership, usage targets, and effort from the selected runtime's
+registry; do not select from duplicated model lists or historical examples.
+Load version 2 registries with `ai_skills.registry.load_registry(path)` before
+inspecting policy. The expanded `model_routing.usage_distribution` contains
+current global and role/band targets, `non_complexity_band_policy` contains work
+model/provider membership, and `effort_by_model_and_band` contains effort
+overrides with a model `reasoning_effort` fallback. Complexity scoring retains
+its separate weight/band policy. The route helper's returned decision is the
+authority for the selected agent, model, effort, and selection reason.
 
 Native route command:
 ```text
@@ -299,55 +301,36 @@ If the fallback is used, set `complexity_source=fallback`. If the override path 
 
 Use this section only when `ai-skills route` is unavailable or exits non-zero. The complexity score comes from the complexity sub-agent, a forced override, or the bounded fallback path above. The fallback is intentionally bounded to one phase so a helper failure is visible instead of silently changing routing behavior for the whole run.
 
-#### Step 1 — Map Score to Target Weight Range
+#### Step 1 — Load Policy and Determine the Effective Band
 
-| Score | Label | Weight range |
-|-------|-------|-------------|
-| 8–12  | `quite-easy`  | 1–3 |
-| 13–17 | `easy`        | 2–4 |
-| 18–22 | `medium`      | 4–6 |
-| 23–27 | `medium-hard` | 6–7 |
-| 28–32 | `complex`     | 7–9 |
-| 33–45 | `holy-fuck`   | 9–10 |
+Read version 2 registries through `ai_skills.registry.load_registry(path)` so model memberships, aliases, CLI defaults, and usage defaults are expanded. The editable model entries live in `agent-registry.json`; CLI definitions live in its sibling `agent-definitions.json`. Version 1 registries remain self-contained.
 
-#### Step 2 — Apply Hard Minimum Overrides
+Map the complexity score using `model_routing.score_to_weight`: 8–12 is `quite-easy`, 13–17 `easy`, 18–22 `medium`, 23–27 `medium-hard`, 28–32 `complex`, and 33–40 `holy-fuck`; scores above 40 also map to `holy-fuck`. Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
 
-Raise `weight_min` if any condition is true:
-- dependency state unknown or conflicting → `weight_min = 9`
-- heavy shared-file ownership conflict risk → `weight_min = 9`
-- broad cross-module integration change → `weight_min = 7`
-- explicit user request for deep/complex orchestration → `weight_min = 9`
-- ambiguous requirements with high risk of misinterpretation → `weight_min = 9`
-- large blast radius with limited rollback options → `weight_min = 9`
+#### Step 2 — Build Eligible Agent/Model Pairs
 
-Use the higher of the table `weight_min` and any override.
+Prefer calling `ai_skills.routing.select_route` with the expanded registry and current ledger if the CLI entry point is unavailable; it uses the same deterministic router.
 
-#### Step 3 — Build Pool and Select Model
+If manual fallback is necessary:
+1. An explicit forced model replaces automatic candidate selection; a forced agent restricts compatible agents. Preserve compatibility and availability checks in both cases.
+2. For implementation, review, modification, planning, and recovery, use `model_routing.non_complexity_band_policy[effective_band].models` plus its provider additions. These lists are expanded from model `work_bands`; do not substitute a weight-filtered pool.
+3. For the complexity-scoring worker, preserve the router's separate scoring policy: exclude explicit-only and `exclude_from_complexity` models; honor model `routing_bands` (expanded from `complexity_bands`) when present, otherwise use weight 1–6 and `min_band`. Include eligible models in `model_routing.band_required_models[effective_band]` (expanded from `required_bands`). Only when this model candidate list is empty, expand the weight maximum by one, up to three times, retaining the existing restrictions.
+4. Keep compatible pairs using agent `model.known_models` (expanded from model `agents` membership), detected CLIs, allow/deny lists, disabled agents/models, and runtime availability exclusions. Google models may execute only through `agy`. GitHub Copilot remains blocked, including forced requests.
+5. If no compatible pair remains, report the filter diagnostics; do not invent an unavailable route.
 
-From `model_catalog` in `agent-registry.json`:
-1. Collect all models where `complexity_weight` is within `[weight_min, weight_max]`.
-2. Keep only models available on at least one detected, non-filtered agent.
-3. Apply `model_routing.provider_routing_rules` — Google/Gemini models are eligible only through `agy`.
-4. Sort by `(complexity_weight ASC, context_window DESC, ability fit)`.
-5. Take the top `selection_pool_size` (default 4) as the base pool.
-6. Append any models listed in `model_routing.band_required_models[current_level]` not already in the pool.
-7. Prefer the agent/model pair that is furthest below its subscription usage target; if usage data is unavailable, pick from the highest target share for that role/band.
-8. If fewer than 2 candidates exist, expand `weight_max` by 1 and retry (up to 3 expansions).
+#### Step 3 — Select Deterministically Using Current Usage
 
-#### Step 4 — Select Agent
+`selection_strategy` is `usage-share-debt`. It documents the Python algorithm; there is no random pool, pool-size cap, or price comparison.
 
-1. Find all agents that list the chosen model in their `known_models`.
-2. Apply `AGENT_ALLOWLIST` and `AGENT_DENYLIST`.
-3. Keep only detected (installed) agents.
-4. Exclude any agent whose registry entry sets `routing_disabled=true`; this blocks `github-copilot` even when the CLI is installed or manually requested.
-5. For GPT models, prefer Codex unless usage targets push work to Claude or Agy.
-6. For Claude-provider models, prefer direct `claude`.
-7. If one agent remains, use it. If multiple non-interchangeable agents remain, prefer registry `agent_preference_rules`; otherwise prefer whichever is furthest below its subscription usage target.
-8. If no agent remains, fail with clear filter diagnostics.
+Use the global targets and the effective-band targets in `usage_distribution`; complexity scoring uses its own role/band policy. A pair's primary usage priority is `(global target - global current share) * global_debt_weight + (role target - role current share)`, with `global_debt_weight=1.5` for work and `0.25` for complexity scoring. Rank zero-role-target agents behind positive-target agents unless an agent was explicitly forced; this is a penalty, not an availability ban.
 
-#### Step 5 — Pass to Runner
+Resolve equal priority using projected global/role share error, remaining global/role debts and targets, role agent preference, distance from the weight-range midpoint, larger context window, and stable model/agent IDs, in the same order as `ai_skills.routing.select_pair`. The scoring weight midpoint is based on 1–6. Retain an eligible preferred reviewer model when requested and no explicit force applies. Use `model_routing.effort_by_model_and_band` (expanded from each model's `effort_by_band`) for the effective band, falling back to model `reasoning_effort`.
 
-Always pass both `AGENT` and `MODEL` explicitly. Never rely on the agent's registry default.
+If the exact policy cannot be reproduced, report the helper failure and stop this phase for recovery. Do not silently substitute another selection algorithm.
+
+#### Step 4 — Pass to Runner
+
+Always pass the selected agent, model, and effort explicitly. Never rely on the agent's registry default. Record that this bounded prompt fallback was used and return to `ai-skills route` for the next phase.
 
 ### Plan Sub-Agent Delegation
 
@@ -627,7 +610,7 @@ The native operation owns the merge lock, disposable worktree and verified share
 
 ### Sandbox
 
-**Invoke the native dispatcher (`ai-skills worker dispatch`) through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `ai-skills agent run`, preserving unattended runner flags configured in `agent-registry.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
+**Invoke the native dispatcher (`ai-skills worker dispatch`) through the current tool's approved permission-escalation flow when sandbox restrictions block access to agent credentials or required project commands.** The dispatcher sets `GUI_MODE=0` by default before calling `ai-skills agent run`, preserving unattended runner flags configured in `agent-definitions.json`. If permission escalation is unavailable or the dispatch still fails after an approved retry, count it as a true agent failure.
 
 ## Appendix D: Sub-Coordinator State (Compaction Survival)
 
@@ -670,7 +653,7 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
       "cycle": 1,
       "pid": 12345,
       "agent": "codex",
-      "model": "gpt-5.3-codex",
+      "model": "gpt-6.1-sol",
       "selection_reason": "under-target",
       "log_file": ".run-with-it/issues/36/workers/impl/cycle-1.log",
       "done_file": ".run-with-it/issues/36/workers/impl/cycle-1.done",
@@ -794,7 +777,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
   "review_summary": {
     "cycles_used": 1,
     "final_verdict": "approve",
-    "reviewer_model": "claude-sonnet-4-5",
+    "reviewer_model": "claude-sonnet-5-5",
     "non_approval_count": 0,
     "nitpick_only": false
   },
@@ -811,7 +794,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
       "role": "impl",
       "cycle": 1,
       "agent": "codex",
-      "model": "gpt-5.3-codex",
+      "model": "gpt-6.1-sol",
       "effort": "high",
       "selection_reason": "under-target"
     }

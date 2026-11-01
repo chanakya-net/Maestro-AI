@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "description": "CLI integration details. Edit agent-registry.json for model and routing changes.",
+  "aliases": {
+    "codex-cli": "codex",
+    "claude-code": "claude",
+    "copilot": "github-copilot",
+    "github-copilot-cli": "github-copilot",
+    "open_code": "opencode",
+    "agy-cli": "agy"
+  },
+  "defaults": {
+    "detection": {
+      "args": ["--version"]
+    },
+    "model": {"default": "", "flag_template": "--model {{model}}"},
+    "user_model_configuration": {
+      "requires_user_model_config": false,
+      "config_paths": [],
+      "skip_when_unconfigured": false,
+      "skip_message": ""
+    }
+  },
+  "agents": {
+    "codex": {
+      "display_name": "Codex",
+      "detection": {"command": "codex"},
+      "invocation": {
+        "command": "codex",
+        "args_template": ["exec", "-C", "{{repo_root}}", "{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "{{model_settings}}", "-"],
+        "prompt_transport": "stdin"
+      },
+      "liveness": {"streaming_output": true, "wrapper_heartbeat_required": true},
+      "permission_modes": {
+        "default": "--dangerously-bypass-approvals-and-sandbox",
+        "read_only": "--sandbox=read-only",
+        "available": ["--dangerously-bypass-approvals-and-sandbox", "--sandbox=read-only", "--sandbox=workspace-write"]
+      },
+      "model": {"default": "gpt-6.1-sol", "pricing_basis": "subscription", "metered_api_cost": false},
+      "capability_band": "advanced",
+      "fallback_order": ["agy", "claude"]
+    },
+    "claude": {
+      "display_name": "Claude Code",
+      "detection": {"command": "claude"},
+      "invocation": {
+        "command": "claude",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{model_settings}}", "{{extra_args}}", "--print"],
+        "prompt_transport": "stdin"
+      },
+      "liveness": {"streaming_output": false, "wrapper_heartbeat_required": true},
+      "permission_modes": {
+        "default": "--dangerously-skip-permissions",
+        "read_only": "--permission-mode=plan",
+        "available": ["--dangerously-skip-permissions", "--permission-mode=plan"]
+      },
+      "model": {"default": "claude-sonnet-5-5", "pricing_basis": "subscription", "metered_api_cost": false},
+      "capability_band": "advanced",
+      "fallback_order": ["codex", "agy"]
+    },
+    "github-copilot": {
+      "routing_disabled": true,
+      "routing_disabled_reason": "GitHub Copilot plan is exhausted; keep blocked from automatic routing and direct run-agent use until explicitly re-enabled.",
+      "display_name": "GitHub Copilot",
+      "detection": {"command": "copilot"},
+      "invocation": {
+        "command": "copilot",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "-p", "{{prompt}}"],
+        "prompt_argument_template": "{{prompt}}"
+      },
+      "permission_modes": {
+        "default": "--autopilot --yolo",
+        "available": ["--autopilot --yolo", "--autopilot"]
+      },
+      "model": {"default": "gpt-5.3-codex"},
+      "capability_band": "balanced",
+      "fallback_order": []
+    },
+    "opencode": {
+      "display_name": "OpenCode",
+      "detection": {"command": "opencode"},
+      "invocation": {
+        "command": "opencode",
+        "args_template": ["run", "{{permission_mode}}", "{{model_flag}}", "{{extra_args}}"],
+        "prompt_transport": "stdin"
+      },
+      "permission_modes": {
+        "default": "--dangerously-skip-permissions",
+        "available": ["--dangerously-skip-permissions", ""]
+      },
+      "capability_band": "balanced",
+      "fallback_order": ["codex", "agy", "claude"],
+      "user_model_configuration": {
+        "requires_user_model_config": true,
+        "config_paths": ["$HOME/.config/opencode/opencode.json", "$HOME/.opencode.json", "./opencode.json"],
+        "skip_when_unconfigured": true,
+        "skip_message": "OpenCode detected but no user model configuration was found; skipping OpenCode until a model is configured."
+      }
+    },
+    "agy": {
+      "display_name": "Agy",
+      "detection": {
+        "command": "agy",
+        "args": ["help"]
+      },
+      "invocation": {
+        "command": "agy",
+        "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "--input-format", "stream-json", "--output-format", "stream-json"],
+        "prompt_transport": "agy-stream-json",
+        "required_cli_flags": ["--input-format", "--output-format"],
+        "protocol_documentation": "https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin"
+      },
+      "liveness": {"streaming_output": false, "wrapper_heartbeat_required": true},
+      "permission_modes": {
+        "default": "--dangerously-skip-permissions",
+        "available": ["--dangerously-skip-permissions"]
+      },
+      "model": {"default": "gemini-3.5-flash-high", "flag_template": ""},
+      "capability_band": "advanced",
+      "fallback_order": ["agy", "claude"]
+    }
+  }
+}

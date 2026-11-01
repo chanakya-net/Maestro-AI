@@ -4,6 +4,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 
 RESOURCE_NAMES = (
+    "agent-definitions.json",
     "agent-registry.json",
     "artifact-recovery-prompt.md",
     "artifact-protocol.md",

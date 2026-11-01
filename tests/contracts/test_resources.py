@@ -22,7 +22,7 @@ def test_resource_lookup_rejects_unmaintained_paths(name):
         resource_path(name)
 
 
-@pytest.mark.parametrize("damage", ["missing", "invalid-json", "invalid-schema", "empty-prompt"])
+@pytest.mark.parametrize("damage", ["missing", "invalid-json", "invalid-schema", "empty-prompt", "missing-definitions", "invalid-definitions"])
 def test_doctor_reports_broken_package_resources_without_writing(tmp_path, damage):
     package = tmp_path / "package" / "ai_skills"
     shutil.copytree(ROOT / "src" / "ai_skills", package, ignore=shutil.ignore_patterns("__pycache__"))
@@ -34,6 +34,10 @@ def test_doctor_reports_broken_package_resources_without_writing(tmp_path, damag
         (data / "prompt.md").unlink()
     elif damage == "empty-prompt":
         (data / "prompt.md").write_text("", encoding="utf-8")
+    elif damage == "missing-definitions":
+        (data / "agent-definitions.json").unlink()
+    elif damage == "invalid-definitions":
+        (data / "agent-definitions.json").write_text('{"schema_version": 999}', encoding="utf-8")
     else:
         (data / "agent-registry.json").write_text("{" if damage == "invalid-json" else '{"schema_version": 999}', encoding="utf-8")
     before = {str(p.relative_to(data)): p.read_bytes() for p in data.iterdir()}
