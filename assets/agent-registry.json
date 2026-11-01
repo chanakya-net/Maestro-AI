@@ -3,45 +3,16 @@
   "description": "Editable models and routing policy. See README.md: Model routing configuration.",
   "agent_definitions": "agent-definitions.json",
   "model_catalog": {
-    "claude-haiku-4-5": {
+    "claude-haiku-5-5": {
       "provider": "anthropic",
       "ability": "fast",
       "complexity_weight": 2,
       "exclude_from_complexity": true,
-      "context_window": 200000,
+      "context_window": 1000000,
       "agents": ["claude"],
       "work_bands": ["quite-easy", "easy"]
     },
-    "claude-haiku-4.5": {
-      "alias_of": "claude-haiku-4-5",
-      "agents": ["github-copilot"]
-    },
-    "claude-sonnet-4-6": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "complexity_weight": 6,
-      "context_window": 1000000,
-      "agents": ["claude"]
-    },
-    "claude-sonnet-4.6": {
-      "alias_of": "claude-sonnet-4-6",
-      "agents": ["github-copilot"]
-    },
-    "claude-sonnet-4-6[1m]": {
-      "provider": "anthropic",
-      "ability": "advanced",
-      "complexity_weight": 7,
-      "context_window": 1000000,
-      "agents": []
-    },
-    "claude-opus-4-6": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "context_window": 1000000,
-      "agents": []
-    },
-    "claude-opus-5": {
+    "claude-opus-5-5": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 9,
@@ -63,7 +34,7 @@
       "required_bands": ["holy-fuck"],
       "effort_by_band": {"holy-fuck": "max"}
     },
-    "claude-sonnet-5": {
+    "claude-sonnet-5-5": {
       "provider": "anthropic",
       "ability": "advanced",
       "complexity_weight": 7,
@@ -71,20 +42,6 @@
       "agents": ["claude"],
       "work_bands": ["quite-easy", "easy", "medium"],
       "effort_by_band": {"quite-easy": "low", "easy": "medium", "medium": "medium"}
-    },
-    "claude-opus-5-high": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "agents": []
-    },
-    "claude-opus-5-xhigh": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
-      "context_window": 1000000,
-      "agents": []
     },
     "gpt-6-astra": {
       "provider": "openai",
@@ -217,20 +174,6 @@
       "provider": "google",
       "ability": "frontier",
       "complexity_weight": 6,
-      "context_window": 1000000,
-      "agents": ["agy"]
-    },
-    "claude-sonnet-4.6-thinking": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "context_window": 1000000,
-      "agents": ["agy"]
-    },
-    "claude-opus-4.6-thinking": {
-      "provider": "anthropic",
-      "ability": "frontier",
-      "complexity_weight": 10,
       "context_window": 1000000,
       "agents": ["agy"]
     },

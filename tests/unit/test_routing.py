@@ -15,7 +15,7 @@ from ai_skills.registry import load_registry
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures" / "routing-golden.json").read_text())
 
 @pytest.mark.parametrize("case", GOLDEN, ids=lambda case: str(case["request"]))
-def test_golden_legacy_policy(case):
+def test_golden_routing_policy(case):
     registry=load_registry()
     request=RouteRequest(**{key:frozenset(value) if isinstance(value,list) else value for key,value in case["request"].items()})
     if "exit_code" in case["expected"]:
@@ -74,3 +74,32 @@ def test_malformed_availability_fields_fail_explicitly(tmp_path,payload):
 @pytest.mark.parametrize("payload",[[],42,"bad"])
 def test_nonobject_ledger_rejected(payload):
     with pytest.raises(ValueError):routing.normalize_ledger(payload)
+
+
+@pytest.mark.parametrize("band, model, effort", [
+    ("quite-easy", "claude-haiku-5-5", ""),
+    ("easy", "claude-haiku-5-5", ""),
+    ("medium", "claude-sonnet-5-5", "medium"),
+    ("medium-hard", "claude-opus-5-5", "high"),
+    ("complex", "claude-opus-5-5", "xhigh"),
+    ("holy-fuck", "claude-fable-5-1", "max"),
+])
+def test_claude_routes_use_current_model_families(band, model, effort):
+    decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="claude"), load_registry(), {})
+    assert (decision.agent, decision.model, decision.effort) == ("claude", model, effort)
+
+
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"])
+def test_requested_claude_models_can_be_forced(model):
+    decision = select_route(RouteRequest(role="impl", forced_agent="claude", forced_model=model), load_registry(), {})
+    assert (decision.agent, decision.model) == ("claude", model)
+
+
+@pytest.mark.parametrize("model", [
+    "claude-haiku-4-5", "claude-haiku-4.5", "claude-sonnet-4-6", "claude-sonnet-4.6",
+    "claude-sonnet-4-6[1m]", "claude-opus-4-6", "claude-opus-5", "claude-sonnet-5",
+    "claude-opus-5-high", "claude-opus-5-xhigh", "claude-sonnet-4.6-thinking", "claude-opus-4.6-thinking",
+])
+def test_retired_claude_models_cannot_be_routed(model):
+    with pytest.raises(SystemExit):
+        select_route(RouteRequest(role="impl", forced_model=model), load_registry(), {})

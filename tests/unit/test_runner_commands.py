@@ -57,6 +57,12 @@ def test_alias_and_default_effort(config):
     assert 'model_reasoning_effort=high' in spec.argv
 
 
+def test_claude_default_invocation_uses_sonnet_5_5(config):
+    spec = build_invocation(config.replace(agent='claude'), load_registry())
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag + 1] == 'claude-sonnet-5-5'
+
+
 def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
     registry = load_registry()
     registry['agents']['github-copilot'].pop('routing_disabled')

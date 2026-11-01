@@ -775,7 +775,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
   "review_summary": {
     "cycles_used": 1,
     "final_verdict": "approve",
-    "reviewer_model": "claude-sonnet-4-5",
+    "reviewer_model": "claude-sonnet-5-5",
     "non_approval_count": 0,
     "nitpick_only": false
   },

@@ -2191,7 +2191,7 @@
     },
     "expected": {
       "agent": "claude",
-      "model": "claude-haiku-4-5",
+      "model": "claude-haiku-5-5",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "easy",
@@ -2366,7 +2366,7 @@
     },
     "expected": {
       "agent": "claude",
-      "model": "claude-haiku-4-5",
+      "model": "claude-haiku-5-5",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
@@ -2391,7 +2391,7 @@
     },
     "expected": {
       "agent": "claude",
-      "model": "claude-haiku-4-5",
+      "model": "claude-haiku-5-5",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
@@ -2410,7 +2410,7 @@
     "request": {
       "role": "impl",
       "complexity_level": "easy",
-      "model_denylist": "codex/gpt-5.4-mini,claude-sonnet-4-6"
+      "model_denylist": "codex/gpt-5.4-mini,claude-sonnet-5-5"
     },
     "expected": {
       "agent": "codex",
@@ -2425,7 +2425,7 @@
           "github-copilot"
         ],
         "models": [
-          "claude-sonnet-4-6"
+          "claude-sonnet-5-5"
         ],
         "agent_models": [
           {

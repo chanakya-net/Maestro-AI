@@ -54,7 +54,7 @@
         "read_only": "--permission-mode=plan",
         "available": ["--dangerously-skip-permissions", "--permission-mode=plan"]
       },
-      "model": {"default": "claude-sonnet-4-6", "pricing_basis": "subscription", "metered_api_cost": false},
+      "model": {"default": "claude-sonnet-5-5", "pricing_basis": "subscription", "metered_api_cost": false},
       "capability_band": "advanced",
       "fallback_order": ["codex", "agy"]
     },

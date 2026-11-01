@@ -22,6 +22,11 @@ CLI commands, permissions, prompt transports, and agent aliases live separately 
 are shared by all agents; an agent's own values override them. Model support is
 derived from the registry, so there is no second `known_models` list to maintain.
 
+The bundled Claude lineup is limited to Opus 5.5 (`claude-opus-5-5`), Fable 5.1
+(`claude-fable-5-1`), Sonnet 5.5 (`claude-sonnet-5-5`), and Haiku 5.5
+(`claude-haiku-5-5`), using the IDs in [Anthropic's model documentation](https://platform.claude.com/docs/en/models/overview).
+They run through the direct Claude CLI, whose default is Sonnet 5.5.
+
 Each `model_catalog` entry groups a model's settings together:
 
 ```json
