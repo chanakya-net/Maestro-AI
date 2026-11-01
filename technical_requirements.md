@@ -1,5 +1,7 @@
 # Technical Requirements: run-with-it Dependency Scheduling, Feature Branch Worktrees, and Merge Recovery
 
+> Historical design record: this document describes the former script implementation. The maintained Python runtime and current commands are documented in README.md and skills/.
+
 ## Goal
 
 Evolve `run-with-it` so it can safely execute dependency-aware GitHub issues in parallel while isolating each issue's implementation in its own git worktree and preserving one final pull request for the whole run.

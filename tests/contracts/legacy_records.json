@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "purpose": "Representative frozen legacy records for future compatibility/migration tests; example PIDs and paths must never be treated as owned processes.",
+  "records": {
+    "main-state": {
+      "schema_version": 4,
+      "execution_plan": {
+        "topo_order": [
+          36,
+          37
+        ],
+        "parallel_jobs": 2,
+        "concurrency_policy": "strict"
+      },
+      "active_pool_issues": [
+        36
+      ],
+      "issue_registry": {
+        "36": {
+          "status": "in_progress",
+          "deps": [],
+          "parallel_safe": true,
+          "ownership_scope": [
+            "src/api"
+          ],
+          "context_file": ".run-with-it/contexts/36.md",
+          "issue_dir": ".run-with-it/issues/36"
+        },
+        "37": {
+          "status": "blocked",
+          "deps": [
+            36
+          ],
+          "parallel_safe": true,
+          "ownership_scope": [
+            "tests/api"
+          ],
+          "context_file": ".run-with-it/contexts/37.md"
+        }
+      }
+    },
+    "sub-state": {
+      "schema_version": 1,
+      "issue_number": 36,
+      "phase": "impl",
+      "issue_base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "impl_commit_sha": null,
+      "modify_commit_sha": null,
+      "review_head_sha": null,
+      "feature_branch": "feature/example",
+      "issue_branch": "feature/example-issue-36",
+      "worktree_path": ".run-with-it/worktrees/issue-36",
+      "plan_file": null,
+      "plan_result_file": null,
+      "plan_summary": null,
+      "plan_complexity_level": null,
+      "queue": {
+        "ready": [],
+        "blocked": [],
+        "completed": []
+      },
+      "ledger_rows": [],
+      "in_flight_agents": [
+        {
+          "role": "impl",
+          "cycle": 1,
+          "pid": 12002,
+          "agent": "codex",
+          "model": "example-model",
+          "effort": "high",
+          "selection_reason": "under-target",
+          "log_file": "workers/impl/cycle-1.log",
+          "done_file": "workers/impl/cycle-1.done",
+          "result_file": "workers/impl/cycle-1-result.json",
+          "started_at": "2026-10-31T00:00:00Z"
+        }
+      ],
+      "review_history": [],
+      "updated_at": "2026-10-31T00:00:00Z"
+    },
+    "worker-state": {
+      "schema_version": 1,
+      "issue": "36",
+      "role": "impl",
+      "cycle": "1",
+      "state": "running",
+      "dispatcher_pid": 12001,
+      "runner_pid": 12002,
+      "agent": "codex",
+      "model": "example-model",
+      "effort": "high",
+      "alive": true,
+      "done": false,
+      "result_present": false,
+      "log_present": true,
+      "log_file": "workers/impl/cycle-1.log",
+      "done_file": "workers/impl/cycle-1.done",
+      "result_file": "workers/impl/cycle-1-result.json",
+      "state_file": "workers/impl/cycle-1.state.json",
+      "log_size_bytes": 12,
+      "log_mtime_epoch": 1793404800,
+      "quiet_seconds": 120,
+      "stall_seconds": 600,
+      "hard_limit_seconds": 7200,
+      "seconds_since_last_output": 0,
+      "seconds_since_last_heartbeat": 0,
+      "started_at": "2026-10-31T00:00:00Z",
+      "last_output_at": "2026-10-31T00:00:00Z",
+      "last_heartbeat_at": null,
+      "updated_at": "2026-10-31T00:00:00Z",
+      "stall_reason": null,
+      "failure_class": null,
+      "exit_code": null,
+      "worktree": {}
+    },
+    "worker-result": {
+      "schema_version": 1,
+      "issue": "36",
+      "role": "impl",
+      "status": "success",
+      "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "files_committed": [
+        "src/api/example.py"
+      ],
+      "plan_deviations": [],
+      "verification": {
+        "passed": true,
+        "commands": [
+          "python -m pytest -q"
+        ]
+      }
+    },
+    "pair-state": {
+      "schema_version": 2,
+      "run_dir": ".pair-colleague/runs/example",
+      "workspace_root": "/workspace/example",
+      "phase": "awaiting-agents",
+      "round": 1,
+      "completed_rounds": 0,
+      "min_rounds": 3,
+      "max_rounds": 8,
+      "timeout_seconds": 3600,
+      "max_agent_attempts": 3,
+      "completion_reason": "",
+      "created_at": "2026-10-31T00:00:00Z",
+      "updated_at": "2026-10-31T00:00:00Z",
+      "assets": {
+        "prompt_template_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "rounds": {
+        "1": {
+          "snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "agents": {
+            "1": {
+              "status": "pending",
+              "attempts": 0
+            },
+            "2": {
+              "status": "pending",
+              "attempts": 0
+            }
+          }
+        }
+      }
+    },
+    "pair-config": {
+      "schema_version": 2,
+      "created_at": "2026-10-31T00:00:00Z",
+      "coordinator": "current invoking agent",
+      "workspace_root": "/workspace/example",
+      "agents": {
+        "1": {
+          "name": "Agent 1",
+          "harness": "codex",
+          "harness_requested": "codex",
+          "model": "example-model",
+          "effort": "high",
+          "safety_profile": "read-only"
+        },
+        "2": {
+          "name": "Agent 2",
+          "harness": "codex",
+          "harness_requested": "codex",
+          "model": "example-model",
+          "effort": "high",
+          "safety_profile": "read-only"
+        }
+      },
+      "min_rounds": 3,
+      "max_rounds": 8,
+      "timeout_seconds": 3600,
+      "max_agent_attempts": 3,
+      "permission_mode": "safe",
+      "runner": "assets/run-agent.sh",
+      "prompt_template": "assets/pair-colleague-agent-prompt.md",
+      "assets": {
+        "runner_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "process_helper_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "prompt_template_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    "pair-attempt": {
+      "id": "agent-1-attempt-1",
+      "argv": [
+        "fake-agent",
+        "--example"
+      ],
+      "started_at": "2026-10-31T00:00:00Z",
+      "state": "starting",
+      "host": "example-host",
+      "supervisor_pid": 12000,
+      "pid": null,
+      "pgid": null,
+      "cwd": "/workspace/example",
+      "timeout_seconds": 3600,
+      "deadline_epoch": 1793408400,
+      "timed_out": false,
+      "interrupted": false,
+      "exit_code": null,
+      "launch_error": ""
+    }
+  }
+}

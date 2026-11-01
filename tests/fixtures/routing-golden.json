@@ -1,0 +1,2449 @@
+[
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-3.1-pro-low",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-3.1-pro-low",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-3.1-pro-low",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-3.1-pro-low",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-3.1-pro-low",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "complexity",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.4-mini",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "modify",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "merge-recovery",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "quite-easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-terra",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "medium",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "complex",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "complex",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "holy-fuck",
+      "detected_agents": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6-astra",
+      "effort": "max",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "forced_agent": "claude"
+    },
+    "expected": {
+      "agent": "claude",
+      "model": "claude-haiku-4-5",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "forced_model": "gpt-6.1-sol"
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "forced-model",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "forced_agent": "codex",
+      "forced_model": "gpt-6.1-sol"
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "forced-agent-and-model",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "exclude_models": [
+        "gpt-5.4-mini",
+        "gpt-5.3-codex-spark"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [
+        "gpt-5.3-codex-spark",
+        "gpt-5.4-mini"
+      ],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium",
+      "prefer_model": "gpt-6.1-sol"
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "sticky-reviewer-preference",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium",
+      "prefer_model": "nonexistent"
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium",
+      "prefer_model": "gpt-6.1-sol",
+      "exclude_models": [
+        "gpt-6.1-sol"
+      ]
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.5",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium",
+      "model_exclusions": [
+        "gpt-6.1-sol"
+      ],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "denylist": [
+        "codex"
+      ]
+    },
+    "expected": {
+      "agent": "claude",
+      "model": "claude-haiku-4-5",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "allowlist": [
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "claude",
+      "model": "claude-haiku-4-5",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "model_denylist": "codex/gpt-5.4-mini,claude-sonnet-4-6"
+    },
+    "expected": {
+      "agent": "codex",
+      "model": "gpt-5.6-luna",
+      "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "easy",
+      "complexity_level": "easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [
+          "claude-sonnet-4-6"
+        ],
+        "agent_models": [
+          {
+            "agent": "codex",
+            "model": "gpt-5.4-mini"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "easy",
+      "forced_agent": "github-copilot"
+    },
+    "expected": {
+      "exit_code": 2
+    }
+  }
+]

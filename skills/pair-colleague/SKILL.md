@@ -51,36 +51,18 @@ Constructive disagreement is valuable. Adversarial debate, ranking, empty praise
 ## Hard Rules
 
 - You must **never guess** a harness, model, or effort. If a value is missing, ask the user for it — **one question at a time** — and never infer it from installed commands or registry defaults.
-- Both colleagues are launched **only** through `run-agent.sh` with the shared agent registry. Never invoke a provider CLI directly, never build a per-harness command line, and never accept or run an arbitrary command string.
+- Both colleagues are launched **only** through `ai-skills agent run` with the shared agent registry. Never invoke a provider CLI directly, never build a per-harness command line, and never accept or run an arbitrary command string.
 - Stay engaged for the whole run. Acceptance is your semantic judgment; never delegate it to a status grep, a readiness counter, or one of the colleagues.
 - Agent `DISCUSSION_STATUS` values are advisory evidence only. `READY` from both colleagues does not end the run and never bypasses the minimum round count.
 - Never claim agreement that did not happen. Unresolved disagreement must appear in your decision and in the final dossier.
 
-## Check the platform first
+## Native runtime
 
-`pair-colleague` runs on **macOS, Linux, and WSL** only. It depends on POSIX sessions, process
-groups, and signal delivery to terminate agent process trees, which native Windows does not
-provide.
+Use the installed `ai-skills` command on macOS, Linux, and native Windows. Python owns process sessions/Windows Jobs, argv, files, JSON, locks and timeouts. Do not recreate platform-specific launch or polling algorithms. `ai-skills doctor --json` checks the selected interpreter and maintained resources. The run's immutable engine selection and inherited `AI_SKILLS_RUN_ROOT` remain authoritative after updates; never replace them with the issue worktree path.
 
-```bash
-uname -s
-```
+## Resolve maintained resources
 
-If that reports `MINGW*`, `MSYS*`, `CYGWIN*`, or `Windows_NT`, **stop**. Tell the user that
-`pair-colleague` needs WSL on Windows: install a WSL distribution, run `bash install.sh` inside
-it, and start the run from the WSL shell. Do not attempt a workaround — the script refuses to
-run there and would leave agent processes behind if it did not.
-
-## Resolve the asset root
-
-```bash
-for candidate in "$PAIR_COLLEAGUE_ASSETS_DIR" "$ASSETS_DEST" "$HOME/.ai-skill-collections/assets" "./assets"; do
-  [ -n "$candidate" ] && [ -f "$candidate/pair-colleague.sh" ] && PC="$candidate/pair-colleague.sh" && break
-done
-echo "$PC"
-```
-
-If nothing resolves, re-run the installer (`bash install.sh`) and retry. The script performs the same resolution internally and fails with the exact list of missing files.
+Use `ai-skills doctor --json` to validate the installed native runtime and maintained registry/prompts. macOS, Linux and native Windows use the same command. No compatibility shell is required. The run records its workspace root and exact owned provider identities, and remains pinned to its selected engine.
 
 ## Required configuration
 
@@ -91,9 +73,9 @@ Ask the user for anything missing, one question at a time, in this order:
 
 Show the user what is actually available before asking:
 
-```bash
-assets/run-agent.sh --list-agents --detected-only
-assets/run-agent.sh --list-models <agent>
+```text
+ai-skills agent list --detected-only
+ai-skills agent models <agent>
 ```
 
 Effort must be one of `low|medium|high|xhigh|max|maximum` (`maximum` is normalized to `max`).
@@ -111,26 +93,18 @@ The two colleagues may share a harness or model when the user explicitly chooses
 
 ### 1. Start the run
 
-```bash
-assets/pair-colleague.sh start task.md \
-  --agent-1-harness codex --agent-1-model gpt-5.6-terra --agent-1-effort high \
-  --agent-2-harness claude --agent-2-model claude-sonnet-5 --agent-2-effort high
+```text
+ai-skills pair start task.md  --agent-1-harness codex --agent-1-model gpt-5.6-terra --agent-1-effort high  --agent-2-harness claude --agent-2-model claude-sonnet-5 --agent-2-effort high
 ```
 
-Or from stdin:
-
-```bash
-printf '%s\n' 'Design a caching strategy for our API' | assets/pair-colleague.sh start - \
-  --agent-1-harness codex --agent-1-model gpt-5.6-terra --agent-1-effort high \
-  --agent-2-harness claude --agent-2-model claude-sonnet-5 --agent-2-effort high
-```
+For stdin input pass `-` as the task source through the calling tool's stdin support; all explicit colleague selections remain required.
 
 Capture `RUN_DIR` from the output; every later command needs it.
 
 ### 2. Run the round
 
-```bash
-assets/pair-colleague.sh run-round --run-dir "$RUN_DIR"
+```text
+ai-skills pair run-round --run-dir <run-dir>
 ```
 
 Exit codes:
@@ -150,8 +124,8 @@ a lost connection, a cancelled tool call. The run refuses to spend money on a se
 work that is still in flight. Wait and retry; `status` reports `LIVE_AGENTS` while they run. Only
 if the user wants that work abandoned should you terminate it:
 
-```bash
-assets/pair-colleague.sh reap --run-dir "$RUN_DIR" --force
+```text
+ai-skills pair reap --run-dir <run-dir> --force
 ```
 
 Repeating any mutating command with the **same** input is safe: it converges on the same state
@@ -190,8 +164,8 @@ Give every candidate a stable ID (`C1`, `C2`, …) on first appearance and keep 
 
 **Before the minimum round count, always choose `CONTINUE`** and give a useful focus. `record-decision` rejects an early `ACCEPT` without changing state.
 
-```bash
-assets/pair-colleague.sh record-decision --run-dir "$RUN_DIR" --decision-file /path/to/decision.md
+```text
+ai-skills pair record-decision --run-dir <run-dir> --decision-file /path/to/decision.md
 ```
 
 - `STATUS=continue` → the next frozen snapshot is built; return to step 2.
@@ -256,8 +230,8 @@ Required structure (every heading exactly once, no placeholder text):
 
 Read `COMPLETED_ROUNDS`, `MIN_ROUNDS`, `MAX_ROUNDS`, `COMPLETION_REASON`, and `RUN_DIR` from `status` rather than recalling them.
 
-```bash
-assets/pair-colleague.sh finalize --run-dir "$RUN_DIR" --final-file /path/to/final-solution-draft.md
+```text
+ai-skills pair finalize --run-dir <run-dir> --final-file /path/to/final-solution-draft.md
 ```
 
 ### 7. Present the result
@@ -285,13 +259,10 @@ launched there no matter which directory you resume from, so the discussion cann
 different repository. A run created before this binding existed reports an empty `WORKSPACE_ROOT`
 and must be bound once, explicitly:
 
-```bash
-assets/pair-colleague.sh run-round --run-dir "$RUN_DIR" --bind-workspace /path/to/repository
+```text
+ai-skills pair run-round --run-dir <run-dir> --bind-workspace /path/to/repository
 ```
 
 ## Scope
 
-Bash only for v1 — macOS, Linux, and WSL. Native Windows (Git Bash, MSYS, Cygwin) is **not**
-supported and the script refuses to run there. There is no native PowerShell implementation, and
-`install.ps1` does not install these assets. Orchestration is local; the installed harnesses may
-still call remote models.
+Native Python orchestration runs on macOS, Linux and Windows. Provider CLIs may call remote models. Every colleague uses a registered read-only profile and a durable owned attempt; missing/unknown identity prevents a duplicate launch. Existing snapshot hashes, retry accounting, workspace binding and semantic acceptance rules remain authoritative across resume and updates.
