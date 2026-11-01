@@ -206,13 +206,15 @@ Use `ai-skills route` for every worker route decision. Do not hand-roll random m
 
 The pool dispatcher's `--agent` and `--model` values configure this Sub-Coordinator process only. `SUB_COORD_AGENT` and `SUB_COORD_MODEL` must never select child workers. Ambient inherited `AGENT` and `MODEL` values are runner telemetry, not routing policy; use only explicit `FORCED_AGENT` and `FORCED_MODEL` values supplied in this context. The Main Orchestrator normalizes explicitly requested deprecated aliases before dispatch, and the dispatcher unconditionally removes `AGENT` and `MODEL` before launching this Sub-Coordinator.
 
-Usage target summary from `agent-registry.json`:
-- overall default: Codex 60%, Claude 35%, Agy 5%
-- complexity scoring: use Agy for about 50% overall, while quite-easy scoring uses Agy around 25% and leaves the rest to Codex/Claude
-- every non-complexity role prefers Codex first, Claude second, and Agy/Gemini third; review still excludes the implementation model when possible
-- quite-easy/easy routes use GPT-5.4, Codex Spark, GPT-5.6 Luna, Claude Sonnet 5, Claude Haiku 4.5, or eligible Gemini models exposed by Agy
-- medium routes use GPT-5.6 Terra, Codex Spark, or Claude Sonnet 5; medium-hard routes use GPT-5.5, GPT-6.1 Sol, or Claude Opus 5
-- complex routes use GPT-6.1 Sol or Claude Opus 5; holy-fuck routes add GPT-6 Astra and Claude Fable 5.1; Sol uses high effort only at medium-hard and xhigh above it, while Opus uses high at medium-hard, xhigh at complex, and max at holy-fuck; Astra and Fable use max at holy-fuck
+Read model membership, usage targets, and effort from the selected runtime's
+registry; do not select from duplicated model lists or historical examples.
+Load version 2 registries with `ai_skills.registry.load_registry(path)` before
+inspecting policy. The expanded `model_routing.usage_distribution` contains
+current global and role/band targets, `non_complexity_band_policy` contains work
+model/provider membership, and `effort_by_model_and_band` contains effort
+overrides with a model `reasoning_effort` fallback. Complexity scoring retains
+its separate weight/band policy. The route helper's returned decision is the
+authority for the selected agent, model, effort, and selection reason.
 
 Native route command:
 ```text
