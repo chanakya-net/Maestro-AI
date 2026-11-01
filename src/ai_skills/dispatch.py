@@ -247,17 +247,19 @@ def _artifact_reason(config):
     run = config.agent_run
     if not run.result_file:
         return 'missing-result-artifact'
+    if config.execution_mode == 'verify_existing':
+        try:
+            journal = _read_bound_outcome(config)
+            if journal and journal['status'] != 'pending':
+                if journal.get('verification_handoff') != verification.handoff_fingerprint(config):
+                    return 'verification-handoff-changed'
+                return '' if journal['status'] == 'success' else journal['reason']
+        except (OSError, ValueError, TypeError, KeyError):
+            return 'invalid-verification-handoff'
     payload, error = artifacts.load_json(str(run.result_file))
     if error:
         return 'missing-result-artifact' if error == 'missing' else 'invalid-result-artifact'
     if config.execution_mode == 'verify_existing':
-        try:
-            journal = _read_bound_outcome(config)
-            if journal and journal['status'] == 'success':
-                return ('' if journal.get('verification_handoff') == verification.handoff_fingerprint(config)
-                        else 'verification-handoff-changed')
-        except (OSError, ValueError, TypeError, KeyError):
-            return 'invalid-verification-handoff'
         return verification.result_reason(config, payload)
     available = git.repo_available(str(run.repo_root)) if run.role in ('impl','modify') else False
     try:
@@ -676,6 +678,12 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         if provider_return_code is None and not prelaunch_failure:
             return WorkerResult('unknown',3,Path(config.state_file),'provider-exit-status-unknown')
         terminal = previous is not None and previous['status'] != 'pending'
+        if terminal and config.execution_mode == 'verify_existing':
+            try:
+                if previous.get('verification_handoff') != verification.handoff_fingerprint(config):
+                    return WorkerResult('unknown',3,Path(config.state_file),'verification-handoff-changed')
+            except OSError:
+                return WorkerResult('unknown',3,Path(config.state_file),'verification-handoff-unavailable')
         if terminal:
             # Only runtime stop reasons change the provider's actual exit code.
             if previous['reason'] in ('interrupted','hard-limit-exceeded','dispatch-timeout','dispatch-bootstrap-failed'):
@@ -741,7 +749,7 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
             progress = verification.git_progress(config)
             if progress is not None:
                 outcome['git_progress'] = progress
-            if config.execution_mode == 'verify_existing' and status == 'success':
+            if config.execution_mode == 'verify_existing':
                 outcome['verification_handoff'] = verification.handoff_fingerprint(config)
             write_json_atomic(outcome_path(config.state_file),outcome)
         worker_state = ('completed' if status == 'success' else 'interrupted' if status == 'interrupted'

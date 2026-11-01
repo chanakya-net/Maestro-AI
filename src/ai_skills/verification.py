@@ -70,9 +70,21 @@ def _source(config):
     process, supervisor = _provider_record(source)
     if not process.get('identity') or supervisor.inspect(ProcessIdentity(**process['identity'])).state != 'dead':
         raise ValueError('verification-source-ownership-unknown')
-    wrapper = supervisor.lookup_attempt(old.run_id + '-dispatcher', old.attempt_id)
-    if wrapper is not None:
-        if not wrapper.get('identity') or supervisor.inspect(ProcessIdentity(**wrapper['identity'])).state != 'dead':
+    wrapper = load_json(Path(str(source_path) + '.dispatcher.process.json'), missing={})
+    if not isinstance(wrapper, dict):
+        raise ValueError('verification-source-dispatcher-invalid')
+    if not wrapper.get('identity'):
+        raw = supervisor.lookup_attempt(old.run_id + '-dispatcher', old.attempt_id)
+        if raw is not None:
+            wrapper = {**raw, 'record_directory': str(supervisor.directory)}
+    if source.detach or wrapper:
+        if not wrapper.get('identity'):
+            raise ValueError('verification-source-dispatcher-unknown')
+        identity = ProcessIdentity(**wrapper['identity'])
+        if identity.run_id != old.run_id + '-dispatcher' or identity.attempt_id != old.attempt_id:
+            raise ValueError('verification-source-dispatcher-mismatch')
+        owner = ProcessSupervisor(Path(wrapper['record_directory'])).inspect(identity)
+        if owner.state != 'dead':
             raise ValueError('verification-source-dispatcher-not-dead')
     head = contract['expected_commit_sha']
     progress = outcome.get('git_progress', {})
@@ -82,7 +94,34 @@ def _source(config):
             not git.is_ancestor(str(run.repo_root), config.issue_base_sha, source.pre_spawn_head) or
             not git.is_ancestor(str(run.repo_root), source.pre_spawn_head, head)):
         raise ValueError('verification-source-commit-mismatch')
+    _protect_source_paths(config, source, supervisor)
     return source
+
+
+def _attempt_paths(config):
+    run, state = config.agent_run, str(config.state_file)
+    paths = [state + suffix for suffix in ('', '.config.json', '.outcome.json',
+        '.dispatcher.process.json', '.dispatcher.log', '.lock')]
+    paths.extend((run.result_file, run.done_file, run.log_file, config.tail_state_file,
+        run.process_state_file or state + '.process.json',
+        run.stream_directory or state + '.streams'))
+    return [Path(path).resolve() for path in paths if path is not None]
+
+
+def _protect_source_paths(config, source, supervisor):
+    from ai_skills.dispatch import _paths_collide
+    protected = _attempt_paths(source)
+    for run_id in (source.agent_run.run_id, source.agent_run.run_id + '-dispatcher'):
+        record = supervisor._path(run_id, source.agent_run.attempt_id)
+        protected.extend((record, record.with_suffix('.stdin'), record.with_suffix('.stop')))
+    # Global status/events buses and the shared supervisor directory intentionally
+    # remain reusable. Their new destinations still cannot alias source records.
+    destinations = _attempt_paths(config)
+    destinations.extend(Path(path).resolve() for path in
+        (config.agent_run.status_file, config.agent_run.events_log) if path is not None)
+    for destination in destinations:
+        if any(_paths_collide(destination, path) for path in protected):
+            raise ValueError('verification-source-path-collision')
 
 
 def admission_reason(config):
@@ -178,11 +217,17 @@ def handoff_fingerprint(config):
     """Bind a terminal proof to its immutable contract and exact report bytes.
 
     Later review/modification may advance the worktree. Replaying a journaled
-    success must not reinterpret those later changes as this attempt's work.
+    decision must not reinterpret those later changes as this attempt's work.
     """
     import hashlib
     run = config.agent_run
+    try:
+        report_hash = hashlib.sha256(Path(run.result_file).read_bytes()).hexdigest()
+    except FileNotFoundError:
+        report_hash = None
+    except IsADirectoryError:
+        report_hash = 'directory'
     return {'retry_contract': config.retry_contract, 'issue_base_sha': config.issue_base_sha,
         'pre_spawn_head': config.pre_spawn_head, 'repo_root': canonical_path(run.repo_root),
         'issue_dir': canonical_path(run.issue_dir), 'cycle': run.cycle,
-        'report_sha256': hashlib.sha256(Path(run.result_file).read_bytes()).hexdigest()}
+        'report_sha256': report_hash}

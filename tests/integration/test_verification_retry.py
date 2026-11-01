@@ -338,3 +338,96 @@ def test_invalid_retry_configuration_is_rejected(tmp_path, patch):
     valid = retry_config(tmp_path, repo, base, contract).to_record()
     with pytest.raises(ValueError):
         WorkerConfig.from_record({**valid, **patch})
+
+
+@pytest.mark.parametrize('destination', ['done_file', 'log_file', 'status_file', 'events_log', 'tail_state_file'])
+@pytest.mark.parametrize('protected', ['result', 'outcome', 'config', 'done', 'log'])
+def test_retry_cannot_overwrite_source_artifacts(tmp_path, destination, protected):
+    repo, base, head, first, contract = preserved(tmp_path)
+    paths = {'result': Path(first.agent_run.result_file), 'done': Path(first.agent_run.done_file),
+        'log': Path(first.agent_run.log_file), 'outcome': Path(str(first.state_file) + '.outcome.json'),
+        'config': Path(str(first.state_file) + '.config.json')}
+    target = paths[protected]; before = target.read_bytes()
+    retry = retry_config(tmp_path, repo, base, contract)
+    if destination == 'tail_state_file': retry = replace(retry, tail_state_file=target)
+    else: retry = replace(retry, agent_run=retry.agent_run.replace(**{destination: target}))
+    with pytest.raises(ValueError, match='verification-source-path-collision'): dispatch_worker(retry)
+    assert target.read_bytes() == before
+    assert not retry.state_file.exists()
+
+
+@pytest.mark.parametrize('alias', ['hardlink', 'symlink'])
+def test_source_artifact_aliases_are_protected(tmp_path, alias):
+    repo, base, head, first, contract = preserved(tmp_path)
+    target = Path(first.agent_run.result_file); before = target.read_bytes()
+    link = tmp_path / 'aliased-source'
+    if alias == 'hardlink': os.link(target, link)
+    else:
+        try: link.symlink_to(target)
+        except OSError: pytest.skip('symlink creation unavailable')
+    retry = retry_config(tmp_path, repo, base, contract)
+    retry = replace(retry, agent_run=retry.agent_run.replace(done_file=link))
+    with pytest.raises(ValueError, match='verification-source-path-collision'): dispatch_worker(retry)
+    assert target.read_bytes() == before
+
+
+def test_detached_source_missing_wrapper_evidence_blocks_retry(tmp_path):
+    import time
+    from ai_skills.dispatch import _provider_record
+    repo, base, head, first, contract = preserved(tmp_path)
+    # A second ordinary worker commits a distinct change, then blocks.
+    source = COMMIT_THEN_BLOCK.replace("'implemented\\n'", "'modified\\n'")
+    second = attempt(tmp_path, repo, 'second', source, issue_base_sha=base, detach=True)
+    result = dispatch_worker(second)
+    deadline = time.monotonic() + 10
+    while result.state == 'running' and time.monotonic() < deadline:
+        time.sleep(.05); result = adopt_worker(second.state_file)
+    assert result.state == 'failed'
+    config = WorkerConfig.from_record(load_json(Path(str(second.state_file) + '.config.json')))
+    _, supervisor = _provider_record(config)
+    from ai_skills.processes import _match
+    wrapper_path = supervisor._path(config.agent_run.run_id + '-dispatcher', config.agent_run.attempt_id)
+    owner = load_json(wrapper_path)['owner']
+    # Tree death precedes the supervisor owner's last journal write. Wait for
+    # that writer too, so deleting evidence cannot race its final publication.
+    deadline = time.monotonic() + 10
+    while _match(owner) == 'alive' and time.monotonic() < deadline:
+        time.sleep(.02)
+    assert _match(owner) == 'dead'
+    wrapper_path.unlink()
+    contract.update(source_state_file=str(second.state_file), source_attempt_id=config.agent_run.attempt_id,
+        expected_commit_sha=git(repo, 'rev-parse', 'HEAD'))
+    retry = retry_config(tmp_path, repo, base, contract)
+    with pytest.raises(ValueError, match='verification-source-dispatcher'): dispatch_worker(retry)
+    assert not retry.state_file.exists()
+
+
+@pytest.mark.parametrize('kind', ['dirty', 'head', 'missing', 'malformed', 'provider-exit'])
+def test_terminal_failure_replays_after_tree_recovery(tmp_path, kind):
+    repo, base, head, first, contract = preserved(tmp_path)
+    if kind in ('missing', 'malformed'):
+        source = "import os\nfrom pathlib import Path\nPath('feature.txt').write_text('dirty')"
+        if kind == 'malformed': source += "\nPath(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{')"
+    else:
+        source = VERIFY.replace('sys.exit(main(', 'code=main(').replace("'--pre-spawn-head',head]))", "'--pre-spawn-head',head])\nassert code==0")
+        source += {'dirty': "\nPath('feature.txt').write_text('dirty')",
+            'head': "\nsubprocess.run(['git','commit','--allow-empty','-qm','unexpected'],check=True)",
+            'provider-exit': '\nsys.exit(7)'}[kind]
+    retry = retry_config(tmp_path, repo, base, contract, source)
+    result = dispatch_worker(retry)
+    assert result.state == 'failed'
+    path = Path(str(retry.state_file) + '.outcome.json'); before = path.read_bytes()
+    git(repo, 'reset', '--hard', head)
+    adopted = adopt_worker(retry.state_file)
+    assert (adopted.state, adopted.reason, adopted.return_code) == (result.state, result.reason, result.return_code)
+    assert path.read_bytes() == before
+
+
+def test_failed_report_cannot_be_replaced_after_journaling(tmp_path):
+    repo, base, head, first, contract = preserved(tmp_path)
+    retry = retry_config(tmp_path, repo, base, contract, "pass")
+    assert dispatch_worker(retry).state == 'failed'
+    path = Path(str(retry.state_file) + '.outcome.json'); before = path.read_bytes()
+    Path(retry.agent_run.result_file).write_text('{}')
+    assert adopt_worker(retry.state_file).state == 'unknown'
+    assert path.read_bytes() == before
