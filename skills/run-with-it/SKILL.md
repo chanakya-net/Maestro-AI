@@ -455,7 +455,7 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
           "role": "impl",
           "cycle": 1,
           "agent": "codex",
-          "model": "gpt-5.3-codex",
+          "model": "gpt-6.1-sol",
           "selection_reason": "under-target"
         }
       ],

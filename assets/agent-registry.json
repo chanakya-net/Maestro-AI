@@ -55,23 +55,23 @@
       "required_bands": ["holy-fuck"],
       "effort_by_band": {"holy-fuck": "max"}
     },
-    "gpt-5.6-luna": {
+    "gpt-6-luna": {
       "provider": "openai",
       "ability": "balanced",
       "complexity_weight": 3,
       "min_band": "easy",
-      "context_window": 372000,
+      "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
       "work_bands": ["quite-easy", "easy"],
-      "complexity_bands": ["easy"]
+      "complexity_bands": ["quite-easy", "easy"]
     },
-    "gpt-5.6-terra": {
+    "gpt-6.1-terra": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 5,
       "min_band": "medium",
-      "context_window": 372000,
+      "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
       "work_bands": ["medium"],
@@ -95,7 +95,7 @@
       "ability": "balanced",
       "complexity_weight": 4,
       "context_window": 400000,
-      "agents": ["codex", "github-copilot"]
+      "agents": ["github-copilot"]
     },
     "gpt-5.3-codex": {
       "provider": "openai",
@@ -104,29 +104,13 @@
       "context_window": 400000,
       "agents": ["github-copilot"]
     },
-    "gpt-5.3-codex-spark": {
-      "provider": "openai",
-      "ability": "advanced",
-      "complexity_weight": 6,
-      "context_window": 400000,
-      "agents": ["codex"],
-      "work_bands": ["quite-easy", "easy", "medium"]
-    },
     "gpt-5.4": {
       "provider": "openai",
       "ability": "frontier",
       "complexity_weight": 9,
       "context_window": 1050000,
-      "agents": ["codex", "github-copilot"],
+      "agents": ["github-copilot"],
       "work_bands": ["quite-easy", "easy"]
-    },
-    "gpt-5.5": {
-      "provider": "openai",
-      "ability": "frontier",
-      "complexity_weight": 9,
-      "context_window": 922000,
-      "agents": ["codex"],
-      "work_bands": ["medium-hard"]
     },
     "gemini-3-flash-preview": {
       "provider": "google",

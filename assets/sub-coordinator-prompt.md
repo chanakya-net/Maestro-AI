@@ -651,7 +651,7 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
       "cycle": 1,
       "pid": 12345,
       "agent": "codex",
-      "model": "gpt-5.3-codex",
+      "model": "gpt-6.1-sol",
       "selection_reason": "under-target",
       "log_file": ".run-with-it/issues/36/workers/impl/cycle-1.log",
       "done_file": ".run-with-it/issues/36/workers/impl/cycle-1.done",
@@ -792,7 +792,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
       "role": "impl",
       "cycle": 1,
       "agent": "codex",
-      "model": "gpt-5.3-codex",
+      "model": "gpt-6.1-sol",
       "effort": "high",
       "selection_reason": "under-target"
     }

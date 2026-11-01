@@ -63,6 +63,12 @@ def test_claude_default_invocation_uses_sonnet_5_5(config):
     assert spec.argv[model_flag + 1] == 'claude-sonnet-5-5'
 
 
+def test_codex_default_invocation_uses_sol_6_1(config):
+    spec = build_invocation(config, load_registry())
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag + 1] == 'gpt-6.1-sol'
+
+
 def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
     registry = load_registry()
     registry['agents']['github-copilot'].pop('routing_disabled')

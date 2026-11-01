@@ -94,7 +94,7 @@ The two colleagues may share a harness or model when the user explicitly chooses
 ### 1. Start the run
 
 ```text
-ai-skills pair start task.md  --agent-1-harness codex --agent-1-model gpt-5.6-terra --agent-1-effort high  --agent-2-harness claude --agent-2-model claude-sonnet-5-5 --agent-2-effort high
+ai-skills pair start task.md  --agent-1-harness codex --agent-1-model gpt-6.1-terra --agent-1-effort high  --agent-2-harness claude --agent-2-model claude-sonnet-5-5 --agent-2-effort high
 ```
 
 For stdin input pass `-` as the task source through the calling tool's stdin support; all explicit colleague selections remain required.

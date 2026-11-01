@@ -27,6 +27,13 @@ The bundled Claude lineup is limited to Opus 5.5 (`claude-opus-5-5`), Fable 5.1
 (`claude-haiku-5-5`), using the IDs in [Anthropic's model documentation](https://platform.claude.com/docs/en/models/overview).
 They run through the direct Claude CLI, whose default is Sonnet 5.5.
 
+Codex supports only GPT-6.1 Sol (`gpt-6.1-sol`, the default), GPT-6 Astra
+(`gpt-6-astra`), GPT-6.1 Terra (`gpt-6.1-terra`), and GPT-6 Luna (`gpt-6-luna`),
+using the IDs in [OpenAI's model documentation](https://learn.chatgpt.com/docs/models#recommended-models).
+Luna handles simple work and scoring, Terra medium work, Sol harder work, and
+Astra the highest work tier. Older model entries retained for other agents do
+not enable those models on Codex.
+
 Each `model_catalog` entry groups a model's settings together:
 
 ```json

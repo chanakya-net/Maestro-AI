@@ -36,7 +36,7 @@
         "read_only": "--sandbox=read-only",
         "available": ["--dangerously-bypass-approvals-and-sandbox", "--sandbox=read-only", "--sandbox=workspace-write"]
       },
-      "model": {"pricing_basis": "subscription", "metered_api_cost": false},
+      "model": {"default": "gpt-6.1-sol", "pricing_basis": "subscription", "metered_api_cost": false},
       "capability_band": "advanced",
       "fallback_order": ["agy", "claude"]
     },
