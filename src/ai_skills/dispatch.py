@@ -70,7 +70,11 @@ class WorkerConfig:
         agent_values = asdict(nested) if isinstance(nested, AgentRunConfig) else dict(nested)
         for key in run_fields - {'environment','state_file'}:
             value = cli.get(key)
-            if value is None and key not in agent_values:
+            # Managed environment IDs belong to the current provider, not to
+            # a child it dispatches. Let dispatch_worker mint missing child IDs;
+            # explicit CLI/config identities remain authoritative for admission.
+            parent_identity = key in ('run_id', 'attempt_id') and env.get('RUN_WITH_IT_DISPATCHER_MANAGED') == '1'
+            if value is None and key not in agent_values and not parent_identity:
                 value = env.get(aliases.get(key, 'RUN_WITH_IT_' + key.upper()))
             if value is not None:
                 agent_values[key] = value

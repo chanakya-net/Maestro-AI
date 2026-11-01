@@ -42,6 +42,49 @@ def test_detach_source_rejects_unrecognized_boolean(tmp_path):
         WorkerConfig.from_sources({'agent_run': config.agent_run, 'state_file': config.state_file}, {'DETACH': 'maybe'})
 
 
+def test_nested_worker_admission_does_not_reuse_managed_parent_identity(tmp_path):
+    from ai_skills.processes import ProcessSupervisor
+    config = worker_config(tmp_path, "import os;from pathlib import Path;Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')")
+    records = tmp_path / 'records'
+    supervisor = ProcessSupervisor(records)
+    claim = supervisor._path('parent-run', 'parent-attempt')
+    claim.write_text(json.dumps({'schema_version': 1, 'run_id': 'parent-run',
+                                'attempt_id': 'parent-attempt', 'state': 'starting'}))
+    original_claim = claim.read_bytes()
+    env = {**os.environ, 'RUN_WITH_IT_DISPATCHER_MANAGED': '1',
+           'RUN_WITH_IT_RUN_ID': 'parent-run', 'RUN_WITH_IT_ATTEMPT_ID': 'parent-attempt'}
+    child = WorkerConfig.from_sources({
+        'agent': 'fake', 'role': 'fixture', 'issue': '7', 'gui_mode': '0',
+        'repo_root': tmp_path, 'registry_file': config.agent_run.registry_file,
+        'context_file': config.agent_run.context_file, 'prompt_file': config.agent_run.prompt_file,
+        'state_file': config.state_file, 'result_file': config.agent_run.result_file,
+        'log_file': config.agent_run.log_file, 'record_directory': records, 'poll_seconds': .02,
+    }, env)
+    assert dispatch_worker(child).state == 'completed'
+    saved = json.loads(config.state_file.read_text())
+    assert saved['run_id'] != 'parent-run'
+    assert saved['attempt_id'] != 'parent-attempt'
+    assert claim.read_bytes() == original_claim
+
+
+@pytest.mark.parametrize('nested', [False, True])
+def test_managed_child_keeps_explicit_run_and_attempt_identity(tmp_path, nested):
+    values = {'run_id': 'explicit-child-run', 'attempt_id': 'explicit-child-attempt'}
+    source = {'agent_run': values, 'state_file': tmp_path / 'child.json'} if nested else {**values, 'state_file': tmp_path / 'child.json'}
+    selected = WorkerConfig.from_sources(source, {'RUN_WITH_IT_DISPATCHER_MANAGED': '1',
+        'RUN_WITH_IT_RUN_ID': 'parent-run', 'RUN_WITH_IT_ATTEMPT_ID': 'parent-attempt'})
+    assert (selected.agent_run.run_id, selected.agent_run.attempt_id) == ('explicit-child-run', 'explicit-child-attempt')
+
+
+@pytest.mark.parametrize('managed', [None, '0'])
+def test_unmanaged_worker_can_still_take_identity_from_explicit_environment(tmp_path, managed):
+    env = {'RUN_WITH_IT_RUN_ID': 'configured-run', 'RUN_WITH_IT_ATTEMPT_ID': 'configured-attempt'}
+    if managed is not None:
+        env['RUN_WITH_IT_DISPATCHER_MANAGED'] = managed
+    selected = WorkerConfig.from_sources({'state_file': tmp_path / 'worker.json'}, env)
+    assert (selected.agent_run.run_id, selected.agent_run.attempt_id) == ('configured-run', 'configured-attempt')
+
+
 @pytest.mark.parametrize(('instructions', 'reason'), [('{broken', 'invalid-review-instructions-artifact'),
                                                      ('null', 'invalid-review-instructions-artifact'),
                                                      (None, 'missing-review-instructions-artifact')])
