@@ -39,7 +39,7 @@ def test_doctor_reports_interpreter_resources_and_no_writes(tmp_path):
     assert report["ok"] is True
     assert Path(report["interpreter"]) == Path(sys.executable)
     assert report["python_version"].startswith(f"{sys.version_info.major}.{sys.version_info.minor}.")
-    assert report["registry_schema_version"] == 1
+    assert report["registry_schema_version"] == 2
     assert "prompt.md" in report["resources"]
     assert "agent-registry.json" in report["resources"]
     assert all(name.endswith((".md", ".json")) for name in report["resources"])

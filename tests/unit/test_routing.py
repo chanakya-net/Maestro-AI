@@ -10,12 +10,13 @@ from pathlib import Path
 import pytest
 from ai_skills.resources import resource_path
 from ai_skills import routing
+from ai_skills.registry import load_registry
 
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures" / "routing-golden.json").read_text())
 
 @pytest.mark.parametrize("case", GOLDEN, ids=lambda case: str(case["request"]))
 def test_golden_legacy_policy(case):
-    registry=json.loads(resource_path("agent-registry.json").read_text())
+    registry=load_registry()
     request=RouteRequest(**{key:frozenset(value) if isinstance(value,list) else value for key,value in case["request"].items()})
     if "exit_code" in case["expected"]:
         with pytest.raises(SystemExit) as exc: select_route(request,registry,{})
@@ -25,7 +26,7 @@ def test_golden_legacy_policy(case):
         assert {key:selection[key] for key in case["expected"]} == case["expected"]
 
 def test_distribution_and_sticky_reviewer():
-    registry=json.loads(resource_path("agent-registry.json").read_text())
+    registry=load_registry()
     ledger=routing.normalize_ledger({})
     for _ in range(120):
         selection=select_route(RouteRequest(role="impl",complexity_level="medium"),registry,ledger).selection
@@ -41,7 +42,7 @@ def test_distribution_and_sticky_reviewer():
     assert fallback.model != preferred
 
 def test_cumulative_exclusions_and_read_only_decision():
-    registry=json.loads(resource_path("agent-registry.json").read_text())
+    registry=load_registry()
     ledger={}; original=copy.deepcopy(ledger)
     decision=select_route(RouteRequest(role="impl",complexity_level="easy",exclude_models=frozenset(["gpt-5.4-mini","gpt-5.3-codex-spark"])),registry,ledger)
     assert decision.model not in {"gpt-5.4-mini","gpt-5.3-codex-spark"}

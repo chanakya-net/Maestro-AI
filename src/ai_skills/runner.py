@@ -28,6 +28,7 @@ import uuid
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.resources import resource_path
+from ai_skills.registry import load_registry
 from ai_skills.outcomes import canonical_path, role_artifact_paths
 from ai_skills.storage import write_json_atomic
 
@@ -75,14 +76,6 @@ class AgentRunResult:
     agent: str
     model: str
     unavailable_reason: str = ''
-
-
-def load_registry(path=None):
-    text = Path(path).read_text(encoding='utf-8') if path else resource_path('agent-registry.json').read_text(encoding='utf-8')
-    registry = json.loads(text)
-    if not isinstance(registry.get('agents'), dict):
-        raise ValueError('registry must contain an agents object')
-    return registry
 
 
 def _agent(registry, name):

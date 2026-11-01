@@ -740,7 +740,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     registry_file = Path(args.registry_file)
     ledger_file = Path(args.ledger_file)
-    registry = read_json_file(registry_file)
+    from ai_skills.registry import load_registry
+    try:
+        registry = load_registry(registry_file)
+    except (OSError, ValueError) as exc:
+        fail(f"cannot load registry {registry_file}: {exc}")
 
     if args.complexity_level:
         base_level = args.complexity_level

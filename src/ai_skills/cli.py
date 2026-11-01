@@ -149,8 +149,8 @@ def doctor_report() -> dict:
             if name == "agent-registry.json":
                 registry = json.loads(content)
                 schema = registry.get("schema_version")
-                if schema != 1 or not isinstance(registry.get("agents"), dict):
-                    raise ValueError("invalid registry schema")
+                from ai_skills.registry import load_registry
+                load_registry()
             present.append(name)
         except (OSError, ValueError, AttributeError) as exc:
             errors.append(f"{name}: {exc}")
