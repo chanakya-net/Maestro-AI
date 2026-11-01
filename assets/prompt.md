@@ -118,6 +118,10 @@ If a full-suite run is prohibitively slow, run the narrowest passing scope, docu
 
 Before running each required command, record `verification_applicability` as `applicable`, `not_applicable`, or `failed`. `not_applicable` is allowed only when a concrete lifecycle precondition is absent (for example, a breaking-change baseline has no module on the base ref because this issue introduces the first module); record the inspected ref/path evidence. An applicable command that exits nonzero is `failed`, never `not_applicable`.
 
+## Verification-only assignment
+
+If authoritative attempt metadata contains `verification_contract.execution_mode="verify_existing"`, follow that contract in the appended `artifact-protocol.md`. Run every required check against the unchanged expected commit, retain its SHA and existing review/comment evidence, and publish a complete report. This overrides edit/new-commit/no-op instructions below. Failed or unavailable checks require a typed failure; source fixes require a separate ordinary change attempt.
+
 ## Mandatory Commit Before Handoff
 
 **Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit on the issue worktree branch, the reviewer cannot isolate your changes.

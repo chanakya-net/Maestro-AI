@@ -25,7 +25,7 @@ import time
 from types import SimpleNamespace
 import uuid
 
-from ai_skills import artifacts, git
+from ai_skills import artifacts, git, verification
 from ai_skills.outcomes import role_artifact_paths
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
@@ -46,10 +46,14 @@ class WorkerConfig:
     hard_limit_seconds: float = 7200
     bootstrap_seconds: float = 10
     pre_spawn_head: str = ''
+    execution_mode: str = 'implement'
+    issue_base_sha: str = ''
+    retry_contract: dict | None = None
     tail_state_file: Path | None = None
     tail_lines: int = 5
 
     def __post_init__(self):
+        verification.validate_configuration(self)
         if type(self.detach) is not bool:
             raise ValueError('detach must be a boolean')
         if type(self.tail_lines) is not int or self.tail_lines < 1:
@@ -114,6 +118,10 @@ class WorkerConfig:
                         raise ValueError('detach must be a boolean')
                     value = normalized in ('1', 'true', 'yes', 'on')
                 values[key] = float(value) if key.endswith('_seconds') else int(value) if key=='tail_lines' else value
+        # Retry authority is explicit configuration, never inherited from a parent.
+        for key in ('execution_mode', 'issue_base_sha', 'retry_contract'):
+            if key in cli:
+                values[key] = cli[key]
         return cls(**values)
 
     def to_record(self):
@@ -164,7 +172,7 @@ def _artifact_args(config, *, from_stall=False):
     run = config.agent_run
     return SimpleNamespace(role=run.role, issue=str(run.issue), result_file=str(run.result_file or ''),
                            done_file=str(run.done_file or ''), log_file=str(run.log_file or ''),
-                           issue_dir=str(run.issue_dir or ''), repo_root=str(run.repo_root), pre_spawn_head=config.pre_spawn_head, from_stall=from_stall)
+                           issue_dir=str(run.issue_dir or ''), repo_root=str(run.repo_root), pre_spawn_head=config.pre_spawn_head, from_stall=from_stall, worker_config=config)
 
 
 def expected_artifact_paths(config: WorkerConfig) -> dict[str, str]:
@@ -242,6 +250,15 @@ def _artifact_reason(config):
     payload, error = artifacts.load_json(str(run.result_file))
     if error:
         return 'missing-result-artifact' if error == 'missing' else 'invalid-result-artifact'
+    if config.execution_mode == 'verify_existing':
+        try:
+            journal = _read_bound_outcome(config)
+            if journal and journal['status'] == 'success':
+                return ('' if journal.get('verification_handoff') == verification.handoff_fingerprint(config)
+                        else 'verification-handoff-changed')
+        except (OSError, ValueError, TypeError, KeyError):
+            return 'invalid-verification-handoff'
+        return verification.result_reason(config, payload)
     available = git.repo_available(str(run.repo_root)) if run.role in ('impl','modify') else False
     try:
         head = git.current_head(str(run.repo_root)) if available else None
@@ -412,7 +429,16 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
             pre_head = git.current_head(str(run.repo_root))
         except (OSError, subprocess.CalledProcessError):
             pre_head = ''
+    if config.execution_mode == 'verify_existing':
+        run = replace(run, verification_context={'execution_mode': config.execution_mode,
+            'issue_base_sha': config.issue_base_sha, **config.retry_contract})
+    else:
+        run = replace(run, verification_context=None)
     config = replace(config,agent_run=run,state_file=state_file,pre_spawn_head=pre_head)
+    if config.execution_mode == 'verify_existing':
+        reason = verification.admission_reason(config)
+        if reason:
+            raise ValueError(reason)
     config_path = Path(str(state_file)+'.config.json')
     with DirectoryLock(state_file):
         old = _optional(state_file)
@@ -526,6 +552,8 @@ def _read_bound_outcome(config):
 
 def _safe_synthesis(config, reason):
     """Only absent outputs may be reconstructed; never erase provider bytes."""
+    if config.execution_mode == 'verify_existing':
+        return False
     paths = expected_artifact_paths(config)
     run = config.agent_run
     # Review repair can overwrite both files. Preserve any malformed existing
@@ -710,6 +738,11 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 issue=str(run.issue),role=run.role,state_file=config.state_file,
                 expected_artifacts=expected_artifact_paths(config))
             outcome = {**outcome, **decision, 'finished_at':time.time()}
+            progress = verification.git_progress(config)
+            if progress is not None:
+                outcome['git_progress'] = progress
+            if config.execution_mode == 'verify_existing' and status == 'success':
+                outcome['verification_handoff'] = verification.handoff_fingerprint(config)
             write_json_atomic(outcome_path(config.state_file),outcome)
         worker_state = ('completed' if status == 'success' else 'interrupted' if status == 'interrupted'
             else 'artifact-recovery-required' if not typed and code == 75 and reason == 'artifact-recovery-required' else 'failed')

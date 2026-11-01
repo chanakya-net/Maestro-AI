@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from ai_skills.outcomes import review_instructions_file
+from ai_skills import verification
 from ai_skills.git import git_output, git_success, current_head, repo_available, working_tree_clean, commit_exists, resolve_commit, is_ancestor, abort_cherry_pick, commit_salvaged_tree
 
 
@@ -205,6 +206,12 @@ def recover_wrong_worktree_commit(args: argparse.Namespace, payload: dict[str, A
 
 
 def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
+    try:
+        config = verification.managed_config(args)
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return str(error)
+    if config is not None and config.execution_mode == 'verify_existing':
+        return verification.result_reason(config, payload)
     available = bool(args.repo_root) and repo_available(args.repo_root)
     head = None
     if available:
@@ -528,6 +535,12 @@ def failure_class(args: argparse.Namespace) -> int:
 
 
 def synthesize_implementation(args: argparse.Namespace) -> bool:
+    try:
+        config = verification.managed_config(args)
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+    if config is not None and config.execution_mode == 'verify_existing':
+        return False
     if args.role not in {"impl", "modify"}:
         return False
     if result_file_is_issue_report(args):
@@ -751,6 +764,12 @@ def write_json(args: argparse.Namespace) -> int:
     if error or not isinstance(payload, dict):
         print(f"invalid payload JSON: {error or 'expected-object'}", file=sys.stderr)
         return 1
+    if args.role in {"impl", "modify"} and payload.get("artifact_kind") != "role_failure":
+        try:
+            args.worker_config = verification.managed_config(args)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            print(str(error), file=sys.stderr)
+            return 1
     target = Path(args.result_file)
     target.parent.mkdir(parents=True, exist_ok=True)
     validated_path = target.with_name(f"{target.name}.validated.{os.getpid()}")
@@ -760,6 +779,7 @@ def write_json(args: argparse.Namespace) -> int:
     validation_args.log_file = ""
     validation_args.issue_dir = getattr(args, "issue_dir", "")
     validation_args.from_stall = False
+    validation_args.publication_unmanaged = getattr(args, "worker_config", None) is None
     try:
         write_json_atomic(str(validated_path), payload)
         reason = ""
@@ -897,6 +917,8 @@ def validate_artifact(role: str, payload: object, evidence: GitEvidence) -> Arti
     elif role in {"impl", "modify"}:
         if not isinstance(payload, dict) or str(payload.get("issue")) != str(evidence.issue) or payload.get("role") != role:
             reason = "invalid-result-artifact"
+        elif payload.get("execution_mode") == "verify_existing":
+            reason = "verification-contract-required"
         elif payload.get("status") == "artifact_recovery_required":
             reason = "artifact-recovery-required"
         elif payload.get("status") != "success":

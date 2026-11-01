@@ -6,7 +6,7 @@ Every terminal attempt publishes a machine-readable report at `expected_artifact
 
 Choose the report by observed evidence:
 
-1. **Verified success:** use the existing role success schema and all required companions. Implementation/modification success still requires a canonical new commit in the assigned issue worktree plus passing verification, or the existing verified no-op contract with `verification.passed=true`. Review success needs valid status and review instructions; plan success needs the required `plan.md`. Never invent a commit, approval, or passing test.
+1. **Verified success:** use the existing role success schema and all required companions. Implementation/modification success still requires a canonical new commit in the assigned issue worktree plus passing verification, or an admitted `verify_existing` contract with the unchanged preserved commit and complete passing check evidence, or the existing verified no-op contract with `verification.passed=true`. Review success needs valid status and review instructions; plan success needs the required `plan.md`. Never invent a commit, approval, or passing test.
 2. **Failure of the role handoff:** publish `artifact_kind="role_failure"` below at the usual primary result path. Use `status="failed"` for work/verification failure, `"blocked"` for an external prerequisite that prevents completion, or `"interrupted"` when stopping before completion. Include nonempty `reason` and `summary`, exact identity, optional verification object and string-list evidence. Never set `verification.passed=true`. No commit, review instructions, or `plan.md` is required on this path. If a stop arrives and tools remain available, publish the interrupted report before exiting; abrupt termination may prevent publication.
 3. **Coordinator terminal issue report:** a Sub-Coordinator that successfully reaches an issue decision publishes its ordinary compact report, including honest `blocked`, `failed-review`, `merge_failed`, or `failed-merge` outcomes. Merge recovery supports `completed`, `failed-merge`, and `blocked`. These need a nonempty summary; blocked reports need nonempty concrete string blocking_reasons. Negative issue outcomes are valid report handoffs, not completed issues. If the coordinator cannot perform the handoff itself, use the typed role failure instead.
 
@@ -19,6 +19,30 @@ ai-skills artifact write-json --role <authoritative-role> --issue <authoritative
 Use a temporary payload beside the result outside the source worktree; this publication-only scratch file is permitted for read-only scoring/planning roles. For implementation/modification success retain the existing `--repo-root <assigned-issue-worktree>` and saved baseline arguments. If publication fails, retain the payload and surface the exact storage/validation error; do not claim it was recorded. Do not overwrite malformed prior results or another attempt's files to force success.
 
 Managed DONE is dispatcher-owned. Never create, edit, repair or remove `RUN_WITH_IT_DONE_FILE`, another worker's DONE, another worker's state, or the dispatcher-owned `state_file` and its claim/config/outcome records. Sub-Coordinators must write their own issue `sub-state.json` ledger as required by their role instructions, including durable in-flight worker identities; that role-owned ledger is separate from dispatcher state. The dispatcher persists the claim, configuration and pending outcome before launching a wrapper or provider; failed persistence prevents launch. It durably records timeout/interruption intent before signaling the owned tree. The dispatcher proves owned-tree shutdown and durable provider exit, validates the report and evidence, then records outcome -> state -> DONE. It may record a non-success DONE. A validated outcome governs phase transitions; raw process success, chat, logs, or a premature DONE do not. Unknown ownership remains nonterminal and prohibits duplicate launch.
+
+## Admitted verification-only attempts
+
+When authoritative attempt metadata includes `verification_contract.execution_mode="verify_existing"`, it overrides earlier implementation/modification instructions to edit or create a new commit. Verify the preserved `expected_commit_sha` only. Do not edit product files, commit, cherry-pick, synthesize a replacement result, or claim a no-op. Keep reports and payloads outside the issue worktree. Tracked changes and untracked nonignored files are rejected; generated outputs covered by the project's existing Git ignore rules are permitted. Do not edit ignore rules to hide changes.
+
+Run every `required_checks` entry and record concrete command output or manual observation evidence. A skipped, unavailable or failed required check is a typed failure/blocked handoff, never passing verification. If code needs a fix, report the defect for a separate ordinary implementation/modification attempt. Preserve review comment closure details when verifying a modifier's work.
+
+Publish using the normal `ai-skills artifact write-json` command with the assigned repo root and result path. The command reads the admitted configuration from dispatcher state; a report cannot enable this mode. Keep `commit_sha` equal to the expected commit, `files_committed` describing the preserved changes, and this verification shape:
+
+```json
+{
+  "passed": true,
+  "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "checks": [
+    {
+      "command": "python -m pytest tests -q",
+      "passed": true,
+      "evidence": "Exact observed result, including test counts and exit status"
+    }
+  ]
+}
+```
+
+Replace the sample with one passing evidence entry for each required check, with no duplicates or omissions. Evidence is worker-supplied and structurally validated; never invent an observation. The dispatcher rechecks Git at finalization and still requires owned-tree shutdown and a successful provider exit. Timeout/interruption cannot be converted into success by a passing report.
 
 Examples below use illustrative identities. Replace them with authoritative attempt metadata and actual evidence. This successful no-op is allowed only after proving the acceptance criteria and running required checks:
 

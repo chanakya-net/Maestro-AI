@@ -120,6 +120,7 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "role": "impl",
   "issue": "42",
   "cycle": "1",
+  "issue_base_sha": "<original immutable ISSUE_BASE_SHA>",
   "context_file": "/absolute/run/.run-with-it/issues/42/context.md",
   "prompt_file": "/absolute/assets/prompt.md",
   "repo_root": "/absolute/run/.run-with-it/worktrees/issue-42",
@@ -149,6 +150,34 @@ ai-skills worker inspect --state-file /absolute/run/.run-with-it/issues/42/worke
 Validation starts no provider. Dispatch creates directories, atomically persists admission and a credential-free config, and returns only after durable provider identity or terminal failed evidence. Persist the identity/state path, role, cycle, route, effort, selection reason, log/done/result paths and start time in `sub-state.json` before monitoring. Reusing an admitted attempt is refused; inspect/adopt it instead of replaying the paid launch. A retry uses a fresh attempt-specific state/log/result path only after the previous tree is verified dead.
 
 DONE is advisory. Advance only after the owned tree is dead, its exit status is known, and the role artifact validates. Quiet live providers survive output stalls until an explicit deadline. At the hard limit preserve committed/dirty implementation progress for typed artifact recovery; unverified salvage is never success. Unknown identity blocks relaunch and destructive cleanup.
+## Verification-only retries
+
+Use this mode when an implementation/modification attempt committed the requested work and only verification remains. It retains the original role and review cycle; it is not a new role and not a verified no-op.
+
+1. Inspect the saved source config/outcome and worktree. Require a terminal source attempt, confirmed dead owned process tree, runtime `git_progress.head`, clean tree, and the same issue/worktree/role/cycle. Unknown provenance, incomplete work or dirty product files use ordinary recovery. Old attempts without runtime Git provenance cannot opt in.
+2. Keep the original `issue_base_sha`. Include it explicitly in every impl/modify worker configuration, including the first attempt. Never override `pre_spawn_head` with this older baseline; the dispatcher captures the actual starting HEAD.
+3. Create fresh attempt-specific paths and add the following fields to the normal worker configuration (replace illustrative SHA strings with full canonical SHAs):
+
+```json
+{
+  "execution_mode": "verify_existing",
+  "issue_base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "retry_contract": {
+    "source_state_file": "/absolute/run/.run-with-it/issues/42/workers/impl/cycle-1-attempt-1.state.json",
+    "source_attempt_id": "exact-source-attempt-id-from-saved-config",
+    "expected_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "required_checks": ["python -m pytest tests -q", "Native UI acceptance checks"]
+  }
+}
+```
+
+4. `required_checks` is the complete list of applicable acceptance checks, including manual/native checks where required, not a worker-selected subset. Supply exact commands or concrete manual-check names and their acceptance criteria in the context. Preserve the source state path, source attempt ID, contract and fresh current attempt identity in `sub-state.json` before monitoring. Never overwrite source artifacts. Repeat verification attempts refer to the original implementation/modification source attempt.
+5. Confirm the missing prerequisite is available before dispatch; route to an agent/environment that can perform the checks. Verification attempts consume the existing same-role retry budget (`MAX_AGENT_FALLBACKS`) and do not advance the review cycle. If the prerequisite remains unavailable, report `blocked` with concrete evidence; do not loop through equivalent environments. Availability exclusions keep their existing separate treatment.
+6. On validated success keep the preserved commit as `impl_commit_sha` or `modify_commit_sha`, set `review_head_sha` to it, preserve review history and use `issue_base_sha..review_head_sha`. Apply the existing review/skip policy, followed by normal merge handoff. Do not substitute `NONE`, create an empty commit, replay implementation, or spawn artifact recovery for this successful handoff.
+7. If verification finds a defect, publish a typed failure, preserve the evidence, and dispatch a new ordinary implementation/modification attempt for that defect. Verification-only workers must not repair source. Unknown ownership blocks relaunch. Invalid provenance or unexpected dirty/changed work returns to the existing bounded recovery path; never weaken the contract to accept it.
+
+This eligible verification-only path takes precedence over automatic artifact recovery for already committed work; all other preserved but unverified work retains the existing typed recovery rules.
+
 ## Background Worker Monitoring Contract
 
 Dispatch/inspect through the native configuration above for every complexity, plan, implementation, review, modification and recovery role. Persist the immutable selected route and every attempt's config/state/log/done/result path in `sub-state.json`. Use fresh attempt paths after a verified terminal failure; bootstrap/unknown identity is not permission to duplicate a launch. The dispatcher owns stdout/stderr tails, wrapper heartbeats, watchdog state and role artifact validation.
@@ -172,7 +201,7 @@ For any `impl` or `modify` worker state with `state="failed"` or `state="artifac
 - done file exists but the result JSON is absent or invalid
 
 apply this exact policy:
-0. A typed `artifact-recovery-required` result goes directly to the Artifact Recovery Worker; never treat it as normal success and do not spend a same-role retry on already-preserved work.
+0. First apply Verification-only retries when its provenance and clean committed-work requirements hold. Otherwise a typed `artifact-recovery-required` result goes directly to the Artifact Recovery Worker; never treat it as normal success and do not spend a same-role retry on already-preserved work.
 1. Read only the dispatcher state JSON and cheap git status metadata. Do not read the raw worker log into context.
 2. Emit `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
 3. If `git -C "$ISSUE_WORKTREE_PATH" status --short` is non-empty, preserve the dirty work before retrying:
@@ -574,6 +603,8 @@ The implementer (or modifier) has already committed all changes as part of its m
      Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
      **Exception — verified no-op:** if `MODIFY_COMMIT_SHA` equals `REVIEW_HEAD_SHA` but the modifier's result artifact is valid with `"no_op": true` and `verification.passed=true` (the verified no-op contract in `modifier-prompt.md`, validated by `ai-skills artifact`), treat the modification as success; do not mark `modifier-no-commit`, and keep `REVIEW_HEAD_SHA` unchanged for the next review cycle.
 
+     **Exception — admitted verification-only retry:** a dispatcher-validated `verify_existing` success retains the preserved modification SHA even when no commit was created by this retry. It is not `modifier-no-commit`; preserve review history and use the original issue baseline.
+
      Store `MODIFY_COMMIT_SHA` in state. For the next review cycle: `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA` (and `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA` — never changes).
    - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
 3. Increment the cycle counter and return to Per-Cycle Steps.
@@ -748,7 +779,7 @@ The dispatcher alone writes managed DONE after report validation and confirmed o
 
 - complexity: the required machine-readable score JSON validates; logs are diagnostic only
 - plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `ai-skills artifact failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
-- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `ai-skills artifact`
+- impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the dispatcher validates an admitted `verify_existing` contract for the preserved commit, **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `ai-skills artifact`
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
 Advance only after dispatcher finalization records a validated success and owned-tree cleanup is complete. Do not emit duplicate worker-done events. Typed role failures follow the existing bounded role recovery; failure needs no success companions. A valid negative coordinator issue report is a successful report handoff, not issue completion.
