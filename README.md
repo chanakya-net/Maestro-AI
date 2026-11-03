@@ -1,20 +1,264 @@
-# AI-Skills
+# Maestro-AI (AI-Skills)
 
-AI-Skills coordinates coding agents through dependency-aware issue scheduling, isolated Git worktrees, model routing, review loops, artifact recovery, and merge recovery. Seven skills guide requirements discovery, issue creation, implementation, debugging, and paired design discussions.
+Turn a software request into small tasks, tested changes, and a pull request.
 
-The maintained runtime is Python on Windows, macOS, and Linux. The same commands and JSON configuration replace the former Bash and PowerShell entry points.
+Maestro-AI helps coding agents work through a project without losing track of the plan. You decide what should be built; the agents clarify the details, implement the work, check it, and report the result.
 
-## Requirements
+There are two parts:
 
-- Python 3.12 or newer and Git.
-- A supported coding agent CLI for execution: Codex, Claude Code, Gemini/Antigravity, Agy, or OpenCode. Install and authenticate the providers you intend to use. A provider distributed through npm still requires Node.js.
-- Authenticated GitHub CLI (`gh`) for GitHub issue and PR operations. Local planning and runtime diagnostics do not require GitHub access.
+- **Seven skills** guide the conversations and tasks: requirements, planning, coding, debugging, design discussions, and concise replies.
+- **A Python runtime** starts agents, schedules ready work, saves progress, validates results, and helps recover interruptions. It uses the same commands on **Windows, macOS, and Linux**.
 
-The registry defines supported models and availability. Copilot runtime selection remains disabled while its configured plan is exhausted. The installer does not install Python, Node.js, or providers, and does not broaden their permissions.
+You bring your code repository and installed, authenticated coding agents. Their models and accounts provide the AI; Maestro-AI coordinates the work.
 
-Maintained providers receive full prompts through stdin, avoiding operating-system command-line length limits. CLI text input and output use UTF-8 on every platform. AGY requires a current CLI supporting `--input-format` and `--output-format`; the runtime checks these flags before launching a paid attempt and reports an upgrade instruction for older builds. Its [documented streaming protocol](https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin) is decoded back into the normal response text while retaining raw output for recovery. Custom registries retain argv input by default; set `invocation.prompt_transport` to `stdin` for a provider that supports plain stdin.
+[Get started](#get-started) · [Choose a skill](#choose-a-skill) · [How a run works](#how-a-run-works) · [Technical reference](#technical-reference) · [Credits](#credits)
 
-## Model routing configuration
+Prefer a visual walkthrough? Open [explainer.html](explainer.html).
+
+## The usual workflow
+
+| 1. Understand | 2. Plan | 3. Build and check |
+| --- | --- | --- |
+| `break-req` | `create-git-issue` | `run-with-it` |
+| Agree on behavior, constraints, and unanswered questions. | Review a product requirements document (PRD), then approve small implementation issues. | Work through ready issues, verify changes, handle review, and prepare a final PR. |
+
+Start with the stage you need. Prepared issues can go straight to `run-with-it`. Debugging and paired design are separate entry points; you do not need every skill for every task.
+
+<a id="installation"></a>
+
+## Get started
+
+<a id="requirements"></a>
+
+### What you need
+
+- **Python 3.12 or newer** and **Git**.
+- An installed, authenticated coding-agent CLI for execution, such as Codex, Claude Code, Agy, or OpenCode. Providers distributed through npm also need Node.js.
+- The authenticated **GitHub CLI (`gh`)** for GitHub issues and PRs. Local planning and runtime diagnostics do not require GitHub access.
+
+The registry controls supported models and availability. Copilot runtime selection remains disabled while its configured plan is exhausted. The installer registers skills and packages the runtime; it does not install Python, Node.js, or coding agents, sign in to their accounts, or broaden their permissions.
+
+### 1. Get the repository
+
+```text
+git clone https://github.com/chanakya-net/Maestro-AI.git
+cd Maestro-AI
+```
+
+### 2. Install the runtime and skills
+
+Choose your operating system. The dry run previews what the skill installer will change.
+
+<details>
+<summary><strong>macOS / Linux</strong></summary>
+
+Use an installed Python 3.12 or newer. If its command has a different name, substitute it below.
+
+```text
+python3.12 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/python -m ai_skills install --source . --dry-run
+.venv/bin/python -m ai_skills install --source .
+```
+
+</details>
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+Use the Windows Python launcher and the environment's interpreter:
+
+```text
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install .
+.venv\Scripts\python.exe -m ai_skills install --source . --dry-run
+.venv\Scripts\python.exe -m ai_skills install --source .
+```
+
+</details>
+
+### 3. Check the setup
+
+In that Python environment, run:
+
+```text
+python -m ai_skills doctor --json
+python -m ai_skills agent list --detected-only
+```
+
+Here and below, `python` means the environment's interpreter. Activate the environment or use its full path from step 2. The installed `ai-skills` command provides the same operations as `python -m ai_skills`.
+
+`doctor` checks the interpreter and maintained resources. The agent list shows detected tools; use each provider's own sign-in process to establish account access.
+
+### 4. Open your coding agent in the project you want to work on
+
+Invoke a skill using your agent's normal skill mechanism. Start with `break-req` for a new idea, `help-me-debug` for a diagnosis, or `run-with-it` for prepared issues. These skill names are not shell commands.
+
+The skills prepare the files and runtime configuration for you. The command reference below is for inspecting or configuring that work when you need more control.
+
+<details>
+<summary><strong>Installation options, protected files, and uninstall</strong></summary>
+
+Installation packages the maintained prompts, registry, and all seven skills into an immutable runtime under `~/.ai-skill-collections/assets/runtimes/`. It publishes `runtime.json` only after verification. Use `--assets-dest PATH` to select another destination and `--only codex` (or another listed profile) to limit registrations. `install --list` lists profiles. A built wheel can replace `.` in `--source`.
+
+Existing unowned skill directories are protected. Inspect the dry-run output, then use `--replace-existing` to migrate an older installation explicitly; the installer preserves backups and records ownership. Registration uses local packaged content rather than fetching a changing branch.
+
+```text
+python -m ai_skills uninstall --dry-run
+python -m ai_skills uninstall
+```
+
+Uninstall removes owned registrations and restores preserved originals when safe. Edited or unrecognized content is preserved. Runtime versions are retained because other runs may still pin them; inspect the reported retained paths before any manual cleanup.
+
+</details>
+
+<a id="skills"></a>
+
+## Choose a skill
+
+| What you want to do | Skill | What you get |
+| --- | --- | --- |
+| Work out the details before coding | [`break-req`](skills/break-req/SKILL.md) | Decisions and implementation steps in `technical_requirements.md`. It stops before changing product code or creating issues. |
+| Turn agreed requirements into issues | [`create-git-issue`](skills/create-git-issue/SKILL.md) | A PRD and small implementation issues with dependencies. You approve the PRD and issue breakdown before publication. Local fallback: `prd.md` and `issues.md`. |
+| Work through ready issues | [`run-with-it`](skills/run-with-it/SKILL.md) | Implemented changes, verification results, GitHub progress updates, and a final PR. Failed or blocked work is reported. |
+| Find out why something is broken | [`help-me-debug`](skills/help-me-debug/SKILL.md) | A human-readable `debug_human_report.md` and a detailed implementation handoff in `debug_llm_context.md`. It stops before applying a fix. |
+| Explore alternatives before choosing | [`pair-colleague`](skills/pair-colleague/SKILL.md) | A bounded discussion between two AI colleagues and a `final-solution.md` decision document, including trade-offs and disagreements. |
+| Implement assigned work with tests first | [`tdd-implementation`](skills/tdd-implementation/SKILL.md) | One behavior at a time: a failing test, enough code to pass, then refactoring with passing tests. Both positive and negative paths are covered. |
+| Keep assistant replies short | [`save-tokens`](skills/save-tokens/SKILL.md) | Compact narration. Code, plans, issue bodies, PR descriptions, and saved workflow records keep their normal format. |
+
+<details>
+<summary><strong>Example: add invoice CSV export</strong></summary>
+
+Imagine your request is: **“Let users export their invoices as a CSV file.”**
+
+1. **Agree on the behavior.** `break-req` helps settle the fields, permissions, filters, and error cases. It explores the codebase before asking for facts it can find itself, and saves the agreed requirements.
+2. **Approve small tasks.** `create-git-issue` proposes a basic export, then support for active filters and an empty-results message. Each issue covers its behavior across the app and tests. You review the PRD and the breakdown before publication.
+3. **Run the prepared issues.** `run-with-it` starts work whose prerequisites are complete. Independent work can run together; overlapping work waits under the ownership rules.
+4. **Build and check.** Workers implement each issue in its own Git workspace, run the required checks, commit changes, and address review feedback when needed.
+5. **Combine accepted changes.** Issue branches merge into a shared feature branch. Merge problems go through recovery. Successful issues are updated and closed as they finish; failed or blocked issues stay open with an explanation.
+6. **Review the final PR.** Once every issue has an outcome, the coordinating agent reports what finished and what could not proceed, and prepares the PR from the shared feature branch.
+
+This example uses GitHub. When GitHub is unavailable, local planning and permitted local issue intake remain available; GitHub updates and PR creation still require access.
+
+</details>
+
+<a id="execution-flow"></a>
+
+## How a run works
+
+The main agent prepares the plan. A Python scheduler keeps ready issues moving. Each issue gets its own coordinator, which assigns implementation, review, and recovery work to workers.
+
+| Role | In plain language |
+| --- | --- |
+| **Main orchestrator** | The agent in your main session. It prepares issues and context, watches the run, and produces the final report and PR. It does not implement issues itself. |
+| **Python pool** | One scheduler starts ready issues, respects dependencies and ownership limits, fills freed slots, saves outcomes, and performs per-issue GitHub updates. |
+| **Issue coordinator** | Called a *Sub-Coordinator* in the source. It owns one issue from scoring and model selection through implementation, review, integration, and a compact report. |
+| **Workers** | Each does one job: score, plan, implement, review, or revise. Recovery workers handle missing or invalid reports and failed merges. |
+
+A **worktree** is a separate Git working folder and branch. An **artifact** is a saved result file, such as a plan, review, or verification report. These let the next agent continue from files rather than relying on chat memory.
+
+The default is up to **four issue coordinators** at once, subject to readiness and ownership rules. Coordinators also launch workers for their phases; four is the issue limit, not a total process limit. Use `PARALLEL_JOBS=1` for one issue at a time.
+
+Only completed prerequisites release dependent issues. GitHub task dependencies come from `## Blocked by`; a parent PRD link is context, not a dependency. New plans use strict concurrency rules to keep overlapping work apart.
+
+A final PR proposes accepted changes to the base branch. Creating it does not merge it. Successful issues are closed during the run; failed and blocked issues stay open with evidence.
+
+<details>
+<summary><strong>Detailed execution flow and architecture diagram</strong></summary>
+
+```mermaid
+flowchart TD
+    A[Requirements and constraints] --> B[Issues and dependency plan]
+    B --> C[Main orchestrator prepares state and issue context]
+    C --> D[Python pool admits ready issues within concurrency limits]
+    D --> E[Issue coordinator in an isolated Git worktree]
+    E --> F[Complexity routing, planning and implementation]
+    F --> G[Review and verification]
+    G -->|Changes needed| F
+    G -->|Accepted| H[Verified integration into the shared feature branch]
+    H --> I[Persist result and update issue progress]
+    I --> D
+    D -->|No active or ready issues| J[Read final state and report blockers or create final PR]
+```
+
+1. The main orchestrator loads the issues, writes the dependency/concurrency plan, and prepares context for every pending executable issue. New plans use strict concurrency metadata so overlapping work does not run together.
+2. One pool owns scheduling. It records each launch intent before dispatch, admits ready issues up to the configured limit, and fills freed slots as dependencies complete. Missing issue context must be supplied before that issue can launch.
+3. Each issue coordinator routes its own workers through implementation, review, and bounded recovery. Coordinator model selection and worker model selection remain independent. Structured artifacts and Git evidence determine completion.
+4. Accepted work goes through verified Git integration. Merge failures enter merge recovery; only completed dependencies unblock further work. The pool persists terminal reports and applies authorized GitHub progress updates.
+5. The main orchestrator watches the pool, reads the final state, and prepares the final ledger and PR. A drained pool can still have blocked or unreachable issues, which must be reported.
+
+</details>
+
+<details>
+<summary><strong>Paired design: two colleagues, one decision document</strong></summary>
+
+Use `pair-colleague` separately when you want to compare solutions before implementing one.
+
+You explicitly choose each colleague's agent, model, and reasoning effort. Both work read-only and receive the same saved context for each round. The coordinating agent reads both responses, records agreements and disagreements, and chooses the next focus.
+
+Defaults are **at least 3 rounds and at most 8**. Matching “ready” responses do not end the discussion automatically: the coordinating agent decides whether the evidence is sufficient. It then writes `final-solution.md` with the selected approach, rejected alternatives, risks, and unresolved disagreements.
+
+Runtime flow: `pair start` → `pair run-round` → coordinator assessment and `pair record-decision` → another round or `pair finalize`.
+
+`pair status --run-dir PATH` reports the resume point. A busy round (exit 4) means wait and collect the existing attempt rather than launch another. See the [skill instructions](skills/pair-colleague/SKILL.md) for configuration and exact steps.
+
+</details>
+
+## Progress, failures, and recovery
+
+Progress messages show the current stage and activity counts. Saved state records what is waiting, running, completed, or blocked.
+
+**A successful process exit is not enough to mark work complete.** Managed results must pass validation, including required verification and Git evidence for implementation work. Unverified changes are preserved for recovery rather than counted as successful.
+
+Existing agents can still be running after a chat or terminal stops. Resume using the saved run: the runtime checks process identities and results before starting replacements. Live or uncertain ownership prevents duplicate launches. An empty pool can still leave blocked or unreachable issues, so the final report must show what could not proceed.
+
+<details>
+<summary><strong>Saved files, resuming, and cleanup</strong></summary>
+
+| Path | What it contains |
+| --- | --- |
+| `.run-with-it/main-state.json` | Overall plan, issue states, completed summaries, and final ledger. |
+| `.run-with-it/issues/<n>/report.json` | A compact result for one issue, with verification and blockers. |
+| `.run-with-it/issues/<n>/sub-state.json` | The issue coordinator's resume point and saved worker identities. |
+| `.run-with-it/issues/<n>/workers/` | Plans, reviews, reports, state, and logs for individual attempts. |
+| `.run-with-it/worktrees/` | Separate workspaces for issue implementation and integration. |
+| `.pair-colleague/runs/` | Saved discussion rounds, coordinator decisions, and final decision documents. |
+
+Restart with the same pool configuration or pair run directory so existing attempts can be reconciled. Do not reset running issues to pending just because the session ended.
+
+Failed or interrupted runs retain state and worktrees. Before discarding a run, use the runtime's stop operation to confirm shutdown. Destructive cleanup needs authorization, and user-modified files are preserved. Exact cleanup rules live in [run-with-it](skills/run-with-it/SKILL.md).
+
+</details>
+
+## Technical reference
+
+Expand the part you need. The [skill instructions](skills/) and maintained runtime code define exact behavior.
+
+<a id="model-routing-configuration"></a>
+
+### Model selection and configuration
+
+Issues are scored for difficulty. The router uses the difficulty, worker role, eligible models, availability, and configured usage targets to choose an agent/model pair. Planning moves up two difficulty levels and review one, capped at the highest.
+
+Model policy lives in [`assets/agent-registry.json`](assets/agent-registry.json). CLI launch settings live in [`assets/agent-definitions.json`](assets/agent-definitions.json). The issue coordinator's model and the worker models it routes are independent choices.
+
+<details>
+<summary><strong>Common execution settings</strong></summary>
+
+| Setting | What it changes |
+| --- | --- |
+| `PARALLEL_JOBS` | Maximum active issues; default 4. Dependencies and ownership conflicts can reduce actual concurrency. |
+| `ISSUE_LABEL` / `ISSUE_LIMIT` | Intake label and maximum issue count; defaults `ready-for-agent` and 1000. |
+| `SUB_COORD_AGENT` / `SUB_COORD_MODEL` | Issue coordinator selection, separate from worker routing. |
+| `FORCED_AGENT` / `FORCED_MODEL` | Explicit worker overrides, subject to compatibility and availability checks. |
+| `AGENT_REGISTRY_FILE` | A custom model and routing registry. |
+
+For the full list, see [run-with-it](skills/run-with-it/SKILL.md).
+
+</details>
+
+<details>
+<summary><strong>Model catalog, eligibility, effort, and usage targets</strong></summary>
 
 For model and routing updates, edit [`assets/agent-registry.json`](assets/agent-registry.json).
 CLI commands, permissions, prompt transports, and agent aliases live separately in
@@ -104,81 +348,14 @@ registries remain supported. Python consumers should call
 memberships into the runner/router's self-contained version 1 data structure.
 The expanded result can also be saved as a standalone registry override.
 
-## Installation
+</details>
 
-Clone this repository and create a Python environment. On macOS/Linux, select an installed Python 3.12 or newer:
+<a id="runtime-commands"></a>
 
-```text
-python3.12 -m venv .venv
-.venv/bin/python -m pip install .
-.venv/bin/python -m ai_skills install --source . --dry-run
-.venv/bin/python -m ai_skills install --source .
-```
+### Runtime operations
 
-On Windows, bootstrap with the Python launcher and use the environment's interpreter:
-
-```text
-py -3.12 -m venv .venv
-.venv\Scripts\python.exe -m pip install .
-.venv\Scripts\python.exe -m ai_skills install --source . --dry-run
-.venv\Scripts\python.exe -m ai_skills install --source .
-```
-
-The examples below use `python` to mean that environment's interpreter. Activate the environment or substitute its full interpreter path from above; every runtime command then has the same arguments on all three systems. `python -m ai_skills` and the installed `ai-skills` console command are equivalent.
-
-Installation packages the maintained prompts, registry, and all seven skills into an immutable runtime under `~/.ai-skill-collections/assets/runtimes/`. It publishes `runtime.json` only after verification. Use `--assets-dest PATH` to select another destination and `--only codex` (or another listed profile) to limit registrations. `install --list` lists profiles. A built wheel can replace `.` in `--source`.
-
-Existing unowned skill directories are protected. Inspect the dry-run output, then use `--replace-existing` to migrate an older installation explicitly; the installer preserves backups and records ownership. Registration uses local packaged content rather than fetching a changing branch.
-
-```text
-python -m ai_skills doctor --json
-python -m ai_skills agent list
-python -m ai_skills uninstall --dry-run
-python -m ai_skills uninstall
-```
-
-Uninstall removes owned registrations and restores preserved originals when safe. Edited or unrecognized content is preserved. Runtime versions are retained because other runs may still pin them; inspect the reported retained paths before any manual cleanup.
-
-## Skills
-
-| Skill | Purpose |
-| --- | --- |
-| `break-req` | Discover requirements, constraints, and dependencies. |
-| `create-git-issue` | Turn resolved requirements into a PRD and implementation issues. |
-| `run-with-it` | Coordinate a rolling pool of issue workers and produce a final PR. |
-| `pair-colleague` | Run two independent solution colleagues through bounded discussion. |
-| `help-me-debug` | Collect evidence and diagnose failures before implementation. |
-| `tdd-implementation` | Implement with behavior-focused red/green/refactor cycles. |
-| `save-tokens` | Use compressed communication when requested. |
-
-Invoke skills inside your coding agent using its normal skill mechanism. A typical workflow is `break-req` → `create-git-issue` → `run-with-it`. Existing ready-for-agent issues can enter directly at `run-with-it`. The skill instructions define the required artifacts, authority boundaries, verification, and final PR flow.
-
-## Execution flow
-
-```mermaid
-flowchart TD
-    A[Requirements and constraints] --> B[Issues and dependency plan]
-    B --> C[Main orchestrator prepares state and issue context]
-    C --> D[Python pool admits ready issues within concurrency limits]
-    D --> E[Issue coordinator in an isolated Git worktree]
-    E --> F[Complexity routing, planning and implementation]
-    F --> G[Review and verification]
-    G -->|Changes needed| F
-    G -->|Accepted| H[Verified integration into the shared feature branch]
-    H --> I[Persist result and update issue progress]
-    I --> D
-    D -->|No active or ready issues| J[Read final state and report blockers or create final PR]
-```
-
-1. The main orchestrator loads the issues, writes the dependency/concurrency plan, and prepares context for every pending executable issue. New plans use strict concurrency metadata so overlapping work does not run together.
-2. One pool owns scheduling. It records each launch intent before dispatch, admits ready issues up to the configured limit, and fills freed slots as dependencies complete. Missing issue context must be supplied before that issue can launch.
-3. Each issue coordinator routes its own workers through implementation, review, and bounded recovery. Coordinator model selection and worker model selection remain independent. Structured artifacts and Git evidence determine completion.
-4. Accepted work goes through verified Git integration. Merge failures enter merge recovery; only completed dependencies unblock further work. The pool persists terminal reports and applies authorized GitHub progress updates.
-5. The main orchestrator watches the pool, reads the final state, and prepares the final ledger and PR. A drained pool can still have blocked or unreachable issues, which must be reported.
-
-For a paired design discussion, invoke `pair-colleague` separately. Its flow is `pair start` → `pair run-round` → coordinator assessment and `pair record-decision` → another round or `pair finalize`. Explicitly choose both colleagues as described in the [skill instructions](skills/pair-colleague/SKILL.md). `pair status --run-dir PATH` reports the resume point; a busy round (exit 4) means wait and collect the existing attempt rather than launch another.
-
-## Runtime commands
+<details>
+<summary><strong>CLI commands, pool configuration, watching, and stopping</strong></summary>
 
 | Command | Responsibility |
 | --- | --- |
@@ -242,7 +419,17 @@ The stop command first requests that pool admission halt, then verifies and stop
 
 Provider selection follows explicit configuration, environment overrides, then registry defaults. `SUB_COORD_AGENT`/`SUB_COORD_MODEL` select coordinator execution; `FORCED_AGENT`/`FORCED_MODEL` constrain worker routing independently. Deprecated ambient `AGENT`/`MODEL` aliases remain available for direct agent execution, while dispatchers clear them before launching providers. Credentials are inherited at execution time and are not serialized into runtime records.
 
-## Managed attempt reporting
+</details>
+
+<details>
+<summary><strong>Provider prompt transport and AGY compatibility</strong></summary>
+
+Maintained providers receive full prompts through stdin, avoiding operating-system command-line length limits. CLI text input and output use UTF-8 on every platform. AGY requires a current CLI supporting `--input-format` and `--output-format`; the runtime checks these flags before launching a paid attempt and reports an upgrade instruction for older builds. Its [documented streaming protocol](https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin) is decoded back into the normal response text while retaining raw output for recovery. Custom registries retain argv input by default; set `invocation.prompt_transport` to `stdin` for a provider that supports plain stdin.
+
+</details>
+
+<details>
+<summary id="managed-attempt-reporting"><strong>Managed attempt reporting and validated outcomes</strong></summary>
 
 Dispatcher-managed workers receive one packaged `artifact-protocol.md` appended to their role prompt with authoritative run/attempt IDs and named absolute output paths. Every terminal attempt publishes a report at its usual primary result path: verified success uses the existing role schema; failed, blocked, or orderly interrupted work uses `schema_version=1`, `artifact_kind="role_failure"`, exact `run_id`, `attempt_id`, `issue`, `role`, terminal `status`, and nonempty `reason` and `summary`. Optional verification/evidence records describe actual commands and errors. Failure publication needs no commit, review instructions, or plan Markdown; it must never claim passing verification. Use the existing `ai-skills artifact write-json` command for both paths. A failed test is a reason to publish a failure report, not to omit it. Success still requires the existing commit/Git proof or verified no-op, passing required verification, and role companions.
 
@@ -252,7 +439,10 @@ A Sub-Coordinator's valid `blocked`, `failed-review`, `merge_failed`, or `failed
 
 Unknown process ownership or missing exit evidence leaves the attempt nonterminal and prohibits duplicate launch. Adoption rechecks identity, report evidence and the outcome journal after proven shutdown, then repairs interrupted publication without relaunching. The outcome/state/DONE writes are ordered, not a transaction: a crash can leave later files missing, and storage failure may prevent even a terminal outcome from being recorded. Claims remain for reconciliation; corrupt/conflicting journals fail closed. Abrupt process termination may prevent the provider from publishing a failure report, so the runtime records the evidence it can prove rather than fabricating successful work.
 
-## Recovery and upgrades
+</details>
+
+<details>
+<summary id="recovery-and-upgrades"><strong>Runtime versions, process ownership, and recovery details</strong></summary>
 
 A pool records its Python engine and interpreter in `.run-with-it/engine.json`; pair runs pin their engine in `config.json`. Commands select that interpreter before parsing version-specific arguments. Installing a newer default does not move an existing run to another runtime. Missing or incompatible pinned runtimes fail explicitly.
 
@@ -266,7 +456,25 @@ Restart with the same pool configuration or pair run directory to reconcile exis
 
 State updates use atomic replacement and ownership-aware directory locks. Process records include creation identity, allowing a restarted controller to distinguish owned workers from recycled PIDs. On POSIX the runtime owns a process session; deliberately detached descendants that create a new session can escape that boundary. On Windows, suspended launch into a kill-on-close Job Object prevents the normal child-launch race. Consoleless Windows shutdown terminates the owned job. Use a local filesystem supporting atomic creation and rename for runtime state.
 
+</details>
+
+## Repository map
+
+| Where | What belongs there |
+| --- | --- |
+| [`skills/`](skills/) | The seven skill guides: scope, workflow, boundaries, and outputs. |
+| [`src/ai_skills/`](src/ai_skills/) | Python installation, scheduling, dispatch, routing, state, result validation, Git integration, and paired discussions. |
+| [`assets/`](assets/) | Worker prompts, coordinator rules, agent definitions, model policy, and the shared result-reporting protocol. |
+| [`tests/`](tests/) | Unit, integration, contract, and packaging checks using fixture providers and temporary repositories. |
+| [`pyproject.toml`](pyproject.toml) | Dependencies, the CLI entry point, and packaged resources. |
+| [`.github/workflows/test.yml`](.github/workflows/test.yml) | Native test matrix for Windows, macOS, and Linux with Python 3.12 and 3.15. |
+
+The maintained runtime is Python on all three operating systems. Earlier Bash and PowerShell launch recipes are historical. Generated logs, run state, and virtual environments are not maintained source.
+
 ## Development
+
+<details>
+<summary><strong>Run tests and build the package</strong></summary>
 
 ```text
 python -m pip install -e ".[dev]"
@@ -276,6 +484,19 @@ python -m build
 
 CI runs the native Python suite on Windows, macOS, and Linux with Python 3.12 and 3.15. Tests use fixture providers and temporary repositories, including process recovery, scheduling, artifact policy, installation, and wheel resources. Provider credentials and paid requests are unnecessary for the suite. Live provider authentication and interactive registration remain environment-specific checks.
 
-Generated logs, run state, virtual environments, build outputs, and local migration reports are ignored. The maintained source lives in `src/ai_skills/`; provider prompts and routing metadata live in `assets/`. The small numerical example is `examples/add_two_numbers.py`.
+</details>
 
-See [explainer.html](explainer.html) for the workflow walkthrough and [LICENSE](LICENSE) for the AGPL-3.0 license.
+## Credits
+
+The following skills contain closely matching material adapted from upstream sources. Each skill's Credits section links the compared version and identifies Maestro-AI's additions.
+
+| Maestro-AI skill | Upstream source |
+| --- | --- |
+| [`break-req`](skills/break-req/SKILL.md#credits) | Matt Pocock's `grill-me` in [mattpocock/skills](https://github.com/mattpocock/skills). |
+| [`create-git-issue`](skills/create-git-issue/SKILL.md#credits) | Matt Pocock's `to-prd`, `to-issues`, and `triage` in [mattpocock/skills](https://github.com/mattpocock/skills). |
+| [`tdd-implementation`](skills/tdd-implementation/SKILL.md#credits) | Matt Pocock's `tdd` in [mattpocock/skills](https://github.com/mattpocock/skills). |
+| [`save-tokens`](skills/save-tokens/SKILL.md#credits) | Julius Brussee's `caveman` in [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman). |
+
+## License
+
+See [LICENSE](LICENSE) for the repository's AGPL-3.0 license. Upstream credit and source links are recorded in the adapted skill files.
