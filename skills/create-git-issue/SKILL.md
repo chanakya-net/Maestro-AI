@@ -403,3 +403,9 @@ At completion, report:
 - Parent reference used by implementation slices.
 - Which issues are ready for runtime execution by `run-with-it`.
 - Any unresolved decisions that block runtime execution.
+
+## Credits
+
+PRD synthesis, vertical-slice issue planning, and tracker vocabulary are adapted from Matt Pocock's [to-prd](https://github.com/mattpocock/skills/blob/b843cb5ea74b1fe5e58a0fc23cddef9e66076fb8/skills/engineering/to-prd/SKILL.md), [to-issues](https://github.com/mattpocock/skills/blob/b843cb5ea74b1fe5e58a0fc23cddef9e66076fb8/skills/engineering/to-issues/SKILL.md), and [triage](https://github.com/mattpocock/skills/blob/b843cb5ea74b1fe5e58a0fc23cddef9e66076fb8/skills/engineering/triage/SKILL.md) skills in [mattpocock/skills](https://github.com/mattpocock/skills).
+
+Maestro-AI combines these workflows and adds the requirements handoff, implementation steps, technical context snapshots, runtime routing hints, slice-sizing limits, and local publishing fallback.

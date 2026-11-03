@@ -138,3 +138,9 @@ At completion, report tests run, observed behavior coverage, and remaining risks
 - [ ] Positive case is covered for this behavior
 - [ ] Negative case is covered for this behavior
 - [ ] No speculative or unrelated features added
+
+## Credits
+
+The TDD workflow, vertical-slice examples, and per-cycle checklist are adapted from Matt Pocock's [tdd skill](https://github.com/mattpocock/skills/blob/b843cb5ea74b1fe5e58a0fc23cddef9e66076fb8/skills/engineering/tdd/SKILL.md) in [mattpocock/skills](https://github.com/mattpocock/skills).
+
+Maestro-AI adds assigned-work boundaries, positive and negative coverage for each behavior, and alignment with the repository's existing test stack and architecture.

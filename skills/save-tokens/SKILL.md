@@ -44,3 +44,9 @@ After:  "Inline prop -> new obj ref each render -> re-render. Shallow compare !=
 - Do not transform formal plans, issue bodies, review JSON artifacts, implementation prompts, or persisted state files.
 - Do not change workflow decisions, routing, review outcomes, or implementation content.
 - Type "stop" or "normal mode" to exit and revert to standard responses
+
+## Credits
+
+The response-compression approach is adapted from Julius Brussee's [caveman skill](https://github.com/JuliusBrussee/caveman/blob/ef6050c5e1848b6880ff47c32ade1a608a64f85e/skills/caveman/SKILL.md) in [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman).
+
+Maestro-AI adds an explicit symbol glossary and more specific boundaries for durable workflow artifacts, while limiting compression to assistant narration.

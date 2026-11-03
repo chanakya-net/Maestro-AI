@@ -57,3 +57,9 @@ Once all branches are resolved:
 4. Inform the user that requirements are ready and they can now run the `create-git-issue` skill.
 
 Do not proceed beyond `technical_requirements.md`, even if the next step is obvious.
+
+## Credits
+
+The requirements interview is adapted from Matt Pocock's [grill-me skill](https://github.com/mattpocock/skills/blob/b843cb5ea74b1fe5e58a0fc23cddef9e66076fb8/skills/productivity/grill-me/SKILL.md) in [mattpocock/skills](https://github.com/mattpocock/skills).
+
+Maestro-AI adds the requirements-only scope, cross-layer technical audit, and structured `technical_requirements.md` handoff with implementation steps.
