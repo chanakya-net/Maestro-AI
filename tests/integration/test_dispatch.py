@@ -934,7 +934,8 @@ else:
     assert json.loads((tmp_path / 'external-response').read_bytes())['result']['status'] == 'success'
 
 
-@pytest.mark.parametrize('kind', ['nonzero', 'stop', 'zero-exit-with-stop', 'runner-failure', 'no-durable-exit'])
+@pytest.mark.parametrize('kind', ['nonzero', 'stop', 'zero-exit-with-stop', 'runner-failure',
+                                  'runner-nonzero', 'no-durable-exit'])
 def test_captured_result_requires_successful_owned_exit(tmp_path, monkeypatch, kind):
     from ai_skills import dispatch
 
@@ -950,6 +951,8 @@ capture.write_text(json.dumps(envelope), encoding='utf-8')
         result = original(run)
         if kind == 'runner-failure':
             raise RuntimeError('injected runner failure')
+        if kind == 'runner-nonzero':
+            return replace(result, return_code=1)
         if kind == 'zero-exit-with-stop':
             dispatch._record_stop_intent(replace(config, agent_run=run), 'hard-limit-exceeded')
         if kind == 'no-durable-exit':
@@ -1038,6 +1041,68 @@ capture.write_text(json.dumps(envelope), encoding='utf-8')
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
     assert capture.read_bytes() == original_capture
     assert json.loads(config.agent_run.result_file.read_bytes()) == json.loads(original_capture)['result']
+
+
+@pytest.mark.parametrize('finish', ['foreground', 'adoption', 'direct-result'])
+def test_capture_requires_runner_record_after_process_state_write_fails(tmp_path, monkeypatch, finish):
+    from ai_skills import dispatch, runner
+    from ai_skills.processes import ProcessIdentity, ProcessSupervisor
+
+    direct = "result_path.write_text(json.dumps(dict(report, publication='direct')), encoding='utf-8')"
+    config = capture_worker(tmp_path, BUILD_CAPTURE + f'''
+capture.write_text(json.dumps(envelope), encoding='utf-8')
+{direct if finish == 'direct-result' else ''}
+''', result_capture=CAPTURE_CHECKS)
+    process_file = Path(str(config.state_file) + '.process.json')
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    journal = Path(str(config.state_file) + '.outcome.json')
+    captured = []
+
+    def fail_initial_process_write(path, value):
+        assert path == process_file and value['state'] == 'alive'
+        supervisor = ProcessSupervisor(Path(value['record_directory']))
+        identity = ProcessIdentity(**value['identity'])
+        deadline = time.monotonic() + 5
+        while supervisor.return_code(identity) is None and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert supervisor.return_code(identity) == 0
+        captured.append(capture.read_bytes())
+        raise OSError('injected runner process-state write failure')
+
+    monkeypatch.setattr(runner, 'write_json_atomic', fail_initial_process_write)
+    if finish == 'adoption':
+        def interrupt_publication(*args, **kwargs):
+            raise OSError('injected result storage interruption')
+
+        with monkeypatch.context() as interruption:
+            interruption.setattr(dispatch, 'write_text_atomic', interrupt_publication)
+            interruption.setattr(dispatch.artifacts, 'write_json_atomic', interrupt_publication)
+            with pytest.raises(OSError, match='injected result storage interruption'):
+                dispatch_worker(config)
+        assert json.loads(journal.read_bytes())['status'] == 'pending'
+        assert not config.agent_run.result_file.exists()
+        assert not config.agent_run.done_file.exists()
+        monkeypatch.setattr(dispatch, '_launcher_state', lambda state: 'dead')
+        result = dispatch.adopt_worker(config.state_file)
+        assert 'reason=capture-runner-exit-unconfirmed' in config.agent_run.events_log.read_text(encoding='utf-8')
+    else:
+        result = dispatch_worker(config)
+
+    assert not process_file.exists()
+    assert captured == [capture.read_bytes()]
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+    outcome = json.loads(journal.read_bytes())
+    assert outcome['provider_return_code'] == 0
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    done = config.agent_run.done_file.read_text(encoding='utf-8')
+    if finish == 'direct-result':
+        assert result.state == 'completed'
+        assert report == {**json.loads(captured[0])['result'], 'publication': 'direct'}
+        assert outcome['status'] == 'success' and '|status=success|' in done
+    else:
+        assert result.state == 'artifact-recovery-required'
+        assert report['status'] == 'artifact_recovery_required'
+        assert outcome['status'] == 'failed' and '|status=failed|' in done
 
 
 def test_runner_preserves_capture_created_between_admission_and_launch(tmp_path, monkeypatch):

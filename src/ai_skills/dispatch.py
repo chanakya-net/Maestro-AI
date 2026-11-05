@@ -419,7 +419,7 @@ def _work(config):
     reason = (result.unavailable_reason or 'dispatch-bootstrap-failed') if prelaunch else timeout_reason or result.unavailable_reason or (errors[0] if errors else '')
     return _finalize_attempt(config, provider_return_code=code, reason=reason,
         failure_class='infrastructure' if result.unavailable_reason else 'capability',
-        prelaunch_failure=prelaunch)
+        prelaunch_failure=prelaunch, runner_failed=result.return_code != 0)
 
 
 def _bind_result_capture(config, registry, original_run):
@@ -542,12 +542,12 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     return adopt_worker(state_file)
 
 
-def _provider_record(config):
-    """Resolve a lost handshake through the exclusive supervisor record."""
+def _provider_record(config, *, allow_supervisor_fallback=True):
+    """Read runner process state, with optional fallback for a lost handshake."""
     run = config.agent_run
     supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
     process = _process_record(config)
-    if not process.get('identity'):
+    if not process.get('identity') and allow_supervisor_fallback:
         raw = supervisor.lookup_attempt(run.run_id, run.attempt_id)
         if raw is not None:
             process = {**raw, 'record_directory': str(supervisor.directory)}
@@ -741,7 +741,9 @@ def _publish_captured_result(config, *, eligible):
         return
     if not eligible:
         return _capture_rejected(run, 'capture-attempt-not-successful')
-    process, supervisor = _provider_record(config)
+    # The supervisor can prove provider exit even if the runner failed before
+    # writing its process state. Only the runner's own record proves completion.
+    process, supervisor = _provider_record(config, allow_supervisor_fallback=False)
     if (not process.get('identity') or process.get('state') != 'dead' or
             type(process.get('return_code')) is not int or process['return_code'] != 0):
         return _capture_rejected(run, 'capture-runner-exit-unconfirmed')
@@ -770,7 +772,7 @@ def _publish_captured_result(config, *, eligible):
 
 def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                       reason: str = '', failure_class: str = 'capability',
-                      prelaunch_failure: bool = False) -> WorkerResult:
+                      prelaunch_failure: bool = False, runner_failed: bool = False) -> WorkerResult:
     """Journal one decision after callers prove owned death or no launch.
 
     Outcome -> state -> DONE -> event. A storage failure propagates, retaining
@@ -808,7 +810,8 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         if stop_intent:
             reason = stop_intent['reason']
         if previous is not None and not terminal and run.final_response_file is not None:
-            _publish_captured_result(config, eligible=provider_return_code == 0 and not reason and not prelaunch_failure)
+            _publish_captured_result(config, eligible=(provider_return_code == 0 and not reason and
+                not prelaunch_failure and not runner_failed))
         payload, error = artifacts.load_json(str(run.result_file))
         typed = isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure'
         status, issue_outcome = 'failed', None
