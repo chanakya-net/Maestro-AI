@@ -598,3 +598,41 @@ while True:time.sleep(.01)
     payload=json.loads(config.agent_run.result_file.read_text())
     assert payload['status']=='blocked' and payload['reason']==provider_reason
     assert not (tmp_path/'plan.md').exists()
+
+
+def test_hard_limit_rejected_capture_keeps_salvage_and_recovery_budget(tmp_path):
+    from ai_skills.recovery import RecoveryEvidence, RecoveryPolicy, decide_recovery
+    from test_dispatch import CAPTURE_CHECKS, capture_worker
+    body = '''
+capture = Path(args[-2])
+Path('feature.txt').write_text('uncommitted progress')
+raw = json.dumps({**metadata['result_capture']['envelope'], 'result': {'status': 'success'}}).encode()
+capture.write_bytes(raw)
+result_path.with_name('capture-original').write_bytes(raw)
+time.sleep(60)
+'''
+    config = capture_worker(tmp_path, body, result_capture=CAPTURE_CHECKS, hard_limit_seconds=.5)
+    result = dispatch_worker(config)
+    assert (result.state, result.return_code, result.reason) == (
+        'artifact-recovery-required', 75, 'artifact-recovery-required')
+    state = json.loads(config.state_file.read_text())
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_text())
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_text())
+    assert state['stop_intent']['reason'] == 'hard-limit-exceeded'
+    assert outcome['reason'] == 'artifact-recovery-required' and outcome['worker_return_code'] == 75
+    assert outcome['git_progress']['head'] != saved['pre_spawn_head']
+    report = json.loads(config.agent_run.result_file.read_text())
+    assert report['status'] == 'artifact_recovery_required'
+    assert 'dispatcher committed the dirty tree' in json.dumps(report)
+    assert Path(saved['agent_run']['final_response_file']).read_bytes() == config.agent_run.result_file.with_name('capture-original').read_bytes()
+    event, = [line for line in config.agent_run.events_log.read_text().splitlines()
+              if 'type=dispatch-capture-rejected|' in line]
+    for part in (f"run_id={saved['agent_run']['run_id']}", f"attempt_id={saved['agent_run']['attempt_id']}",
+                 'issue=7', 'role=impl', 'cycle=4', 'reason=capture-attempt-not-successful'):
+        assert part in event
+    evidence = RecoveryEvidence(issue='7', sub_state={'phase': 'impl'}, workers=((
+        {'role': 'impl', 'cycle': 4}, {'state': result.state}, True, True, {'alive': False}),))
+    policy = RecoveryPolicy()
+    decision = decide_recovery(evidence, policy)
+    assert (decision.action, decision.reason) == ('spawn_recovery', 'artifact-recovery-required')
+    assert decision.details['max_recovery_attempts'] == policy.max_attempts
