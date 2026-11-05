@@ -241,3 +241,20 @@ def test_coordinator_writer_rejects_malformed_report_atomically(tmp_path):
     target=tmp_path/'report.json'
     assert artifacts.main(['write-json','--role','sub-coord','--issue','7','--payload-file',str(source),'--result-file',str(target)]) == 1
     assert not target.exists()
+
+
+def test_check_evidence_reason_table():
+    from ai_skills.verification import check_evidence_reason
+
+    sha = 'a' * 40
+    check = {'command': 'check', 'passed': True, 'evidence': 'exit 0'}
+    passing = {'passed': True, 'commit_sha': sha, 'checks': [check]}
+    for report, reason in (
+        (passing, ''),
+        (None, 'implementation-verification-failed'),
+        ({**passing, 'commit_sha': 'b' * 40}, 'verification-evidence-commit-mismatch'),
+        ({**passing, 'checks': []}, 'verification-checks-incomplete'),
+        ({**passing, 'checks': [{**check, 'command': 'other'}]}, 'verification-checks-incomplete'),
+        ({**passing, 'checks': [{**check, 'evidence': ' '}]}, 'verification-check-not-passed'),
+    ):
+        assert check_evidence_reason(report, expected_commit=sha, required_checks=['check']) == reason

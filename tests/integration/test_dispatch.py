@@ -668,3 +668,410 @@ def test_event_storage_failure_keeps_terminal_journal_done_and_repairs_without_l
     monkeypatch.setattr(dispatch.EventBus,'emit',emit)
     assert dispatch.adopt_worker(config.state_file).state=='completed'
     with pytest.raises(RuntimeError,match='prohibits relaunch'):dispatch_worker(config)
+
+
+def test_result_capture_configuration_round_trip_and_rejections(tmp_path):
+    explicit = {'required_checks': ['check A', 'check B'], 'review_comment_ids': []}
+    inputs = {
+        'state_file': tmp_path / 'state.json', 'result_capture': explicit,
+        'final_response_file': 'caller.json',
+        'agent_run': {'agent': 'codex', 'final_response_file': 'nested.json',
+                      'result_capture_context': {'spoofed': True}},
+    }
+    config = WorkerConfig.from_sources(inputs, {'RUN_WITH_IT_FINAL_RESPONSE_FILE': 'parent.json'})
+    assert config.result_capture == explicit
+    assert config.agent_run.final_response_file is None
+    assert config.agent_run.result_capture_context is None
+    record = config.to_record()
+    assert WorkerConfig.from_record(record).result_capture == explicit
+    del record['result_capture']
+    del record['agent_run']['final_response_file']
+    del record['agent_run']['result_capture_context']
+    assert WorkerConfig.from_record(record).result_capture is None
+    assert WorkerConfig.from_sources({'state_file': config.state_file},
+        {'RUN_WITH_IT_RESULT_CAPTURE': json.dumps(explicit)}).result_capture is None
+    for bad in ([], {}, {'required_checks': ['a'], 'required_review_ids': []},
+                *({**explicit, 'required_checks': checks} for checks in ([], ['a', 'a'], [' '], [1])),
+                {**explicit, 'review_comment_ids': ['id']}):
+        with pytest.raises(ValueError):
+            WorkerConfig.from_sources({**inputs, 'result_capture': bad}, {})
+    assert not config.state_file.exists()
+
+
+CAPTURE_CHECKS = {'required_checks': ['feature check', 'git check'], 'review_comment_ids': []}
+
+
+def capture_worker(tmp_path, body, *, help_flag=True, **options):
+    from ai_skills.git import git_output
+    from ai_skills.runner import load_registry
+
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    git_output(str(repo), 'init', '-q')
+    git_output(str(repo), 'config', 'user.name', 'Test')
+    git_output(str(repo), 'config', 'user.email', 'test@example.invalid')
+    git_output(str(repo), 'commit', '--allow-empty', '-qm', 'Baseline')
+    baseline = git_output(str(repo), 'rev-parse', 'HEAD')
+    (repo / '.git' / 'info' / 'exclude').write_text('/exec\n', encoding='utf-8')
+    script = repo / 'exec'
+    help_text = '--output-last-message <FILE>' if help_flag else 'Older Codex'
+    script.write_text(f'''import json, os, subprocess, sys, time
+from pathlib import Path
+if sys.argv[1:] == ['--help']:
+    print({help_text!r})
+    raise SystemExit(0)
+result_path = Path(os.environ['RUN_WITH_IT_RESULT_FILE'])
+state = Path(os.environ['RUN_WITH_IT_STATE_FILE'])
+with state.with_name('calls').open('a') as calls:
+    calls.write('run\\n')
+args = sys.argv[1:]
+prompt = sys.stdin.buffer.read()
+metadata = json.loads(prompt.decode('utf-8').rsplit('Authoritative attempt metadata:\\n', 1)[1])
+record = json.loads(Path(str(state) + '.config.json').read_text(encoding='utf-8'))
+''' + body, encoding='utf-8')
+    config = worker_config(tmp_path, '', issue_base_sha=baseline, **options)
+    registry = load_registry()
+    registry['agents']['codex']['invocation']['command'] = sys.executable
+    registry['agents']['claude']['invocation']['command'] = sys.executable
+    registry['agents']['claude']['invocation']['args_template'].insert(0, 'exec')
+    config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    run = config.agent_run.replace(agent='codex-cli', role='impl', cycle=4, repo_root=repo,
+        unattended=True, record_directory=tmp_path / 'records', issue_dir=tmp_path / 'issue')
+    return replace(config, agent_run=run)
+
+
+@pytest.mark.parametrize('variant', ['supported', 'unsupported', 'legacy', 'claude', 'modify', 'review', 'plan', 'no-cycle'])
+def test_capture_binding_recorded_only_for_eligible_codex_attempts(tmp_path, variant):
+    bound = variant == 'supported'
+    config = capture_worker(tmp_path, f'''
+assert ('result_capture' in metadata) == {bound}
+assert ('--output-last-message' in args) == {bound}
+if {bound}:
+    assert args[-3:] == ['--output-last-message', record['agent_run']['final_response_file'], '-']
+    assert Path(args[-2]) == Path(record['agent_run']['stream_directory']) / 'final-response.json'
+    assert metadata['result_capture']['envelope']['cycle'] == '4'
+    assert metadata['result_capture']['required_checks'] == ['feature check', 'git check']
+else:
+    assert record['agent_run']['final_response_file'] is None
+    assert record['agent_run']['result_capture_context'] is None
+result_path.with_name('transport-ok').touch()
+if {variant == 'unsupported'}:
+    result_path.write_text(json.dumps({{'issue': '7', 'role': 'impl', 'status': 'success',
+        'no_op': True, 'commit_sha': 'NONE', 'files_committed': [],
+        'verification': {{'passed': True, 'commands': ['direct report check']}}}}), encoding='utf-8')
+''', help_flag=variant != 'unsupported', result_capture=None if variant == 'legacy' else CAPTURE_CHECKS)
+    if variant in ('modify', 'review', 'plan'):
+        config = replace(config, agent_run=config.agent_run.replace(role=variant))
+    if variant == 'review':
+        config = replace(config, agent_run=config.agent_run.replace(result_file=tmp_path / 'review-status.json'))
+    if variant == 'no-cycle':
+        config = replace(config, agent_run=config.agent_run.replace(cycle=''))
+    if variant == 'claude':
+        config = replace(config, agent_run=config.agent_run.replace(agent='claude'))
+    result = dispatch_worker(config)
+    assert (tmp_path / 'transport-ok').exists()
+    if variant == 'unsupported':
+        assert result.state == 'completed'
+        assert json.loads(config.agent_run.result_file.read_bytes())['no_op'] is True
+
+
+@pytest.mark.parametrize('kind', ['file', 'symlink', 'alias', 'conflicting-arg'])
+def test_admission_rejects_occupied_or_aliased_capture_path(tmp_path, kind):
+    config = capture_worker(tmp_path, '', result_capture=CAPTURE_CHECKS)
+    path = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    path.parent.mkdir()
+    if kind == 'file':
+        path.write_text('preserve', encoding='utf-8')
+    elif kind == 'symlink':
+        if os.name == 'nt':
+            pytest.skip('Windows test process may lack symlink privilege')
+        path.symlink_to(tmp_path / 'absent')
+    elif kind == 'alias':
+        config = replace(config, agent_run=config.agent_run.replace(log_file=path))
+    else:
+        config = replace(config, agent_run=config.agent_run.replace(extra_args=('--output-last-message=other',)))
+    with pytest.raises((RuntimeError, ValueError), match='capture|collision'):
+        dispatch_worker(config)
+    assert not config.state_file.exists()
+    assert not (tmp_path / 'calls').exists()
+    if kind == 'file':
+        assert path.read_text(encoding='utf-8') == 'preserve'
+    if kind == 'symlink':
+        assert path.is_symlink()
+
+
+BUILD_CAPTURE = '''
+contract = metadata['result_capture']
+capture = Path(args[-2])
+assert args[-3:] == ['--output-last-message', str(capture), '-']
+Path('feature.txt').write_text('implemented', encoding='utf-8')
+subprocess.run(['git', 'add', 'feature.txt'], check=True)
+subprocess.run(['git', 'commit', '-qm', 'Implement feature'], check=True)
+assert Path('feature.txt').read_text(encoding='utf-8') == 'implemented'
+subprocess.run(['git', 'diff', '--check', 'HEAD^', 'HEAD'], check=True)
+head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+report = {'schema_version': 1, 'issue': '7', 'role': 'impl', 'status': 'success',
+    'commit_sha': head, 'files_committed': ['feature.txt'], 'plan_deviations': [],
+    'verification': {'passed': True, 'commit_sha': head, 'commands': ['feature check', 'git check'],
+        'checks': [{'command': check, 'passed': True, 'evidence': 'observed exit 0'}
+                   for check in contract['required_checks']]}}
+envelope = {**contract['envelope'], 'result': report}
+'''
+
+
+def test_fake_codex_captured_commit_becomes_verified_result_after_one_invocation(tmp_path):
+    from ai_skills.dispatch import adopt_worker
+    from ai_skills.git import current_head, git_output
+
+    config = capture_worker(tmp_path, BUILD_CAPTURE + '''
+capture.write_text(json.dumps(envelope), encoding='utf-8')
+assert not result_path.exists()
+''', result_capture=CAPTURE_CHECKS)
+    config = WorkerConfig.from_sources({**config.to_record(), 'agent_run': config.agent_run}, os.environ)
+    root = str(config.agent_run.repo_root)
+    git_output(root, 'commit', '--allow-empty', '-qm', 'Attempt starting checkpoint')
+    pre_spawn_head = current_head(root)
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    captured_bytes = capture.read_bytes()
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report == json.loads(captured_bytes)['result']
+    assert report['commit_sha'] == current_head(root)
+    assert report['commit_sha'] != pre_spawn_head != config.issue_base_sha
+    assert report['verification']['commands'] == CAPTURE_CHECKS['required_checks']
+    journal = Path(str(config.state_file) + '.outcome.json')
+    journal_bytes = journal.read_bytes()
+    assert json.loads(journal_bytes)['status'] == 'success'
+    assert json.loads(journal_bytes)['git_progress']['pre_spawn_head'] == pre_spawn_head
+    assert '|status=success|source=dispatcher|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    assert adopt_worker(config.state_file).state == 'completed'
+    assert journal.read_bytes() == journal_bytes
+    assert capture.read_bytes() == captured_bytes
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize('mutation', [
+    "envelope['run_id'] = 'stale'",
+    "envelope['attempt_id'] = 'stale'",
+    "envelope['issue'] = '8'",
+    "envelope['role'] = 'modify'",
+    "envelope['cycle'] = 4",
+    "envelope['schema_version'] = True",
+    "envelope['artifact_kind'] = 'other'",
+    "report['issue'] = '8'",
+    "report.update(artifact_kind='role_failure', status='failed')",
+    "report['no_op'] = True",
+    "report['commit_sha'] = head[:12]",
+    "report['commit_sha'] = record['pre_spawn_head']",
+    "subprocess.run(['git', 'commit', '--allow-empty', '-qm', 'Later HEAD'], check=True)",
+    "subprocess.run(['git', 'checkout', '--orphan', 'unrelated'], check=True); "
+    "subprocess.run(['git', 'commit', '-qm', 'Unrelated HEAD'], check=True); "
+    "head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(); "
+    "report['commit_sha'] = report['verification']['commit_sha'] = head",
+    "Path('feature.txt').write_text('dirty')",
+    "subprocess.run(['git', 'config', 'status.showUntrackedFiles', 'no'], check=True); Path('untracked').touch()",
+    "report['verification'].pop('passed')",
+    "report['verification']['commit_sha'] = record['pre_spawn_head']",
+    "report['verification']['checks'].pop()",
+    "report['verification']['checks'][1] = report['verification']['checks'][0]",
+    "report['verification']['checks'][0]['passed'] = False",
+    "report['verification']['checks'][0]['evidence'] = ' '",
+    "report['verification']['checks'][0]['command'] = 'feature check '",
+    "raw = b'{malformed'",
+    "raw = bytes([255])",
+    "raw = b'```json\\n' + raw + b'\\n```'",
+    "raw = raw + raw",
+    "raw = b'[]'",
+    "raw = b'{\"schema_version\":1,' + raw[1:]",
+    "raw = raw[:-1] + b',\"nonfinite\":NaN}'",
+])
+def test_captured_result_rejections_never_publish_success(tmp_path, mutation):
+    encode = "raw = json.dumps(envelope).encode('utf-8')"
+    lines = (encode, mutation) if mutation.startswith('raw =') else (mutation, encode)
+    config = capture_worker(tmp_path, BUILD_CAPTURE + f'''
+{lines[0]}
+{lines[1]}
+capture.write_bytes(raw)
+result_path.with_name('capture-original').write_bytes(raw)
+''', result_capture=CAPTURE_CHECKS)
+    result = dispatch_worker(config)
+    assert result.state != 'completed'
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    assert capture.read_bytes() == (tmp_path / 'capture-original').read_bytes()
+    if config.agent_run.result_file.exists():
+        assert json.loads(config.agent_run.result_file.read_bytes())['status'] == 'artifact_recovery_required'
+    events = config.agent_run.events_log.read_text(encoding='utf-8')
+    diagnostic = next(line for line in events.splitlines() if 'type=dispatch-capture-rejected|' in line)
+    assert 'run_id=worker-7-impl-' in diagnostic and '|attempt_id=' in diagnostic
+    assert 'reason=' in diagnostic and 'observed exit 0' not in diagnostic
+    if mutation.startswith('raw =') and mutation != "raw = b'[]'":
+        assert 'reason=capture-invalid-json' in diagnostic
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'hardlink', 'directory', 'stream-alias'])
+def test_unsafe_capture_locations_are_never_read_as_results(tmp_path, kind):
+    if os.name == 'nt' and kind in ('symlink', 'stream-alias'):
+        pytest.skip('Windows test process may lack symlink privilege')
+    config = capture_worker(tmp_path, BUILD_CAPTURE + f'''
+target = result_path.with_name('external-response')
+target.write_text(json.dumps(envelope), encoding='utf-8')
+kind = {kind!r}
+if kind == 'symlink':
+    capture.symlink_to(target)
+elif kind == 'hardlink':
+    os.link(target, capture)
+elif kind == 'directory':
+    capture.mkdir()
+else:
+    capture.parent.rename(result_path.with_name('displaced-streams'))
+    capture.parent.symlink_to(result_path.with_name('displaced-streams'), target_is_directory=True)
+    capture.write_bytes(target.read_bytes())
+''', result_capture=CAPTURE_CHECKS)
+    assert dispatch_worker(config).state == 'artifact-recovery-required'
+    events = config.agent_run.events_log.read_text(encoding='utf-8')
+    assert 'reason=capture-path-unsafe' in events
+    assert json.loads((tmp_path / 'external-response').read_bytes())['result']['status'] == 'success'
+
+
+@pytest.mark.parametrize('kind', ['nonzero', 'stop', 'zero-exit-with-stop', 'runner-failure', 'no-durable-exit'])
+def test_captured_result_requires_successful_owned_exit(tmp_path, monkeypatch, kind):
+    from ai_skills import dispatch
+
+    suffix = {'nonzero': 'raise SystemExit(7)', 'stop': 'time.sleep(60)'}.get(kind, '')
+    config = capture_worker(tmp_path, BUILD_CAPTURE + f'''
+capture.write_text(json.dumps(envelope), encoding='utf-8')
+{suffix}
+''', result_capture=CAPTURE_CHECKS, hard_limit_seconds=2 if kind == 'stop' else 7200)
+
+    original = dispatch.run_agent
+
+    def invoke(run):
+        result = original(run)
+        if kind == 'runner-failure':
+            raise RuntimeError('injected runner failure')
+        if kind == 'zero-exit-with-stop':
+            dispatch._record_stop_intent(replace(config, agent_run=run), 'hard-limit-exceeded')
+        if kind == 'no-durable-exit':
+            path = next(Path(run.record_directory).glob('*.json'))
+            record = json.loads(path.read_bytes())
+            del record['return_code']
+            dispatch.write_json_atomic(path, record)
+        return result
+
+    monkeypatch.setattr(dispatch, 'run_agent', invoke)
+    result = dispatch_worker(config)
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    assert json.loads(capture.read_bytes())['result']['status'] == 'success'
+    state = json.loads(config.state_file.read_bytes())
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    if kind in ('stop', 'zero-exit-with-stop'):
+        assert state['stop_intent']['reason'] == 'hard-limit-exceeded'
+    if kind == 'zero-exit-with-stop':
+        assert outcome['provider_return_code'] == 0
+    if kind == 'no-durable-exit':
+        assert result.reason == 'provider-exit-status-unknown'
+        assert outcome['status'] == 'pending'
+        assert not config.agent_run.result_file.exists()
+        assert not config.agent_run.done_file.exists()
+    else:
+        assert result.state != 'completed'
+        assert outcome['status'] == 'failed'
+        assert '|status=failed|' in config.agent_run.done_file.read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('kind', ['valid', 'malformed', 'empty', 'race'])
+def test_existing_result_path_retains_precedence_over_capture(tmp_path, monkeypatch, kind):
+    direct = {'valid': "json.dumps({**report, 'publication': 'direct'})",
+              'malformed': "'{broken'", 'empty': "''", 'race': None}[kind]
+    suffix = '' if direct is None else f'result_path.write_text({direct}, encoding="utf-8")'
+    config = capture_worker(tmp_path, BUILD_CAPTURE + f'''
+capture.write_text(json.dumps(envelope), encoding='utf-8')
+{suffix}
+''', result_capture=CAPTURE_CHECKS)
+    if kind == 'race':
+        original_link = os.link
+
+        def concurrent_publication(source, destination, *args, **kwargs):
+            if Path(destination) == config.agent_run.result_file:
+                report = json.loads(Path(source).read_bytes())
+                Path(destination).write_text(json.dumps({**report, 'publication': 'direct'}), encoding='utf-8')
+            return original_link(source, destination, *args, **kwargs)
+
+        monkeypatch.setattr(os, 'link', concurrent_publication)
+    result = dispatch_worker(config)
+    result_bytes = config.agent_run.result_file.read_bytes()
+    if kind in ('valid', 'race'):
+        assert result.state == 'completed'
+        assert json.loads(result_bytes)['publication'] == 'direct'
+    else:
+        assert result.state == 'failed'
+        assert result_bytes == (b'{broken' if kind == 'malformed' else b'')
+
+
+def test_adoption_replays_captured_handoff_without_relaunch(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = capture_worker(tmp_path, BUILD_CAPTURE + '''
+capture.write_text(json.dumps(envelope), encoding='utf-8')
+''', result_capture=CAPTURE_CHECKS)
+    original = dispatch.write_text_atomic
+
+    def failed_storage(path, value, *, exclusive=False):
+        if exclusive:
+            raise OSError('injected captured result publication failure')
+        return original(path, value)
+
+    monkeypatch.setattr(dispatch, 'write_text_atomic', failed_storage)
+    with pytest.raises(OSError, match='injected captured result publication failure'):
+        dispatch_worker(config)
+    assert not config.agent_run.result_file.exists()
+    journal = Path(str(config.state_file) + '.outcome.json')
+    assert json.loads(journal.read_bytes())['status'] == 'pending'
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    original_capture = capture.read_bytes()
+    state = json.loads(config.state_file.read_bytes())
+    state['launcher_identity']['created_at'] += 1
+    dispatch.write_json_atomic(config.state_file, state)
+    monkeypatch.setattr(dispatch, 'write_text_atomic', original)
+    assert dispatch.adopt_worker(config.state_file).state == 'completed'
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+    assert capture.read_bytes() == original_capture
+    assert json.loads(config.agent_run.result_file.read_bytes()) == json.loads(original_capture)['result']
+
+
+def test_runner_preserves_capture_created_between_admission_and_launch(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = capture_worker(tmp_path, '', result_capture=CAPTURE_CHECKS)
+    original = dispatch.run_agent
+
+    def occupy(run):
+        path = Path(run.final_response_file)
+        path.parent.mkdir()
+        path.write_bytes(b'preserve these bytes')
+        return original(run)
+
+    monkeypatch.setattr(dispatch, 'run_agent', occupy)
+    assert dispatch_worker(config).state == 'failed'
+    assert not (tmp_path / 'calls').exists()
+    path = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    assert path.read_bytes() == b'preserve these bytes'
+
+
+def test_capture_cannot_publish_through_a_redirected_result_path(tmp_path):
+    if os.name == 'nt':
+        pytest.skip('Windows test process may lack symlink privilege')
+    config = capture_worker(tmp_path, BUILD_CAPTURE + '''
+capture.write_text(json.dumps(envelope), encoding='utf-8')
+result_path.parent.mkdir()
+external = result_path.parent.with_name('external-output')
+external.mkdir()
+result_path.parent.rmdir()
+result_path.parent.symlink_to(external, target_is_directory=True)
+''', result_capture=CAPTURE_CHECKS)
+    run = config.agent_run.replace(result_file=tmp_path / 'reports' / 'result.json')
+    result = dispatch_worker(replace(config, agent_run=run))
+    assert result.reason == 'invalid-or-conflicting-outcome'
+    assert list((tmp_path / 'external-output').iterdir()) == []
+    assert not run.done_file.exists()

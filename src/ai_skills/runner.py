@@ -66,6 +66,8 @@ class AgentRunConfig:
     scrub_ambient_aliases: bool = False
     dispatcher_managed: bool = False
     verification_context: dict | None = None
+    final_response_file: Path | None = None
+    result_capture_context: dict | None = None
 
     def replace(self, **values):
         return replace(self, **values)
@@ -142,6 +144,8 @@ def _payload(config):
                 result_file=config.result_file, issue_dir=config.issue_dir)}
         if config.verification_context is not None:
             metadata['verification_contract'] = config.verification_context
+        if config.final_response_file is not None and config.result_capture_context is not None:
+            metadata['result_capture'] = config.result_capture_context
         protocol = resource_path('artifact-protocol.md').read_text(encoding='utf-8')
         payload += '\n\n' + protocol.rstrip('\n') + '\n\nAuthoritative attempt metadata:\n'
         payload += json.dumps(metadata, ensure_ascii=False, sort_keys=True) + '\n\n'
@@ -160,8 +164,16 @@ def _render(text, substitutions):
     return text
 
 
+def _capture_bound(config, name):
+    return (name == 'codex' and config.dispatcher_managed and config.role == 'impl' and
+        config.verification_context is None and config.final_response_file is not None and
+        config.result_capture_context is not None)
+
+
 def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     name, agent = _agent(registry, config.agent)
+    if not _capture_bound(config, name):
+        config = config.replace(final_response_file=None, result_capture_context=None)
     root = Path(config.repo_root).resolve()
     if not root.is_dir():
         raise ValueError(f'repo root not found: {root}')
@@ -213,7 +225,20 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
             argv.extend(expansions[key])
         else:
             argv.append(_render(token, substitutions))
+    if config.final_response_file is not None:
+        _add_capture_flag(argv, transport, config.final_response_file)
     return ProcessSpec(tuple(argv), root, env, unset_env=('AGENT','MODEL') if config.scrub_ambient_aliases else (), stdin=input_bytes)
+
+
+def _add_capture_flag(argv, transport, path):
+    if transport != 'stdin' or argv[-1] != '-':
+        raise ValueError('Codex capture requires a stdin invocation')
+    for arg in argv[1:-1]:
+        option = arg.partition('=')[0]
+        if (option in ('--', '--output-last-message') or
+                (option.startswith('-') and not option.startswith('--') and 'o' in option[1:])):
+            raise ValueError('Codex capture conflicts with a provider argument')
+    argv[-1:-1] = ['--output-last-message', str(path)]
 
 
 def resolve_executable(argv, environment, *, windows=None):
@@ -240,6 +265,22 @@ def resolve_executable(argv, environment, *, windows=None):
     if not node:
         raise FileNotFoundError('missing command: node (required by npm shim)')
     return (node, str(entry), *argv[1:])
+
+
+def supports_final_response_capture(spec: ProcessSpec) -> bool:
+    """Probe only the resolved executable prefix, without task arguments or input."""
+    try:
+        argv = resolve_executable(spec.argv, spec.env)
+        prefix = argv[:len(argv) - len(spec.argv) + 1]
+        env = {key: value for key, value in spec.env.items() if key not in spec.unset_env}
+        with tempfile.TemporaryFile() as output:
+            result = subprocess.run((*prefix, 'exec', '--help'), cwd=spec.cwd, env=env,
+                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, timeout=10)
+            output.seek(0)
+            help_text = output.read(65536)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and bool(re.search(rb'(?<![\w-])--output-last-message(?=[\s=,]|$)', help_text))
 
 
 class _Tail:
@@ -352,6 +393,7 @@ def classify_unavailable(text):
 def run_agent(config: AgentRunConfig) -> AgentRunResult:
     registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
+    capture_bound = _capture_bound(config, name)
     invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
     spec = build_invocation(config, registry)
@@ -368,6 +410,11 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
     stream_context = nullcontext(config.stream_directory) if config.stream_directory else tempfile.TemporaryDirectory(prefix='ai-skills-streams-')
     with stream_context as temporary:
         directory = Path(temporary)
+        if capture_bound:
+            capture = Path(config.final_response_file)
+            if (capture != directory / 'final-response.json' or capture.resolve() != capture or
+                    capture.exists() or capture.is_symlink()):
+                raise ValueError('unsafe or occupied Codex capture path')
         directory.mkdir(parents=True, exist_ok=True)
         output, errors = directory/'stdout', directory/'stderr'
         with output.open('xb'), errors.open('xb'):
@@ -420,7 +467,7 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             if code == 0 and isinstance(tails[0], _AgyTail):
                 tails[0].finish()
             reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
-            if config.process_state_file:
+            if config.process_state_file and (not capture_bound or code != 0):
                 write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
         except FileNotFoundError as error:
             code, reason = 127, 'missing-command'
@@ -457,6 +504,9 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
     line = emit_status('telemetry', telemetry)
     EventBus.append(bus.log_file, line + '\n')
     print(line, file=sys.stderr)
+    if capture_bound and config.process_state_file and code == 0:
+        # Adoption needs durable proof that the runner finished after the owned provider.
+        write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
     return AgentRunResult(code, name, model, reason)
 
 
