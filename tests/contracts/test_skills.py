@@ -290,3 +290,10 @@ def test_coordinator_binds_modifier_capture_to_finalized_review_cycle():
     modifier = (ROOT / 'assets/modifier-prompt.md').read_text(encoding='utf-8')
     for phrase in ('review_comment_ids` is the finalized current-cycle checklist', 'from `REVIEWER_INSTRUCTIONS_FILE`', 'never advances the review cycle', 'exact blocker', 'smallest next action'):
         assert phrase in modifier
+
+
+def test_coordinator_routes_modifier_noop_blocked_and_resolved_checks():
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    for phrase in ('one path for capture and file publication', 'never assign `NONE` to `REVIEW_HEAD_SHA`', 'verification.commit_sha', 'Typed `blocked` outcome', 'smallest next action', 'do not enter `failed-review` or Worker Artifact Recovery', 'only to an actual handoff failure', 'resolved mandatory checks', 'whether or not `result_capture` is included', 'illustrative verification suggestions are not', 'For verified committed success only'):
+        assert phrase in revise
