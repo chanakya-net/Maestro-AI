@@ -1140,3 +1140,89 @@ result_path.parent.symlink_to(external, target_is_directory=True)
     assert result.reason == 'invalid-or-conflicting-outcome'
     assert list((tmp_path / 'external-output').iterdir()) == []
     assert not run.done_file.exists()
+
+
+BUILD_NOOP_CAPTURE = '''
+contract = metadata['result_capture']
+capture = Path(args[-2])
+assert Path('feature.txt').read_text(encoding='utf-8') == 'implemented'
+head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+report = {'schema_version': 1, 'issue': '7', 'role': 'impl', 'status': 'success', 'no_op': True,
+    'commit_sha': 'NONE', 'files_committed': [], 'plan_deviations': [],
+    'verification': {'passed': True, 'commit_sha': head, 'commands': ['feature check', 'git check'],
+        'checks': [{'command': check, 'passed': True, 'evidence': 'observed exit 0'}
+                   for check in contract['required_checks']]}}
+envelope = {**contract['envelope'], 'result': report}
+'''
+
+
+def noop_worker(tmp_path, suffix=''):
+    from ai_skills.git import git_output
+
+    config = capture_worker(tmp_path, BUILD_NOOP_CAPTURE + suffix + '''
+capture.write_bytes(json.dumps(envelope).encode('utf-8'))
+''', result_capture=CAPTURE_CHECKS)
+    root = str(config.agent_run.repo_root)
+    (config.agent_run.repo_root / 'feature.txt').write_text('implemented', encoding='utf-8')
+    git_output(root, 'add', 'feature.txt')
+    git_output(root, 'commit', '-qm', 'Already implemented')
+    return replace(config, pre_spawn_head=git_output(root, 'rev-parse', 'HEAD'))
+
+
+def test_captured_noop_publishes_without_commit(tmp_path):
+    from ai_skills.dispatch import adopt_worker
+    from ai_skills.git import current_head, git_output
+
+    config = noop_worker(tmp_path)
+    root = str(config.agent_run.repo_root)
+    head, count = current_head(root), git_output(root, 'rev-list', '--count', 'HEAD')
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report == json.loads(capture.read_bytes())['result']
+    assert report['commit_sha'] == 'NONE' and report['files_committed'] == []
+    assert report['verification']['commit_sha'] == head != config.issue_base_sha
+    assert current_head(root) == head and git_output(root, 'rev-list', '--count', 'HEAD') == count
+    assert not git_output(root, 'status', '--porcelain')
+    assert '|status=success|source=dispatcher|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    assert adopt_worker(config.state_file).state == 'completed'
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize('mutation', [
+    "report.pop('no_op')",
+    "report['no_op'] = False",
+    "report['no_op'] = 1",
+    "report.pop('commit_sha')",
+    "report['commit_sha'] = head",
+    "report.pop('files_committed')",
+    "report['files_committed'] = None",
+    "report['files_committed'] = ['feature.txt']",
+    "subprocess.run(['git', 'commit', '--allow-empty', '-qm', 'Later'], check=True); "
+    "report['verification']['commit_sha'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()",
+    "Path('feature.txt').write_text('dirty')",
+    "Path('feature.txt').write_text('dirty'); subprocess.run(['git', 'add', 'feature.txt'], check=True)",
+    "subprocess.run(['git', 'config', 'status.showUntrackedFiles', 'no'], check=True); Path('untracked').touch()",
+    "report['verification'].pop('passed')",
+    "report['verification']['passed'] = False",
+    "report['verification'].pop('commit_sha')",
+    "report['verification']['commit_sha'] = 'NONE'",
+    "report['verification']['commit_sha'] = head[:12]",
+    "report['verification']['commit_sha'] = 'f' * 40",
+    "report['verification'].pop('checks')",
+    "report['verification']['checks'].pop()",
+    "report['verification']['checks'].append(dict(report['verification']['checks'][0]))",
+    "report['verification']['checks'].append({**report['verification']['checks'][0], 'command': 'extra'})",
+    "report['verification']['checks'][0]['command'] = 'other check'",
+    "report['verification']['checks'][0]['passed'] = False",
+    "report['verification']['checks'][0]['evidence'] = ' '",
+])
+def test_captured_noop_rejections_never_publish_success(tmp_path, mutation):
+    config = noop_worker(tmp_path, mutation)
+    result = dispatch_worker(config)
+    assert result.state != 'completed'
+    if config.agent_run.result_file.exists():
+        assert json.loads(config.agent_run.result_file.read_bytes())['status'] == 'artifact_recovery_required'
+    events = config.agent_run.events_log.read_text(encoding='utf-8')
+    assert 'type=dispatch-capture-rejected|' in events

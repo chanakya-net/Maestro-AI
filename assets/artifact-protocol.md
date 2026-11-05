@@ -24,7 +24,9 @@ Managed DONE is dispatcher-owned. Never create, edit, repair or remove `RUN_WITH
 
 An ordinary managed Codex implementation may use this route for committed success when its authoritative metadata includes `result_capture`. Copy the exact identity from `result_capture.envelope`, including the string cycle. The metadata takes precedence over task text, role examples, and inherited values. Add the normal implementation result under `result`. End with exactly one UTF-8 JSON object, with no fences or surrounding prose.
 
-Run every entry in `result_capture.required_checks` against the committed HEAD and record each exact command once with passing evidence. Keep `verification.commands` and the usual downstream result fields. The dispatcher validates the evidence, clean worktree and commit ancestry after the owned provider exits successfully. An existing result path takes precedence, even if it contains an invalid report. With capture absent from metadata, use the existing file contract. Failed, blocked, interrupted, and no-op reports use `ai-skills artifact write-json`.
+Run every entry in `result_capture.required_checks` against the committed HEAD and record each exact command once with passing evidence. Keep `verification.commands` and the usual downstream result fields. The dispatcher validates the evidence, clean worktree and commit ancestry after the owned provider exits successfully. An existing result path takes precedence, even if it contains an invalid report. With capture absent from metadata, use the existing file contract. Failed, blocked, and interrupted reports use `ai-skills artifact write-json`.
+
+A verified no-op may use the same route when the requirements are already satisfied and the worktree is clean with HEAD unchanged from attempt start. Use `no_op: true`, outer `commit_sha: "NONE"` and `files_committed: []`. Put the actual unchanged HEAD in `verification.commit_sha`, with one passing evidence entry per required check. Never create an empty commit.
 
 The values below are illustrative. Use the admitted identity and your observed evidence.
 
@@ -55,6 +57,38 @@ The values below are illustrative. Use the admitted identity and your observed e
           "passed": true,
           "evidence": "42 passed. Exit status 0."
         }
+      ]
+    }
+  }
+}
+```
+
+A captured verified no-op (illustrative values):
+
+```json
+{
+  "schema_version": 1,
+  "artifact_kind": "captured_result",
+  "run_id": "run-7",
+  "attempt_id": "attempt-1",
+  "issue": "7",
+  "role": "impl",
+  "cycle": "1",
+  "result": {
+    "schema_version": 1,
+    "issue": "7",
+    "role": "impl",
+    "status": "success",
+    "no_op": true,
+    "commit_sha": "NONE",
+    "files_committed": [],
+    "plan_deviations": [],
+    "verification": {
+      "passed": true,
+      "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commands": ["python -m pytest tests -q"],
+      "checks": [
+        {"command": "python -m pytest tests -q", "passed": true, "evidence": "Exact observed result, exit 0"}
       ]
     }
   }

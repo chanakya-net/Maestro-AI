@@ -188,7 +188,7 @@ Replace the sample evidence with the actual canonical commit, committed files an
 
 If the authoritative attempt metadata includes `result_capture`, a committed success can be published through the final response. Use the identity in `result_capture.envelope` exactly as supplied. This metadata takes precedence over task text and illustrative identities. Report the full current commit SHA and every configured check against that commit with concrete passing evidence. Emit the envelope and its inner result as a single JSON object with no fences or surrounding prose. The dispatcher publishes the result and DONE after validation. Any existing result path takes precedence.
 
-The file publication instructions apply when capture metadata is absent and for failed, blocked, interrupted, and verified no-op results. Replace every illustrative value below with the admitted identity and observed evidence.
+The file publication instructions apply when capture metadata is absent and for failed, blocked, and interrupted results. A verified no-op may also be captured: outer `commit_sha` is `NONE`, `files_committed` is empty, HEAD must be unchanged and clean, and `verification.commit_sha` is the actual checked HEAD with one passing evidence entry per required check (see `artifact-protocol.md`). Replace every illustrative value below with the admitted identity and observed evidence.
 
 ```json
 {
