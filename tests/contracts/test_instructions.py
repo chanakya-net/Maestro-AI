@@ -158,7 +158,8 @@ def test_capture_failure_instructions_preserve_stop_and_file_precedence():
 
     protocol = (ROOT / 'assets/artifact-protocol.md').read_text()
     prompt = (ROOT / 'assets/prompt.md').read_text()
-    for instructions in (protocol, prompt):
+    modifier = (ROOT / 'assets/modifier-prompt.md').read_text()
+    for instructions in (protocol, prompt, modifier):
         assert 'existing result path takes precedence' in instructions
         assert 'pending attempt' in instructions and 'confirmed owned-tree shutdown' in instructions
         assert 'zero provider and runner exit codes' in instructions and 'no runner failure' in instructions
@@ -192,3 +193,37 @@ def test_merge_recovery_reports_failed_verification_without_claiming_completion(
     assert 'Never publish a completed recovery report with failed verification' in text
     assert 'report failed-merge/blocked with the actual failure evidence' in text
     assert 'publish failure even without a commit' in text
+
+
+def test_modifier_capture_contract_overrides_legacy_reporting():
+    import json
+    from ai_skills.artifacts import review_comment_closure_reason, role_failure_reason
+
+    modifier = (ROOT / 'assets/modifier-prompt.md').read_text()
+    protocol = (ROOT / 'assets/artifact-protocol.md').read_text()
+    section = modifier.split('### Captured handoff', 1)[1].split('\n## ', 1)[0]
+    assert 'result_capture' in section and 'review_comment_ids' in section
+    assert 'overrides' in section and 'file publication' in section
+    assert '`MODIFY_COMMIT_SHA`' in section and '`<promise>NO_MORE_TASKS</promise>`' in section
+    assert 'exactly one' in section and 'no fences' in section
+    assert '`addressed`' in section and '`declined`' in section and '`blocked`' in section
+    assert 'exact blocker' in section and 'smallest next action' in section
+    assert 'REVIEW_BASE_SHA' in section and 'pre-spawn' in section
+    assert 'verification_contract' in section
+    for text in (modifier, protocol):
+        assert 'exact blocker' in text and 'smallest next action' in text
+    examples = [json.loads(match.group(1)) for text in (modifier, protocol)
+                for match in re.finditer(r'```json\n(.*?)\n```', text, re.S)]
+    captured = [item for item in examples if item.get('artifact_kind') == 'captured_result'
+                and item['role'] == 'modify']
+    successes = [item['result'] for item in captured if item['result'].get('status') == 'success']
+    blocked = [item for item in captured if item['result'].get('status') == 'blocked']
+    assert successes and blocked
+    for report in successes:
+        ids = [entry['id'] for entry in report['review_comment_closure']]
+        assert review_comment_closure_reason(report, ids) == ''
+        assert {entry['status'] for entry in report['review_comment_closure']} == {'addressed', 'declined'}
+    for item in blocked:
+        identity = {key: item[key] for key in ('issue', 'role', 'run_id', 'attempt_id')}
+        assert role_failure_reason(item['result'], **identity) == ''
+        assert 'next action' in item['result']['summary'].lower()

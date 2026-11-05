@@ -115,7 +115,15 @@ def test_codex_capture_flag_precedes_stdin_and_rejects_conflicts(config):
     for flag in ('-o', '-ofoo', '-qofoo', '--output-last-message', '--output-last-message=foo'):
         with pytest.raises(ValueError, match='capture'):
             build_invocation(bound.replace(extra_args=(flag,)), registry)
-    for ineligible in (bound.replace(dispatcher_managed=False), bound.replace(agent='claude')):
+    modifier = build_invocation(bound.replace(role='modify'), registry)
+    assert modifier.argv[-3:] == ('--output-last-message', str(bound.final_response_file), '-')
+    assert json.loads(modifier.stdin.decode().rsplit('Authoritative attempt metadata:\n', 1)[1])['result_capture'] == context
+    with pytest.raises(ValueError, match='capture'):
+        build_invocation(bound.replace(role='modify', extra_args=('-o',)), registry)
+    verify = bound.replace(role='modify', verification_context={'execution_mode': 'verify_existing'})
+    for ineligible in (bound.replace(dispatcher_managed=False), bound.replace(agent='claude'),
+                       bound.replace(role='review', result_file=config.repo_root / 'review-status.json'),
+                       bound.replace(role='plan', issue_dir=config.repo_root), verify):
         spec = build_invocation(ineligible, registry)
         assert '--output-last-message' not in spec.argv
         assert b'"result_capture"' not in spec.stdin
