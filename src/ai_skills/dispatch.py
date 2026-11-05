@@ -715,7 +715,7 @@ def _record_stop_intent(config, reason):
 
 def _capture_rejected(run, reason):
     EventBus(events_log=run.events_log, log_file=run.log_file).emit('dispatch-capture-rejected',
-        {'run_id':run.run_id, 'attempt_id':run.attempt_id, 'issue':run.issue, 'role':run.role, 'reason':reason})
+        {'run_id':run.run_id, 'attempt_id':run.attempt_id, 'issue':run.issue, 'role':run.role, 'cycle':verification.capture_cycle(run.cycle), 'reason':reason})
 
 
 def _capture_bytes(run):
