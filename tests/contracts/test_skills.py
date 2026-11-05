@@ -278,3 +278,15 @@ def test_coordinator_owns_ordinary_implementation_capture_checks():
     assert 'any supported enabled route' in instructions
     assert 'dispatcher selects the adapter' in instructions
     assert 'omit `result_capture`' in instructions
+
+
+def test_coordinator_binds_modifier_capture_to_finalized_review_cycle():
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    for phrase in ('exactly the comment IDs of the finalized current-cycle review', 'no severity filtering, generated IDs, deduplication or earlier-cycle IDs', 'full findings stay in', 'baseline applicable checks', 'additional review-required checks', 'finalized successful review attempt', 'review_head_sha', 'sub-state.json', 'never advances the review cycle', 'REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA', 'REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA'):
+        assert phrase in revise
+    assert 'only permitted read' in text and 'comments[].id' in text and 'comments[].verification' in text
+    assert 'Never read `REVIEWER_INSTRUCTIONS_FILE`' not in text
+    modifier = (ROOT / 'assets/modifier-prompt.md').read_text(encoding='utf-8')
+    for phrase in ('review_comment_ids` is the finalized current-cycle checklist', 'from `REVIEWER_INSTRUCTIONS_FILE`', 'never advances the review cycle', 'exact blocker', 'smallest next action'):
+        assert phrase in modifier
