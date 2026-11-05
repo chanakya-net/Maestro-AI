@@ -1012,35 +1012,299 @@ capture.write_text(json.dumps(envelope), encoding='utf-8')
         assert result_bytes == (b'{broken' if kind == 'malformed' else b'')
 
 
-def test_adoption_replays_captured_handoff_without_relaunch(tmp_path, monkeypatch):
+PUBLICATION_BOUNDARIES = ('result', 'outcome', 'state', 'done')
+
+
+def interrupt_publication(monkeypatch, config, boundary):
     from ai_skills import dispatch
 
-    config = capture_worker(tmp_path, BUILD_CAPTURE + '''
-capture.write_text(json.dumps(envelope), encoding='utf-8')
-''', result_capture=CAPTURE_CHECKS)
-    original = dispatch.write_text_atomic
+    write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
+    state_file = config.state_file.resolve()
+    done_file = config.agent_run.done_file.resolve()
 
-    def failed_storage(path, value, *, exclusive=False):
-        if exclusive:
-            raise OSError('injected captured result publication failure')
-        return original(path, value)
+    def publish_json(path, value):
+        if boundary == 'outcome' and Path(path).resolve() == dispatch.outcome_path(state_file) and value['status'] != 'pending':
+            raise OSError('injected publication failure')
+        if boundary == 'state' and Path(path).resolve() == state_file and 'completed_at' in value:
+            raise OSError('injected publication failure')
+        return write_json(path, value)
 
-    monkeypatch.setattr(dispatch, 'write_text_atomic', failed_storage)
-    with pytest.raises(OSError, match='injected captured result publication failure'):
-        dispatch_worker(config)
-    assert not config.agent_run.result_file.exists()
-    journal = Path(str(config.state_file) + '.outcome.json')
-    assert json.loads(journal.read_bytes())['status'] == 'pending'
-    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
-    original_capture = capture.read_bytes()
-    state = json.loads(config.state_file.read_bytes())
+    def publish_text(path, value, *, exclusive=False):
+        if (boundary == 'result' and exclusive) or (boundary == 'done' and Path(path).resolve() == done_file):
+            raise OSError('injected publication failure')
+        return write_text(path, value, exclusive=exclusive)
+
+    monkeypatch.setattr(dispatch, 'write_json_atomic', publish_json)
+    monkeypatch.setattr(dispatch, 'write_text_atomic', publish_text)
+
+
+def interrupt_foreground_dispatch(monkeypatch, config, boundary):
+    with monkeypatch.context() as patch:
+        interrupt_publication(patch, config, boundary)
+        with pytest.raises(OSError, match='injected publication failure'):
+            dispatch_worker(config)
+
+
+def mark_launcher_dead(config):
+    from ai_skills.storage import load_json, write_json_atomic
+
+    state = load_json(config.state_file)
     state['launcher_identity']['created_at'] += 1
-    dispatch.write_json_atomic(config.state_file, state)
-    monkeypatch.setattr(dispatch, 'write_text_atomic', original)
-    assert dispatch.adopt_worker(config.state_file).state == 'completed'
-    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
-    assert capture.read_bytes() == original_capture
-    assert json.loads(config.agent_run.result_file.read_bytes()) == json.loads(original_capture)['result']
+    write_json_atomic(config.state_file, state)
+
+
+def assert_publication_boundary(config, boundary, status):
+    from ai_skills.dispatch import outcome_path
+
+    state = json.loads(config.state_file.read_bytes())
+    journal = json.loads(outcome_path(config.state_file).read_bytes())
+    assert config.agent_run.result_file.exists() == (boundary != 'result')
+    assert journal['status'] == (status if boundary in ('state', 'done') else 'pending')
+    assert ('completed_at' in state) == (boundary == 'done')
+    assert not config.agent_run.done_file.exists()
+
+
+def assert_capture_adopted_twice(monkeypatch, config, kind='commit'):
+    from ai_skills import dispatch
+    from ai_skills.git import current_head
+
+    run = config.agent_run
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    journal = dispatch.outcome_path(config.state_file)
+    capture_before = capture.read_bytes()
+    result_before = run.result_file.read_bytes() if run.result_file.exists() else None
+    journal_before = journal.read_bytes()
+    terminal = json.loads(journal_before)['status'] != 'pending'
+    status, state, code = ('failed', 'failed', 1) if kind == 'typed' else ('success', 'completed', 0)
+    write_json = dispatch.write_json_atomic
+
+    def forbid_capture(*args, **kwargs):
+        pytest.fail('adoption attempted to import capture after publication')
+
+    def preserve_journal(path, value):
+        assert path != journal.resolve(), 'adoption wrote a second terminal decision'
+        return write_json(path, value)
+
+    with monkeypatch.context() as patch:
+        if result_before is not None:
+            patch.setattr(dispatch, '_capture_bytes', forbid_capture)
+        if terminal:
+            patch.setattr(dispatch, '_publish_captured_result', forbid_capture)
+            patch.setattr(dispatch, 'write_json_atomic', preserve_journal)
+        first = dispatch.adopt_worker(config.state_file)
+        assert (first.state, first.return_code) == (state, code), first.reason
+        result_bytes, journal_bytes = run.result_file.read_bytes(), journal.read_bytes()
+        done_bytes = run.done_file.read_bytes()
+        patch.setattr(dispatch, '_publish_captured_result', forbid_capture)
+        patch.setattr(dispatch, 'write_json_atomic', preserve_journal)
+        assert dispatch.adopt_worker(config.state_file) == first
+
+    assert run.result_file.read_bytes() == (result_before if result_before is not None else result_bytes)
+    assert journal.read_bytes() == journal_bytes
+    assert run.done_file.read_bytes() == done_bytes
+    assert capture.read_bytes() == capture_before
+    outcome = json.loads(journal_bytes)
+    if terminal:
+        assert journal_bytes == journal_before
+    assert (outcome['status'], outcome['provider_return_code'], outcome['worker_return_code']) == (status, 0, code)
+    assert f'|status={status}|source=dispatcher|'.encode() in done_bytes
+    expected = json.loads(capture_before)['result']
+    if kind == 'direct':
+        expected = {**expected, 'publication': 'direct'}
+        assert 'dispatch-capture-rejected' not in run.events_log.read_text(encoding='utf-8')
+    assert json.loads(result_bytes) == expected
+    head = current_head(str(run.repo_root))
+    assert outcome['git_progress']['head'] == head
+    if kind == 'typed':
+        assert outcome['reason'] == expected['reason']
+    elif kind == 'noop':
+        assert expected['commit_sha'] == 'NONE' and expected['files_committed'] == []
+        assert head == expected['verification']['commit_sha'] == config.pre_spawn_head
+    else:
+        assert expected['commit_sha'] == expected['verification']['commit_sha'] == head
+        assert head != outcome['git_progress']['pre_spawn_head']
+    assert config.state_file.with_name('calls').read_text(encoding='utf-8') == 'run\n'
+    with pytest.raises(RuntimeError, match='prohibits relaunch'):
+        dispatch_worker(config)
+
+
+def publication_worker(tmp_path, kind='commit', *, suffix='', **options):
+    if kind == 'noop':
+        return noop_worker(tmp_path)
+    if kind == 'typed':
+        return typed_capture_worker(tmp_path)
+    body = BUILD_CAPTURE + "capture.write_text(json.dumps(envelope), encoding='utf-8')\n"
+    if kind == 'direct':
+        body += "result_path.write_text(json.dumps({**report, 'publication': 'direct'}), encoding='utf-8')\n"
+    return capture_worker(tmp_path, body + suffix, result_capture=CAPTURE_CHECKS, **options)
+
+
+@pytest.mark.parametrize(('kind', 'boundary'), [
+    (kind, boundary)
+    for kind in ('commit', 'noop', 'typed', 'direct')
+    for boundary in PUBLICATION_BOUNDARIES
+    if (kind, boundary) != ('direct', 'result')
+])
+def test_adoption_reconciles_each_capture_publication_boundary_once(tmp_path, monkeypatch, kind, boundary):
+    from ai_skills.git import git_output
+
+    config = publication_worker(tmp_path, kind)
+    root = str(config.agent_run.repo_root)
+    before = git_output(root, 'rev-list', '--count', 'HEAD') if kind == 'noop' else None
+    interrupt_foreground_dispatch(monkeypatch, config, boundary)
+    assert_publication_boundary(config, boundary, 'failed' if kind == 'typed' else 'success')
+    mark_launcher_dead(config)
+    assert_capture_adopted_twice(monkeypatch, config, kind)
+    if kind == 'noop':
+        assert git_output(root, 'rev-list', '--count', 'HEAD') == before
+
+
+@pytest.mark.parametrize('uncertainty', ['provider-unknown', 'exit-unknown', 'launcher-alive'])
+def test_uncertain_ownership_defers_boundary_adoption_without_publication(tmp_path, monkeypatch, uncertainty):
+    from ai_skills import dispatch
+
+    config = publication_worker(tmp_path)
+    interrupt_foreground_dispatch(monkeypatch, config, 'result')
+    journal = dispatch.outcome_path(config.state_file)
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    before = (journal.read_bytes(), capture.read_bytes())
+    if uncertainty != 'launcher-alive':
+        mark_launcher_dead(config)
+    with monkeypatch.context() as patch:
+        if uncertainty == 'provider-unknown':
+            inspect = dispatch.ProcessSupervisor.inspect
+
+            def inspect_unknown(supervisor, identity):
+                liveness = inspect(supervisor, identity)
+                assert liveness.state == 'dead'
+                return replace(liveness, state='unknown', reason='ownership-inaccessible')
+
+            patch.setattr(dispatch.ProcessSupervisor, 'inspect', inspect_unknown)
+            expected = ('unknown', 3, 'ownership-inaccessible')
+        elif uncertainty == 'exit-unknown':
+            patch.setattr(dispatch.ProcessSupervisor, 'return_code', lambda self, identity: None)
+            expected = ('unknown', 3, 'provider-exit-status-unknown')
+        else:
+            expected = ('running', 0, 'launcher-ownership-alive')
+        adopted = dispatch.adopt_worker(config.state_file)
+        assert (adopted.state, adopted.return_code, adopted.reason) == expected
+
+    assert_publication_boundary(config, 'result', 'success')
+    assert (journal.read_bytes(), capture.read_bytes()) == before
+    mark_launcher_dead(config)
+    assert_capture_adopted_twice(monkeypatch, config)
+
+
+@pytest.mark.parametrize('boundary', PUBLICATION_BOUNDARIES)
+def test_adoption_storage_failure_propagates_then_completes(tmp_path, monkeypatch, boundary):
+    from ai_skills import dispatch
+
+    config = publication_worker(tmp_path)
+    interrupt_foreground_dispatch(monkeypatch, config, 'result')
+    mark_launcher_dead(config)
+    with monkeypatch.context() as patch:
+        interrupt_publication(patch, config, boundary)
+        with pytest.raises(OSError, match='injected publication failure'):
+            dispatch.adopt_worker(config.state_file)
+    assert_publication_boundary(config, boundary, 'success')
+    assert_capture_adopted_twice(monkeypatch, config)
+
+
+CRASH_DURING_PUBLICATION = """
+import os, sys
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+from ai_skills import dispatch
+from ai_skills.storage import load_json
+
+config = dispatch.WorkerConfig.from_record(load_json(Path(sys.argv[2])))
+boundary = sys.argv[3]
+write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
+
+def publish_json(path, value):
+    if boundary == 'outcome' and path == dispatch.outcome_path(config.state_file) and value['status'] != 'pending':
+        os._exit(97)
+    return write_json(path, value)
+
+def publish_text(path, value, *, exclusive=False):
+    if boundary == 'result' and exclusive:
+        os._exit(97)
+    return write_text(path, value, exclusive=exclusive)
+
+dispatch.write_json_atomic = publish_json
+dispatch.write_text_atomic = publish_text
+raise SystemExit(dispatch._work(config).return_code)
+"""
+
+
+def wait_for_crashed_wrapper(config):
+    from ai_skills.processes import ProcessIdentity, ProcessSupervisor
+
+    path = Path(str(config.state_file) + '.dispatcher.process.json')
+    wrapper = json.loads(path.read_bytes())
+    supervisor = ProcessSupervisor(Path(wrapper['record_directory']))
+    identity = ProcessIdentity(**wrapper['identity'])
+    deadline = time.monotonic() + 15
+    while supervisor.inspect(identity).state != 'dead':
+        assert time.monotonic() < deadline, 'dispatcher did not reach the publication boundary'
+        time.sleep(.02)
+
+
+@pytest.mark.parametrize('boundary', ['result', 'outcome'])
+def test_detached_wrapper_loss_at_capture_boundary_adopts_once(tmp_path, monkeypatch, boundary):
+    from ai_skills.dispatch import _stop_provider
+    from ai_skills.processes import ProcessSupervisor
+
+    release = tmp_path / 'release-provider'
+    config = publication_worker(tmp_path, detach=True, suffix='''
+while not state.with_name('release-provider').exists():
+    time.sleep(.01)
+''')
+    start = ProcessSupervisor.start
+
+    def start_with_crash(supervisor, spec, *, run_id, attempt_id):
+        if run_id.endswith('-dispatcher'):
+            spec = replace(spec, argv=(*spec.argv[:2], CRASH_DURING_PUBLICATION, *spec.argv[3:], boundary))
+        return start(supervisor, spec, run_id=run_id, attempt_id=attempt_id)
+
+    monkeypatch.setattr(ProcessSupervisor, 'start', start_with_crash)
+    try:
+        result = dispatch_worker(config)
+        assert result.state in ('running', 'quiet', 'stalled'), result.reason
+        release.touch()
+        wait_for_crashed_wrapper(config)
+        assert_publication_boundary(config, boundary, 'success')
+        lock = Path(str(config.state_file) + '.lock')
+        assert (lock / 'owner.json').is_file()
+        assert_capture_adopted_twice(monkeypatch, config)
+        assert not lock.exists()
+    finally:
+        release.touch()
+        _stop_provider(config)
+
+
+def test_adoption_repairs_prelaunch_failure_after_terminal_journal(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = worker_config(tmp_path, 'raise AssertionError("provider should never run")')
+    registry = json.loads(config.agent_run.registry_file.read_bytes())
+    registry['agents']['fake']['invocation']['command'] = str(tmp_path / 'missing-provider')
+    config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    interrupt_foreground_dispatch(monkeypatch, config, 'state')
+    mark_launcher_dead(config)
+    journal = dispatch.outcome_path(config.state_file)
+    before = journal.read_bytes()
+    outcome = json.loads(before)
+    assert (outcome['status'], outcome['provider_return_code'], outcome['reason']) == ('failed', None, 'missing-command')
+    assert not config.agent_run.done_file.exists()
+
+    for _ in range(2):
+        result = dispatch.adopt_worker(config.state_file)
+        assert (result.state, result.return_code, result.reason) == ('failed', 127, 'missing-command')
+        assert journal.read_bytes() == before
+        assert '|status=failed|source=dispatcher|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    assert not Path(str(config.state_file) + '.process.json').exists()
 
 
 @pytest.mark.parametrize('finish', ['foreground', 'adoption', 'direct-result'])
