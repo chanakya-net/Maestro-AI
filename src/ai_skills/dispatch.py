@@ -731,7 +731,7 @@ def _capture_bytes(run):
 
 
 def _publish_captured_result(config, *, eligible):
-    """Recover committed or verified no-op success while the attempt lock excludes other finalizers."""
+    """Publish a validated captured report while the attempt lock excludes other finalizers."""
     run = config.agent_run
     if (config.result_capture is None or config.execution_mode != 'implement' or run.role != 'impl' or
             not run.dispatcher_managed or run.result_capture_context is None):

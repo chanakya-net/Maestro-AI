@@ -137,7 +137,7 @@ Use the assigned issue worktree as the explicit working directory for Git. Compa
 
 ## Result Artifact
 
-After the commit succeeds, publish the normal success schema using the file route or the admitted captured handoff below. On failure publish the shared protocol role failure at `RUN_WITH_IT_RESULT_FILE`, even without a commit. This JSON is the machine-readable implementation handoff.
+Publish a machine-readable implementation handoff using the admitted captured handoff below or the file route. For work or verification failures and unavailable prerequisites, use the shared typed failure schema even without a commit.
 
 On a verified no-op (`IMPL_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
@@ -152,7 +152,7 @@ Path safety:
 - Never write implementation handoff JSON to SUB_COORD_REPORT_FILE.
 - Never write implementation handoff JSON to `.run-with-it/issues/<n>/report.json`.
 - If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins.
-For file publication, write the role payload using file tools. Record the canonical commit SHA and committed files from the assigned issue worktree with exact passing verification evidence. Publish atomically using the validator.
+For file publication, write the role payload using file tools. For commit-based success, record the canonical commit SHA and committed files from the assigned issue worktree with exact passing verification evidence. Publish atomically using the validator.
 
 ```text
 ai-skills artifact write-json --role impl --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
@@ -186,9 +186,13 @@ Replace the sample evidence with the actual canonical commit, committed files an
 
 ### Captured handoff
 
-If the authoritative attempt metadata includes `result_capture`, a committed success can be published through the final response. Use the identity in `result_capture.envelope` exactly as supplied. This metadata takes precedence over task text and illustrative identities. Report the full current commit SHA and every configured check against that commit with concrete passing evidence. Emit the envelope and its inner result as a single JSON object with no fences or surrounding prose. The dispatcher publishes the result and DONE after validation. Any existing result path takes precedence.
+If the authoritative attempt metadata includes `result_capture`, use the final response for verified success or a typed failure. Use the identity in `result_capture.envelope` exactly as supplied. This metadata takes precedence over task text and illustrative identities. Emit the envelope and its inner result as a single JSON object with no fences or surrounding prose. The dispatcher publishes the result and DONE after validation. An existing result path takes precedence, including an empty or invalid file.
 
-The file publication instructions apply when capture metadata is absent and for failed, blocked, and interrupted results. A verified no-op may also be captured: outer `commit_sha` is `NONE`, `files_committed` is empty, HEAD must be unchanged and clean, and `verification.commit_sha` is the actual checked HEAD with one passing evidence entry per required check (see `artifact-protocol.md`). Replace every illustrative value below with the admitted identity and observed evidence.
+Capture import requires a pending attempt, confirmed owned-tree shutdown, durable zero provider and runner exit codes, and no runner failure. Stop intent prevents capture import even after a zero exit. If a stop arrives and tools remain available, publish the typed interrupted report directly with `ai-skills artifact write-json`. Use the file publication instructions when capture metadata is absent.
+
+For failed checks, use a typed `failed` result. For an unavailable prerequisite, use `blocked`. Include the original reason and concrete evidence. The inner typed result binds the exact admitted run, attempt, issue, and role. It can report partial work without a commit or passing checks.
+
+For committed success, report the full current commit SHA from the clean worktree and every configured check against that commit with concrete passing evidence. For a verified no-op, set the role report's `commit_sha` to `NONE` and leave `files_committed` empty. Keep HEAD unchanged and the worktree clean. Use the actual checked HEAD in `verification.commit_sha` and include one passing evidence entry per required check. See `artifact-protocol.md` for the no-op and typed examples. Replace every illustrative value below with the admitted identity and observed evidence.
 
 ```json
 {
@@ -251,7 +255,7 @@ The dispatcher publishes managed DONE after validating the actual role outcome. 
 
 ## Output Contract
 
-For verified success, output the report below after passing tests and the mandatory commit (or verified no-op). If verification cannot pass or work cannot finish, publish the shared protocol failure report instead, with actual commands/errors and preserved work paths.
+For a captured handoff, the single JSON object above is the final response. For file publication, use the report below after passing tests and the mandatory commit (or verified no-op). If verification cannot pass or work cannot finish, publish the shared protocol failure report with actual commands, errors, and preserved work paths.
 
 Report:
 
@@ -261,5 +265,5 @@ Report:
 4. Tests run, suites executed, and pass/fail results (required — must show tests passed)
 5. Remaining risks or follow-up notes
 
-If all assigned work is complete and no further ready work is provided in context, output:
+For file publication, if all assigned work is complete and no further ready work is provided in context, output:
 `<promise>NO_MORE_TASKS</promise>`

@@ -1226,3 +1226,228 @@ def test_captured_noop_rejections_never_publish_success(tmp_path, mutation):
         assert json.loads(config.agent_run.result_file.read_bytes())['status'] == 'artifact_recovery_required'
     events = config.agent_run.events_log.read_text(encoding='utf-8')
     assert 'type=dispatch-capture-rejected|' in events
+
+
+BUILD_TYPED_CAPTURE = '''
+capture = Path(args[-2])
+identity = metadata['result_capture']['envelope']
+assert args[-3:] == ['--output-last-message', str(capture), '-']
+report = {key: identity[key] for key in ('schema_version', 'issue', 'role', 'run_id', 'attempt_id')}
+report.update(artifact_kind='role_failure', status='failed', reason='artifact-recovery-required',
+              summary='The feature check failed.', verification={'passed': False},
+              evidence=['feature check exited 1'])
+envelope = {**identity, 'result': report}
+'''
+
+
+def typed_capture_worker(tmp_path, *, prepare='', encode='', after=''):
+    return capture_worker(tmp_path, BUILD_TYPED_CAPTURE + prepare + '''
+raw = json.dumps(envelope).encode('utf-8')
+''' + encode + '''
+capture.write_bytes(raw)
+result_path.with_name('capture-original').write_bytes(raw)
+''' + after, result_capture=CAPTURE_CHECKS)
+
+
+def read_typed_capture(config):
+    capture = Path(str(config.state_file) + '.streams') / 'final-response.json'
+    raw = capture.read_bytes()
+    assert raw == config.agent_run.result_file.with_name('capture-original').read_bytes()
+    return raw
+
+
+@pytest.mark.parametrize(('status', 'worktree', 'code'), [
+    ('failed', 'clean', 1), ('failed', 'modified', 1), ('blocked', 'staged', 1),
+    ('interrupted', 'untracked', 130),
+])
+def test_captured_role_failure_preserves_report_without_success_evidence(tmp_path, status, worktree, code):
+    from ai_skills.git import current_head, git_output
+
+    details = {
+        'failed': {},
+        'blocked': {'status': 'blocked', 'reason': 'service-unavailable',
+                    'summary': 'Required database unavailable.', 'evidence': ['database connection refused']},
+        'interrupted': {'status': 'interrupted', 'reason': 'operator-stopped-work',
+                        'summary': 'Stopped before checks.', 'evidence': ['partial feature remains']},
+    }
+    config = typed_capture_worker(tmp_path, prepare=f'\nreport.update({details[status]!r})\n')
+    repo = config.agent_run.repo_root
+    if worktree != 'clean':
+        (repo / 'feature.txt').write_text('partial work', encoding='utf-8')
+    if worktree in ('modified', 'staged'):
+        git_output(str(repo), 'add', 'feature.txt')
+    if worktree == 'modified':
+        git_output(str(repo), 'commit', '-qm', 'Existing feature')
+        (repo / 'feature.txt').write_text('edited feature', encoding='utf-8')
+    head, dirty = current_head(str(repo)), git_output(str(repo), 'status', '--porcelain')
+
+    result = dispatch_worker(config)
+
+    report = json.loads(read_typed_capture(config))['result']
+    assert json.loads(config.agent_run.result_file.read_bytes()) == report
+    assert 'commit_sha' not in report
+    assert result.state == ('interrupted' if status == 'interrupted' else 'failed')
+    assert result.reason == report['reason'] and result.return_code == code
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert (outcome['status'], outcome['reason'], outcome['provider_return_code']) == (status, report['reason'], 0)
+    assert f'|status={status}|source=dispatcher|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    assert current_head(str(repo)) == head and git_output(str(repo), 'status', '--porcelain') == dirty
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize(('location', 'key', 'value'), [
+    (location, key, value) for location in ('envelope', 'report') for key, value in (
+        ('run_id', 'foreign'), ('attempt_id', 'foreign'), ('issue', '99'), ('role', 'modify'),
+        ('schema_version', True),
+    )
+] + [('envelope', 'cycle', 4)])
+def test_captured_role_failure_rejects_invalid_identity(tmp_path, key, value, location):
+    config = typed_capture_worker(tmp_path, prepare=f'\n{location}[{key!r}] = {value!r}\n')
+    reason = 'capture-identity-mismatch' if location == 'envelope' else (
+        'invalid-role-failure-schema' if key == 'schema_version' else 'role-failure-identity-mismatch')
+    assert_typed_capture_rejected(config, reason)
+
+
+@pytest.mark.parametrize(('mutation', 'reason'), [
+    ("report['status'] = 'success'", 'invalid-role-failure-status'),
+    ("report['reason'] = ''", 'invalid-role-failure-reason'),
+    ("report['summary'] = ' '", 'invalid-role-failure-reason'),
+    ("report['evidence'] = [7]", 'invalid-role-failure-evidence'),
+    ("report['verification']['passed'] = True", 'invalid-role-failure-verification'),
+])
+def test_captured_role_failure_rejects_invalid_schema(tmp_path, mutation, reason):
+    config = typed_capture_worker(tmp_path, prepare=f'\n{mutation}\n')
+    assert_typed_capture_rejected(config, reason)
+
+
+@pytest.mark.parametrize('mutation', [
+    "raw = raw.replace(b'\"status\":', b'\"status\": \"failed\", \"status\":', 1)",
+    "raw = raw.replace(b'\"passed\": false', b'\"passed\": 1e999', 1)",
+    "raw = raw[:-1]",
+])
+def test_captured_role_failure_rejects_invalid_json(tmp_path, mutation):
+    config = typed_capture_worker(tmp_path, encode=f'\n{mutation}\n')
+    assert_typed_capture_rejected(config, 'capture-invalid-json')
+
+
+def assert_typed_capture_rejected(config, reason):
+    assert dispatch_worker(config).state == 'failed'
+    read_typed_capture(config)
+    assert not config.agent_run.result_file.exists()
+    events = config.agent_run.events_log.read_text(encoding='utf-8')
+    diagnostic = next(line for line in events.splitlines() if 'type=dispatch-capture-rejected|' in line)
+    assert 'run_id=worker-7-impl-' in diagnostic and '|attempt_id=' in diagnostic
+    assert diagnostic.endswith(f'|reason={reason}')
+    assert 'feature check' not in diagnostic
+
+
+@pytest.mark.parametrize('kind', ['nonzero', 'runner-failure', 'runner-nonzero', 'no-runner-record',
+                                  'no-durable-exit', 'unknown-shutdown'])
+def test_typed_capture_requires_successful_owned_exit(tmp_path, monkeypatch, kind):
+    from ai_skills import dispatch
+
+    config = typed_capture_worker(tmp_path, after='\nraise SystemExit(7)\n' if kind == 'nonzero' else '')
+    original = dispatch.run_agent
+
+    def invoke(run):
+        result = original(run)
+        if kind == 'runner-failure':
+            raise RuntimeError('injected runner failure')
+        if kind == 'runner-nonzero':
+            return replace(result, return_code=1)
+        if kind == 'no-runner-record':
+            Path(run.process_state_file).unlink()
+        if kind == 'no-durable-exit':
+            path = next(Path(run.record_directory).glob('*.json'))
+            record = json.loads(path.read_bytes())
+            del record['return_code']
+            dispatch.write_json_atomic(path, record)
+        if kind == 'unknown-shutdown':
+            inspect = dispatch.ProcessSupervisor.inspect
+
+            def unknown_shutdown(supervisor, identity):
+                liveness = inspect(supervisor, identity)
+                assert liveness.state == 'dead'
+                return replace(liveness, state='unknown')
+
+            monkeypatch.setattr(dispatch.ProcessSupervisor, 'inspect', unknown_shutdown)
+        return result
+
+    monkeypatch.setattr(dispatch, 'run_agent', invoke)
+    result = dispatch_worker(config)
+    captured_reason = json.loads(read_typed_capture(config))['result']['reason']
+    assert not config.agent_run.result_file.exists()
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    if kind in ('no-durable-exit', 'unknown-shutdown'):
+        reason = 'provider-exit-status-unknown' if kind == 'no-durable-exit' else 'shutdown-identity-unknown'
+        assert (result.state, result.reason, outcome['status']) == ('unknown', reason, 'pending')
+        assert not config.agent_run.done_file.exists()
+    else:
+        assert result.state == outcome['status'] == 'failed'
+        assert outcome['reason'] != captured_reason
+        assert outcome['provider_return_code'] == (7 if kind == 'nonzero' else 0)
+        assert '|status=failed|' in config.agent_run.done_file.read_text(encoding='utf-8')
+
+
+def record_stop_after_provider_exit(monkeypatch, config, reason):
+    from ai_skills import dispatch
+
+    original = dispatch.run_agent
+
+    def invoke(run):
+        result = original(run)
+        assert result.return_code == 0
+        dispatch._record_stop_intent(replace(config, agent_run=run), reason)
+        return result
+
+    monkeypatch.setattr(dispatch, 'run_agent', invoke)
+
+
+def assert_forced_stop(config, result, reason, status, code):
+    assert (result.state, result.reason, result.return_code) == (status, reason, code)
+    state = json.loads(config.state_file.read_bytes())
+    assert (state['state'], state['reason'], state['return_code']) == (status, reason, code)
+    assert state['stop_intent']['reason'] == reason
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert (outcome['status'], outcome['reason'], outcome['worker_return_code']) == (status, reason, code)
+    assert outcome['provider_return_code'] == 0
+    assert f'|status={status}|source=dispatcher|' in config.agent_run.done_file.read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize(('reason', 'status', 'code'), [
+    ('hard-limit-exceeded', 'failed', 124), ('dispatch-timeout', 'failed', 124),
+    ('interrupted', 'interrupted', 130),
+])
+def test_forced_stop_prevents_typed_capture_import(tmp_path, monkeypatch, reason, status, code):
+    config = typed_capture_worker(tmp_path)
+    record_stop_after_provider_exit(monkeypatch, config, reason)
+
+    result = dispatch_worker(config)
+
+    read_typed_capture(config)
+    assert not config.agent_run.result_file.exists()
+    assert_forced_stop(config, result, reason, status, code)
+
+
+def test_direct_interrupted_result_survives_forced_stop(tmp_path, monkeypatch):
+    config = typed_capture_worker(tmp_path, after='''
+direct = dict(report, status='interrupted', summary='Interrupted before verification completed.',
+              evidence=['partial work preserved'])
+payload = result_path.with_name('direct-payload.json')
+payload.write_text(json.dumps(direct), encoding='utf-8')
+subprocess.run([sys.executable, '-m', 'ai_skills', 'artifact', 'write-json', '--role', direct['role'],
+                '--issue', direct['issue'], '--payload-file', str(payload), '--result-file', str(result_path)],
+               check=True)
+result_path.with_name('direct-original').write_bytes(result_path.read_bytes())
+''')
+    record_stop_after_provider_exit(monkeypatch, config, 'hard-limit-exceeded')
+
+    result = dispatch_worker(config)
+
+    direct = config.agent_run.result_file.read_bytes()
+    assert direct == (tmp_path / 'direct-original').read_bytes()
+    assert json.loads(direct)['status'] == 'interrupted'
+    assert json.loads(direct)['evidence'] == ['partial work preserved']
+    assert json.loads(direct)['reason'] == 'artifact-recovery-required'
+    assert json.loads(read_typed_capture(config))['result']['status'] == 'failed'
+    assert_forced_stop(config, result, 'hard-limit-exceeded', 'failed', 124)
