@@ -125,6 +125,60 @@ def test_real_restart_adopts_live_provider_without_second_launch(tmp_path,monkey
     assert (tmp_path/'dirty.txt').read_text()=='preserve dirty work'
 
 
+@pytest.mark.parametrize('boundary', ['outcome', 'state', 'done'])
+def test_restart_adopts_interrupted_publication_without_relaunch(tmp_path, monkeypatch, boundary):
+    from ai_skills import dispatch
+    from pool_support import real_pool_fixture
+
+    monkeypatch.setenv('RUN_WITH_IT_GITHUB_UPDATES', '0')
+    config = real_pool_fixture(tmp_path, delay=0)
+    first = PoolSupervisor(config)
+    assert first.initialize() is None
+    worker = replace(first.worker('1'), detach=False)
+    first._intent('1', worker)
+    state_file = Path(worker.state_file).resolve()
+    journal = dispatch.outcome_path(state_file)
+    write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
+
+    def publish_json(path, value):
+        if boundary == 'outcome' and path == journal and value['status'] == 'success':
+            raise OSError('injected pool publication failure')
+        if boundary == 'state' and path == state_file and value.get('state') == 'completed':
+            raise OSError('injected pool publication failure')
+        return write_json(path, value)
+
+    def publish_text(path, value, *, exclusive=False):
+        if boundary == 'done' and path == Path(worker.agent_run.done_file).resolve():
+            raise OSError('injected pool publication failure')
+        return write_text(path, value, exclusive=exclusive)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dispatch, 'write_json_atomic', publish_json)
+        patch.setattr(dispatch, 'write_text_atomic', publish_text)
+        with pytest.raises(OSError, match='injected pool publication failure'):
+            dispatch.dispatch_worker(worker)
+
+    report = Path(worker.agent_run.result_file)
+    original_report = report.read_bytes()
+    journal_before = journal.read_bytes()
+    assert json.loads(journal_before)['status'] == ('pending' if boundary == 'outcome' else 'success')
+    assert not Path(worker.agent_run.done_file).exists()
+    state = load_json(state_file)
+    state['launcher_identity']['created_at'] += 1
+    write_json_atomic(state_file, state)
+    assert run_pool(config).state == 'pool-empty'
+    saved = first.read()
+    assert saved['issue_registry']['1']['status'] == 'completed'
+    assert saved['pool_attempts']['1']['status'] == 'finalized'
+    outcome = load_json(journal)
+    assert (outcome['status'], outcome['issue_outcome']) == ('success', 'completed')
+    if boundary != 'outcome':
+        assert journal.read_bytes() == journal_before
+    assert '|status=success|source=dispatcher|' in Path(worker.agent_run.done_file).read_text(encoding='utf-8')
+    assert report.read_bytes() == original_report
+    assert len((tmp_path / 'launches.log').read_text(encoding='utf-8').splitlines()) == 1
+
+
 def test_real_detached_pool_preserves_options_and_worker_overrides(tmp_path,monkeypatch):
     import time
     from ai_skills.dispatch import stop_run

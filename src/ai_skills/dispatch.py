@@ -927,8 +927,10 @@ def adopt_worker(state_file) -> WorkerResult:
                         0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher)
                 if state.get('state') not in ('launching','starting') and state.get('reason') not in ('dispatch-bootstrap-failed','missing-command','cli-unsupported'):
                     return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
+            # State can lag the journal if terminal publication was interrupted.
+            # Let the finalizer reuse the journal reason before defaulting it.
             return _finalize_attempt(config,provider_return_code=None,
-                reason=state.get('reason') or 'dispatch-bootstrap-failed',
+                reason=state.get('reason') or '',
                 failure_class=state.get('failure_class','capability'),prelaunch_failure=True)
         identity = ProcessIdentity(**process['identity'])
         liveness = supervisor.inspect(identity)
