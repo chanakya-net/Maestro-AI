@@ -566,13 +566,19 @@ def test_capture_with_ineligible_provenance_uses_normal_recovery(tmp_path, kind)
 
 
 def test_captured_evidence_cannot_substitute_for_retry_evidence(tmp_path):
+    from ai_skills.verification import check_evidence_reason
+    from test_dispatch import CAPTURE_CHECKS
     source, result = rejected_capture(tmp_path, 'impl')
     assert result.state == 'artifact-recovery-required'
     saved = load_json(Path(str(source.state_file) + '.config.json'))
     repo = source.agent_run.repo_root
     head = git(repo, 'rev-parse', 'HEAD')
     contract = {'source_state_file': str(source.state_file), 'source_attempt_id': saved['agent_run']['attempt_id'],
-                'expected_commit_sha': head, 'required_checks': ['feature acceptance']}
+                'expected_commit_sha': head, 'required_checks': list(CAPTURE_CHECKS['required_checks'])}
+    captured = load_json(Path(saved['agent_run']['final_response_file']))['result']
+    assert captured['commit_sha'] == head
+    assert check_evidence_reason(captured['verification'], expected_commit=head,
+                                 required_checks=contract['required_checks']) == ''
     verify = VERIFY.replace("Path('feature.txt').read_text()=='implemented\\n'",
                             "Path('feature.txt').read_text().startswith('implemented')")
     verify = verify.replace('payload_path.write_text(json.dumps(payload))',
