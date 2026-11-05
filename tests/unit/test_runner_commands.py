@@ -127,3 +127,35 @@ def test_codex_capture_flag_precedes_stdin_and_rejects_conflicts(config):
         spec = build_invocation(ineligible, registry)
         assert '--output-last-message' not in spec.argv
         assert b'"result_capture"' not in spec.stdin
+
+
+@pytest.mark.parametrize(('agent', 'source', 'flags', 'conflicts'), [
+    ('claude-code', 'claude-json', ('--output-format', 'json'),
+     ('--output-format=stream-json', '--input-format', '--include-partial-messages')),
+    ('agy-cli', 'agy-stream-json', (),
+     ('--output-format=text', '--input-format=text', '--prompt')),
+    ('open_code', 'opencode-json-v1.16.2', ('--format', 'json'),
+     ('--format=default', '--interactive', '--command')),
+])
+def test_stream_capture_preserves_baseline_arguments_and_rejects_conflicts(config, agent, source, flags, conflicts):
+    registry = load_registry()
+    plain = config.replace(agent=agent, model='configured/model', dispatcher_managed=True, role='impl',
+                           state_file=config.repo_root / 'state.json', result_file=config.repo_root / 'result.json')
+    context = {'source': source}
+    bound = plain.replace(result_capture_context=context)
+    baseline = build_invocation(plain, registry)
+    captured = build_invocation(bound, registry)
+    assert captured.argv == baseline.argv + flags
+    stdin = captured.stdin
+    if source == 'agy-stream-json':
+        assert stdin.count(b'\n') == 1
+        stdin = json.loads(stdin)['message']['content'].encode()
+    assert json.loads(stdin.decode().rsplit('Authoritative attempt metadata:\n', 1)[1])['result_capture'] == context
+    for option in (*conflicts, '--'):
+        with pytest.raises(ValueError, match='capture conflicts'):
+            build_invocation(bound.replace(extra_args=(option,)), registry)
+    for ineligible in (bound.replace(dispatcher_managed=False),
+                       bound.replace(verification_context={'execution_mode': 'verify_existing'})):
+        spec = build_invocation(ineligible, registry)
+        assert spec.argv == baseline.argv
+        assert b'"result_capture"' not in spec.stdin

@@ -27,6 +27,9 @@ import uuid
 
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
+from ai_skills.provider_capture import (
+    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, ProviderError, agy_result_response, extract_response,
+)
 from ai_skills.resources import resource_path
 from ai_skills.registry import load_registry
 from ai_skills.outcomes import canonical_path, role_artifact_paths
@@ -144,7 +147,7 @@ def _payload(config):
                 result_file=config.result_file, issue_dir=config.issue_dir)}
         if config.verification_context is not None:
             metadata['verification_contract'] = config.verification_context
-        if config.final_response_file is not None and config.result_capture_context is not None:
+        if config.result_capture_context is not None:
             metadata['result_capture'] = config.result_capture_context
         protocol = resource_path('artifact-protocol.md').read_text(encoding='utf-8')
         payload += '\n\n' + protocol.rstrip('\n') + '\n\nAuthoritative attempt metadata:\n'
@@ -164,15 +167,37 @@ def _render(text, substitutions):
     return text
 
 
-def _capture_bound(config, name):
-    return (name == 'codex' and config.dispatcher_managed and config.role in ('impl', 'modify') and
-        config.verification_context is None and config.final_response_file is not None and
-        config.result_capture_context is not None)
+_CAPTURE_ROUTES = {'codex': (CODEX, 'stdin'), 'claude': (CLAUDE, 'stdin'),
+                   'agy': (AGY, 'agy-stream-json'), 'opencode': (OPENCODE, 'stdin')}
+
+
+def capture_source(config, name=None):
+    if (not config.dispatcher_managed or config.role not in ('impl', 'modify') or
+            config.verification_context is not None or config.result_capture_context is None):
+        return None
+    source = config.result_capture_context.get('source', CODEX)
+    if not isinstance(source, str) or (name is not None and source != _CAPTURE_ROUTES.get(name, (None, None))[0]):
+        return None
+    if source == CODEX and config.final_response_file is not None:
+        return source
+    if source in STREAM_SOURCES and config.final_response_file is None:
+        return source
+    return None
+
+
+def capture_candidate(config, registry, spec):
+    name, agent = _agent(registry, config.agent)
+    source, transport = _CAPTURE_ROUTES.get(name, (None, None))
+    if source and agent.get('invocation', {}).get('prompt_transport') == transport:
+        if name != 'opencode' or _configured(agent, spec.env, spec.cwd):
+            return source
+    return None
 
 
 def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     name, agent = _agent(registry, config.agent)
-    if not _capture_bound(config, name):
+    source = capture_source(config, name)
+    if not source:
         config = config.replace(final_response_file=None, result_capture_context=None)
     root = Path(config.repo_root).resolve()
     if not root.is_dir():
@@ -225,8 +250,10 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
             argv.extend(expansions[key])
         else:
             argv.append(_render(token, substitutions))
-    if config.final_response_file is not None:
+    if source == CODEX:
         _add_capture_flag(argv, transport, config.final_response_file)
+    elif source:
+        _stream_capture_args(argv, transport, source)
     return ProcessSpec(tuple(argv), root, env, unset_env=('AGENT','MODEL') if config.scrub_ambient_aliases else (), stdin=input_bytes)
 
 
@@ -239,6 +266,31 @@ def _add_capture_flag(argv, transport, path):
                 (option.startswith('-') and not option.startswith('--') and 'o' in option[1:])):
             raise ValueError('Codex capture conflicts with a provider argument')
     argv[-1:-1] = ['--output-last-message', str(path)]
+
+
+def _stream_capture_args(argv, transport, source):
+    if source == CLAUDE:
+        if transport != 'stdin' or argv[-1] != '--print':
+            raise ValueError('Claude capture requires print mode with stdin')
+        _reject_capture_options(argv[1:], '--output-format', '--input-format',
+                                '--include-partial-messages', '--replay-user-messages')
+        argv.extend(('--output-format', 'json'))
+    elif source == AGY:
+        if transport != 'agy-stream-json' or argv[-4:] != [
+                '--input-format', 'stream-json', '--output-format', 'stream-json']:
+            raise ValueError('Agy capture requires stream-json input and output')
+        _reject_capture_options(argv[1:-4], '--input-format', '--output-format',
+                                '-p', '--print', '--prompt', '-i', '--prompt-interactive')
+    elif source == OPENCODE:
+        if transport != 'stdin' or argv[1:2] != ['run']:
+            raise ValueError('OpenCode capture requires a run invocation with stdin')
+        _reject_capture_options(argv[2:], '--format', '--interactive', '-i', '--command', '--demo')
+        argv.extend(('--format', 'json'))
+
+
+def _reject_capture_options(args, *flags):
+    if any(arg.partition('=')[0] in (*flags, '--') for arg in args):
+        raise ValueError('capture conflicts with a provider argument')
 
 
 def resolve_executable(argv, environment, *, windows=None):
@@ -267,20 +319,42 @@ def resolve_executable(argv, environment, *, windows=None):
     return (node, str(entry), *argv[1:])
 
 
-def supports_final_response_capture(spec: ProcessSpec) -> bool:
+def _capture_probe(prefix, spec, env, *args):
+    with tempfile.TemporaryFile() as output:
+        result = subprocess.run((*prefix, *args), cwd=spec.cwd, env=env,
+            stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, timeout=10)
+        output.seek(0)
+        return output.read(65536) if result.returncode == 0 else b''
+
+
+def _help_option(help_text, flag):
+    pattern = (rb'^[ \t]*(?:-\w,[ \t]+)?' + flag + rb'(?=[\s,]|=<|$)'
+               rb'[^\r\n]*(?:\r?\n[ \t]+[^\s-][^\r\n]*)*')
+    match = re.search(pattern, help_text, re.MULTILINE)
+    return match[0] if match else b''
+
+
+def supports_final_response_capture(spec: ProcessSpec, source=CODEX) -> bool:
     """Probe only the resolved executable prefix, without task arguments or input."""
+    subcommand, flag = {CODEX: (('exec',), b'--output-last-message'),
+                        CLAUDE: ((), b'--output-format'),
+                        AGY: ((), b'--output-format'),
+                        OPENCODE: (('run',), b'--format')}[source]
     try:
         argv = resolve_executable(spec.argv, spec.env)
         prefix = argv[:len(argv) - len(spec.argv) + 1]
         env = {key: value for key, value in spec.env.items() if key not in spec.unset_env}
-        with tempfile.TemporaryFile() as output:
-            result = subprocess.run((*prefix, 'exec', '--help'), cwd=spec.cwd, env=env,
-                stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, timeout=10)
-            output.seek(0)
-            help_text = output.read(65536)
+        help_text = _capture_probe(prefix, spec, env, *subcommand, '--help')
+        option = _help_option(help_text, flag)
+        if not option:
+            return False
+        if source == OPENCODE and _capture_probe(prefix, spec, env, '--version').strip() != OPENCODE_VERSION.encode():
+            return False
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0 and bool(re.search(rb'(?<![\w-])--output-last-message(?=[\s=,]|$)', help_text))
+    if source == AGY:
+        return bool(_help_option(help_text, b'--input-format'))
+    return source == CODEX or bool(re.search(rb'(?<![\w-])json(?![\w-])', option))
 
 
 class _Tail:
@@ -337,24 +411,21 @@ def read_provider_output(path, *, transport='argv'):
                 if result is not None:
                     raise ValueError('AGY returned multiple results for a single prompt')
                 result = event.get('result')
-    if not isinstance(result, dict) or not isinstance(result.get('response'), str):
-        raise ValueError('AGY stream ended without a complete terminal result.response')
-    if result.get('status') != 'SUCCESS':
-        raise ValueError('AGY result failed: ' + str(result.get('error') or result.get('status')))
-    return result['response']
+    return agy_result_response(result)
 
 
-class _AgyTail(_Tail):
-    def __init__(self, path, channel, bus):
-        super().__init__(path, channel, bus)
-        self.path = path
-
+class _RawTail(_Tail):
     def drain(self, *, final=False):
-        # Raw NDJSON remains in the durable stream file. Do not mistake tool
-        # deltas or JSON-escaped status strings for colleague narrative.
+        # Machine output stays in the durable stream file.
         data = self.stream.read(65536)
         self.recent = (self.recent + self.decoder.decode(data, final=final and not data))[-65536:]
         return bool(data)
+
+
+class _AgyTail(_RawTail):
+    def __init__(self, path, channel, bus):
+        super().__init__(path, channel, bus)
+        self.path = path
 
     def finish(self):
         response = read_provider_output(self.path, transport='agy-stream-json')
@@ -390,10 +461,23 @@ def classify_unavailable(text):
     return ''
 
 
+def _stream_unavailability(source, tail):
+    tail.stream.seek(0)
+    try:
+        extract_response(source, tail.stream)
+    except ProviderError as error:
+        return classify_unavailable(str(error))
+    except (ValueError, RecursionError):
+        # The dispatcher rejects invalid framing only when capture is needed.
+        pass
+    return ''
+
+
 def run_agent(config: AgentRunConfig) -> AgentRunResult:
     registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
-    capture_bound = _capture_bound(config, name)
+    source = capture_source(config, name)
+    stream_capture = source in STREAM_SOURCES
     invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
     spec = build_invocation(config, registry)
@@ -410,16 +494,18 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
     stream_context = nullcontext(config.stream_directory) if config.stream_directory else tempfile.TemporaryDirectory(prefix='ai-skills-streams-')
     with stream_context as temporary:
         directory = Path(temporary)
-        if capture_bound:
+        if source == CODEX:
             capture = Path(config.final_response_file)
             if (capture != directory / 'final-response.json' or capture.resolve() != capture or
                     capture.exists() or capture.is_symlink()):
                 raise ValueError('unsafe or occupied Codex capture path')
         directory.mkdir(parents=True, exist_ok=True)
         output, errors = directory/'stdout', directory/'stderr'
-        with output.open('xb'), errors.open('xb'):
-            pass
+        with output.open('xb') as stdout, errors.open('xb'):
+            stdout_info = os.fstat(stdout.fileno())
         output_tail = _AgyTail if invocation.get('prompt_transport') == 'agy-stream-json' else _Tail
+        if stream_capture:
+            output_tail = _RawTail
         tails = [output_tail(output, 'stdout', bus), _Tail(errors, 'stderr', bus)]
         owned = None
         try:
@@ -430,6 +516,8 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
                                      run_id=config.run_id or 'agent-' + uuid.uuid4().hex,
                                      attempt_id=config.attempt_id or uuid.uuid4().hex)
             state = {'schema_version':1, 'identity':asdict(owned.identity), 'record_directory':str(supervisor.directory), 'state':'alive', 'stdout_file':str(output), 'stderr_file':str(errors)}
+            if stream_capture:
+                state['stdout_identity'] = [stdout_info.st_dev, stdout_info.st_ino]
             if config.process_state_file:
                 write_json_atomic(Path(config.process_state_file), state)
             next_heartbeat = time.monotonic() + config.heartbeat_seconds
@@ -467,7 +555,12 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             if code == 0 and isinstance(tails[0], _AgyTail):
                 tails[0].finish()
             reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
-            if config.process_state_file and (not capture_bound or code != 0):
+            if stream_capture:
+                reason = reason or _stream_unavailability(source, tails[0])
+                if reason:
+                    state['unavailable_reason'] = reason
+                    code = code or 1
+            if config.process_state_file and (not source or code != 0):
                 write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
         except FileNotFoundError as error:
             code, reason = 127, 'missing-command'
@@ -504,7 +597,7 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
     line = emit_status('telemetry', telemetry)
     EventBus.append(bus.log_file, line + '\n')
     print(line, file=sys.stderr)
-    if capture_bound and config.process_state_file and code == 0:
+    if source and config.process_state_file and code == 0:
         # Adoption needs durable proof that the runner finished after the owned provider.
         write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
     return AgentRunResult(code, name, model, reason)

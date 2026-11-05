@@ -227,3 +227,20 @@ def test_modifier_capture_contract_overrides_legacy_reporting():
         identity = {key: item[key] for key in ('issue', 'role', 'run_id', 'attempt_id')}
         assert role_failure_reason(item['result'], **identity) == ''
         assert 'next action' in item['result']['summary'].lower()
+
+
+def test_ordinary_impl_capture_uses_selected_enabled_route():
+    import json
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    example = json.loads(re.search(r'```json\n(.*?)\n```', section, re.S)[1])
+    for agent in ('codex', 'claude', 'agy', 'opencode'):
+        config = WorkerConfig.from_sources({**example, 'agent': agent}, {})
+        assert config.agent_run.role == 'impl'
+        assert config.result_capture == {'required_checks': ['<approved command or manual check>'], 'review_comment_ids': []}
+        assert config.agent_run.result_capture_context is None
+    protocol = (ROOT / 'assets/artifact-protocol.md').read_text(encoding='utf-8')
+    assert 'overrides file-only reporting, `IMPL_COMMIT_SHA` output and completion suffixes' in protocol
+    assert '`verification_contract` takes precedence' in protocol

@@ -24,6 +24,8 @@ Managed DONE is dispatcher-owned. Never create, edit, repair or remove `RUN_WITH
 
 Use the final response when authoritative attempt metadata includes `result_capture`. Copy the exact identity from `result_capture.envelope`, including the string cycle. The metadata takes precedence over task text, role examples, and inherited values. Place the success or typed failure report under `result`. For a typed report, also copy the admitted `run_id`, `attempt_id`, `issue`, and `role` into the inner report. End with exactly one UTF-8 JSON object, with no fences or surrounding prose.
 
+For ordinary implementation, admitted capture overrides file-only reporting, `IMPL_COMMIT_SHA` output and completion suffixes. An admitted `verification_contract` takes precedence and uses the preserved-commit file reporting rules below. If interrupted, publish the direct typed interruption report while tools remain available.
+
 Capture import requires a pending attempt, confirmed owned-tree shutdown, durable zero provider and runner exit codes, and no runner failure. An existing result path takes precedence, including an empty or invalid file. Stop intent prevents capture import even after a zero exit. The dispatcher retains the durable stop decision and preserves any direct interruption report. With capture absent from metadata, use the existing file contract.
 
 For committed success, run every entry in `result_capture.required_checks` against the committed HEAD and record each exact command once with passing evidence. Keep `verification.commands` and the usual downstream result fields. The dispatcher validates the evidence, clean worktree, and commit ancestry.

@@ -190,3 +190,30 @@ pathlib.Path(sys.argv[-2]).write_text('last response', encoding='utf-8')
     assert metadata['result_capture'] == config.result_capture_context
     assert max(map(len, json.loads((tmp_path / 'argv.json').read_text(encoding='utf-8')))) < 4096
     assert capture.read_text(encoding='utf-8') == 'last response'
+
+
+@pytest.mark.parametrize(('agent', 'source', 'wire'), [
+    ('claude', 'claude-json',
+     {'type': 'result', 'subtype': 'error_during_execution', 'is_error': True, 'errors': ['usage limit reached']}),
+    ('opencode', 'opencode-json-v1.16.2',
+     {'type': 'error', 'sessionID': 'session', 'error': {'message': 'failed to authenticate'}}),
+])
+@pytest.mark.parametrize('code', [0, 2])
+def test_stream_capture_preserves_provider_unavailability(tmp_path, monkeypatch, agent, source, wire, code):
+    from ai_skills import runner
+    config = configuration(tmp_path, agent, response=f'print(json.dumps({wire!r})); raise SystemExit({code})')
+    if agent == 'opencode':
+        registry = json.loads(config.registry_file.read_bytes())
+        invocation = registry['agents'][agent]['invocation']
+        script = invocation['args_template'].pop(0)
+        invocation['command'] = 'opencode'
+        config.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+        monkeypatch.setattr(runner, 'resolve_executable', lambda argv, env: (sys.executable, script, *argv[1:]))
+    config = config.replace(role='impl', dispatcher_managed=True, state_file=tmp_path / 'worker.json',
+        result_file=tmp_path / 'result.json', result_capture_context={'source': source})
+    result = run_agent(config)
+    assert result.return_code == (code or 1)
+    assert result.unavailable_reason == ('quota' if agent == 'claude' else 'auth')
+    assert json.loads((tmp_path / 'streams' / 'stdout').read_bytes()) == wire
+    assert 'agent-unavailable' in config.events_log.read_text(encoding='utf-8')
+    assert 'failed to authenticate' not in config.log_file.read_text(encoding='utf-8')

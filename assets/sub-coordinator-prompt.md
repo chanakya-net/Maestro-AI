@@ -112,6 +112,8 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 
 Write one JSON configuration per role/cycle/attempt using file tools; use absolute paths, JSON strings for model names, and arrays for exact extra argv. `agent`/`model` below are examples: replace them with the persisted route decision and preserve `effort` and `selection_reason` in Sub-Coordinator state. Worker selectors never inherit `SUB_COORD_AGENT` or `SUB_COORD_MODEL`.
 
+For ordinary managed implementation on any supported enabled route, include `result_capture` when you can establish the complete list of applicable approved checks. Populate `required_checks` from the issue requirements, grounded plan when present, and governing repository instructions. Include all approved command and manual checks in the task context and use their exact text in the config. Supply an empty `review_comment_ids` list for implementation. If check applicability or completeness is unresolved, omit `result_capture` and use file publication. The dispatcher selects the adapter and falls back to file publication when an otherwise compatible executable lacks capture.
+
 ```json
 {
   "agent": "codex",
@@ -121,6 +123,10 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "issue": "42",
   "cycle": "1",
   "issue_base_sha": "<original immutable ISSUE_BASE_SHA>",
+  "result_capture": {
+    "required_checks": ["<approved command or manual check>"],
+    "review_comment_ids": []
+  },
   "context_file": "/absolute/run/.run-with-it/issues/42/context.md",
   "prompt_file": "/absolute/assets/prompt.md",
   "repo_root": "/absolute/run/.run-with-it/worktrees/issue-42",
@@ -403,7 +409,7 @@ Write a fresh attempt-specific `worker.json` using the Native Worker Configurati
 Read `git rev-parse HEAD` with the issue worktree as the explicit working directory. Verify it equals the saved bootstrap base before initial implementation; persist that canonical SHA as `ISSUE_BASE_SHA`. On recovery preserve saved base/implementation SHAs instead of overwriting them.
 
 Store `ISSUE_BASE_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` immediately. This value never changes for the lifetime of this issue.
-Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
+Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, including the implementation capture contract when all applicable approved checks are established. Then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together. Inspect the persisted state before any retry.
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
 
