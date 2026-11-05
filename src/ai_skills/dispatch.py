@@ -30,9 +30,10 @@ from ai_skills import artifacts, git, verification
 from ai_skills.outcomes import role_artifact_paths
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
+from ai_skills.provider_capture import CODEX, ProviderError, extract_response
 from ai_skills.runner import (
     AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable,
-    load_registry, run_agent, supports_final_response_capture,
+    capture_candidate, capture_source, load_registry, run_agent, supports_final_response_capture,
 )
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
 from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, outcome_reason
@@ -424,31 +425,30 @@ def _work(config):
 
 def _bind_result_capture(config, registry, original_run):
     run = config.agent_run
-    agent = registry.get('aliases', {}).get(run.agent, run.agent)
     ids = (config.result_capture or {}).get('review_comment_ids')
     # Review comment IDs are modifier closure authority; an impl never binds them.
     if (config.result_capture is None or config.execution_mode != 'implement' or
-            run.role not in ('impl', 'modify') or (run.role == 'impl' and ids) or agent != 'codex' or
+            run.role not in ('impl', 'modify') or (run.role == 'impl' and ids) or
             not verification.capture_cycle(run.cycle) or not config.pre_spawn_head or
             not git.repo_available(str(run.repo_root))):
-        return config
-    if registry['agents'][agent].get('invocation', {}).get('prompt_transport') != 'stdin':
         return config
     try:
         if git.current_head(str(run.repo_root)) != config.pre_spawn_head:
             return config
     except (OSError, subprocess.SubprocessError):
         return config
-    if not supports_final_response_capture(build_invocation(run, registry)):
+    spec = build_invocation(run, registry)
+    source = capture_candidate(run, registry, spec)
+    if not source or not supports_final_response_capture(spec, source):
         return config
     for path in (original_run.result_file, original_run.stream_directory or run.stream_directory):
         if Path(path).is_symlink():
             raise ValueError('capture paths must not be symlinks')
     contract = {'required_checks': list(config.result_capture['required_checks']), 'review_comment_ids': list(ids)}
     identity = verification.capture_identity(run)
-    context = {'schema_version': 1, 'source': 'codex-last-message', 'cycle': identity['cycle'],
+    context = {'schema_version': 1, 'source': source, 'cycle': identity['cycle'],
         **contract, 'envelope': identity}
-    run = replace(run, final_response_file=Path(run.stream_directory) / 'final-response.json',
+    run = replace(run, final_response_file=Path(run.stream_directory) / 'final-response.json' if source == CODEX else None,
         result_capture_context=context)
     build_invocation(run, registry)
     return replace(config, agent_run=run, result_capture=contract)
@@ -718,26 +718,51 @@ def _capture_rejected(run, reason):
         {'run_id':run.run_id, 'attempt_id':run.attempt_id, 'issue':run.issue, 'role':run.role, 'cycle':verification.capture_cycle(run.cycle), 'reason':reason})
 
 
-def _capture_bytes(run):
-    path = Path(run.final_response_file)
-    if path != Path(run.stream_directory) / 'final-response.json' or path.resolve() != path:
-        raise ValueError('capture path changed')
+def _capture_bytes(run, process, supervisor):
+    source = capture_source(run)
+    directory = Path(run.stream_directory)
+    if source == CODEX:
+        path = Path(run.final_response_file)
+        if path != directory / 'final-response.json':
+            raise OSError('capture path changed')
+    else:
+        path = directory / 'stdout'
+        raw = supervisor.lookup_attempt(run.run_id, run.attempt_id) or {}
+        if (raw.get('identity') != process['identity'] or process.get('stdout_file') != str(path) or
+                (raw.get('spec') or {}).get('stdout') != str(path)):
+            raise OSError('capture stdout binding changed')
+    if path.resolve() != path:
+        raise OSError('capture path changed')
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-        raise ValueError('capture is not an independent regular file')
+        raise OSError('capture is not an independent regular file')
+    if source != CODEX and process.get('stdout_identity') != [info.st_dev, info.st_ino]:
+        raise OSError('capture stdout was replaced')
     flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     with os.fdopen(os.open(path, flags), 'rb') as stream:
-        opened = os.fstat(stream.fileno())
-        if not os.path.samestat(info, opened) or opened.st_nlink != 1 or path.resolve() != path:
-            raise ValueError('capture changed before reading')
-        return stream.read()
+        _check_capture_file(path, stream, info)
+        response = extract_response(source, stream)
+        _check_capture_file(path, stream, info)
+        return response
+
+
+def _check_capture_file(path, stream, original):
+    opened = os.fstat(stream.fileno())
+    current = path.lstat()
+    for info in (opened, current):
+        if (not os.path.samestat(original, info) or info.st_nlink != 1 or
+                (info.st_size, info.st_mtime_ns, info.st_ctime_ns) !=
+                (original.st_size, original.st_mtime_ns, original.st_ctime_ns)):
+            raise OSError('capture changed while reading')
+    if path.resolve() != path:
+        raise OSError('capture path changed')
 
 
 def _publish_captured_result(config, *, eligible):
     """Publish a validated captured report while the attempt lock excludes other finalizers."""
     run = config.agent_run
     if (config.result_capture is None or config.execution_mode != 'implement' or run.role not in ('impl', 'modify') or
-            not run.dispatcher_managed or run.result_capture_context is None):
+            not capture_source(run)):
         return
     path = Path(run.result_file)
     if path.exists() or path.is_symlink():
@@ -754,10 +779,14 @@ def _publish_captured_result(config, *, eligible):
     if supervisor.inspect(identity).state != 'dead' or supervisor.return_code(identity) != 0:
         return _capture_rejected(run, 'capture-provider-exit-unconfirmed')
     try:
-        response = _capture_bytes(run)
+        response = _capture_bytes(run, process, supervisor)
     except FileNotFoundError:
         return _capture_rejected(run, 'capture-response-missing')
-    except (OSError, ValueError, RuntimeError):
+    except ProviderError:
+        return _capture_rejected(run, 'capture-provider-error')
+    except (ValueError, RecursionError):
+        return _capture_rejected(run, 'capture-response-invalid')
+    except (OSError, RuntimeError):
         return _capture_rejected(run, 'capture-path-unsafe')
     reason, payload = verification.captured_result_reason(config, response)
     if reason:
@@ -812,7 +841,7 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 failure_class = 'infrastructure'
         if stop_intent:
             reason = stop_intent['reason']
-        if previous is not None and not terminal and run.final_response_file is not None:
+        if previous is not None and not terminal and capture_source(run):
             _publish_captured_result(config, eligible=(provider_return_code == 0 and not reason and
                 not prelaunch_failure and not runner_failed))
         payload, error = artifacts.load_json(str(run.result_file))
@@ -952,7 +981,9 @@ def adopt_worker(state_file) -> WorkerResult:
             code = supervisor.return_code(identity)
         if code is None:
             return WorkerResult('unknown',3,state_file,'provider-exit-status-unknown',process['identity'])
-        reason = _availability_reason(config) if code else ''
+        reason = process.get('unavailable_reason', '')
+        if not reason and code:
+            reason = _availability_reason(config)
         return _finalize_attempt(config,provider_return_code=code,reason=reason,
             failure_class='infrastructure' if reason else 'capability')
     except (ValueError,TypeError,KeyError) as error:

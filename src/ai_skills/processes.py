@@ -366,6 +366,8 @@ def _own(path):
     try:
         with ExitStack() as stack:
             spec = record.pop('spec')
+            # Keep stream bindings for adoption without retaining launch argv.
+            record['spec'] = {channel: spec[channel] for channel in ('stdout', 'stderr')}
             stdin = stack.enter_context(open(record.get('stdin_file') or os.devnull, 'rb'))
             stdout = stack.enter_context(open(spec['stdout'] or os.devnull, 'ab'))
             stderr = stack.enter_context(open(spec['stderr'] or os.devnull, 'ab'))

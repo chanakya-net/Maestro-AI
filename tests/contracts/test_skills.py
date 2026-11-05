@@ -269,3 +269,12 @@ def test_merge_recovery_bootstrap_has_no_unrelated_implementation_skills():
     text=resource('merge-recovery-prompt.md')
     assert 'tdd-implementation' not in text and 'both activations' not in text
     assert 'ai-skills' in text
+
+
+def test_coordinator_owns_ordinary_implementation_capture_checks():
+    instructions = section(resource('sub-coordinator-prompt.md'), 'Native Worker Configuration')
+    assert 'complete list of applicable approved checks' in instructions
+    assert 'all approved command and manual checks' in instructions
+    assert 'any supported enabled route' in instructions
+    assert 'dispatcher selects the adapter' in instructions
+    assert 'omit `result_capture`' in instructions

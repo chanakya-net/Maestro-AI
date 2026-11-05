@@ -705,7 +705,7 @@ def test_result_capture_configuration_round_trip_and_rejections(tmp_path):
 CAPTURE_CHECKS = {'required_checks': ['feature check', 'git check'], 'review_comment_ids': []}
 
 
-def capture_worker(tmp_path, body, *, help_flag=True, **options):
+def capture_worker(tmp_path, body, *, help_flag=True, probe=None, **options):
     from ai_skills.git import git_output
     from ai_skills.runner import load_registry
 
@@ -719,11 +719,14 @@ def capture_worker(tmp_path, body, *, help_flag=True, **options):
     (repo / '.git' / 'info' / 'exclude').write_text('/exec\n', encoding='utf-8')
     script = repo / 'exec'
     help_text = '--output-last-message <FILE>' if help_flag else 'Older Codex'
-    script.write_text(f'''import json, os, subprocess, sys, time
-from pathlib import Path
+    probe = probe or f'''
 if sys.argv[1:] == ['--help']:
     print({help_text!r})
     raise SystemExit(0)
+'''
+    script.write_text(f'''import json, os, subprocess, sys, time
+from pathlib import Path
+{probe}
 result_path = Path(os.environ['RUN_WITH_IT_RESULT_FILE'])
 state = Path(os.environ['RUN_WITH_IT_STATE_FILE'])
 with state.with_name('calls').open('a') as calls:
@@ -1969,4 +1972,255 @@ result_path.write_text(json.dumps(dict(report, summary='Direct blocked report.')
         assert result.state != 'completed'
         if kind == 'stop':
             assert json.loads(config.state_file.read_bytes())['stop_intent']['reason'] == 'hard-limit-exceeded'
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+STREAM_SOURCES = {'claude': 'claude-json', 'agy': 'agy-stream-json', 'opencode': 'opencode-json-v1.16.2'}
+
+
+def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2'):
+    from ai_skills import runner
+
+    invocation = {
+        'claude': "assert args[-3:] == ['--print', '--output-format', 'json']",
+        'agy': "assert args[-4:] == ['--input-format', 'stream-json', '--output-format', 'stream-json']",
+        'opencode': "assert args[0] == 'run' and args[-2:] == ['--format', 'json']",
+    }[agent]
+    build = build_modify_capture() if role == 'modify' else BUILD_CAPTURE
+    codex_args = "capture = Path(args[-2])\nassert args[-3:] == ['--output-last-message', str(capture), '-']"
+    build = build.replace(codex_args, invocation)
+    flags = {'claude': '    --output-format=stream-json)\n--output-format (choices: "text", "json", "stream-json")',
+             'agy': '--input-format\n--output-format', 'opencode': '--format [choices: "default", "json"]'}[agent]
+    probe = f"""
+if '--version' in sys.argv:
+    print({version!r})
+    raise SystemExit(0)
+if '--help' in sys.argv:
+    assert sys.stdin.buffer.read() == b''
+    print({(flags if help_text is None else help_text)!r})
+    raise SystemExit(0)
+"""
+    config = (modify_worker(tmp_path, build + body, probe=probe) if role == 'modify' else
+              capture_worker(tmp_path, build + body, probe=probe, result_capture=CAPTURE_CHECKS))
+    script = config.agent_run.repo_root / 'exec'
+    source = script.read_text(encoding='utf-8')
+    if agent == 'agy':
+        source = source.replace('metadata = json.loads(prompt.decode', "prompt = json.loads(prompt)['message']['content'].encode('utf-8')\nmetadata = json.loads(prompt.decode")
+    script.write_text(source, encoding='utf-8')
+    registry = json.loads(config.agent_run.registry_file.read_bytes())
+    registry['agents']['claude']['invocation']['command'] = 'claude'
+    registry['agents']['claude']['invocation']['args_template'].remove('exec')
+    registry['agents']['opencode']['user_model_configuration']['config_paths'] = [str(tmp_path / 'opencode.json')]
+    (tmp_path / 'opencode.json').write_text('{}', encoding='utf-8')
+    config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    resolve = runner.resolve_executable
+
+    def fake_executable(argv, environment):
+        if argv[0] == agent:
+            return (sys.executable, str(script), *argv[1:])
+        return resolve(argv, environment)
+
+    monkeypatch.setattr(runner, 'resolve_executable', fake_executable)
+    return replace(config, agent_run=config.agent_run.replace(agent=agent))
+
+
+CLAUDE_CAPTURE = """
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                  'result': json.dumps(envelope)}))
+"""
+
+
+AGY_CAPTURE = '''
+for event in [
+    {'event': 'init', 'conversation_id': 'resumed', 'init': {}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 20,
+        'step_type': 'user_input', 'state': 'DONE'}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 21,
+        'step_type': 'tool', 'state': 'DONE', 'text_delta': json.dumps(envelope)}},
+    {'event': 'result', 'result': {'conversation_id': 'resumed', 'status': 'SUCCESS',
+        'num_turns': 7, 'response': json.dumps(envelope)}},
+]:
+    print(json.dumps(event))
+'''
+
+
+def opencode_capture(mutation=''):
+    fixture = Path(__file__).resolve().parents[1] / 'fixtures/opencode/v1.16.2-tool-to-final.json'
+    events = json.loads(fixture.read_bytes())['events']
+    return f"""
+events = {events!r}
+decoy = {{**envelope, 'result': {{**report, 'provider_decoy': True}}}}
+events[1]['part']['text'] = json.dumps(decoy)
+events[2]['part']['state']['output'] = json.dumps(decoy)
+events[-2]['part']['text'] = json.dumps(envelope)
+{mutation}
+for event in events:
+    print(json.dumps(event))
+"""
+
+
+@pytest.mark.parametrize('agent', ['codex', 'claude', 'agy', 'opencode'])
+@pytest.mark.parametrize('role', ['impl', 'modify'])
+def test_omitted_result_handoff(tmp_path, monkeypatch, agent, role):
+    from ai_skills.git import current_head, git_output
+
+    omitted = """
+assert not result_path.exists()
+result_path.with_name('original-envelope').write_text(json.dumps(envelope), encoding='utf-8')
+"""
+    if agent == 'codex':
+        write = "capture.write_text(json.dumps(envelope), encoding='utf-8')\n" + omitted
+        config = (modify_worker(tmp_path, build_modify_capture() + write) if role == 'modify' else
+                  capture_worker(tmp_path, BUILD_CAPTURE + write, result_capture=CAPTURE_CHECKS))
+    else:
+        wire = {'claude': CLAUDE_CAPTURE, 'agy': AGY_CAPTURE, 'opencode': opencode_capture()}[agent]
+        config = stream_capture_worker(tmp_path, monkeypatch, agent, wire + omitted, role=role)
+    root = str(config.agent_run.repo_root)
+    start = current_head(root)
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    context = saved['agent_run']['result_capture_context']
+    assert context['source'] == STREAM_SOURCES.get(agent, 'codex-last-message')
+    assert (saved['agent_run']['final_response_file'] is None) == (agent != 'codex')
+    original = json.loads((tmp_path / 'original-envelope').read_bytes())
+    assert context['envelope'] == {key: original[key] for key in context['envelope']}
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report == original['result']
+    assert report['commit_sha'] == current_head(root) != start
+    assert report['verification']['commit_sha'] == report['commit_sha']
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['git_progress'] == {'head': report['commit_sha'], 'pre_spawn_head': start,
+                                       'issue_base_sha': config.issue_base_sha}
+    assert (outcome['run_id'], outcome['attempt_id']) == (original['run_id'], original['attempt_id'])
+    if role == 'modify':
+        assert [entry['id'] for entry in report['review_comment_closure']] == MODIFY_IDS
+        assert git_output(root, 'rev-list', '--count', f'{config.issue_base_sha}..HEAD') == '2'
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize(('agent', 'wire', 'diagnostic'), [
+    ('claude', CLAUDE_CAPTURE * 2, 'capture-response-invalid'),
+    ('claude', 'print(json.dumps([envelope]))', 'capture-response-invalid'),
+    ('claude', CLAUDE_CAPTURE.replace("'is_error': False", "'is_error': True"), 'capture-provider-error'),
+    ('claude', "print('{')", 'capture-response-invalid'),
+    ('claude', CLAUDE_CAPTURE.replace('json.dumps(envelope)', 'json.dumps({**envelope, "attempt_id": "stale"})'),
+     'capture-identity-mismatch'),
+    ('agy', AGY_CAPTURE.replace("'status': 'SUCCESS'", "'status': 'FAILED'"), 'capture-provider-error'),
+    ('agy', AGY_CAPTURE.replace("'result': {'conversation_id': 'resumed'", "'result': {'conversation_id': 'other'"),
+     'capture-response-invalid'),
+    ('agy', AGY_CAPTURE.replace("'step_type': 'tool'", "'step_type': 'user_input'"), 'capture-response-invalid'),
+    ('agy', AGY_CAPTURE + "print(json.dumps(event))", 'capture-response-invalid'),
+    ('opencode', opencode_capture('events.pop()'), 'capture-response-invalid'),
+    ('opencode', opencode_capture('events.pop(3)'), 'capture-response-invalid'),
+    ('opencode', opencode_capture('events.pop(-2)'), 'capture-response-invalid'),
+    ('opencode', opencode_capture("events.insert(-1, events[-2])"), 'capture-response-invalid'),
+    ('opencode', opencode_capture("events[-2]['part']['messageID'] = 'another'"), 'capture-response-invalid'),
+    ('opencode', opencode_capture("events[-2]['sessionID'] = 'another'"), 'capture-response-invalid'),
+    ('opencode', opencode_capture("events.append({'type': 'error', 'sessionID': 'ses_fixture', 'error': 'failed'})"),
+     'capture-provider-error'),
+])
+def test_stream_capture_rejections_preserve_existing_handling(tmp_path, monkeypatch, agent, wire, diagnostic):
+    from ai_skills.git import current_head
+
+    config = stream_capture_worker(tmp_path, monkeypatch, agent, wire)
+    root = str(config.agent_run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'artifact-recovery-required', result.reason
+    assert current_head(root) != config.issue_base_sha
+    salvage = json.loads(config.agent_run.result_file.read_bytes())
+    assert salvage['status'] == 'artifact_recovery_required'
+    assert salvage['verification']['passed'] is False
+    assert 'reason=' + diagnostic in config.agent_run.events_log.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize('binding', ['runner-path', 'supervisor-path', 'runner-record', 'replaced', 'hardlink', 'symlink'])
+def test_stream_capture_requires_original_stdout(tmp_path, monkeypatch, binding):
+    from ai_skills import dispatch
+
+    if os.name == 'nt' and binding == 'symlink':
+        pytest.skip('Windows symlink privilege varies')
+    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', CLAUDE_CAPTURE)
+    finalize = dispatch._finalize_attempt
+
+    def change_binding(admitted, **options):
+        run = admitted.agent_run
+        path = Path(run.stream_directory) / 'stdout'
+        record = Path(run.process_state_file)
+        if binding == 'runner-record':
+            record.unlink()
+        elif binding == 'runner-path':
+            process = json.loads(record.read_bytes())
+            process['stdout_file'] = str(path.with_name('stderr'))
+            record.write_text(json.dumps(process), encoding='utf-8')
+        elif binding == 'supervisor-path':
+            supervisor_record, = run.record_directory.glob('*.json')
+            process = json.loads(supervisor_record.read_bytes())
+            process['spec']['stdout'] = str(path.with_name('stderr'))
+            supervisor_record.write_text(json.dumps(process), encoding='utf-8')
+        elif binding == 'hardlink':
+            os.link(path, path.with_name('alias'))
+        else:
+            original = path.rename(path.with_name('original'))
+            if binding == 'symlink':
+                path.symlink_to(original)
+            else:
+                path.write_bytes(original.read_bytes())
+        return finalize(admitted, **options)
+
+    monkeypatch.setattr(dispatch, '_finalize_attempt', change_binding)
+    assert dispatch_worker(config).state == 'artifact-recovery-required'
+    salvage = json.loads(config.agent_run.result_file.read_bytes())
+    assert salvage['status'] == 'artifact_recovery_required'
+    assert salvage['verification']['passed'] is False
+    diagnostic = 'capture-runner-exit-unconfirmed' if binding == 'runner-record' else 'capture-path-unsafe'
+    assert 'reason=' + diagnostic in config.agent_run.events_log.read_text(encoding='utf-8')
+
+
+@pytest.mark.parametrize('direct', ['invalid', 'valid'])
+def test_stream_capture_preserves_direct_result_file(tmp_path, monkeypatch, direct):
+    write = "result_path.write_bytes(b'')" if direct == 'invalid' else (
+        "result_path.write_text(json.dumps({**report, 'publication': 'direct'}), encoding='utf-8')")
+    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', CLAUDE_CAPTURE + write + '\n')
+    result = dispatch_worker(config)
+    raw = config.agent_run.result_file.read_bytes()
+    if direct == 'valid':
+        assert result.state == 'completed'
+        assert json.loads(raw)['publication'] == 'direct'
+    else:
+        assert result.state != 'completed'
+        assert raw == b''
+
+
+@pytest.mark.parametrize(('agent', 'options'), [
+    ('claude', {'help_text': '--output-format (choices: "text", "stream-json")\n --other json'}),
+    ('opencode', {'version': '1.16.1'}),
+    ('opencode', {'help_text': '--formatting (choices: "json")'}),
+    ('opencode', {'unconfigured': True}),
+])
+def test_optional_stream_capture_falls_back_to_file_reporting(tmp_path, monkeypatch, agent, options):
+    options = options.copy()
+    unconfigured = options.pop('unconfigured', False)
+    config = stream_capture_worker(tmp_path, monkeypatch, agent, '', **options)
+    if unconfigured:
+        (tmp_path / 'opencode.json').unlink()
+    script = config.agent_run.repo_root / 'exec'
+    source = script.read_text(encoding='utf-8').split("contract = metadata['result_capture']", 1)[0]
+    script.write_text(source + """
+assert 'result_capture' not in metadata
+assert '--output-format' not in args and '--format' not in args
+result_path.write_text(json.dumps({'issue': '7', 'role': 'impl', 'status': 'success',
+    'no_op': True, 'commit_sha': 'NONE', 'files_committed': [],
+    'verification': {'passed': True, 'commands': ['file check']}}), encoding='utf-8')
+""", encoding='utf-8')
+    assert dispatch_worker(config).state == 'completed'
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_quiet_stream_capture_waits_for_the_original_provider(tmp_path, monkeypatch):
+    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', 'time.sleep(.25)\n' + CLAUDE_CAPTURE)
+    config = replace(config, quiet_seconds=.02, stall_seconds=.05, hard_limit_seconds=10)
+    assert dispatch_worker(config).state == 'completed'
+    assert 'type=worker-stalled|' in config.agent_run.events_log.read_text(encoding='utf-8')
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
