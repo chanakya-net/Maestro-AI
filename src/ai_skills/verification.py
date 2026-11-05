@@ -46,10 +46,13 @@ def validate_configuration(config):
 def validate_result_capture(contract):
     if contract is None:
         return
-    if (not isinstance(contract, dict) or set(contract) != {'required_checks', 'review_comment_ids'} or
-            contract['review_comment_ids'] != []):
+    if not isinstance(contract, dict) or set(contract) != {'required_checks', 'review_comment_ids'}:
         raise ValueError('invalid result_capture')
     _validate_required_checks(contract['required_checks'])
+    ids = contract['review_comment_ids']
+    if (not isinstance(ids, list) or any(not isinstance(item, str) or not item.strip() for item in ids) or
+            len(set(ids)) != len(ids)):
+        raise ValueError('review_comment_ids must be unique nonblank strings')
 
 
 def _validate_required_checks(checks):
@@ -94,7 +97,7 @@ def _capture_commit_ok(root, payload, head, start, no_op):
 
 def captured_result_reason(config, response):
     """Return a bounded rejection reason and the unchanged inner report."""
-    from ai_skills.artifacts import GitEvidence, role_failure_reason, validate_artifact
+    from ai_skills.artifacts import GitEvidence, review_comment_closure_reason, role_failure_reason, validate_artifact
 
     try:
         envelope = json.loads(response.decode('utf-8'), object_pairs_hook=_unique_json_object,
@@ -125,10 +128,12 @@ def captured_result_reason(config, response):
             return 'capture-dirty-worktree', None
     except (OSError, subprocess.SubprocessError):
         return 'capture-git-unavailable', None
-    decision = validate_artifact('impl', payload, GitEvidence(issue=str(run.issue), repo_available=True,
+    decision = validate_artifact(run.role, payload, GitEvidence(issue=str(run.issue), repo_available=True,
         head=head, canonical_commit=head, pre_spawn_head=start, canonical_pre_spawn_head=start))
     reason = decision.reason or check_evidence_reason(payload.get('verification'), expected_commit=head,
         required_checks=config.result_capture['required_checks'])
+    if not reason and run.role == 'modify':
+        reason = review_comment_closure_reason(payload, config.result_capture['review_comment_ids'])
     return reason, payload
 
 

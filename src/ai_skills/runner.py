@@ -165,7 +165,7 @@ def _render(text, substitutions):
 
 
 def _capture_bound(config, name):
-    return (name == 'codex' and config.dispatcher_managed and config.role == 'impl' and
+    return (name == 'codex' and config.dispatcher_managed and config.role in ('impl', 'modify') and
         config.verification_context is None and config.final_response_file is not None and
         config.result_capture_context is not None)
 

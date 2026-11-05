@@ -101,6 +101,46 @@ def role_failure_reason(payload: object, *, issue: str, role: str, run_id: str, 
     return ''
 
 
+CLOSURE_SUCCESS_STATUSES = ('addressed', 'declined')
+
+
+def _string_list(value: object, *, nonempty: bool) -> bool:
+    return (isinstance(value, list) and (bool(value) or not nonempty) and
+            all(isinstance(item, str) and (item.strip() or not nonempty) for item in value))
+
+
+def _closure_entry_reason(entry: object) -> str:
+    if not isinstance(entry, dict) or not isinstance(entry.get('id'), str):
+        return 'invalid-review-comment-closure'
+    if entry.get('status') not in CLOSURE_SUCCESS_STATUSES:
+        return 'review-comment-unresolved'
+    if not isinstance(entry.get('action'), str) or not entry['action'].strip():
+        return 'review-comment-closure-action-missing'
+    if not _string_list(entry.get('files_changed'), nonempty=False):
+        return 'invalid-review-comment-closure'
+    if not _string_list(entry.get('verification'), nonempty=True):
+        return 'review-comment-closure-evidence-missing'
+    return ''
+
+
+def review_comment_closure_reason(payload: object, expected_ids: list[str]) -> str:
+    """Require exactly one evidenced success closure per expected comment ID."""
+    closure = payload.get('review_comment_closure') if isinstance(payload, dict) else None
+    if not isinstance(closure, list):
+        return 'invalid-review-comment-closure'
+    expected, seen = set(expected_ids), set()
+    for entry in closure:
+        reason = _closure_entry_reason(entry)
+        if reason:
+            return reason
+        if entry['id'] not in expected:
+            return 'review-comment-closure-unexpected-id'
+        if entry['id'] in seen:
+            return 'review-comment-closure-duplicate-id'
+        seen.add(entry['id'])
+    return '' if seen == expected else 'review-comment-closure-incomplete'
+
+
 def issue_report_path(args: argparse.Namespace) -> Path | None:
     issue_dir = getattr(args, "issue_dir", "") or ""
     if not issue_dir:

@@ -30,6 +30,8 @@ For committed success, run every entry in `result_capture.required_checks` again
 
 A verified no-op may use the same route when the requirements are already satisfied and the worktree is clean with HEAD unchanged from attempt start. Set `no_op: true`, `commit_sha: "NONE"`, and `files_committed: []` in the role report. Put the actual unchanged HEAD in `verification.commit_sha`, with one passing evidence entry per required check. Never create an empty commit.
 
+A modifier (`role: "modify"`) uses the same route and Git and check rules, validated against the attempt's pre-spawn HEAD; the review range keeps the original issue baseline. The capture route overrides file-only reporting, `MODIFY_COMMIT_SHA` output and completion suffixes. Its `result_capture.review_comment_ids` is the finalized current-cycle checklist. Success needs exactly one `review_comment_closure` entry per listed ID with `id`, `status` (`addressed` or an evidenced `declined`), a concrete `action`, a `files_changed` string list and a nonempty `verification` evidence list. Missing, extra, duplicate or `blocked` entries prevent captured success. When a prerequisite blocks the fix, publish a typed `blocked` report whose `summary` states the exact blocker and the smallest next action, with concrete `evidence`; it never advances the review cycle. See `modifier-prompt.md` for modifier examples.
+
 The values below are illustrative. Use the admitted identity and your observed evidence.
 
 ```json
@@ -146,6 +148,32 @@ A captured report for an unavailable prerequisite.
     "reason": "verification-service-unavailable",
     "summary": "The required integration database could not be reached.",
     "evidence": ["The connection to the configured local test database was refused"]
+  }
+}
+```
+
+A captured modifier report for an unavailable prerequisite.
+
+```json
+{
+  "schema_version": 1,
+  "artifact_kind": "captured_result",
+  "run_id": "run-7",
+  "attempt_id": "attempt-2",
+  "issue": "7",
+  "role": "modify",
+  "cycle": "2",
+  "result": {
+    "schema_version": 1,
+    "artifact_kind": "role_failure",
+    "run_id": "run-7",
+    "attempt_id": "attempt-2",
+    "issue": "7",
+    "role": "modify",
+    "status": "blocked",
+    "reason": "review-dependency-unavailable",
+    "summary": "Blocker: the local fixture database refused connections, so R001 cannot be verified. Smallest next action: restart the fixture database and rerun the modifier.",
+    "evidence": ["python -m pytest tests -q: connection refused on localhost:5432"]
   }
 }
 ```

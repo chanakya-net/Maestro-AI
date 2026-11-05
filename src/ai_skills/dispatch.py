@@ -425,8 +425,11 @@ def _work(config):
 def _bind_result_capture(config, registry, original_run):
     run = config.agent_run
     agent = registry.get('aliases', {}).get(run.agent, run.agent)
-    if (config.result_capture is None or config.execution_mode != 'implement' or run.role != 'impl' or
-            agent != 'codex' or not verification.capture_cycle(run.cycle) or not config.pre_spawn_head or
+    ids = (config.result_capture or {}).get('review_comment_ids')
+    # Review comment IDs are modifier closure authority; an impl never binds them.
+    if (config.result_capture is None or config.execution_mode != 'implement' or
+            run.role not in ('impl', 'modify') or (run.role == 'impl' and ids) or agent != 'codex' or
+            not verification.capture_cycle(run.cycle) or not config.pre_spawn_head or
             not git.repo_available(str(run.repo_root))):
         return config
     if registry['agents'][agent].get('invocation', {}).get('prompt_transport') != 'stdin':
@@ -441,7 +444,7 @@ def _bind_result_capture(config, registry, original_run):
     for path in (original_run.result_file, original_run.stream_directory or run.stream_directory):
         if Path(path).is_symlink():
             raise ValueError('capture paths must not be symlinks')
-    contract = {'required_checks': list(config.result_capture['required_checks']), 'review_comment_ids': []}
+    contract = {'required_checks': list(config.result_capture['required_checks']), 'review_comment_ids': list(ids)}
     identity = verification.capture_identity(run)
     context = {'schema_version': 1, 'source': 'codex-last-message', 'cycle': identity['cycle'],
         **contract, 'envelope': identity}
@@ -733,7 +736,7 @@ def _capture_bytes(run):
 def _publish_captured_result(config, *, eligible):
     """Publish a validated captured report while the attempt lock excludes other finalizers."""
     run = config.agent_run
-    if (config.result_capture is None or config.execution_mode != 'implement' or run.role != 'impl' or
+    if (config.result_capture is None or config.execution_mode != 'implement' or run.role not in ('impl', 'modify') or
             not run.dispatcher_managed or run.result_capture_context is None):
         return
     path = Path(run.result_file)

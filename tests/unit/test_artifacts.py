@@ -258,3 +258,33 @@ def test_check_evidence_reason_table():
         ({**passing, 'checks': [{**check, 'evidence': ' '}]}, 'verification-check-not-passed'),
     ):
         assert check_evidence_reason(report, expected_commit=sha, required_checks=['check']) == reason
+
+
+def _closure(*ids, **changes):
+    return [{'id': comment, 'status': 'addressed', 'action': 'Fixed ' + comment, 'files_changed': ['a.py'],
+             'verification': ['pytest passed'], **changes} for comment in ids]
+
+
+@pytest.mark.parametrize(('closure', 'expected', 'reason'), [
+    (_closure('R1', 'R2'), ['R1', 'R2'], ''),
+    (_closure('R2', 'R1'), ['R1', 'R2'], ''),
+    (_closure('R1', status='declined', files_changed=[], extra='kept'), ['R1'], ''),
+    ([], [], ''),
+    (_closure('R1'), [], 'review-comment-closure-unexpected-id'),
+    (_closure('R1'), ['R1', 'R2'], 'review-comment-closure-incomplete'),
+    (_closure('R1', 'R1'), ['R1'], 'review-comment-closure-duplicate-id'),
+    (_closure('r1'), ['R1'], 'review-comment-closure-unexpected-id'),
+    (_closure('R1', status='blocked'), ['R1'], 'review-comment-unresolved'),
+    (_closure('R1', action=''), ['R1'], 'review-comment-closure-action-missing'),
+    (_closure('R1', action=None), ['R1'], 'review-comment-closure-action-missing'),
+    (_closure('R1', files_changed=[None]), ['R1'], 'invalid-review-comment-closure'),
+    (_closure('R1', verification=['ok', '']), ['R1'], 'review-comment-closure-evidence-missing'),
+    (_closure('R1', status='declined', verification=None), ['R1'], 'review-comment-closure-evidence-missing'),
+    ([[]], ['R1'], 'invalid-review-comment-closure'),
+    ([{'id': ['R1']}], ['R1'], 'invalid-review-comment-closure'),
+    (None, [], 'invalid-review-comment-closure'),
+])
+def test_review_comment_closure_reason_table(closure, expected, reason):
+    payload = {'review_comment_closure': closure} if closure is not None else {}
+    assert artifacts.review_comment_closure_reason(payload, expected) == reason
+    assert artifacts.review_comment_closure_reason(None, expected) == 'invalid-review-comment-closure'

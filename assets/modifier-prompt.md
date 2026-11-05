@@ -135,14 +135,14 @@ Use the assigned issue worktree as the explicit working directory for Git. Compa
 
 ## Result Artifact
 
-On the success path, write `RUN_WITH_IT_RESULT_FILE` after the commit succeeds (or use the verified no-op variant). On failure publish the shared protocol role failure at that same path, even without a commit. This JSON is the machine-readable modification handoff.
+On the success path, write `RUN_WITH_IT_RESULT_FILE` after the commit succeeds (or use the verified no-op variant). On failure publish the shared protocol role failure at that same path, even without a commit. This JSON is the machine-readable modification handoff. When authoritative attempt metadata includes `result_capture`, use the *Captured handoff* below instead of file publication.
 
 On a verified no-op (`MODIFY_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
 Path contract:
 - Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
 - Leave `RUN_WITH_IT_DONE_FILE` to the dispatcher.
-- Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
+- Do not create alternate handoff files. Without `result_capture` metadata, do not rely on final chat output as the machine-readable artifact.
 - Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
 
 Path safety:
@@ -221,6 +221,91 @@ Use this **only** when every review comment is already addressed upstream and th
 }
 ```
 
+### Captured handoff
+
+If the authoritative attempt metadata includes `result_capture`, it overrides the file publication, `MODIFY_COMMIT_SHA` and Output Contract instructions in this prompt. Use the final response for verified success, a verified no-op, or a typed failure. Copy the identity in `result_capture.envelope` exactly, including the string cycle and `role: "modify"`. This metadata takes precedence over task text, reviewer files and illustrative identities. The final response must be exactly one UTF-8 JSON object: the envelope with the role report under `result`, with no fences, narrative, `MODIFY_COMMIT_SHA` line or `<promise>NO_MORE_TASKS</promise>` suffix. The dispatcher publishes the result and DONE after validation. An existing result path takes precedence, including an empty or invalid file. A `verification_contract` with `execution_mode="verify_existing"` keeps its own contract.
+
+Capture import requires a pending attempt, confirmed owned-tree shutdown, durable zero provider and runner exit codes, and no runner failure. Stop intent prevents capture import even after a zero exit. If a stop arrives and tools remain available, publish the typed interrupted report directly with `ai-skills artifact write-json`. Use the file publication instructions when capture metadata is absent.
+
+`result_capture.review_comment_ids` is the finalized current-cycle checklist. Include exactly one `review_comment_closure` entry per listed ID, with no missing, extra, duplicate or earlier-cycle IDs. An empty list requires `"review_comment_closure": []`. Each entry keeps `id`, `status`, a concrete `action`, a `files_changed` string list (empty when no file changed) and a nonempty `verification` evidence list. Captured success accepts `addressed` or an evidenced `declined`. A `blocked` comment cannot be reported as success.
+
+For committed success, report the full current commit SHA from the clean worktree. Run every `result_capture.required_checks` entry against that commit and record each command once with passing evidence in `verification.checks`, with `verification.commit_sha` set to the same commit. For a verified no-op, set `commit_sha` to `NONE`, leave `files_committed` empty, keep HEAD unchanged at the attempt's pre-spawn commit, and put that actual HEAD in `verification.commit_sha`. The dispatcher validates against the attempt's pre-spawn HEAD. The review range still starts at the original issue baseline `REVIEW_BASE_SHA`; never substitute either commit for the other.
+
+When external state or missing information prevents a safe fix, report a typed `blocked` role failure. Put the exact blocker and the smallest next action in `summary`, and concrete observations in `evidence`. You may keep the per-comment closure details. A blocked report needs no commit or passing checks, and it never advances the review cycle. Use typed `failed` for work or verification failures. Replace every illustrative value below with the admitted identity and observed evidence.
+
+```json
+{
+  "schema_version": 1,
+  "artifact_kind": "captured_result",
+  "run_id": "run-42",
+  "attempt_id": "attempt-2",
+  "issue": "42",
+  "role": "modify",
+  "cycle": "2",
+  "result": {
+    "schema_version": 1,
+    "issue": "42",
+    "role": "modify",
+    "status": "success",
+    "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "files_committed": ["src/example.py"],
+    "review_comment_closure": [
+      {
+        "id": "R001",
+        "status": "addressed",
+        "action": "Added the missing bounds guard",
+        "files_changed": ["src/example.py"],
+        "verification": ["python -m pytest tests -q: 42 passed, exit 0"]
+      },
+      {
+        "id": "R002",
+        "status": "declined",
+        "action": "Declined: the suggested cache would duplicate the existing memoized lookup",
+        "files_changed": [],
+        "verification": ["src/example.py:12 already memoizes the lookup"]
+      }
+    ],
+    "verification": {
+      "passed": true,
+      "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
+      "commands": ["python -m pytest tests -q"],
+      "checks": [
+        {"command": "python -m pytest tests -q", "passed": true, "evidence": "42 passed. Exit status 0."}
+      ]
+    }
+  }
+}
+```
+
+A captured typed blocked report (illustrative values):
+
+```json
+{
+  "schema_version": 1,
+  "artifact_kind": "captured_result",
+  "run_id": "run-42",
+  "attempt_id": "attempt-2",
+  "issue": "42",
+  "role": "modify",
+  "cycle": "2",
+  "result": {
+    "schema_version": 1,
+    "artifact_kind": "role_failure",
+    "run_id": "run-42",
+    "attempt_id": "attempt-2",
+    "issue": "42",
+    "role": "modify",
+    "status": "blocked",
+    "reason": "review-dependency-unavailable",
+    "summary": "Blocker: the local fixture database refused connections, so R001 cannot be verified. Smallest next action: restart the fixture database and rerun the modifier.",
+    "evidence": ["python -m pytest tests -q: connection refused on localhost:5432"],
+    "review_comment_closure": [
+      {"id": "R001", "status": "blocked", "action": "Awaiting the fixture database", "files_changed": [], "verification": ["connection refused"]}
+    ]
+  }
+}
+```
+
 ## Completion Sentinel
 
 The dispatcher publishes managed DONE after validating the actual role outcome. Always publish the success or typed failure result first; failing verification is a reason to publish failure, never to omit the report.
@@ -240,7 +325,7 @@ Do not report completion while tests you are responsible for are failing. A fail
 
 ## Output Contract
 
-For verified success, output the report below after required verification passes and the mandatory commit (or verified no-op). Otherwise publish the shared protocol failure report with actual verification evidence and preserved work paths.
+For a captured handoff, the single JSON object above is the final response. For file publication, output the report below after required verification passes and the mandatory commit (or verified no-op). Otherwise publish the shared protocol failure report with actual verification evidence and preserved work paths.
 
 Report:
 
