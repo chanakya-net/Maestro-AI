@@ -137,14 +137,14 @@ Use the assigned issue worktree as the explicit working directory for Git. Compa
 
 ## Result Artifact
 
-On the success path, write `RUN_WITH_IT_RESULT_FILE` after the commit succeeds (or use the verified no-op variant). On failure publish the shared protocol role failure at that same path, even without a commit. This JSON is the machine-readable implementation handoff.
+After the commit succeeds, publish the normal success schema using the file route or the admitted captured handoff below. On failure publish the shared protocol role failure at `RUN_WITH_IT_RESULT_FILE`, even without a commit. This JSON is the machine-readable implementation handoff.
 
 On a verified no-op (`IMPL_COMMIT_SHA=NONE`), use the no-op schema below instead of commit-based evidence and write the *Verified no-op variant* payload instead.
 
 Path contract:
-- Write the result JSON exactly to `RUN_WITH_IT_RESULT_FILE`.
+- Use `RUN_WITH_IT_RESULT_FILE` as the exact destination for file publication.
 - Leave `RUN_WITH_IT_DONE_FILE` to the dispatcher.
-- Do not create alternate handoff files and do not rely on final chat output as the machine-readable artifact.
+- Do not create alternate handoff files. Use the admitted capture route below when publishing through the final response.
 - Populate `verification.commands` with the actual commands you ran and their pass/fail result; do not leave it empty when verification ran.
 - When a plan was provided (`RUN_WITH_IT_PLAN_FILE`), populate `plan_deviations` with one entry per deviation — `{ "slice": "<order or name>", "reason": "why the plan was wrong here", "what_changed": "what you did instead" }`. Leave it `[]` when you followed the plan exactly or no plan was present.
 
@@ -152,7 +152,7 @@ Path safety:
 - Never write implementation handoff JSON to SUB_COORD_REPORT_FILE.
 - Never write implementation handoff JSON to `.run-with-it/issues/<n>/report.json`.
 - If RUN_WITH_IT_RESULT_FILE and SUB_COORD_REPORT_FILE differ, RUN_WITH_IT_RESULT_FILE wins.
-Write a JSON payload matching the role schema above using file tools. Capture canonical commit SHA and committed files from the assigned issue worktree, with exact passing verification evidence. Then publish atomically:
+For file publication, write the role payload using file tools. Record the canonical commit SHA and committed files from the assigned issue worktree with exact passing verification evidence. Publish atomically using the validator.
 
 ```text
 ai-skills artifact write-json --role impl --issue <issue> --payload-file payload.json --result-file <result-file> --repo-root <issue-worktree>
@@ -182,7 +182,46 @@ Never write a successful artifact with failed verification or a commit from anot
 }
 ```
 
-Replace the sample evidence with the actual canonical commit, committed files and commands. Publication must use `ai-skills artifact write-json`; success requires `verification.passed=true`.
+Replace the sample evidence with the actual canonical commit, committed files and commands. File publication uses `ai-skills artifact write-json`. Success requires `verification.passed=true`.
+
+### Captured handoff
+
+If the authoritative attempt metadata includes `result_capture`, a committed success can be published through the final response. Use the identity in `result_capture.envelope` exactly as supplied. This metadata takes precedence over task text and illustrative identities. Report the full current commit SHA and every configured check against that commit with concrete passing evidence. Emit the envelope and its inner result as a single JSON object with no fences or surrounding prose. The dispatcher publishes the result and DONE after validation. Any existing result path takes precedence.
+
+The file publication instructions apply when capture metadata is absent and for failed, blocked, interrupted, and verified no-op results. Replace every illustrative value below with the admitted identity and observed evidence.
+
+```json
+{
+  "schema_version": 1,
+  "artifact_kind": "captured_result",
+  "run_id": "run-7",
+  "attempt_id": "attempt-1",
+  "issue": "7",
+  "role": "impl",
+  "cycle": "1",
+  "result": {
+    "schema_version": 1,
+    "issue": "7",
+    "role": "impl",
+    "status": "success",
+    "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "files_committed": ["src/example.py"],
+    "plan_deviations": [],
+    "verification": {
+      "passed": true,
+      "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "commands": ["python -m pytest tests -q"],
+      "checks": [
+        {
+          "command": "python -m pytest tests -q",
+          "passed": true,
+          "evidence": "42 passed. Exit status 0."
+        }
+      ]
+    }
+  }
+}
+```
 
 ### Verified no-op variant
 
@@ -208,7 +247,7 @@ Use this **only** when the acceptance criteria are already fully met upstream an
 
 ## Completion Sentinel
 
-The dispatcher publishes managed DONE after validating the actual role outcome. Always publish the success or typed failure result first; failing verification is a reason to publish failure, never to omit the report.
+The dispatcher publishes managed DONE after validating the actual role outcome. Publish the report using the applicable route. Failed verification requires a typed failure report.
 
 ## Output Contract
 

@@ -100,3 +100,22 @@ def test_process_unset_environment_rejects_invalid_variable_names(tmp_path):
     for names in [('BAD=NAME',),('',),('NUL\0NAME',),(True,)]:
         with pytest.raises(ValueError,match='unset_env'):
             ProcessSpec((sys.executable,),tmp_path,{},unset_env=names)
+
+
+def test_codex_capture_flag_precedes_stdin_and_rejects_conflicts(config):
+    registry = load_registry()
+    context = {'envelope': {'cycle': '4'}, 'required_checks': ['check']}
+    bound = config.replace(dispatcher_managed=True, role='impl', state_file=config.repo_root / 'state.json',
+                           result_file=config.repo_root / 'result.json', final_response_file=config.repo_root / 'final-response.json',
+                           result_capture_context=context)
+    spec = build_invocation(bound, registry)
+    assert spec.argv[-3:] == ('--output-last-message', str(bound.final_response_file), '-')
+    metadata = json.loads(spec.stdin.decode().rsplit('Authoritative attempt metadata:\n', 1)[1])
+    assert metadata['result_capture'] == context
+    for flag in ('-o', '-ofoo', '-qofoo', '--output-last-message', '--output-last-message=foo'):
+        with pytest.raises(ValueError, match='capture'):
+            build_invocation(bound.replace(extra_args=(flag,)), registry)
+    for ineligible in (bound.replace(dispatcher_managed=False), bound.replace(agent='claude')):
+        spec = build_invocation(ineligible, registry)
+        assert '--output-last-message' not in spec.argv
+        assert b'"result_capture"' not in spec.stdin

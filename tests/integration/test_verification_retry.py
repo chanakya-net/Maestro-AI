@@ -431,3 +431,28 @@ def test_failed_report_cannot_be_replaced_after_journaling(tmp_path):
     Path(retry.agent_run.result_file).write_text('{}')
     assert adopt_worker(retry.state_file).state == 'unknown'
     assert path.read_bytes() == before
+
+
+def test_verify_existing_ignores_well_formed_capture_for_codex(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    repo, base, head, _, contract = preserved(tmp_path)
+    source = VERIFY.replace("sys.argv[1].split", "sys.stdin.read().split")
+    source = source.replace("head=subprocess", "assert 'result_capture' not in metadata\n"
+                            "assert '--output-last-message' not in sys.argv\nhead=subprocess")
+    retry = retry_config(tmp_path, repo, base, contract, source=source,
+        result_capture={'required_checks': ['unrelated capture check'], 'review_comment_ids': []})
+    run = retry.agent_run.replace(agent='codex')
+    registry = load_json(Path(run.registry_file))
+    registry['agents']['codex'] = registry['agents'].pop('fake')
+    invocation = registry['agents']['codex']['invocation']
+    invocation['prompt_transport'] = 'stdin'
+    invocation['args_template'][-1] = '-'
+    Path(run.registry_file).write_text(json.dumps(registry), encoding='utf-8')
+
+    def unexpected_probe(_):
+        pytest.fail('verification-only attempt probed Codex capture')
+
+    monkeypatch.setattr(dispatch, 'supports_final_response_capture', unexpected_probe)
+    assert dispatch_worker(replace(retry, agent_run=run)).state == 'completed'
+    assert load_json(Path(run.result_file))['commit_sha'] == head

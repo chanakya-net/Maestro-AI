@@ -14,6 +14,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import socket
 
@@ -29,7 +30,10 @@ from ai_skills import artifacts, git, verification
 from ai_skills.outcomes import role_artifact_paths
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
-from ai_skills.runner import AgentRunConfig, AgentRunResult, build_invocation, load_registry, run_agent, classify_unavailable
+from ai_skills.runner import (
+    AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable,
+    load_registry, run_agent, supports_final_response_capture,
+)
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
 from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, outcome_reason
 
@@ -51,6 +55,7 @@ class WorkerConfig:
     retry_contract: dict | None = None
     tail_state_file: Path | None = None
     tail_lines: int = 5
+    result_capture: dict | None = None
 
     def __post_init__(self):
         verification.validate_configuration(self)
@@ -72,7 +77,10 @@ class WorkerConfig:
                    'registry_file':'AGENT_REGISTRY_FILE','gui_mode':'GUI_MODE'}
         nested = cli.pop('agent_run', {}) or {}
         agent_values = asdict(nested) if isinstance(nested, AgentRunConfig) else dict(nested)
-        for key in run_fields - {'environment','state_file'}:
+        runtime_capture = {'final_response_file', 'result_capture_context'}
+        for key in runtime_capture:
+            agent_values.pop(key, None)
+        for key in run_fields - {'environment','state_file'} - runtime_capture:
             value = cli.get(key)
             # Managed environment IDs belong to the current provider, not to
             # a child it dispatches. Let dispatch_worker mint missing child IDs;
@@ -118,8 +126,8 @@ class WorkerConfig:
                         raise ValueError('detach must be a boolean')
                     value = normalized in ('1', 'true', 'yes', 'on')
                 values[key] = float(value) if key.endswith('_seconds') else int(value) if key=='tail_lines' else value
-        # Retry authority is explicit configuration, never inherited from a parent.
-        for key in ('execution_mode', 'issue_base_sha', 'retry_contract'):
+        # Retry and capture authority are explicit, never inherited from a parent.
+        for key in ('execution_mode', 'issue_base_sha', 'retry_contract', 'result_capture'):
             if key in cli:
                 values[key] = cli[key]
         return cls(**values)
@@ -232,7 +240,15 @@ def _preflight_paths(config: WorkerConfig) -> dict[str, str]:
     reject_aliases(directories, inputs)
     reject_aliases({'state_lock': directories['state_lock']},
                    {name: directories[name] for name in ('streams', 'records')})
-    for name, path in {**runtime, **{name:path for name,path in outputs.items() if name not in ('plan', 'done')}}.items():
+    exclusive = {**runtime, **{name: path for name, path in outputs.items() if name not in ('plan', 'done')}}
+    if run.final_response_file is not None:
+        capture = Path(run.final_response_file)
+        if capture != directories['streams'] / 'final-response.json':
+            raise ValueError('invalid capture path')
+        reject_aliases({'capture': capture}, {**outputs, **runtime, **inputs, **destinations,
+            'records': directories['records'], 'state_lock': directories['state_lock']})
+        exclusive['capture'] = capture
+    for name, path in exclusive.items():
         if path.exists() or path.is_symlink():
             raise RuntimeError(f'occupied {name} path prohibits a new attempt: {path}')
     supervisor = ProcessSupervisor(directories['records'])
@@ -403,19 +419,50 @@ def _work(config):
     reason = (result.unavailable_reason or 'dispatch-bootstrap-failed') if prelaunch else timeout_reason or result.unavailable_reason or (errors[0] if errors else '')
     return _finalize_attempt(config, provider_return_code=code, reason=reason,
         failure_class='infrastructure' if result.unavailable_reason else 'capability',
-        prelaunch_failure=prelaunch)
+        prelaunch_failure=prelaunch, runner_failed=result.return_code != 0)
+
+
+def _bind_result_capture(config, registry, original_run):
+    run = config.agent_run
+    agent = registry.get('aliases', {}).get(run.agent, run.agent)
+    if (config.result_capture is None or config.execution_mode != 'implement' or run.role != 'impl' or
+            agent != 'codex' or not verification.capture_cycle(run.cycle) or not config.pre_spawn_head or
+            not git.repo_available(str(run.repo_root))):
+        return config
+    if registry['agents'][agent].get('invocation', {}).get('prompt_transport') != 'stdin':
+        return config
+    try:
+        if git.current_head(str(run.repo_root)) != config.pre_spawn_head:
+            return config
+    except (OSError, subprocess.SubprocessError):
+        return config
+    if not supports_final_response_capture(build_invocation(run, registry)):
+        return config
+    for path in (original_run.result_file, original_run.stream_directory or run.stream_directory):
+        if Path(path).is_symlink():
+            raise ValueError('capture paths must not be symlinks')
+    contract = {'required_checks': list(config.result_capture['required_checks']), 'review_comment_ids': []}
+    identity = verification.capture_identity(run)
+    context = {'schema_version': 1, 'source': 'codex-last-message', 'cycle': identity['cycle'],
+        **contract, 'envelope': identity}
+    run = replace(run, final_response_file=Path(run.stream_directory) / 'final-response.json',
+        result_capture_context=context)
+    build_invocation(run, registry)
+    return replace(config, agent_run=run, result_capture=contract)
 
 
 def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     # Complete input validation before writing launch state or starting a child.
     registry = load_registry(config.agent_run.registry_file)
-    build_invocation(config.agent_run, registry)
+    original_run = config.agent_run
+    run = replace(original_run, final_response_file=None, result_capture_context=None)
+    build_invocation(run, registry)
     if not config.agent_run.result_file:
         raise ValueError('result_file is required')
     state_file = Path(config.state_file).resolve()
     directory = state_file.parent
     directory.mkdir(parents=True, exist_ok=True)
-    run = replace(config.agent_run, state_file=state_file, scrub_ambient_aliases=True, dispatcher_managed=True,
+    run = replace(run, state_file=state_file, scrub_ambient_aliases=True, dispatcher_managed=True,
                   process_state_file=config.agent_run.process_state_file or Path(str(state_file)+'.process.json'),
                   stream_directory=config.agent_run.stream_directory or Path(str(state_file)+'.streams'),
                   run_id=config.agent_run.run_id or f'worker-{config.agent_run.issue}-{config.agent_run.role}-{uuid.uuid4().hex}',
@@ -446,6 +493,8 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
         old = _optional(state_file)
         if old:
             raise RuntimeError('existing worker state prohibits relaunch; inspect or create a new attempt')
+        config = _bind_result_capture(config, registry, original_run)
+        run = config.agent_run
         expected = _preflight_paths(config)
         write_json_atomic(state_file,{'schema_version':1,'state':'launching','run_id':run.run_id,'attempt_id':run.attempt_id,
             'launcher_identity':{'pid':os.getpid(),'created_at':psutil.Process().create_time(),'host':socket.gethostname()}})
@@ -493,12 +542,12 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     return adopt_worker(state_file)
 
 
-def _provider_record(config):
-    """Resolve a lost handshake through the exclusive supervisor record."""
+def _provider_record(config, *, allow_supervisor_fallback=True):
+    """Read runner process state, with optional fallback for a lost handshake."""
     run = config.agent_run
     supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
     process = _process_record(config)
-    if not process.get('identity'):
+    if not process.get('identity') and allow_supervisor_fallback:
         raw = supervisor.lookup_attempt(run.run_id, run.attempt_id)
         if raw is not None:
             process = {**raw, 'record_directory': str(supervisor.directory)}
@@ -521,8 +570,8 @@ def _unknown_attempt(config, reason, identity=None):
     return WorkerResult('unknown', 3, Path(config.state_file), reason, identity)
 
 
-def write_text_atomic(path, text):
-    """Publish DONE with the same replacement and fsync discipline as JSON."""
+def write_text_atomic(path, text, *, exclusive=False):
+    """Flush before publication, optionally reserving the destination atomically."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
@@ -533,7 +582,10 @@ def write_text_atomic(path, text):
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        replace_file_atomic(temporary, path)
+        if exclusive:
+            os.link(temporary, path)
+        else:
+            replace_file_atomic(temporary, path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
@@ -558,6 +610,8 @@ def _safe_synthesis(config, reason):
         return False
     paths = expected_artifact_paths(config)
     run = config.agent_run
+    if run.final_response_file is not None and Path(run.result_file).resolve() != Path(run.result_file):
+        return False
     # Review repair can overwrite both files. Preserve any malformed existing
     # companion, and only use the existing repair rules for an absent output.
     for path in paths.values():
@@ -656,9 +710,69 @@ def _record_stop_intent(config, reason):
         write_json_atomic(Path(config.state_file),state)
 
 
+def _capture_rejected(run, reason):
+    EventBus(events_log=run.events_log, log_file=run.log_file).emit('dispatch-capture-rejected',
+        {'run_id':run.run_id, 'attempt_id':run.attempt_id, 'issue':run.issue, 'role':run.role, 'reason':reason})
+
+
+def _capture_bytes(run):
+    path = Path(run.final_response_file)
+    if path != Path(run.stream_directory) / 'final-response.json' or path.resolve() != path:
+        raise ValueError('capture path changed')
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise ValueError('capture is not an independent regular file')
+    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    with os.fdopen(os.open(path, flags), 'rb') as stream:
+        opened = os.fstat(stream.fileno())
+        if not os.path.samestat(info, opened) or opened.st_nlink != 1 or path.resolve() != path:
+            raise ValueError('capture changed before reading')
+        return stream.read()
+
+
+def _publish_captured_result(config, *, eligible):
+    """Recover committed success while the attempt lock excludes other finalizers."""
+    run = config.agent_run
+    if (config.result_capture is None or config.execution_mode != 'implement' or run.role != 'impl' or
+            not run.dispatcher_managed or run.result_capture_context is None):
+        return
+    path = Path(run.result_file)
+    if path.exists() or path.is_symlink():
+        return
+    if not eligible:
+        return _capture_rejected(run, 'capture-attempt-not-successful')
+    # The supervisor can prove provider exit even if the runner failed before
+    # writing its process state. Only the runner's own record proves completion.
+    process, supervisor = _provider_record(config, allow_supervisor_fallback=False)
+    if (not process.get('identity') or process.get('state') != 'dead' or
+            type(process.get('return_code')) is not int or process['return_code'] != 0):
+        return _capture_rejected(run, 'capture-runner-exit-unconfirmed')
+    identity = ProcessIdentity(**process['identity'])
+    if supervisor.inspect(identity).state != 'dead' or supervisor.return_code(identity) != 0:
+        return _capture_rejected(run, 'capture-provider-exit-unconfirmed')
+    try:
+        response = _capture_bytes(run)
+    except FileNotFoundError:
+        return _capture_rejected(run, 'capture-response-missing')
+    except (OSError, ValueError, RuntimeError):
+        return _capture_rejected(run, 'capture-path-unsafe')
+    reason, payload = verification.captured_result_reason(config, response)
+    if reason:
+        return _capture_rejected(run, reason)
+    if path.resolve() != path:
+        return _capture_rejected(run, 'capture-result-path-unsafe')
+    if path.exists() or path.is_symlink():
+        return
+    try:
+        write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + '\n', exclusive=True)
+    except FileExistsError:
+        # A direct file published concurrently has precedence.
+        return
+
+
 def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                       reason: str = '', failure_class: str = 'capability',
-                      prelaunch_failure: bool = False) -> WorkerResult:
+                      prelaunch_failure: bool = False, runner_failed: bool = False) -> WorkerResult:
     """Journal one decision after callers prove owned death or no launch.
 
     Outcome -> state -> DONE -> event. A storage failure propagates, retaining
@@ -695,6 +809,9 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 failure_class = 'infrastructure'
         if stop_intent:
             reason = stop_intent['reason']
+        if previous is not None and not terminal and run.final_response_file is not None:
+            _publish_captured_result(config, eligible=(provider_return_code == 0 and not reason and
+                not prelaunch_failure and not runner_failed))
         payload, error = artifacts.load_json(str(run.result_file))
         typed = isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure'
         status, issue_outcome = 'failed', None
@@ -1211,7 +1328,8 @@ def main(argv=None):
             print('WORKER|'+ '|'.join(f'{key}={str(value).lower() if isinstance(value,bool) else value}' for key,value in diagnostic.items()))
             return 0
         if args.dry_run or args.validate_only:
-            spec=build_invocation(config.agent_run,load_registry(config.agent_run.registry_file))
+            run = replace(config.agent_run, final_response_file=None, result_capture_context=None)
+            spec=build_invocation(run,load_registry(run.registry_file))
             print(json.dumps(list(spec.argv)) if args.dry_run else 'STATUS|type=dispatch-ready')
             return 0
         result=dispatch_worker(config)
