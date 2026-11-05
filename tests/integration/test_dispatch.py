@@ -1815,6 +1815,34 @@ report['reviewer_notes'] = 'compatible extra field'
 '''
 
 
+def test_file_modifier_noop_preserves_reviewed_head_without_verification_sha(tmp_path):
+    from ai_skills.dispatch import adopt_worker
+    from ai_skills.git import current_head, git_output
+
+    config = modify_worker(tmp_path, f'''
+assert 'result_capture' not in metadata
+report = {{'schema_version': 1, 'issue': '7', 'role': 'modify', 'status': 'success',
+    'no_op': True, 'commit_sha': 'NONE', 'files_committed': [],
+    'review_comment_closure': [{{'id': comment, 'status': 'addressed',
+        'action': 'Already fixed', 'files_changed': [], 'verification': ['feature check passed']}}
+        for comment in {MODIFY_IDS!r}],
+    'verification': {{'passed': True, 'commands': ['feature check']}}}}
+result_path.write_text(json.dumps(report), encoding='utf-8')
+''')
+    config = replace(config, result_capture=None)
+    root, base, reviewed = str(config.agent_run.repo_root), config.issue_base_sha, config.pre_spawn_head
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    assert adopt_worker(config.state_file).state == 'completed'
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['no_op'] is True and report['commit_sha'] == 'NONE'
+    assert 'commit_sha' not in report['verification']
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['git_progress'] == {'head': reviewed, 'pre_spawn_head': reviewed, 'issue_base_sha': base}
+    assert current_head(root) == reviewed
+    assert git_output(root, 'rev-list', '--count', f'{base}..{reviewed}') == '1'
+
+
 @pytest.mark.parametrize('no_op', [False, True], ids=['commit', 'no-op'])
 def test_captured_modifier_success_preserves_evidenced_declines(tmp_path, no_op):
     from ai_skills.git import current_head, git_output

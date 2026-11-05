@@ -292,8 +292,42 @@ def test_coordinator_binds_modifier_capture_to_finalized_review_cycle():
         assert phrase in modifier
 
 
-def test_coordinator_routes_modifier_noop_blocked_and_resolved_checks():
-    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+def test_coordinator_keeps_resolved_mandatory_checks_in_file_fallback():
+    text = resource('sub-coordinator-prompt.md')
     revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
-    for phrase in ('one path for capture and file publication', 'never assign `NONE` to `REVIEW_HEAD_SHA`', 'verification.commit_sha', 'Typed `blocked` outcome', 'smallest next action', 'do not enter `failed-review` or Worker Artifact Recovery', 'only to an actual handoff failure', 'resolved mandatory checks', 'whether or not `result_capture` is included', 'illustrative verification suggestions are not', 'For verified committed success only'):
+    for phrase in ('resolved mandatory checks', 'whether or not `result_capture` is included', 'illustrative verification suggestions are not'):
         assert phrase in revise
+
+
+def test_coordinator_reuses_the_saved_review_head_after_either_modifier_noop():
+    text = resource('sub-coordinator-prompt.md')
+    revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    noop = revise.split('**Verified no-op**', 1)[1].split('**Committed or preserved success**', 1)[0]
+    assert '`no_op=true`, `commit_sha=NONE` and `verification.passed=true`' in noop
+    assert 'captured no-op also requires `verification.commit_sha`' in noop
+    assert 'file-published no-op may omit that field' in noop
+    assert 'Keep the saved `REVIEW_HEAD_SHA` and leave `MODIFY_COMMIT_SHA` unchanged' in noop
+    assert 'set `REVIEW_HEAD_SHA` from the saved `review_head_sha`' in revise
+    assert '`REVIEW_HEAD_SHA=<saved review_head_sha>`' in revise
+    assert '`REVIEW_HEAD_SHA=<saved review_head_sha>`' in text.split('**`verdict=revise`**', 1)[0]
+    recovery = section(text, 'Recovery Mode')
+    assert 'apply the post-dispatch modifier outcome rules under `verdict=revise`' in recovery
+    assert 'completed `modify` worker should update' not in recovery
+    persistence = section(text, 'Appendix D: Sub-Coordinator State (Compaction Survival)')
+    assert 'persist the state from the post-dispatch rules under `verdict=revise`' in persistence
+    assert 'store `modify_commit_sha` and update `review_head_sha = modify_commit_sha`' not in persistence
+
+
+def test_coordinator_stops_on_typed_blocked_before_modifier_success_gates():
+    text = resource('sub-coordinator-prompt.md')
+    revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    outcomes = revise.split('**Post-dispatch modifier outcomes**', 1)[1]
+    blocked, remaining = outcomes.split('**Typed `failed` outcome**', 1)
+    assert '**Typed `blocked` outcome**' in blocked
+    assert 'smallest next action' in blocked and '`blocking_reasons`' in blocked
+    assert 'preserve the saved cycle and review range' in blocked
+    assert 'End this path immediately before any commit or passing-verification checks' in blocked
+    assert 'do not enter `failed-review` or Worker Artifact Recovery' in blocked
+    assert '**Actual handoff failure**' in remaining
+    assert 'Only verified success reaches this step' in remaining
+    assert "if the modification agent's output does not include passing verification results" not in revise
