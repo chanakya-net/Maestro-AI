@@ -152,6 +152,31 @@ def test_shared_protocol_failure_examples_validate_and_apply_without_success_com
     assert 'review instructions' in text and 'plan.md' in text
 
 
+def test_capture_failure_instructions_preserve_stop_and_file_precedence():
+    import json
+    from ai_skills.artifacts import role_failure_reason
+
+    protocol = (ROOT / 'assets/artifact-protocol.md').read_text()
+    prompt = (ROOT / 'assets/prompt.md').read_text()
+    for instructions in (protocol, prompt):
+        assert 'existing result path takes precedence' in instructions
+        assert 'pending attempt' in instructions and 'confirmed owned-tree shutdown' in instructions
+        assert 'zero provider and runner exit codes' in instructions and 'no runner failure' in instructions
+        assert 'stop intent prevents capture import even after a zero exit' in instructions.lower()
+        assert re.search(r'If a stop arrives and tools remain available, publish .*interrupted.* directly with '
+                         r'`ai-skills artifact write-json`', instructions)
+        assert 'DONE' in instructions and 'dispatcher' in instructions
+    examples = [json.loads(match.group(1)) for match in re.finditer(r'```json\n(.*?)\n```', protocol, re.S)]
+    captured_failures = [item for item in examples if item.get('artifact_kind') == 'captured_result'
+                         and item['result'].get('artifact_kind') == 'role_failure']
+    assert {item['result']['status'] for item in captured_failures} == {'failed', 'blocked'}
+    for item in captured_failures:
+        identity = {key: item[key] for key in ('issue', 'role', 'run_id', 'attempt_id')}
+        report = item['result']
+        assert role_failure_reason(report, **identity) == ''
+        assert report['evidence'] and 'commit_sha' not in report
+
+
 def test_shared_protocol_preserves_coordinator_ledger_ownership():
     text=(ROOT/'assets/artifact-protocol.md').read_text()
     assert 'dispatcher-owned `state_file` and its claim/config/outcome records' in text

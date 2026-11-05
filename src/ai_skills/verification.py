@@ -94,7 +94,7 @@ def _capture_commit_ok(root, payload, head, start, no_op):
 
 def captured_result_reason(config, response):
     """Return a bounded rejection reason and the unchanged inner report."""
-    from ai_skills.artifacts import GitEvidence, validate_artifact
+    from ai_skills.artifacts import GitEvidence, role_failure_reason, validate_artifact
 
     try:
         envelope = json.loads(response.decode('utf-8'), object_pairs_hook=_unique_json_object,
@@ -108,6 +108,10 @@ def captured_result_reason(config, response):
             any(envelope[key] != value for key, value in identity.items())):
         return 'capture-identity-mismatch', None
     payload = envelope['result']
+    if isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure':
+        reason = role_failure_reason(payload, issue=str(run.issue), role=run.role,
+            run_id=run.run_id, attempt_id=run.attempt_id)
+        return reason, payload
     if (not isinstance(payload, dict) or payload.get('status') != 'success' or
             type(payload.get('no_op', False)) is not bool or payload.get('execution_mode', 'implement') != 'implement'):
         return 'capture-unsupported-result', None
