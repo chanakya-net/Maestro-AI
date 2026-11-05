@@ -244,3 +244,43 @@ def test_ordinary_impl_capture_uses_selected_enabled_route():
     protocol = (ROOT / 'assets/artifact-protocol.md').read_text(encoding='utf-8')
     assert 'overrides file-only reporting, `IMPL_COMMIT_SHA` output and completion suffixes' in protocol
     assert '`verification_contract` takes precedence' in protocol
+
+
+def test_ordinary_modifier_capture_uses_selected_enabled_route():
+    import json
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', section, re.S)]
+    modify = next(block for block in blocks if block.get('role') == 'modify')
+    example = {**blocks[0], **modify}
+    assert 'agent' not in modify
+    for agent in ('codex', 'claude', 'agy', 'opencode'):
+        config = WorkerConfig.from_sources({**example, 'agent': agent}, {})
+        assert config.agent_run.role == 'modify' and config.agent_run.cycle == '2'
+        assert config.result_capture == {'required_checks': ['<approved command or manual check>', '<additional review-required check>'], 'review_comment_ids': ['R001', 'R002']}
+        assert config.agent_run.result_capture_context is None
+        assert config.issue_base_sha == blocks[0]['issue_base_sha'] and config.pre_spawn_head == ''
+    assert modify['prompt_file'].endswith('modifier-prompt.md')
+    assert '/workers/modify/' in modify['result_file']
+
+
+def test_modifier_capture_falls_back_to_file_contract_on_ambiguous_ids():
+    import json
+    import pytest
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', section, re.S)]
+    example = {**blocks[0], **next(b for b in blocks if b.get('role') == 'modify')}
+    assert WorkerConfig.from_sources({k: v for k, v in example.items() if k != 'result_capture'}, {}).result_capture is None
+    for ids in (['R001', 'R001'], ['R001', ' '], 'R001'):
+        with pytest.raises(ValueError):
+            WorkerConfig.from_sources({**example, 'result_capture': {'required_checks': ['check'], 'review_comment_ids': ids}}, {})
+    with pytest.raises(ValueError):
+        WorkerConfig.from_sources({**example, 'result_capture': {'required_checks': [], 'review_comment_ids': ['R001']}}, {})
+    revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    for phrase in ('IDs repeat', 'review-required check cannot be named exactly', 'use the existing file contract', 'dispatcher selects the adapter'):
+        assert phrase in revise

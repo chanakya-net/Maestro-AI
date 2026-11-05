@@ -1766,11 +1766,11 @@ result_path.with_name('capture-original').write_bytes(raw)
 '''
 
 
-def modify_worker(tmp_path, body, *, ids=MODIFY_IDS, **options):
+def modify_worker(tmp_path, body, *, ids=MODIFY_IDS, checks=None, **options):
     """Baseline A, implementation commit B before spawn, modifier admitted at B."""
     from ai_skills.git import git_output
 
-    contract = {'required_checks': list(CAPTURE_CHECKS['required_checks']), 'review_comment_ids': list(ids)}
+    contract = {'required_checks': list(CAPTURE_CHECKS['required_checks'] if checks is None else checks), 'review_comment_ids': list(ids)}
     config = capture_worker(tmp_path, body, result_capture=contract, **options)
     root = str(config.agent_run.repo_root)
     (config.agent_run.repo_root / 'feature.txt').write_text('implemented', encoding='utf-8')
@@ -1813,6 +1813,34 @@ closure[1].update(status='declined', action='Declined: the suggested guard dupli
                   files_changed=[], verification=['feature.txt line 1 already enforces the guard'])
 report['reviewer_notes'] = 'compatible extra field'
 '''
+
+
+def test_file_modifier_noop_preserves_reviewed_head_without_verification_sha(tmp_path):
+    from ai_skills.dispatch import adopt_worker
+    from ai_skills.git import current_head, git_output
+
+    config = modify_worker(tmp_path, f'''
+assert 'result_capture' not in metadata
+report = {{'schema_version': 1, 'issue': '7', 'role': 'modify', 'status': 'success',
+    'no_op': True, 'commit_sha': 'NONE', 'files_committed': [],
+    'review_comment_closure': [{{'id': comment, 'status': 'addressed',
+        'action': 'Already fixed', 'files_changed': [], 'verification': ['feature check passed']}}
+        for comment in {MODIFY_IDS!r}],
+    'verification': {{'passed': True, 'commands': ['feature check']}}}}
+result_path.write_text(json.dumps(report), encoding='utf-8')
+''')
+    config = replace(config, result_capture=None)
+    root, base, reviewed = str(config.agent_run.repo_root), config.issue_base_sha, config.pre_spawn_head
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    assert adopt_worker(config.state_file).state == 'completed'
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['no_op'] is True and report['commit_sha'] == 'NONE'
+    assert 'commit_sha' not in report['verification']
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['git_progress'] == {'head': reviewed, 'pre_spawn_head': reviewed, 'issue_base_sha': base}
+    assert current_head(root) == reviewed
+    assert git_output(root, 'rev-list', '--count', f'{base}..{reviewed}') == '1'
 
 
 @pytest.mark.parametrize('no_op', [False, True], ids=['commit', 'no-op'])
@@ -1978,7 +2006,7 @@ result_path.write_text(json.dumps(dict(report, summary='Direct blocked report.')
 STREAM_SOURCES = {'claude': 'claude-json', 'agy': 'agy-stream-json', 'opencode': 'opencode-json-v1.16.2'}
 
 
-def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2'):
+def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2', build=None, **modify_options):
     from ai_skills import runner
 
     invocation = {
@@ -1986,7 +2014,7 @@ def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', he
         'agy': "assert args[-4:] == ['--input-format', 'stream-json', '--output-format', 'stream-json']",
         'opencode': "assert args[0] == 'run' and args[-2:] == ['--format', 'json']",
     }[agent]
-    build = build_modify_capture() if role == 'modify' else BUILD_CAPTURE
+    build = build if build is not None else (build_modify_capture() if role == 'modify' else BUILD_CAPTURE)
     codex_args = "capture = Path(args[-2])\nassert args[-3:] == ['--output-last-message', str(capture), '-']"
     build = build.replace(codex_args, invocation)
     flags = {'claude': '    --output-format=stream-json)\n--output-format (choices: "text", "json", "stream-json")',
@@ -2000,7 +2028,7 @@ if '--help' in sys.argv:
     print({(flags if help_text is None else help_text)!r})
     raise SystemExit(0)
 """
-    config = (modify_worker(tmp_path, build + body, probe=probe) if role == 'modify' else
+    config = (modify_worker(tmp_path, build + body, probe=probe, **modify_options) if role == 'modify' else
               capture_worker(tmp_path, build + body, probe=probe, result_capture=CAPTURE_CHECKS))
     script = config.agent_run.repo_root / 'exec'
     source = script.read_text(encoding='utf-8')
@@ -2224,3 +2252,98 @@ def test_quiet_stream_capture_waits_for_the_original_provider(tmp_path, monkeypa
     assert dispatch_worker(config).state == 'completed'
     assert 'type=worker-stalled|' in config.agent_run.events_log.read_text(encoding='utf-8')
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize('agent', ['codex', 'claude', 'agy', 'opencode'])
+def test_modifier_capture_supplies_exact_ids_and_checks_without_findings(tmp_path, monkeypatch, agent):
+    from ai_skills.artifacts import valid_review_instructions
+    from ai_skills.git import git_output
+
+    ids, checks = ['R003', 'R001'], ['feature check', 'git check', 'review check R003']
+    comments = [dict(id=i, file='feature.txt', severity='warning', category='correctness', fix='Fix', evidence='SENTINEL-FINDING', expected_change='Fixed', verification='review check R003', blocking=True, line=1) for i in ids]
+    instructions = {'verdict': 'revise', 'summary': 'Review', 'comments': comments, 'blocking_reasons': []}
+    assert valid_review_instructions(instructions)
+    path = tmp_path / 'instructions.json'
+    path.write_text(json.dumps(instructions), encoding='utf-8')
+    assertions = f'''
+assert contract['review_comment_ids'] == {ids!r}
+assert contract['required_checks'] == {checks!r}
+assert set(contract) == {{'schema_version', 'source', 'cycle', 'required_checks', 'review_comment_ids', 'envelope'}}
+assert 'SENTINEL-FINDING' not in prompt.decode('utf-8')
+instructions_path = next(line.split('=', 1)[1] for line in prompt.decode('utf-8').splitlines() if line.startswith('REVIEWER_INSTRUCTIONS_FILE='))
+assert [c['id'] for c in json.loads(Path(instructions_path).read_text())['comments']] == contract['review_comment_ids']
+'''
+    if agent == 'codex':
+        config = modify_worker(tmp_path, build_modify_capture() + assertions + WRITE_CAPTURE, ids=ids, checks=checks)
+    else:
+        wire = {'claude': CLAUDE_CAPTURE, 'agy': AGY_CAPTURE, 'opencode': opencode_capture()}[agent]
+        config = stream_capture_worker(tmp_path, monkeypatch, agent, assertions + wire, role='modify', ids=ids, checks=checks)
+    config.agent_run.context_file.write_text(f'Context\nREVIEWER_INSTRUCTIONS_FILE={path}\n', encoding='utf-8')
+    start, base = config.pre_spawn_head, config.issue_base_sha
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert [c['id'] for c in report['review_comment_closure']] == ids
+    assert [c['command'] for c in report['verification']['checks']] == checks
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    assert saved['result_capture'] == {'required_checks': checks, 'review_comment_ids': ids}
+    assert saved['agent_run']['result_capture_context']['source'] == STREAM_SOURCES.get(agent, 'codex-last-message')
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['git_progress'] == {'head': report['commit_sha'], 'pre_spawn_head': start, 'issue_base_sha': base}
+    assert git_output(str(config.agent_run.repo_root), 'rev-list', '--count', f'{base}..HEAD') == '2'
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize(('agent', 'mode'), [('claude', 'omitted'), ('agy', 'omitted'), ('opencode', 'omitted'), ('claude', 'unsupported')])
+def test_modifier_without_capture_uses_file_contract(tmp_path, monkeypatch, agent, mode):
+    options = {'help_text': '--output-format (choices: "text", "stream-json")'} if mode == 'unsupported' else {}
+    config = stream_capture_worker(tmp_path, monkeypatch, agent, '', role='modify', **options)
+    if mode == 'omitted':
+        config = replace(config, result_capture=None)
+    script = config.agent_run.repo_root / 'exec'
+    source = script.read_text(encoding='utf-8').split("contract = metadata['result_capture']", 1)[0]
+    script.write_text(source + '''
+assert 'result_capture' not in metadata
+assert '--format' not in args
+Path('review.txt').write_text('review fix', encoding='utf-8')
+subprocess.run(['git', 'add', 'review.txt'], check=True)
+subprocess.run(['git', 'commit', '-qm', 'Address review'], check=True)
+head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+report = {'schema_version': 1, 'issue': '7', 'role': 'modify', 'status': 'success',
+    'commit_sha': head, 'files_committed': ['feature.txt', 'review.txt'],
+    'review_comment_closure': [{'id': i, 'status': 'addressed', 'action': 'Fixed', 'files_changed': ['review.txt'], 'verification': ['checked']} for i in ['R001', 'R002']],
+    'verification': {'passed': True, 'commands': ['feature check']}}
+result_path.write_text(json.dumps(report), encoding='utf-8')
+''', encoding='utf-8')
+    start = config.pre_spawn_head
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    assert saved['agent_run']['result_capture_context'] is None
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['review_comment_closure'][0]['id'] == 'R001'
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['git_progress']['pre_spawn_head'] == start
+    assert outcome['git_progress']['issue_base_sha'] == config.issue_base_sha
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_captured_modifier_blocked_on_stream_adapter_preserves_next_action_and_cycle(tmp_path, monkeypatch):
+    from ai_skills.git import current_head, git_output
+
+    build = BUILD_TYPED_CAPTURE.replace("capture = Path(args[-2])\n", '').replace("assert args[-3:] == ['--output-last-message', str(capture), '-']", "assert args[-3:] == ['--print', '--output-format', 'json']")
+    body = f"\nreport.update({MODIFY_BLOCKED!r})\nPath('feature.txt').write_text('partial review fix', encoding='utf-8')\n" + CLAUDE_CAPTURE
+    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', body, role='modify', build=build)
+    start = config.pre_spawn_head
+    result = dispatch_worker(config)
+    assert (result.state, result.reason, result.return_code) == ('failed', MODIFY_BLOCKED['reason'], 1)
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert {key: report[key] for key in MODIFY_BLOCKED} == MODIFY_BLOCKED
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert (outcome['status'], outcome['reason']) == ('blocked', MODIFY_BLOCKED['reason'])
+    assert '|status=blocked|source=dispatcher|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    assert (saved['agent_run']['cycle'], saved['issue_base_sha'], saved['pre_spawn_head']) == (4, config.issue_base_sha, start)
+    root = str(config.agent_run.repo_root)
+    assert current_head(root) == start
+    assert git_output(root, 'status', '--porcelain') == 'M feature.txt'
