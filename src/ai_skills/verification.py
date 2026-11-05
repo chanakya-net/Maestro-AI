@@ -83,6 +83,15 @@ def _finite_json_number(value):
     return number
 
 
+def _capture_commit_ok(root, payload, head, start, no_op):
+    """Check the captured commit shape: new descendant commit, or unchanged HEAD for a no-op."""
+    if not re.fullmatch('[0-9a-f]{40}', head) or not re.fullmatch('[0-9a-f]{40}', start):
+        return False
+    if no_op:
+        return head == start and payload.get('commit_sha') == 'NONE' and payload.get('files_committed') == []
+    return payload.get('commit_sha') == head and head != start and git.is_ancestor(root, start, head)
+
+
 def captured_result_reason(config, response):
     """Return a bounded rejection reason and the unchanged inner report."""
     from ai_skills.artifacts import GitEvidence, validate_artifact
@@ -100,14 +109,13 @@ def captured_result_reason(config, response):
         return 'capture-identity-mismatch', None
     payload = envelope['result']
     if (not isinstance(payload, dict) or payload.get('status') != 'success' or
-            payload.get('no_op', False) is not False or payload.get('execution_mode', 'implement') != 'implement'):
+            type(payload.get('no_op', False)) is not bool or payload.get('execution_mode', 'implement') != 'implement'):
         return 'capture-unsupported-result', None
+    no_op = payload.get('no_op', False)
     root, start = str(run.repo_root), config.pre_spawn_head
     try:
         head = git.current_head(root)
-        if (payload.get('commit_sha') != head or not re.fullmatch('[0-9a-f]{40}', head) or
-                not re.fullmatch('[0-9a-f]{40}', start) or head == start or
-                not git.is_ancestor(root, start, head)):
+        if not _capture_commit_ok(root, payload, head, start, no_op):
             return 'capture-commit-mismatch', None
         if git.git_output(root, 'status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none'):
             return 'capture-dirty-worktree', None
