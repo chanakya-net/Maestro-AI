@@ -479,3 +479,82 @@ def test_update_cli_error_exits_2_without_traceback(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', (tmp_path / 'missing').as_uri())
     assert update.main(['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 2
     assert 'ai-skills update:' in capsys.readouterr().err
+
+
+def test_official_source_ignores_caller_git_dir(official_repository, monkeypatch):
+    from ai_skills.update import official_source
+    expected = _git(official_repository, 'rev-parse', 'main')
+    monkeypatch.setenv('GIT_DIR', str(Path(__file__).parents[2] / '.git'))
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        assert sha == expected
+
+
+def test_official_source_cannot_redirect_official_url(official_repository, monkeypatch):
+    import ai_skills.update as update
+    monkeypatch.setenv('GIT_CONFIG_COUNT', '1')
+    monkeypatch.setenv('GIT_CONFIG_KEY_0', f'url.{official_repository.as_uri()}.insteadOf')
+    monkeypatch.setenv('GIT_CONFIG_VALUE_0', update.OFFICIAL_REPOSITORY)
+    # A deliberately invalid official URL must not be rewritten to the fixture.
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', 'https://127.0.0.1:1/no-repo')
+    monkeypatch.setenv('GIT_CONFIG_VALUE_0', update.OFFICIAL_REPOSITORY)
+    with pytest.raises(ValueError):
+        with update.official_source(timeout=5): pass
+
+
+def test_update_installs_new_revision_when_only_packaged_readme_changes(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    (official_repository / 'README.md').write_text('new metadata')
+    _git(official_repository, 'add', 'README.md'); _git(official_repository, 'commit', '-qm', 'readme')
+    second = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert first['prefix'] != second['prefix']
+    assert json.loads((Path(second['prefix']) / '.ai-skills-runtime.json').read_text())['source_revision'] == second['source_revision']
+    assert Path(first['python']).is_file()
+
+
+def test_update_rejects_retained_runtime_with_missing_interpreter(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    Path(first['python']).unlink()
+    with pytest.raises(ValueError, match='interpreter missing'):
+        run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+
+
+def test_update_restores_registrations_when_activation_write_fails(official_repository, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    target = config.home / '.codex/skills/pair-colleague/.ai-skills-registration.json'
+    prior = target.read_bytes()
+    (official_repository / 'README.md').write_text('revision')
+    _git(official_repository, 'add', 'README.md'); _git(official_repository, 'commit', '-qm', 'next')
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == config.assets_dest / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'):
+        run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert target.read_bytes() == prior
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+    assert Path(first['python']).is_file()
+
+
+def test_update_cli_stdout_stays_json_with_subprocess_output(official_repository, tmp_path, monkeypatch, capfd):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    def noisy(plan):
+        subprocess.run([sys.executable, '-c', "print('installer progress')"], check=True, stdout=sys.stdout)
+        return fake_package_installer(plan)
+    monkeypatch.setattr(installation, '_install_package', noisy)
+    assert update.main(['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 0
+    captured = capfd.readouterr()
+    assert json.loads(captured.out)['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert 'installer progress' in captured.err

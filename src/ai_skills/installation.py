@@ -202,8 +202,10 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
     destination = _safe_assets(config.assets_dest or default_assets_dest(), home)
     source, version, dependencies, payload = _source(config.source)
     pins = _dependency_pins(dependencies)
-    fingerprint = hashlib.sha256(json.dumps({'payload': payload, 'dependencies': pins, 'python': sys.version,
-                                            'platform': sys.platform, 'machine': platform.machine()}, sort_keys=True).encode()).hexdigest()
+    identity = {'payload': payload, 'dependencies': pins, 'python': sys.version,
+                'platform': sys.platform, 'machine': platform.machine()}
+    if revision: identity['source_revision'] = revision
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     prefix = destination / 'runtimes' / (version + '-' + fingerprint[:20])
     for candidate in (prefix, prefix.parent):
         if candidate.is_symlink(): raise ValueError(f'symlink escape in runtime directory: {candidate}')
@@ -283,9 +285,9 @@ def _runtime_root(python):
 
 
 def _install_package(plan):
-    subprocess.run([str(plan.config.python), '-m', 'venv', str(plan.prefix)], check=True)
-    for command in plan.pip_commands: subprocess.run(command, check=True)
-    subprocess.run([str(plan.python), '-m', 'pip', 'check'], check=True)
+    subprocess.run([str(plan.config.python), '-m', 'venv', str(plan.prefix)], check=True, stdout=sys.stdout)
+    for command in plan.pip_commands: subprocess.run(command, check=True, stdout=sys.stdout)
+    subprocess.run([str(plan.python), '-m', 'pip', 'check'], check=True, stdout=sys.stdout)
     return _runtime_root(plan.python)
 
 
@@ -444,7 +446,7 @@ def _run_registration(argv, *, home=None):
         if os.name == 'nt':
             drive, tail = os.path.splitdrive(selected)
             environment.update(HOMEDRIVE=drive, HOMEPATH=tail)
-    subprocess.run(resolve_executable(tuple(argv), environment), check=True, env=environment)
+    subprocess.run(resolve_executable(tuple(argv), environment), check=True, env=environment, stdout=sys.stdout)
 
 
 def _clean_interrupted(prefix):
@@ -472,6 +474,9 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
         if plan.prefix.exists() and not _receipt(plan.prefix).exists(): _clean_interrupted(plan.prefix)
         if plan.prefix.exists():
             receipt = _owned_receipt(plan.prefix, plan.fingerprint); _verify_payload(receipt, plan.prefix)
+            if plan.source_revision and receipt.get('source_revision') != plan.source_revision:
+                raise ValueError('retained runtime source revision mismatch')
+            if not plan.python.is_file(): raise ValueError(f'installed venv interpreter missing: {plan.python}')
             root = Path(receipt['package_root'])
         else:
             plan.prefix.mkdir(parents=True)
@@ -527,18 +532,23 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                         if target.exists() or target.is_symlink(): item['installed_sha256'] = _tree_hash(target)
                 if registration not in applied: applied.append(registration)
                 registrations.append(registration)
+            manifest = {'schema_version': 1, 'owner': OWNER, 'python': str(plan.python), 'prefix': str(plan.prefix),
+                        'version': plan.version, 'fingerprint': plan.fingerprint, 'resources': str(root / 'data'),
+                        'skills': str(root / 'skills'), 'owned_paths': [str(plan.prefix), str(plan.assets_dest / 'runtime.json'), *(r['target'] for r in registrations if r['kind'] == 'copy')],
+                        'registrations': registrations}
+            if plan.source_revision: manifest['source_revision'] = dict(plan.source_revision)
+            write_json_atomic(committed_path, manifest)
+            try:
+                write_json_atomic(active_path, manifest)
+            except BaseException:
+                if committed: write_json_atomic(committed_path, committed)
+                else: committed_path.unlink(missing_ok=True)
+                raise
         except BaseException:
             for registration in reversed(applied):
                 if registration['kind'] == 'copy': _restore_copy(registration, plan.fingerprint)
                 else: _restore_adapter(registration)
             raise
-        manifest = {'schema_version': 1, 'owner': OWNER, 'python': str(plan.python), 'prefix': str(plan.prefix),
-                    'version': plan.version, 'fingerprint': plan.fingerprint, 'resources': str(root / 'data'),
-                    'skills': str(root / 'skills'), 'owned_paths': [str(plan.prefix), str(plan.assets_dest / 'runtime.json'), *(r['target'] for r in registrations if r['kind'] == 'copy')],
-                    'registrations': registrations}
-        if plan.source_revision: manifest['source_revision'] = dict(plan.source_revision)
-        write_json_atomic(plan.prefix / 'runtime.json', manifest)
-        write_json_atomic(plan.assets_dest / 'runtime.json', manifest)
         return manifest
 
 

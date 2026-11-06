@@ -9,7 +9,7 @@ install detection; preserving the previous selection is a separate concern.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
 import json
 import os
@@ -36,7 +36,10 @@ class UpdateConfig:
 def _git(*args, cwd=None, timeout=CLONE_TIMEOUT_SECONDS):
     git = shutil.which('git')
     if not git: raise ValueError('official source requires git on PATH')
-    env = {**os.environ, 'GIT_TERMINAL_PROMPT': '0'}
+    env = {key: value for key, value in os.environ.items()
+           if not key.upper().startswith('GIT_') and not key.upper().endswith('_PROXY')
+           and key.upper() not in ('SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE')}
+    env.update(GIT_TERMINAL_PROMPT='0', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
     try:
         result = subprocess.run([git, *args], cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as error:
@@ -53,9 +56,11 @@ def official_source(repository=None, branch=None, *, timeout=CLONE_TIMEOUT_SECON
     branch = branch or OFFICIAL_BRANCH
     with tempfile.TemporaryDirectory(prefix='ai-skills-update-') as scratch:
         checkout = Path(scratch) / 'source'
-        _git('-c', 'core.autocrlf=false', 'clone', '--quiet', '--depth', '1', '--single-branch', '--no-tags',
+        template = Path(scratch) / 'empty-template'
+        template.mkdir()
+        _git('-c', 'core.autocrlf=false', '-c', f'core.hooksPath={template}', '-c', f'core.attributesFile={os.devnull}', 'clone', '--template', str(template), '--quiet', '--depth', '1', '--single-branch', '--no-tags',
              '--branch', branch, '--', repository, str(checkout), timeout=timeout)
-        sha = _git('rev-parse', 'HEAD', cwd=checkout, timeout=timeout)
+        sha = _git('rev-parse', f'refs/remotes/origin/{branch}^{{commit}}', cwd=checkout, timeout=timeout)
         yield checkout, sha
 
 
@@ -74,7 +79,8 @@ def main(argv=None):
     parser.add_argument('--only', action='append', choices=AGENTS, default=[])
     try:
         options = parser.parse_args(argv)
-        manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only)))
+        with redirect_stdout(sys.stderr):
+            manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only)))
         print(json.dumps(manifest, indent=2)); return 0
     except SystemExit as error: return int(error.code or 0)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
