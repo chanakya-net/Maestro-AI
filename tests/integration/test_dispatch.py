@@ -860,6 +860,48 @@ assert not result_path.exists()
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
 
 
+@pytest.mark.parametrize('change_during_read', [False, True])
+def test_capture_handles_distinct_path_and_descriptor_ctimes(tmp_path, monkeypatch, change_during_read):
+    from ai_skills import dispatch
+
+    directory = tmp_path.resolve()
+    path = directory / 'final-response.json'
+    payload = b'{"captured":true}'
+    path.write_bytes(payload)
+    run = replace(worker_config(tmp_path, '').agent_run, role='impl',
+                  dispatcher_managed=True, result_capture_context={},
+                  stream_directory=directory, final_response_file=path)
+    path_ctime = path.lstat().st_ctime_ns
+    fstat = os.fstat
+    extract_response = dispatch.extract_response
+    read_finished = False
+
+    def descriptor_stat(fd):
+        info = fstat(fd)
+        # Windows path stats report creation time in ctime. Descriptor stats
+        # report the metadata change time, which can differ for the same file.
+        return os.stat_result(info, {
+            'st_mtime_ns': info.st_mtime_ns,
+            'st_ctime_ns': path_ctime + (2 if read_finished and change_during_read else 1),
+        })
+
+    def read_response(source, stream):
+        nonlocal read_finished
+        response = extract_response(source, stream)
+        read_finished = True
+        return response
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'fstat', descriptor_stat)
+        patch.setattr(dispatch, 'extract_response', read_response)
+        if change_during_read:
+            with pytest.raises(OSError, match='capture changed while reading'):
+                dispatch._capture_bytes(run, None, None)
+            assert read_finished
+        else:
+            assert dispatch._capture_bytes(run, None, None) == payload
+
+
 @pytest.mark.parametrize('mutation', [
     "envelope['run_id'] = 'stale'",
     "envelope['attempt_id'] = 'stale'",

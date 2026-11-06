@@ -740,20 +740,26 @@ def _capture_bytes(run, process, supervisor):
         raise OSError('capture stdout was replaced')
     flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     with os.fdopen(os.open(path, flags), 'rb') as stream:
-        _check_capture_file(path, stream, info)
+        opened = os.fstat(stream.fileno())
+        _check_capture_file(path, opened, info)
         response = extract_response(source, stream)
-        _check_capture_file(path, stream, info)
+        after_read = os.fstat(stream.fileno())
+        _check_capture_file(path, after_read, info)
+        if after_read.st_ctime_ns != opened.st_ctime_ns:
+            raise OSError('capture changed while reading')
         return response
 
 
-def _check_capture_file(path, stream, original):
-    opened = os.fstat(stream.fileno())
+def _check_capture_file(path, opened, original):
     current = path.lstat()
     for info in (opened, current):
         if (not os.path.samestat(original, info) or info.st_nlink != 1 or
-                (info.st_size, info.st_mtime_ns, info.st_ctime_ns) !=
-                (original.st_size, original.st_mtime_ns, original.st_ctime_ns)):
+                (info.st_size, info.st_mtime_ns) != (original.st_size, original.st_mtime_ns)):
             raise OSError('capture changed while reading')
+    # Windows reports creation time for lstat and metadata change time for
+    # fstat. Compare each ctime only against an earlier value from the same API.
+    if current.st_ctime_ns != original.st_ctime_ns:
+        raise OSError('capture changed while reading')
     if path.resolve() != path:
         raise OSError('capture path changed')
 
