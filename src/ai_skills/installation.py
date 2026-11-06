@@ -142,6 +142,7 @@ class InstallConfig:
     python: Path = field(default_factory=lambda: Path(sys.executable))
     dry_run: bool = False
     replace_existing: bool = False
+    source_revision: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -157,12 +158,25 @@ class InstallationPlan:
     dependencies: tuple[str, ...]
     pip_commands: tuple[tuple[str, ...], ...]
     registrations: tuple[dict, ...]
+    source_revision: dict | None = None
 
     def to_record(self):
-        return {'source': str(self.source), 'assets_dest': str(self.assets_dest), 'prefix': str(self.prefix),
+        record = {'source': str(self.source), 'assets_dest': str(self.assets_dest), 'prefix': str(self.prefix),
                 'python': str(self.python), 'version': self.version, 'fingerprint': self.fingerprint,
                 'dependencies': list(self.dependencies), 'pip_commands': [list(c) for c in self.pip_commands],
                 'registrations': list(self.registrations)}
+        if self.source_revision: record['source_revision'] = dict(self.source_revision)
+        return record
+
+
+def _check_source_revision(revision):
+    """Validate the optional official-source record before anything is written."""
+    if revision is None: return None
+    if (not isinstance(revision, dict) or not isinstance(revision.get('commit'), str)
+            or not re.fullmatch(r'[0-9a-f]{40}', revision['commit'])
+            or not all(isinstance(revision.get(k), str) and revision[k] for k in ('repository', 'branch'))):
+        raise ValueError('invalid source revision: expected repository, branch and 40-hex commit')
+    return {k: revision[k] for k in ('repository', 'branch', 'commit')}
 
 
 def _detect(home):
@@ -183,6 +197,7 @@ def _external_paths(agent, home):
 
 def plan_install(config: InstallConfig) -> InstallationPlan:
     if sys.version_info < (3, 12): raise ValueError('Python 3.12 or newer is required')
+    revision = _check_source_revision(config.source_revision)
     home = _absolute(config.home or Path.home())
     destination = _safe_assets(config.assets_dest or default_assets_dest(), home)
     source, version, dependencies, payload = _source(config.source)
@@ -245,7 +260,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                     raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
             registration.update(backup=str(prefix / 'registration-backups' / registration['agent'] / registration['skill']),
                                 existing_sha256=_tree_hash(target), existing_owned=owned)
-    return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations))
+    return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision)
 
 
 def _receipt(prefix):
@@ -472,6 +487,7 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                 receipt = {'owner': OWNER, 'schema_version': 1, 'prefix': str(plan.prefix), 'python': str(plan.python),
                            'version': plan.version, 'fingerprint': plan.fingerprint, 'dependencies': list(plan.dependencies),
                            'package_root': str(root), 'payload_hashes': hashes}
+                if plan.source_revision: receipt['source_revision'] = dict(plan.source_revision)
                 write_json_atomic(_receipt(plan.prefix), receipt)
                 (plan.prefix / '.installing.json').unlink()
             except BaseException:
@@ -520,6 +536,7 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                     'version': plan.version, 'fingerprint': plan.fingerprint, 'resources': str(root / 'data'),
                     'skills': str(root / 'skills'), 'owned_paths': [str(plan.prefix), str(plan.assets_dest / 'runtime.json'), *(r['target'] for r in registrations if r['kind'] == 'copy')],
                     'registrations': registrations}
+        if plan.source_revision: manifest['source_revision'] = dict(plan.source_revision)
         write_json_atomic(plan.prefix / 'runtime.json', manifest)
         write_json_atomic(plan.assets_dest / 'runtime.json', manifest)
         return manifest

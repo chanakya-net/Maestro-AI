@@ -369,3 +369,113 @@ def test_external_registration_and_uninstall_use_planned_home(source_tree, tmp_p
     assert len(calls) == 2
     assert calls[1][1]['HOME'] == str(selected_home)
     assert calls[1][1]['USERPROFILE'] == str(selected_home)
+
+
+# --- update from the official main commit (controlled local fixture) ---------
+
+def _git(repo, *args):
+    return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _bump(repo, old, new, message):
+    project = repo / 'pyproject.toml'
+    project.write_text(project.read_text().replace(old, new))
+    _git(repo, 'commit', '-qam', message)
+
+
+@pytest.fixture
+def official_repository(source_tree, tmp_path):
+    repo = tmp_path / 'official'
+    shutil.copytree(source_tree, repo)
+    _git(repo, 'init', '-q', '-b', 'main')
+    _git(repo, 'config', 'user.name', 'Fixture'); _git(repo, 'config', 'user.email', 'fixture@example.invalid')
+    _git(repo, 'add', '-A'); _git(repo, 'commit', '-qm', 'initial')
+    _git(repo, 'checkout', '-qb', 'feature'); _bump(repo, '0.1.0.dev0', '0.9.0.dev0', 'feature')
+    _git(repo, 'checkout', '-q', 'main'); _bump(repo, '0.1.0.dev0', '0.2.0.dev0', 'main tip')
+    return repo
+
+
+def test_official_source_resolves_exact_main_commit_and_cleans_up(official_repository):
+    from ai_skills.update import official_source
+    before = (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        assert sha == _git(official_repository, 'rev-parse', 'main') != _git(official_repository, 'rev-parse', 'feature')
+        assert len(sha) == 40 and (checkout / 'pyproject.toml').is_file()
+        assert '0.2.0.dev0' in (checkout / 'pyproject.toml').read_text()
+    assert not checkout.exists()
+    assert before == (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+
+
+def test_official_source_reports_clone_failure_and_cleans_up(tmp_path):
+    from ai_skills.update import official_source
+    with pytest.raises(ValueError, match='official source'):
+        with official_source((tmp_path / 'missing').as_uri()): pass
+
+
+def test_source_revision_recorded_in_receipt_and_manifest_when_provided(source_tree, tmp_path):
+    revision = {'repository': 'file:///x', 'branch': 'main', 'commit': 'a' * 40}
+    plan = plan_install(make_config(source_tree, tmp_path, source_revision=revision))
+    assert plan.to_record()['source_revision'] == revision
+    manifest = apply_install(plan, package_installer=fake_package_installer)
+    assert manifest['source_revision'] == revision
+    assert json.loads((plan.prefix / '.ai-skills-runtime.json').read_text())['source_revision'] == revision
+    plain = plan_install(make_config(source_tree, tmp_path / 'other'))
+    assert 'source_revision' not in plain.to_record()
+    assert 'source_revision' not in apply_install(plain, package_installer=fake_package_installer)
+
+
+@pytest.mark.parametrize('bad', ['text', {'repository': 'r', 'branch': 'main', 'commit': 'abc'}, {'commit': 'g' * 40}])
+def test_invalid_source_revision_rejected_before_any_write(source_tree, tmp_path, bad):
+    with pytest.raises(ValueError, match='source revision'): plan_install(make_config(source_tree, tmp_path, source_revision=bad))
+    assert not (tmp_path / 'assets').exists()
+
+
+def test_update_installs_exact_official_main_commit_and_preserves_checkout(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    before = (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+    sha = _git(official_repository, 'rev-parse', 'main')
+    config = UpdateConfig(assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert manifest['version'] == '0.2.0.dev0'
+    assert manifest['source_revision'] == {'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}
+    assert Path(manifest['python']).is_file()
+    assert json.loads((tmp_path / 'assets/runtime.json').read_text()) == manifest
+    receipt = json.loads((Path(manifest['prefix']) / '.ai-skills-runtime.json').read_text())
+    assert receipt['source_revision']['commit'] == sha
+    assert before == (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+    assert _git(official_repository, 'branch', '--show-current') == 'main'
+
+
+def test_update_keeps_pinned_run_and_reads_older_manifest(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    project = source_tree / 'pyproject.toml'; project.write_text(project.read_text().replace('0.1.0.dev0', '0.0.9.dev0'))
+    old = plan_install(make_config(source_tree, tmp_path)); old_manifest = apply_install(old, package_installer=fake_package_installer)
+    assert 'source_revision' not in old_manifest
+    run = tmp_path / 'run'; (run / '.run-with-it').mkdir(parents=True)
+    write_json_atomic(run / '.run-with-it/engine.json', {'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(old.python)})
+    config = UpdateConfig(assets_dest=old.assets_dest, home=tmp_path / 'home', agents=('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert resolve_runtime(run, assets_dest=old.assets_dest) == old.python
+    assert resolve_runtime(assets_dest=old.assets_dest) == Path(manifest['python']) != old.python
+    assert old.python.is_file()
+    retained = plan_uninstall(UninstallConfig(assets_dest=old.assets_dest, home=tmp_path / 'home')).retained_runtimes
+    assert old.prefix in retained and Path(manifest['prefix']) in retained
+
+
+def test_update_cli_reports_installed_commit(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    args = ['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']
+    assert update.main(args) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert update.main(['--only', 'bogus']) == 2
+
+
+def test_update_cli_error_exits_2_without_traceback(tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', (tmp_path / 'missing').as_uri())
+    assert update.main(['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 2
+    assert 'ai-skills update:' in capsys.readouterr().err
