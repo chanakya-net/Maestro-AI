@@ -387,13 +387,14 @@ def _verify_interpreter(python, package_root):
 
 
 def _install_package(plan):
-    # Isolated mode plus a controlled cwd keep the invoking checkout off sys.path;
-    # the temporary official checkout stays the explicit pip build source.
-    env, cwd = _isolated_environment(), plan.prefix
-    _run_child([str(plan.config.python), '-I', '-m', 'venv', str(plan.prefix)], cwd=cwd, env=env)
-    # Updates must not let inherited pip destinations write outside the candidate
-    # prefix; an ordinary install keeps the caller's pip configuration (constraints).
-    if plan.source_revision: env = _pip_environment(plan.python, env, cwd)
+    # Isolated mode (-I) keeps the invoking checkout off sys.path; the temporary
+    # official checkout stays the explicit pip build source.
+    env, cwd = _isolated_environment(), None
+    _run_child([str(plan.config.python), '-I', '-m', 'venv', str(plan.prefix)], cwd=plan.prefix, env=env)
+    # Updates run pip from the candidate prefix with allowlisted settings so caller
+    # destinations cannot write outside it. An ordinary install keeps the caller's
+    # cwd and pip configuration, so relative constraints and find-links resolve.
+    if plan.source_revision: env, cwd = _pip_environment(plan.python, env, plan.prefix), plan.prefix
     for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
     _run_child([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env)
     return _runtime_root(plan.python)
@@ -505,30 +506,118 @@ def _restore_copy(registration, fingerprint):
     if backup is not None: _copy_tree(backup, target)
 
 
-def _backup_adapter(registration):
-    for item in registration.get('paths', []):
-        if not item.get('backup'): continue
-        target, backup = Path(item['target']), Path(item['backup'])
-        if _tree_hash(target) != item['existing_sha256']: raise ValueError(f'adapter registration changed after planning: {target}')
+def _adapter_state(target):
+    """Digest of an adapter target, or None when absent; never through a symlinked ancestor."""
+    target = Path(target)
+    for ancestor in target.parents:
+        if ancestor.is_symlink(): raise ValueError(f'symlink escape in adapter registration: {ancestor}')
+    return _tree_hash(target) if target.exists() or target.is_symlink() else None
+
+
+def _remove_tree(target):
+    if target.is_symlink() or target.is_file(): target.unlink()
+    else: shutil.rmtree(target)
+
+
+def _restore_backup(item):
+    backup, target = Path(item['backup']), Path(item['target'])
+    if _tree_hash(backup) != item['existing_sha256']: raise ValueError(f'adapter backup changed: {backup}')
+    target.parent.mkdir(parents=True, exist_ok=True); _copy_tree(backup, target)
+
+
+_BASELINE_KEYS = ('existing_sha256', 'backup', 'original_backup', 'original_sha256')
+
+
+class _AdapterActivation:
+    """Expected state of every adapter target during one activation.
+
+    A target shared by several adapters (``~/.agents/skills``) is a single
+    transition from its pre-activation state: the first adapter backs it up and
+    later adapters inherit that baseline, so rollback and uninstall restore it once.
+    """
+
+    def __init__(self):
+        self.current, self.owners = {}, {}  # target -> digest written here | items sharing it
+
+    def expected(self, item):
+        target = item['target']
+        return self.current[target] if target in self.current else item.get('existing_sha256')
+
+    def check(self, registration):
+        """Refuse a target appearing, vanishing or changing outside this activation."""
+        for item in registration.get('paths', []):
+            if _adapter_state(item['target']) != self.expected(item):
+                raise ValueError(f'adapter registration changed after planning: {item["target"]}')
+
+    def prepare(self, registration):
+        self.check(registration)
+        for item in registration.get('paths', []):
+            owners = self.owners.setdefault(item['target'], [])
+            if owners:
+                for key in _BASELINE_KEYS:
+                    if key in owners[0]: item[key] = owners[0][key]
+                    else: item.pop(key, None)
+            elif item.get('backup'): self._backup(item)
+            owners.append(item)
+
+    @staticmethod
+    def _backup(item):
+        backup = Path(item['backup'])
         if backup.exists() or backup.is_symlink():
             if _tree_hash(backup) != item['existing_sha256']: raise ValueError(f'adapter backup changed: {backup}')
         else:
-            backup.parent.mkdir(parents=True, exist_ok=True); _copy_tree(target, backup)
+            backup.parent.mkdir(parents=True, exist_ok=True); _copy_tree(Path(item['target']), backup)
+
+    def record(self, registration):
+        for item in registration.get('paths', []):
+            digest = self.current[item['target']] = _adapter_state(item['target'])
+            for owner in self.owners[item['target']]:
+                if digest: owner['installed_sha256'] = digest
+                else: owner.pop('installed_sha256', None)
+
+    def rollback(self, registration, handled):
+        """Restore each target once; keep output this activation cannot explain."""
+        failures = []
+        for item in registration.get('paths', []):
+            if item['target'] in handled: continue
+            handled.add(item['target'])
+            try: self._restore(item)
+            except (OSError, ValueError) as failure: failures.append(str(failure))
+        return failures
+
+    def _restore(self, item):
+        target = Path(item['target'])
+        actual = _adapter_state(target)
+        if actual != self.expected(item):
+            kept = f'; its backup is kept at {item["backup"]}' if item.get('backup') else ''
+            raise ValueError(f'unverified adapter output preserved at {target}{kept}')
+        if actual is not None: _remove_tree(target)
+        if item.get('backup'): _restore_backup(item)
+
+
+def _rollback(applied, fingerprint, adapters):
+    """Attempt to undo every applied registration; return what could not be restored."""
+    failures, handled = [], set()
+    for registration in reversed(applied):
+        if registration['kind'] != 'copy':
+            failures += adapters.rollback(registration, handled); continue
+        try: _restore_copy(registration, fingerprint)
+        except (OSError, ValueError) as failure: failures.append(str(failure))
+    return failures
 
 
 def _restore_adapter(registration):
     for item in registration.get('paths', []):
         target = Path(item['target'])
         if target.exists() or target.is_symlink():
+            digest = _tree_hash(target)
+            # A target shared with another adapter may already hold its restored baseline.
+            if item.get('backup') and digest == item.get('existing_sha256'): continue
             expected = item.get('installed_sha256') or item.get('existing_sha256')
-            if not expected or _tree_hash(target) != expected:
+            if not expected or digest != expected:
                 raise ValueError(f'uncommitted or edited adapter content preserved; inspect its original backup: {target}')
-            if target.is_symlink(): target.unlink()
-            else: shutil.rmtree(target)
-        if item.get('backup'):
-            backup = Path(item['backup'])
-            if _tree_hash(backup) != item['existing_sha256']: raise ValueError(f'adapter backup changed: {backup}')
-            target.parent.mkdir(parents=True, exist_ok=True); _copy_tree(backup, target)
+            _remove_tree(target)
+        if item.get('backup'): _restore_backup(item)
 
 
 def _registration_payload(prefix, root, version):
@@ -622,8 +711,11 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
         prior_by_key = {(r['agent'], r.get('target', '')): r for r in committed.get('registrations', [])}
         selected_keys = {(r['agent'], r.get('target', '')) for r in plan.registrations}
         registrations = [r for r in active.get('registrations', []) if (r['agent'], r.get('target', '')) not in selected_keys]
-        applied = []
+        applied, adapters = [], _AdapterActivation()
         try:
+            # Every adapter target must still match planning before any adapter runs.
+            for registration in plan.registrations:
+                if registration['kind'] != 'copy': adapters.check(registration)
             for registration in plan.registrations:
                 registration['runtime_prefix'] = str(plan.prefix)
                 registration['fingerprint'] = plan.fingerprint
@@ -637,16 +729,14 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                         registrations.append(prior); continue
                 if registration['kind'] == 'copy': _register_copy(registration, root, plan.fingerprint)
                 else:
-                    _backup_adapter(registration)
+                    adapters.prepare(registration)
                     applied.append(registration)
                     if registration['agent'] == 'gemini' and any(p.get('backup') for p in registration.get('paths', [])):
                         register(registration['undo'])
                     # Include an adapter being applied so a partly successful
                     # native command can restore all explicitly backed paths.
                     register(registration['argv'])
-                    for item in registration.get('paths', []):
-                        target = Path(item['target'])
-                        if target.exists() or target.is_symlink(): item['installed_sha256'] = _tree_hash(target)
+                    adapters.record(registration)
                 if registration not in applied: applied.append(registration)
                 registrations.append(registration)
             manifest = {'schema_version': 1, 'owner': OWNER, 'python': str(plan.python), 'prefix': str(plan.prefix),
@@ -661,10 +751,10 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                 if committed: write_json_atomic(committed_path, committed)
                 else: committed_path.unlink(missing_ok=True)
                 raise
-        except BaseException:
-            for registration in reversed(applied):
-                if registration['kind'] == 'copy': _restore_copy(registration, plan.fingerprint)
-                else: _restore_adapter(registration)
+        except BaseException as error:
+            # Keep the original failure; recovery state that needs inspection rides along.
+            for failure in _rollback(applied, plan.fingerprint, adapters):
+                error.add_note('rollback incomplete: ' + failure)
             raise
         return manifest
 

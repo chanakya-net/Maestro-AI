@@ -747,14 +747,19 @@ def test_update_reactivates_retained_revision_with_adapter(official_repository, 
     assert Path(second['python']).is_file() and Path(first['python']).is_file()
 
 
-def test_ordinary_install_honors_pip_constraints(source_tree, tmp_path, monkeypatch):
+@pytest.mark.parametrize('paths', ['absolute', 'relative'])
+def test_ordinary_install_honors_pip_constraints(source_tree, tmp_path, monkeypatch, paths):
     import dataclasses
     import ai_skills.installation as installation
     wheels = _fixture_wheel(tmp_path / 'wheels').parent
     (tmp_path / 'constraints.txt').write_text('auditproof==2.0\n')
-    monkeypatch.setenv('PIP_NO_INDEX', '1'); monkeypatch.setenv('PIP_FIND_LINKS', str(wheels))
+    # Relative pip settings resolve against the caller's cwd, as pip itself does.
+    caller = tmp_path if paths == 'relative' else tmp_path / 'elsewhere'
+    caller.mkdir(exist_ok=True); monkeypatch.chdir(caller)
+    locate = (lambda path: os.path.relpath(path, caller)) if paths == 'relative' else str
+    monkeypatch.setenv('PIP_NO_INDEX', '1'); monkeypatch.setenv('PIP_FIND_LINKS', locate(wheels))
     monkeypatch.setenv('PIP_DISABLE_PIP_VERSION_CHECK', '1')
-    monkeypatch.setenv('PIP_CONSTRAINT', str(tmp_path / 'constraints.txt'))
+    monkeypatch.setenv('PIP_CONSTRAINT', locate(tmp_path / 'constraints.txt'))
     def real_pip_installer(plan):
         pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
         return installation._install_package(dataclasses.replace(plan, pip_commands=(pip, _offline_command(plan))))
@@ -826,3 +831,107 @@ def test_update_adapter_ignores_caller_local_skills_binary(official_repository, 
     monkeypatch.delenv('npm_config_prefix')
     apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=config.assets_dest, home=tmp_path / 'home')))
     assert not marker.exists()
+
+
+def test_update_rolls_back_other_registrations_after_adapter_failure(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    config = UpdateConfig(tmp_path / 'assets', home, ('codex', 'gemini'))
+    run_update(config, repository=repository, package_installer=fake_package_installer, registrar=adapter)
+    snapshot = lambda: {p: p.read_bytes() for p in (home / '.codex/skills').rglob('*') if p.is_file()}
+    active, receipts = (config.assets_dest / 'runtime.json').read_bytes(), snapshot()
+    _commit_readme(official_repository, 'revision B')
+    def fail_after_write(argv):
+        adapter(argv)
+        if 'install' in argv: raise subprocess.CalledProcessError(1, argv)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_update(config, repository=repository, package_installer=fake_package_installer, registrar=fail_after_write)
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+    assert snapshot() == receipts
+    # The unverified adapter output and its backup stay for recovery, named on the original error.
+    notes = getattr(failure.value, '__notes__', [])
+    assert any('preserved' in note and str(extension) in note for note in notes)
+    assert (extension / 'gemini-extension.json').is_file()
+
+
+def _skills_adapter(home):
+    """npx skills stand-in: add copies into ~/.agents/skills plus the profile root; remove deletes both."""
+    profiles = {'github-copilot': '.copilot/skills', 'antigravity': '.gemini/antigravity/skills'}
+    def adapter(argv):
+        roots = [home / '.agents/skills', home / profiles[argv[argv.index('-a') + 1]]]
+        if 'remove' in argv:
+            for root in roots:
+                for name in SKILL_NAMES: shutil.rmtree(root / name, ignore_errors=True)
+            return
+        for skill in (Path(argv[4]) / 'skills').iterdir():
+            for root in roots: shutil.copytree(skill, root / skill.name, dirs_exist_ok=True)
+    return adapter
+
+
+def _commit_skill(repo, text):
+    skill = repo / 'skills/pair-colleague/SKILL.md'
+    skill.write_text(skill.read_text() + '\n' + text + '\n')
+    _git(repo, 'commit', '-qam', text)
+
+
+def test_update_refreshes_shared_adapter_paths(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, agents = tmp_path / 'home', ('copilot', 'antigravity')
+    shared = home / '.agents/skills/pair-colleague'
+    shared.mkdir(parents=True); (shared / 'SKILL.md').write_text('user original skill')
+    adapter = _skills_adapter(home)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home,
+                                        agents=agents, replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    config = UpdateConfig(legacy.assets_dest, home, agents)
+    update = lambda: run_update(config, repository=official_repository.as_uri(),
+                                package_installer=fake_package_installer, registrar=adapter)
+    update()
+    _commit_skill(official_repository, 'revision B'); second = update()
+    assert 'revision B' in (shared / 'SKILL.md').read_text()
+    items = [p for r in second['registrations'] for p in r['paths'] if p['target'] == str(shared)]
+    assert len(items) == 2 and items[0]['installed_sha256'] == items[1]['installed_sha256']
+    assert items[0]['backup'] == items[1]['backup'] and items[0]['original_backup'] == items[1]['original_backup']
+    active, installed = (legacy.assets_dest / 'runtime.json').read_bytes(), (shared / 'SKILL.md').read_bytes()
+    _commit_skill(official_repository, 'revision C')
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == legacy.assets_dest / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'): update()
+    assert (legacy.assets_dest / 'runtime.json').read_bytes() == active
+    assert (shared / 'SKILL.md').read_bytes() == installed
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=home)), registrar=adapter)
+    assert (shared / 'SKILL.md').read_text() == 'user original skill'
+    assert not any((home / '.agents/skills' / name).exists() for name in SKILL_NAMES if name != 'pair-colleague')
+
+
+@pytest.mark.parametrize('change', ['file', 'symlink-ancestor'])
+def test_update_rejects_adapter_target_created_during_staging(official_repository, tmp_path, change):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    run_update(UpdateConfig(tmp_path / 'assets', home, ('codex',)), repository=repository,
+               package_installer=fake_package_installer)
+    active = (tmp_path / 'assets/runtime.json').read_bytes()
+    _commit_readme(official_repository, 'revision B')
+    elsewhere = tmp_path / 'elsewhere/pair-colleague/SKILL.md'
+    user = home / '.agents/skills/pair-colleague/SKILL.md'
+    def concurrent_writer(plan):
+        # Another writer appears after planning but before adapter registration.
+        if change == 'file': user.parent.mkdir(parents=True)
+        else:
+            elsewhere.parent.mkdir(parents=True); user.parents[2].mkdir(parents=True)
+            user.parents[1].symlink_to(elsewhere.parents[1], target_is_directory=True)
+        user.write_text('user skill written during staging')
+        return fake_package_installer(plan)
+    calls = []
+    with pytest.raises(ValueError, match='changed after planning|symlink escape'):
+        run_update(UpdateConfig(tmp_path / 'assets', home, ('copilot',)), repository=repository,
+                   package_installer=concurrent_writer, registrar=calls.append)
+    assert calls == [] and user.read_text() == 'user skill written during staging'
+    assert (tmp_path / 'assets/runtime.json').read_bytes() == active
