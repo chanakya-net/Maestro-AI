@@ -563,16 +563,19 @@ def test_update_cli_stdout_stays_json_with_subprocess_output(official_repository
     assert 'installer progress' in captured.err
 
 
+def _offline_command(plan):
+    script = ("import shutil,sys,sysconfig;from pathlib import Path;s=Path(sys.argv[1]);"
+              "r=Path(sysconfig.get_path('purelib'))/'ai_skills';shutil.copytree(s/'src/ai_skills',r);"
+              "shutil.copytree(s/'assets',r/'data');shutil.copytree(s/'skills',r/'skills');print('offline install progress')")
+    return (str(plan.python), '-I', '-c', script, str(plan.source))
+
+
 def offline_package_installer(plan):
     """Run the real installer boundary with an offline stand-in for pip install."""
     import dataclasses
     import ai_skills.installation as installation
-    script = ("import shutil,sys,sysconfig;from pathlib import Path;s=Path(sys.argv[1]);"
-              "r=Path(sysconfig.get_path('purelib'))/'ai_skills';shutil.copytree(s/'src/ai_skills',r);"
-              "shutil.copytree(s/'assets',r/'data');shutil.copytree(s/'skills',r/'skills');print('offline install progress')")
     assert all(command[1:3] == ('-I', '-m') for command in plan.pip_commands)
-    command = (str(plan.python), '-I', '-c', script, str(plan.source))
-    return installation._install_package(dataclasses.replace(plan, pip_commands=(command,)))
+    return installation._install_package(dataclasses.replace(plan, pip_commands=(_offline_command(plan),)))
 
 
 def _shadow(directory, marker):
@@ -645,3 +648,100 @@ def test_installation_subprocesses_support_redirected_python_stdout(source_tree,
         _run_registration([sys.executable, '-c', "print('registration progress')"], home=tmp_path / 'home')
     assert Path(root).is_relative_to(plan.prefix) and (Path(root) / 'skills').is_dir()
     assert 'offline install progress' in buffer.getvalue() and 'registration progress' in buffer.getvalue()
+
+
+def _fixture_wheel(directory):
+    """A minimal offline wheel so real pip runs without any network access."""
+    directory.mkdir(parents=True, exist_ok=True)
+    wheel = directory / 'auditproof-1.0-py3-none-any.whl'
+    info = 'auditproof-1.0.dist-info/'
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        archive.writestr('auditproof.py', 'VALUE = 1\n')
+        archive.writestr(info + 'METADATA', 'Metadata-Version: 2.1\nName: auditproof\nVersion: 1.0\n')
+        archive.writestr(info + 'WHEEL', 'Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n')
+        archive.writestr(info + 'RECORD', f'auditproof.py,,\n{info}METADATA,,\n{info}WHEEL,,\n{info}RECORD,,\n')
+    return wheel
+
+
+def _scratch_checkout(path):
+    path.mkdir(parents=True); _git(path, 'init', '-q', '-b', 'main')
+    (path / 'tracked.txt').write_text('tracked'); _git(path, 'add', '-A')
+    _git(path, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'scratch')
+    return path
+
+
+@pytest.mark.parametrize('redirect', ['env-target', 'config-target', 'config-prefix', 'config-root'])
+def test_update_ignores_pip_install_destination_overrides(official_repository, tmp_path, monkeypatch, redirect):
+    import dataclasses
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    wheels, checkout = _fixture_wheel(tmp_path / 'wheels').parent, _scratch_checkout(tmp_path / 'checkout')
+    kind, option = redirect.split('-')
+    # Index settings from the caller's pip configuration must still apply: the
+    # wheel is only found through the configured find-links with no index.
+    lines = ['[global]', 'no-index = true', f'find-links = {wheels}', 'disable-pip-version-check = true', '[install]']
+    if kind == 'config': lines.append(f'{option} = {checkout}')
+    else: monkeypatch.setenv('PIP_TARGET', str(checkout))
+    (tmp_path / 'pip.conf').write_text('\n'.join(lines) + '\n')
+    monkeypatch.setenv('PIP_CONFIG_FILE', str(tmp_path / 'pip.conf'))
+    def real_pip_installer(plan):
+        pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
+        return installation._install_package(dataclasses.replace(plan, pip_commands=(pip, _offline_command(plan))))
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=real_pip_installer)
+    purelib = Path(subprocess.run([manifest['python'], '-I', '-c', 'import auditproof;print(auditproof.__file__)'],
+                                  check=True, capture_output=True, text=True).stdout.strip())
+    assert purelib.is_relative_to(manifest['prefix'])
+    assert _git(checkout, 'status', '--porcelain', '--ignored') == ''
+    assert sorted(p.name for p in checkout.iterdir()) == ['.git', 'tracked.txt']
+
+
+def _deterministic_gemini(extension):
+    """Install writes content naming the registered payload; uninstall removes it."""
+    def adapter(argv):
+        if 'uninstall' in argv:
+            if extension.exists(): shutil.rmtree(extension)
+            return
+        extension.mkdir(parents=True); (extension / 'gemini-extension.json').write_text(json.dumps({'source': argv[-1]}))
+    return adapter
+
+
+def _commit_readme(repo, text):
+    (repo / 'README.md').write_text(text)
+    _git(repo, 'add', 'README.md'); _git(repo, 'commit', '-qm', text)
+    return _git(repo, 'rev-parse', 'main')
+
+
+def test_update_reactivates_retained_revision_with_adapter(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    extension = tmp_path / 'home/.gemini/extensions/ai-skill-collections'
+    extension.mkdir(parents=True); (extension / 'gemini-extension.json').write_text('legacy extension')
+    adapter, repository = _deterministic_gemini(extension), official_repository.as_uri()
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home',
+                                        agents=('gemini',), replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    config = UpdateConfig(legacy.assets_dest, tmp_path / 'home', ('gemini',))
+    update = lambda: run_update(config, repository=repository, package_installer=fake_package_installer, registrar=adapter)
+    sha_a = _git(official_repository, 'rev-parse', 'main'); first = update()
+    _commit_readme(official_repository, 'revision B'); second = update()
+    assert first['prefix'] != second['prefix']
+    _git(official_repository, 'reset', '-q', '--hard', sha_a)
+    active, installed = (legacy.assets_dest / 'runtime.json').read_bytes(), (extension / 'gemini-extension.json').read_bytes()
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == legacy.assets_dest / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'): update()
+    assert (legacy.assets_dest / 'runtime.json').read_bytes() == active
+    assert (extension / 'gemini-extension.json').read_bytes() == installed
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    again = update()
+    assert again['prefix'] == first['prefix'] and again['source_revision']['commit'] == sha_a
+    assert json.loads((extension / 'gemini-extension.json').read_text())['source'].startswith(first['prefix'])
+    assert subprocess.run([second['python'], '-c', 'pass']).returncode == 0
+    assert update()['prefix'] == first['prefix']
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=tmp_path / 'home')), registrar=adapter)
+    assert (extension / 'gemini-extension.json').read_text() == 'legacy extension'
+    assert Path(second['python']).is_file() and Path(first['python']).is_file()

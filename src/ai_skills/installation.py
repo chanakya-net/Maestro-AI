@@ -7,6 +7,7 @@ Global Python/Node installations and provider permission settings are untouched.
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass, field
 import email
 import hashlib
@@ -206,6 +207,16 @@ def _carry_original(entry, prior):
     entry['original_backup'], entry['original_sha256'] = (prior.get(key) for key in keys)
 
 
+def _transition_backup(prefix, agent, name, digest):
+    """Rollback snapshot of one prior registration state for this candidate.
+
+    Keyed by the prior content digest so reactivating a retained prefix after a
+    different registration was active gets its own snapshot instead of colliding
+    with the one taken on that prefix's first activation.
+    """
+    return str(prefix / 'registration-backups' / agent / (name + '.' + digest))
+
+
 def _uninstall_view(entry):
     if 'original_backup' not in entry: return entry
     return dict(entry, backup=entry['original_backup'], existing_sha256=entry['original_sha256'])
@@ -278,7 +289,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                     digest = _tree_hash(target)
                     if external_owned.get(str(target)) != digest and not config.replace_existing:
                         raise ValueError(f'unowned adapter registration already exists: {target}; use --dry-run --replace-existing to review its backup')
-                    item.update(existing_sha256=digest, backup=str(prefix / 'registration-backups' / registration['agent'] / hashlib.sha256(str(target).encode()).hexdigest()))
+                    item.update(existing_sha256=digest, backup=_transition_backup(prefix, registration['agent'], hashlib.sha256(str(target).encode()).hexdigest(), digest))
                     if external_owned.get(str(target)) == digest: _carry_original(item, prior_entries.get(str(target)))
                 registration['paths'].append(item)
             continue
@@ -292,8 +303,9 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
             except ValueError:
                 if not config.replace_existing:
                     raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
-            registration.update(backup=str(prefix / 'registration-backups' / registration['agent'] / registration['skill']),
-                                existing_sha256=_tree_hash(target), existing_owned=owned)
+            digest = _tree_hash(target)
+            registration.update(backup=_transition_backup(prefix, registration['agent'], registration['skill'], digest),
+                                existing_sha256=digest, existing_owned=owned)
             if owned: _carry_original(registration, prior_entries.get(str(target)))
     return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision)
 
@@ -314,6 +326,32 @@ def _owned_receipt(prefix, fingerprint=None):
 def _isolated_environment():
     # Caller PYTHONPATH/PYTHONHOME/PYTHONSTARTUP must not shadow installer modules.
     return {key: value for key, value in os.environ.items() if not key.upper().startswith('PYTHON')}
+
+
+# Index, trust and network settings pip may inherit. Install destinations
+# (target/prefix/root/user/src), logs and requirement injection never pass.
+PIP_SETTINGS = frozenset({
+    'index-url', 'extra-index-url', 'no-index', 'find-links', 'trusted-host', 'cert', 'client-cert',
+    'proxy', 'timeout', 'retries', 'keyring-provider', 'only-binary', 'no-binary', 'prefer-binary',
+    'pre', 'no-cache-dir', 'disable-pip-version-check', 'no-input', 'progress-bar', 'quiet', 'verbose'})
+_PIP_SECTIONS = {'global': 0, 'install': 1, ':env:': 2}  # pip precedence, lowest first
+
+
+def _pip_environment(python, base, cwd):
+    """Carry allowlisted pip settings as variables; disable every pip config file."""
+    listing = subprocess.run([str(python), '-I', '-m', 'pip', 'config', 'list'], capture_output=True,
+                             text=True, check=True, cwd=cwd, env=base).stdout
+    settings = []
+    for line in listing.splitlines():
+        name, separator, value = line.partition('=')
+        section, _, key = name.rpartition('.')
+        if separator and section in _PIP_SECTIONS and key in PIP_SETTINGS:
+            settings.append((_PIP_SECTIONS[section], key, ast.literal_eval(value)))
+    env = {key: value for key, value in base.items() if not key.upper().startswith('PIP_')}
+    for _, key, value in sorted(settings, key=lambda setting: setting[0]):
+        env['PIP_' + key.upper().replace('-', '_')] = str(value)
+    env['PIP_CONFIG_FILE'] = os.devnull  # pip then loads no global, user, site or env config file
+    return env
 
 
 def _run_child(argv, *, cwd=None, env=None):
@@ -352,6 +390,8 @@ def _install_package(plan):
     # the temporary official checkout stays the explicit pip build source.
     env, cwd = _isolated_environment(), plan.prefix
     _run_child([str(plan.config.python), '-I', '-m', 'venv', str(plan.prefix)], cwd=cwd, env=env)
+    # Inherited pip destinations must not write outside the candidate prefix.
+    env = _pip_environment(plan.python, env, cwd)
     for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
     _run_child([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env)
     return _runtime_root(plan.python)
