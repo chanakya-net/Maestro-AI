@@ -568,12 +568,32 @@ class _AdapterActivation:
         else:
             backup.parent.mkdir(parents=True, exist_ok=True); _copy_tree(Path(item['target']), backup)
 
+    def settle(self, registration):
+        """Expect each target as observed after this activation's own undo succeeded."""
+        for item in registration.get('paths', []):
+            self.current[item['target']] = _adapter_state(item['target'])
+
     def record(self, registration):
         for item in registration.get('paths', []):
-            digest = self.current[item['target']] = _adapter_state(item['target'])
-            for owner in self.owners[item['target']]:
-                if digest: owner['installed_sha256'] = digest
-                else: owner.pop('installed_sha256', None)
+            self.settle_owners(item['target'], self.owners[item['target']], _adapter_state(item['target']))
+
+    def settle_owners(self, target, owners, digest):
+        self.current[target] = digest
+        for owner in owners:
+            if digest: owner['installed_sha256'] = digest
+            else: owner.pop('installed_sha256', None)
+
+    def share(self, retained):
+        """Give retained owners of a rewritten shared target its new receipt and baseline."""
+        for registration in retained:
+            for item in registration.get('paths', []):
+                owners = self.owners.get(item['target'])
+                if not owners: continue
+                if owners[0].get('backup'):
+                    for key in _BASELINE_KEYS:
+                        if key in owners[0]: item[key] = owners[0][key]
+                        else: item.pop(key, None)
+                self.settle_owners(item['target'], [item], self.current.get(item['target']))
 
     def rollback(self, registration, handled):
         """Restore each target once; keep output this activation cannot explain."""
@@ -710,7 +730,8 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
         committed = _object(committed_path) if committed_path.exists() else {}
         prior_by_key = {(r['agent'], r.get('target', '')): r for r in committed.get('registrations', [])}
         selected_keys = {(r['agent'], r.get('target', '')) for r in plan.registrations}
-        registrations = [r for r in active.get('registrations', []) if (r['agent'], r.get('target', '')) not in selected_keys]
+        retained = [r for r in active.get('registrations', []) if (r['agent'], r.get('target', '')) not in selected_keys]
+        registrations = list(retained)
         applied, adapters = [], _AdapterActivation()
         try:
             # Every adapter target must still match planning before any adapter runs.
@@ -732,13 +753,14 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                     adapters.prepare(registration)
                     applied.append(registration)
                     if registration['agent'] == 'gemini' and any(p.get('backup') for p in registration.get('paths', [])):
-                        register(registration['undo'])
+                        register(registration['undo']); adapters.settle(registration)
                     # Include an adapter being applied so a partly successful
                     # native command can restore all explicitly backed paths.
                     register(registration['argv'])
                     adapters.record(registration)
                 if registration not in applied: applied.append(registration)
                 registrations.append(registration)
+            adapters.share(retained)
             manifest = {'schema_version': 1, 'owner': OWNER, 'python': str(plan.python), 'prefix': str(plan.prefix),
                         'version': plan.version, 'fingerprint': plan.fingerprint, 'resources': str(root / 'data'),
                         'skills': str(root / 'skills'), 'owned_paths': [str(plan.prefix), str(plan.assets_dest / 'runtime.json'), *(r['target'] for r in registrations if r['kind'] == 'copy')],

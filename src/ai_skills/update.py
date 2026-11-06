@@ -84,4 +84,7 @@ def main(argv=None):
         print(json.dumps(manifest, indent=2)); return 0
     except SystemExit as error: return int(error.code or 0)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        print(f'ai-skills update: {error}', file=sys.stderr); return 2
+        print(f'ai-skills update: {error}', file=sys.stderr)
+        # Rollback recovery notes name preserved output and backups needing inspection.
+        for note in getattr(error, '__notes__', ()): print(f'ai-skills update: {note}', file=sys.stderr)
+        return 2

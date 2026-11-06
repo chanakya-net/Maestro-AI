@@ -935,3 +935,79 @@ def test_update_rejects_adapter_target_created_during_staging(official_repositor
                    package_installer=concurrent_writer, registrar=calls.append)
     assert calls == [] and user.read_text() == 'user skill written during staging'
     assert (tmp_path / 'assets/runtime.json').read_bytes() == active
+
+
+def test_update_keeps_shared_receipts_after_single_adapter_update(official_repository, source_tree, tmp_path):
+    from ai_skills.installation import _tree_hash
+    from ai_skills.update import UpdateConfig, run_update
+    home, agents = tmp_path / 'home', ('copilot', 'antigravity')
+    shared = home / '.agents/skills/pair-colleague'
+    shared.mkdir(parents=True); (shared / 'SKILL.md').write_text('user original skill')
+    adapter = _skills_adapter(home)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home,
+                                        agents=agents, replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    update = lambda selected: run_update(UpdateConfig(legacy.assets_dest, home, selected), repository=official_repository.as_uri(),
+                                         package_installer=fake_package_installer, registrar=adapter)
+    first = update(agents)
+    retained = next(r for r in first['registrations'] if r['agent'] == 'antigravity')
+    specific = [p for p in retained['paths'] if '.gemini/antigravity' in p['target']]
+    _commit_skill(official_repository, 'revision B'); second = update(('copilot',))
+    assert 'revision B' in (shared / 'SKILL.md').read_text()
+    items = [p for r in second['registrations'] for p in r['paths'] if p['target'] == str(shared)]
+    assert len(items) == 2 and {p['installed_sha256'] for p in items} == {_tree_hash(shared)}
+    assert items[0]['original_backup'] == items[1]['original_backup']
+    kept = next(r for r in second['registrations'] if r['agent'] == 'antigravity')
+    assert [p for p in kept['paths'] if '.gemini/antigravity' in p['target']] == specific
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=home)), registrar=adapter)
+    assert (shared / 'SKILL.md').read_text() == 'user original skill'
+
+
+def test_update_restores_gemini_when_replacement_fails_before_write(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    extension.mkdir(parents=True); (extension / 'gemini-extension.json').write_text('legacy extension')
+    adapter = _deterministic_gemini(extension)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home,
+                                        agents=('gemini',), replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    update = lambda registrar: run_update(UpdateConfig(legacy.assets_dest, home, ('gemini',)), repository=repository,
+                                          package_installer=fake_package_installer, registrar=registrar)
+    update(adapter)
+    active, installed = (legacy.assets_dest / 'runtime.json').read_bytes(), (extension / 'gemini-extension.json').read_bytes()
+    _commit_readme(official_repository, 'revision B')
+    def fail_before_write(argv):
+        if 'install' in argv: raise subprocess.CalledProcessError(1, argv)
+        adapter(argv)
+    with pytest.raises(subprocess.CalledProcessError) as failure: update(fail_before_write)
+    assert not getattr(failure.value, '__notes__', [])
+    assert (legacy.assets_dest / 'runtime.json').read_bytes() == active
+    assert (extension / 'gemini-extension.json').read_bytes() == installed
+    retry = update(adapter)
+    assert json.loads((extension / 'gemini-extension.json').read_text())['source'].startswith(retry['prefix'])
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=home)), registrar=adapter)
+    assert (extension / 'gemini-extension.json').read_text() == 'legacy extension'
+
+
+def test_update_cli_reports_incomplete_rollback(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    extension = tmp_path / 'home/.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    monkeypatch.setattr(installation, '_run_registration', lambda argv, *, home=None: adapter(argv))
+    args = ['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'gemini']
+    assert update.main(args) == 0; capsys.readouterr()
+    _commit_readme(official_repository, 'revision B')
+    def fail_after_write(argv, *, home=None):
+        adapter(argv)
+        if 'install' in argv: raise subprocess.CalledProcessError(1, argv)
+    monkeypatch.setattr(installation, '_run_registration', fail_after_write)
+    assert update.main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'returned non-zero exit status 1' in captured.err
+    assert 'rollback incomplete' in captured.err and str(extension) in captured.err
+    assert str(tmp_path / 'assets/runtimes') in captured.err and 'registration-backups' in captured.err
