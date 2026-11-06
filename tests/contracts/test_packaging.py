@@ -56,17 +56,23 @@ def test_sdist_rebuild_and_installed_entrypoints_outside_checkout(distributions,
     assert not (source / ".git").exists()
     rebuilt = tmp_path / "rebuilt"
     run(sys.executable, "-m", "build", "--no-isolation", "--wheel", "--outdir", rebuilt, cwd=source)
+    with zipfile.ZipFile(next(rebuilt.glob("*.whl"))) as archive:
+        entrypoints = archive.read(next(name for name in archive.namelist() if name.endswith("/entry_points.txt"))).decode()
+        assert "ai-skills = ai_skills.cli:main" in entrypoints
+        assert "maestro = ai_skills.cli:main" in entrypoints
     environment = tmp_path / "environment"
     run(sys.executable, "-m", "venv", environment, cwd=tmp_path)
     bindir = environment / ("Scripts" if os.name == "nt" else "bin")
     python = bindir / ("python.exe" if os.name == "nt" else "python")
     command = bindir / ("ai-skills.exe" if os.name == "nt" else "ai-skills")
+    maestro = bindir / ("maestro.exe" if os.name == "nt" else "maestro")
     run(python, "-m", "pip", "install", "--no-deps", next(rebuilt.glob("*.whl")), cwd=tmp_path)
     work = tmp_path / "outside checkout"
     work.mkdir()
-    env = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"}}
+    env = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AI_SKILLS_RUN_ROOT"}}
     env["PATH"] = ""
-    for entrypoint in ([python, "-m", "ai_skills"], [command]):
+    env["ASSETS_DEST"] = str(tmp_path / "absent-assets")
+    for entrypoint in ([python, "-m", "ai_skills"], [command], [maestro]):
         assert "doctor" in run(*entrypoint, "--help", cwd=work, env=env).stdout
         report = json.loads(run(*entrypoint, "doctor", "--json", cwd=work, env=env).stdout)
         assert report["ok"] is True
