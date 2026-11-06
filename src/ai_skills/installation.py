@@ -195,6 +195,35 @@ def _external_paths(agent, home):
     return [root / name for root in roots for name in SKILL_NAMES]
 
 
+def _carry_original(entry, prior):
+    """Keep the pre-Maestro uninstall baseline when replacing managed content.
+
+    ``backup`` stays the immediate prior registration for activation rollback;
+    ``original_backup`` (None when nothing preceded Maestro) is what uninstall restores.
+    """
+    if prior is None: return
+    keys = ('original_backup', 'original_sha256') if 'original_backup' in prior else ('backup', 'existing_sha256')
+    entry['original_backup'], entry['original_sha256'] = (prior.get(key) for key in keys)
+
+
+def _uninstall_view(entry):
+    if 'original_backup' not in entry: return entry
+    return dict(entry, backup=entry['original_backup'], existing_sha256=entry['original_sha256'])
+
+
+def _owned_backup(backup, destination):
+    """An uninstall backup must live in an owned retained runtime's backup directory."""
+    backup, runtimes = _absolute(backup), destination / 'runtimes'
+    if not backup.is_relative_to(runtimes) or len(backup.relative_to(runtimes).parts) < 2: return False
+    prefix = runtimes / backup.relative_to(runtimes).parts[0]
+    if not backup.is_relative_to(prefix / 'registration-backups'): return False
+    for ancestor in (backup, *backup.parents):
+        if ancestor == runtimes: break
+        if ancestor.is_symlink() and ancestor != backup: return False
+    _owned_receipt(prefix)
+    return True
+
+
 def plan_install(config: InstallConfig) -> InstallationPlan:
     if sys.version_info < (3, 12): raise ValueError('Python 3.12 or newer is required')
     revision = _check_source_revision(config.source_revision)
@@ -211,8 +240,8 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
         if candidate.is_symlink(): raise ValueError(f'symlink escape in runtime directory: {candidate}')
     python = _python(prefix)
     pip_commands = []
-    if pins: pip_commands.append((str(python), '-m', 'pip', 'install', *pins))
-    pip_commands.append((str(python), '-m', 'pip', 'install', '--no-deps', str(source)))
+    if pins: pip_commands.append((str(python), '-I', '-m', 'pip', 'install', *pins))
+    pip_commands.append((str(python), '-I', '-m', 'pip', 'install', '--no-deps', str(source)))
     agents = config.agents or _detect(home)
     registrations = []
     for agent in dict.fromkeys(agents):
@@ -229,12 +258,14 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                                   'argv': ['npx', '-y', 'skills', 'add', str(prefix / 'registration/skills'), '-a', PROFILES[agent], '--yes', '--global'],
                                   'undo': ['npx', '-y', 'skills', 'remove', *(s for s in SKILL_NAMES), '-a', PROFILES[agent], '--yes', '--global']})
     active = destination / 'runtime.json'
-    external_owned = {}
+    external_owned, prior_entries = {}, {}
     if active.exists():
         previous = _object(active)
         if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
         for r in previous.get('registrations', []):
+            if r.get('kind') == 'copy': prior_entries[r['target']] = r
             for p in r.get('paths', []):
+                prior_entries[p['target']] = p
                 if p.get('installed_sha256'): external_owned[p['target']] = p['installed_sha256']
     for registration in registrations:
         if registration['kind'] != 'copy':
@@ -248,6 +279,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                     if external_owned.get(str(target)) != digest and not config.replace_existing:
                         raise ValueError(f'unowned adapter registration already exists: {target}; use --dry-run --replace-existing to review its backup')
                     item.update(existing_sha256=digest, backup=str(prefix / 'registration-backups' / registration['agent'] / hashlib.sha256(str(target).encode()).hexdigest()))
+                    if external_owned.get(str(target)) == digest: _carry_original(item, prior_entries.get(str(target)))
                 registration['paths'].append(item)
             continue
         target = Path(registration['target'])
@@ -262,6 +294,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                     raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
             registration.update(backup=str(prefix / 'registration-backups' / registration['agent'] / registration['skill']),
                                 existing_sha256=_tree_hash(target), existing_owned=owned)
+            if owned: _carry_original(registration, prior_entries.get(str(target)))
     return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision)
 
 
@@ -278,16 +311,49 @@ def _owned_receipt(prefix, fingerprint=None):
     return receipt
 
 
+def _isolated_environment():
+    # Caller PYTHONPATH/PYTHONHOME/PYTHONSTARTUP must not shadow installer modules.
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith('PYTHON')}
+
+
+def _run_child(argv, *, cwd=None, env=None):
+    """Run a child whose progress follows Python's stdout, with or without a descriptor."""
+    stream = getattr(sys, 'stdout', None)
+    try: descriptor = stream.fileno()
+    except (AttributeError, OSError, ValueError): descriptor = None  # io.UnsupportedOperation
+    if descriptor is not None:
+        stream.flush()
+        return subprocess.run(argv, check=True, cwd=cwd, env=env, stdout=descriptor)
+    result = subprocess.run(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True, errors='replace')
+    if stream is not None and result.stdout: stream.write(result.stdout)
+    result.check_returncode()
+    return result
+
+
 def _runtime_root(python):
     code = 'import ai_skills,json;from pathlib import Path;print(json.dumps(str(Path(ai_skills.__file__).parent)))'
-    result = subprocess.run([str(python), '-c', code], capture_output=True, text=True, check=True)
+    result = subprocess.run([str(python), '-I', '-c', code], capture_output=True, text=True, check=True,
+                            cwd=Path(python).parents[1], env=_isolated_environment())
     return Path(json.loads(result.stdout))
 
 
+def _verify_interpreter(python, package_root):
+    """A retained runtime must launch and import its own recorded package."""
+    if not python.is_file(): raise ValueError(f'installed venv interpreter missing: {python}')
+    try: root = _runtime_root(python)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise ValueError(f'installed venv interpreter unusable: {python}: {error}') from error
+    if root.resolve() != Path(package_root).resolve():
+        raise ValueError(f'installed venv interpreter imports an unexpected package: {root}')
+
+
 def _install_package(plan):
-    subprocess.run([str(plan.config.python), '-m', 'venv', str(plan.prefix)], check=True, stdout=sys.stdout)
-    for command in plan.pip_commands: subprocess.run(command, check=True, stdout=sys.stdout)
-    subprocess.run([str(plan.python), '-m', 'pip', 'check'], check=True, stdout=sys.stdout)
+    # Isolated mode plus a controlled cwd keep the invoking checkout off sys.path;
+    # the temporary official checkout stays the explicit pip build source.
+    env, cwd = _isolated_environment(), plan.prefix
+    _run_child([str(plan.config.python), '-I', '-m', 'venv', str(plan.prefix)], cwd=cwd, env=env)
+    for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
+    _run_child([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env)
     return _runtime_root(plan.python)
 
 
@@ -446,7 +512,7 @@ def _run_registration(argv, *, home=None):
         if os.name == 'nt':
             drive, tail = os.path.splitdrive(selected)
             environment.update(HOMEDRIVE=drive, HOMEPATH=tail)
-    subprocess.run(resolve_executable(tuple(argv), environment), check=True, env=environment, stdout=sys.stdout)
+    _run_child(resolve_executable(tuple(argv), environment), env=environment)
 
 
 def _clean_interrupted(prefix):
@@ -476,8 +542,8 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
             receipt = _owned_receipt(plan.prefix, plan.fingerprint); _verify_payload(receipt, plan.prefix)
             if plan.source_revision and receipt.get('source_revision') != plan.source_revision:
                 raise ValueError('retained runtime source revision mismatch')
-            if not plan.python.is_file(): raise ValueError(f'installed venv interpreter missing: {plan.python}')
             root = Path(receipt['package_root'])
+            _verify_interpreter(plan.python, root)
         else:
             plan.prefix.mkdir(parents=True)
             marker = {'owner': OWNER, 'prefix': str(plan.prefix), 'host': socket.gethostname(), 'pid': os.getpid(), 'create_time': psutil.Process().create_time(), 'token': uuid.uuid4().hex}
@@ -608,18 +674,18 @@ def plan_uninstall(config: UninstallConfig) -> UninstallationPlan:
                 if ancestor.is_symlink(): raise ValueError(f'symlink escape in registration: {ancestor}')
             if target.exists():
                 _registration_receipt(target)
-                if registration.get('backup'):
-                    backup = Path(registration['backup'])
-                    if not backup.is_relative_to(registration_prefix / 'registration-backups') or _tree_hash(backup) != registration.get('existing_sha256'):
+                baseline = _uninstall_view(registration)
+                if baseline.get('backup'):
+                    backup = Path(baseline['backup'])
+                    if not _owned_backup(backup, destination) or _tree_hash(backup) != baseline.get('existing_sha256'):
                         raise ValueError(f'unowned or changed registration backup: {backup}')
+                    restorations.append({'target': str(target), 'backup': baseline['backup']})
                 paths.append(target)
-                if registration.get('backup'):
-                    restorations.append({'target': str(target), 'backup': registration['backup']})
         else:
             # Reconstruct the known adapter rather than execute arbitrary JSON.
             agent = registration['agent']
             allowed = {str(p) for p in _external_paths(agent, home)}
-            for item in registration.get('paths', []):
+            for item in map(_uninstall_view, registration.get('paths', [])):
                 if item['target'] not in allowed: raise ValueError('adapter target is not a standard owned path')
                 target = Path(item['target'])
                 for ancestor in target.parents:
@@ -628,7 +694,7 @@ def plan_uninstall(config: UninstallConfig) -> UninstallationPlan:
                     raise ValueError(f'edited adapter registration: {target}')
                 if item.get('backup'):
                     backup = Path(item['backup'])
-                    if not backup.is_relative_to(registration_prefix / 'registration-backups') or _tree_hash(backup) != item.get('existing_sha256'):
+                    if not _owned_backup(backup, destination) or _tree_hash(backup) != item.get('existing_sha256'):
                         raise ValueError(f'unowned or changed adapter backup: {backup}')
                     restorations.append({'target': str(target), 'backup': str(backup)})
             if agent == 'gemini': commands.append(('gemini', 'extensions', 'uninstall', 'ai-skill-collections'))
@@ -652,12 +718,12 @@ def apply_uninstall(plan: UninstallationPlan, *, registrar=None):
         manifest = _object(plan.assets_dest / 'runtime.json')
         for registration in manifest.get('registrations', []):
             if registration['kind'] == 'command' and (not plan.config.agents or registration['agent'] in plan.config.agents):
-                _restore_adapter(registration)
+                _restore_adapter(dict(registration, paths=[_uninstall_view(i) for i in registration.get('paths', [])]))
         by_target = {r.get('target'): r for r in manifest.get('registrations', []) if r['kind'] == 'copy'}
         for path in plan.paths:
             if path.is_dir():
                 registration = by_target[str(path)]
-                _restore_copy(registration, registration.get('fingerprint', plan.fingerprint))
+                _restore_copy(_uninstall_view(registration), registration.get('fingerprint', plan.fingerprint))
             else: path.unlink()
         active_path = plan.assets_dest / 'runtime.json'
         if active_path.exists() and plan.config.agents:

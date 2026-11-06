@@ -26,6 +26,7 @@ def test_missing_pinned_environment_never_falls_back(tmp_path):
 import shutil
 import socket
 import subprocess
+import sysconfig
 import venv
 import psutil
 from ai_skills.installation import OWNER, main
@@ -49,6 +50,8 @@ def fake_package_installer(plan):
     venv.EnvBuilder(with_pip=False).create(plan.prefix)
     root = plan.prefix / 'payload/ai_skills'
     root.mkdir(parents=True)
+    purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': str(plan.prefix), 'platbase': str(plan.prefix)}))
+    (purelib / 'fixture-payload.pth').write_text(str(root.parent) + '\n')
     (root / '__init__.py').write_text('# fixture package ' + plan.version)
     if plan.source.is_dir():
         (root / 'data').mkdir()
@@ -558,3 +561,87 @@ def test_update_cli_stdout_stays_json_with_subprocess_output(official_repository
     captured = capfd.readouterr()
     assert json.loads(captured.out)['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
     assert 'installer progress' in captured.err
+
+
+def offline_package_installer(plan):
+    """Run the real installer boundary with an offline stand-in for pip install."""
+    import dataclasses
+    import ai_skills.installation as installation
+    script = ("import shutil,sys,sysconfig;from pathlib import Path;s=Path(sys.argv[1]);"
+              "r=Path(sysconfig.get_path('purelib'))/'ai_skills';shutil.copytree(s/'src/ai_skills',r);"
+              "shutil.copytree(s/'assets',r/'data');shutil.copytree(s/'skills',r/'skills');print('offline install progress')")
+    assert all(command[1:3] == ('-I', '-m') for command in plan.pip_commands)
+    command = (str(plan.python), '-I', '-c', script, str(plan.source))
+    return installation._install_package(dataclasses.replace(plan, pip_commands=(command,)))
+
+
+def _shadow(directory, marker):
+    """A caller checkout whose venv/pip/ai_skills modules record any import."""
+    write = f"from pathlib import Path; Path({str(marker)!r}).write_text(__name__); raise SystemExit(74)\n"
+    for module in ('venv.py', 'pip/__init__.py', 'pip/__main__.py', 'ai_skills/__init__.py'):
+        target = directory / module; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(write)
+
+
+def test_update_ignores_caller_python_module_shadowing(official_repository, tmp_path, monkeypatch):
+    from ai_skills.update import UpdateConfig, run_update
+    caller, path_entry = tmp_path / 'caller', tmp_path / 'pythonpath'
+    _shadow(caller, tmp_path / 'cwd-marker'); _shadow(path_entry, tmp_path / 'path-marker')
+    monkeypatch.chdir(caller); monkeypatch.setenv('PYTHONPATH', str(path_entry))
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=offline_package_installer)
+    assert (Path(manifest['prefix']) / 'pyvenv.cfg').is_file() and Path(manifest['python']).is_file()
+    assert Path(manifest['resources']).is_relative_to(manifest['prefix'])
+    assert not (tmp_path / 'cwd-marker').exists() and not (tmp_path / 'path-marker').exists()
+    assert sorted(p.name for p in caller.iterdir()) == ['ai_skills', 'pip', 'venv.py']
+
+
+def test_update_rejects_retained_runtime_with_unusable_interpreter(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    first_sha = first['source_revision']['commit']
+    broken = Path(first['python']); broken.unlink(); broken.write_text('not an interpreter'); broken.chmod(0o644)
+    (official_repository / 'README.md').write_text('second')
+    _git(official_repository, 'add', 'README.md'); _git(official_repository, 'commit', '-qm', 'second')
+    second = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    registration = config.home / '.codex/skills/pair-colleague/.ai-skills-registration.json'
+    registered = registration.read_bytes()
+    _git(official_repository, 'reset', '-q', '--hard', first_sha)
+    with pytest.raises(ValueError, match='interpreter'):
+        run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+    assert registration.read_bytes() == registered
+    assert Path(first['prefix']).is_dir() and Path(second['python']).is_file()
+
+
+def test_update_preserves_original_uninstall_restoration(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    original = tmp_path / 'home/.codex/skills/pair-colleague'
+    original.mkdir(parents=True); (original / 'SKILL.md').write_text('user original skill')
+    first = plan_install(make_config(source_tree, tmp_path, replace_existing=True))
+    apply_install(first, package_installer=fake_package_installer)
+    config = UpdateConfig(first.assets_dest, tmp_path / 'home', ('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert manifest['prefix'] != str(first.prefix)
+    plan = plan_uninstall(UninstallConfig(assets_dest=first.assets_dest, home=tmp_path / 'home'))
+    assert first.prefix in plan.retained_runtimes
+    apply_uninstall(plan)
+    assert sorted(p.name for p in original.iterdir()) == ['SKILL.md']
+    assert (original / 'SKILL.md').read_text() == 'user original skill'
+    others = [tmp_path / 'home/.codex/skills' / name for name in SKILL_NAMES if name != 'pair-colleague']
+    assert others and not any(path.exists() for path in others)
+    assert not (first.assets_dest / 'runtime.json').exists() and first.python.is_file()
+
+
+def test_installation_subprocesses_support_redirected_python_stdout(source_tree, tmp_path):
+    import contextlib
+    import io
+    from ai_skills.installation import _run_registration
+    plan = plan_install(make_config(source_tree, tmp_path)); plan.prefix.mkdir(parents=True)
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        root = offline_package_installer(plan)
+        _run_registration([sys.executable, '-c', "print('registration progress')"], home=tmp_path / 'home')
+    assert Path(root).is_relative_to(plan.prefix) and (Path(root) / 'skills').is_dir()
+    assert 'offline install progress' in buffer.getvalue() and 'registration progress' in buffer.getvalue()
