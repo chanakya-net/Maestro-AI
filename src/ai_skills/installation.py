@@ -21,6 +21,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import tomllib
 import uuid
 import zipfile
@@ -390,8 +391,9 @@ def _install_package(plan):
     # the temporary official checkout stays the explicit pip build source.
     env, cwd = _isolated_environment(), plan.prefix
     _run_child([str(plan.config.python), '-I', '-m', 'venv', str(plan.prefix)], cwd=cwd, env=env)
-    # Inherited pip destinations must not write outside the candidate prefix.
-    env = _pip_environment(plan.python, env, cwd)
+    # Updates must not let inherited pip destinations write outside the candidate
+    # prefix; an ordinary install keeps the caller's pip configuration (constraints).
+    if plan.source_revision: env = _pip_environment(plan.python, env, cwd)
     for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
     _run_child([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env)
     return _runtime_root(plan.python)
@@ -542,17 +544,24 @@ def _registration_payload(prefix, root, version):
     shutil.copytree(skills, gemini / 'skills', dirs_exist_ok=True)
 
 
+# Caller npm settings that would point npx at an invoking project's local bins.
+_NPM_PROJECT_KEYS = frozenset({'NPM_CONFIG_PREFIX', 'NPM_CONFIG_LOCAL_PREFIX'})
+
+
 def _run_registration(argv, *, home=None):
     # argv lists only; never shell interpolation or automatic tool installs.
+    # A fresh empty cwd keeps npx from resolving the invoking checkout's
+    # node_modules/.bin or project .npmrc instead of the expected package.
     from ai_skills.runner import resolve_executable
-    environment = dict(os.environ)
+    environment = {key: value for key, value in os.environ.items() if key.upper() not in _NPM_PROJECT_KEYS}
     if home is not None:
         selected = str(_absolute(home))
         environment.update(HOME=selected, USERPROFILE=selected)
         if os.name == 'nt':
             drive, tail = os.path.splitdrive(selected)
             environment.update(HOMEDRIVE=drive, HOMEPATH=tail)
-    _run_child(resolve_executable(tuple(argv), environment), env=environment)
+    with tempfile.TemporaryDirectory(prefix='ai-skills-adapter-') as cwd:
+        _run_child(resolve_executable(tuple(argv), environment), cwd=cwd, env=environment)
 
 
 def _clean_interrupted(prefix):
@@ -620,8 +629,10 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                 registration['fingerprint'] = plan.fingerprint
                 key = (registration['agent'], registration.get('target', ''))
                 prior = prior_by_key.get(key)
-                if prior and registration['kind'] == 'copy':
-                    current = _registration_receipt(Path(registration['target']))
+                target = Path(registration.get('target', ''))
+                # Fast path only for a live registration; a partly uninstalled one is recreated.
+                if prior and registration['kind'] == 'copy' and (target.exists() or target.is_symlink()):
+                    current = _registration_receipt(target)
                     if current['fingerprint'] == plan.fingerprint:
                         registrations.append(prior); continue
                 if registration['kind'] == 'copy': _register_copy(registration, root, plan.fingerprint)

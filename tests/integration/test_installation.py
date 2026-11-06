@@ -745,3 +745,84 @@ def test_update_reactivates_retained_revision_with_adapter(official_repository, 
     apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=tmp_path / 'home')), registrar=adapter)
     assert (extension / 'gemini-extension.json').read_text() == 'legacy extension'
     assert Path(second['python']).is_file() and Path(first['python']).is_file()
+
+
+def test_ordinary_install_honors_pip_constraints(source_tree, tmp_path, monkeypatch):
+    import dataclasses
+    import ai_skills.installation as installation
+    wheels = _fixture_wheel(tmp_path / 'wheels').parent
+    (tmp_path / 'constraints.txt').write_text('auditproof==2.0\n')
+    monkeypatch.setenv('PIP_NO_INDEX', '1'); monkeypatch.setenv('PIP_FIND_LINKS', str(wheels))
+    monkeypatch.setenv('PIP_DISABLE_PIP_VERSION_CHECK', '1')
+    monkeypatch.setenv('PIP_CONSTRAINT', str(tmp_path / 'constraints.txt'))
+    def real_pip_installer(plan):
+        pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
+        return installation._install_package(dataclasses.replace(plan, pip_commands=(pip, _offline_command(plan))))
+    plan = plan_install(make_config(source_tree, tmp_path))
+    with pytest.raises(subprocess.CalledProcessError):
+        apply_install(plan, package_installer=real_pip_installer)
+    assert not plan.prefix.exists() and not (plan.assets_dest / 'runtime.json').exists()
+    (tmp_path / 'constraints.txt').write_text('auditproof==1.0\n')
+    manifest = apply_install(plan_install(make_config(source_tree, tmp_path)), package_installer=real_pip_installer)
+    assert subprocess.run([manifest['python'], '-I', '-c', 'import auditproof'], check=False).returncode == 0
+
+
+def test_update_restores_partially_uninstalled_copy_registrations(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    both = UpdateConfig(tmp_path / 'assets', home, ('codex', 'claude'))
+    first = run_update(both, repository=repository, package_installer=fake_package_installer)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=both.assets_dest, home=home, agents=('codex',))))
+    assert not any((home / '.codex/skills' / name).exists() for name in SKILL_NAMES)
+    def must_not_install_again(_): raise AssertionError('retained revision must reuse its runtime')
+    again = run_update(UpdateConfig(both.assets_dest, home, ('codex',)), repository=repository,
+                       package_installer=must_not_install_again)
+    assert again['prefix'] == first['prefix'] and again['python'] == first['python']
+    assert again['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert json.loads((both.assets_dest / 'runtime.json').read_text()) == again
+    for agent in ('codex', 'claude'):
+        for name in SKILL_NAMES:
+            target = home / f'.{agent}/skills' / name
+            receipt = json.loads((target / '.ai-skills-registration.json').read_text())
+            assert receipt['fingerprint'] == first['fingerprint'] and (target / 'SKILL.md').is_file()
+    assert {(r['agent'], r['target']) for r in again['registrations']} == {
+        (r['agent'], r['target']) for r in first['registrations']}
+    assert subprocess.run([again['python'], '-c', 'pass']).returncode == 0
+
+
+_FAKE_NPX = '''#!{python}
+"""npx stand-in: a project-local bin wins, like npm exec; otherwise the registry package."""
+import os, shutil, sys
+from pathlib import Path
+args = sys.argv[1:]
+if args[:1] == ['-y']: args = args[1:]
+start = Path(os.environ.get('npm_config_prefix') or os.getcwd())
+for directory in (start, *start.parents):
+    local = directory / 'node_modules/.bin' / args[0]
+    if local.is_file(): os.execv(sys.executable, [sys.executable, str(local), *args[1:]])
+if args[1] == 'add':
+    root = Path(os.environ['HOME']) / '.agents/skills'
+    for skill in (Path(args[2]) / 'skills').iterdir():
+        shutil.copytree(skill, root / skill.name, dirs_exist_ok=True)
+'''
+
+
+def test_update_adapter_ignores_caller_local_skills_binary(official_repository, tmp_path, monkeypatch):
+    from ai_skills.update import UpdateConfig, run_update
+    checkout, marker = _scratch_checkout(tmp_path / 'checkout'), tmp_path / 'checkout/checkout-marker'
+    local = checkout / 'node_modules/.bin/skills'; local.parent.mkdir(parents=True)
+    local.write_text(f'from pathlib import Path\nPath({str(marker)!r}).write_text("local skills ran")\n')
+    bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
+    npx = bin_dir / 'npx'; npx.write_text(_FAKE_NPX.format(python=sys.executable)); npx.chmod(0o755)
+    monkeypatch.setenv('PATH', str(bin_dir) + os.pathsep + os.environ['PATH'])
+    monkeypatch.setenv('npm_config_prefix', str(checkout)); monkeypatch.chdir(checkout)
+    before = _git(checkout, 'status', '--porcelain', '--ignored')
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('copilot',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert not marker.exists()
+    assert _git(checkout, 'status', '--porcelain', '--ignored') == before
+    assert manifest['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    for name in SKILL_NAMES: assert (tmp_path / 'home/.agents/skills' / name / 'SKILL.md').is_file()
+    monkeypatch.delenv('npm_config_prefix')
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=config.assets_dest, home=tmp_path / 'home')))
+    assert not marker.exists()
