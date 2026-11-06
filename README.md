@@ -86,7 +86,7 @@ python -m ai_skills doctor --json
 python -m ai_skills agent list --detected-only
 ```
 
-Here and below, `python` means the environment's interpreter. Activate the environment or use its full path from step 2. The installed `ai-skills` command provides the same operations as `python -m ai_skills`.
+Here and below, `python` means the environment's interpreter. Activate the environment or use its full path from step 2. The installed `maestro` and `ai-skills` commands provide the same operations as `python -m ai_skills`. Activate this retained bootstrap environment, or use `.venv/bin/maestro` or `.venv/bin/ai-skills` on macOS/Linux, and `.venv\Scripts\maestro.exe` or `.venv\Scripts\ai-skills.exe` on Windows. Operational commands use a run pin first, then the active managed runtime. No arguments, help, version, doctor, install, and uninstall run locally; doctor reports the invoking environment.
 
 `doctor` checks the interpreter and maintained resources. The agent list shows detected tools; use each provider's own sign-in process to establish account access.
 
@@ -100,6 +100,22 @@ The skills prepare the files and runtime configuration for you. The command refe
 <summary><strong>Installation options, protected files, and uninstall</strong></summary>
 
 Installation packages the maintained prompts, registry, and all seven skills into an immutable runtime under `~/.ai-skill-collections/assets/runtimes/`. It publishes `runtime.json` only after verification. Use `--assets-dest PATH` to select another destination and `--only codex` (or another listed profile) to limit registrations. `install --list` lists profiles. A built wheel can replace `.` in `--source`.
+
+**Existing installations:** To obtain `maestro` for the first time, start from a fresh official checkout containing this command (or use an appropriate wheel). Use the original separately owned bootstrap virtual environment, or create a new one with step 2 if it is absent. Do not install into a directory under `assets/runtimes/`. From the checkout, refresh the bootstrap package even if its version is unchanged:
+
+```text
+# macOS / Linux
+.venv/bin/python -m pip install --upgrade --force-reinstall .
+.venv/bin/python -m ai_skills install --source . --dry-run
+.venv/bin/python -m ai_skills install --source .
+
+# Windows
+.venv\Scripts\python.exe -m pip install --upgrade --force-reinstall .
+.venv\Scripts\python.exe -m ai_skills install --source . --dry-run
+.venv\Scripts\python.exe -m ai_skills install --source .
+```
+
+Retain your chosen `--assets-dest` and `--only` options on both install commands. A managed runtime installation does not rewrite scripts in an older bootstrap environment or add directories to PATH. Activate the refreshed environment or use the full command paths above. The module form remains available for installation and recovery.
 
 Existing unowned skill directories are protected. Inspect the dry-run output, then use `--replace-existing` to migrate an older installation explicitly; the installer preserves backups and records ownership. Registration uses local packaged content rather than fetching a changing branch.
 
