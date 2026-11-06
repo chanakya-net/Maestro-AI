@@ -963,6 +963,50 @@ def test_update_keeps_shared_receipts_after_single_adapter_update(official_repos
     assert (shared / 'SKILL.md').read_text() == 'user original skill'
 
 
+def _target_entries(manifest, target):
+    entries = [i for r in manifest['registrations'] for i in r.get('paths', [r])]
+    return [i for i in entries if i.get('target') == str(target)]
+
+
+@pytest.mark.parametrize('agents', [('codex',), ('copilot', 'antigravity')])
+def test_update_restores_original_after_recreating_missing_registration(official_repository, source_tree, tmp_path,
+                                                                         monkeypatch, agents):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / ('.codex/skills' if agents == ('codex',) else '.agents/skills') / 'pair-colleague'
+    target.mkdir(parents=True); (target / 'SKILL.md').write_text('user original skill')
+    adapter = None if agents == ('codex',) else _skills_adapter(home)
+    kwargs = dict(package_installer=fake_package_installer, registrar=adapter)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=agents, replace_existing=True))
+    apply_install(legacy, **kwargs)
+    update = lambda selected: run_update(UpdateConfig(assets, home, selected), repository=official_repository.as_uri(), **kwargs)
+    first = update(agents)
+    baseline = {(i['original_backup'], i['original_sha256']) for i in _target_entries(first, target)}
+    assert len(baseline) == 1 and None not in next(iter(baseline))
+    shutil.rmtree(target)
+    _commit_skill(official_repository, 'revision B')
+    active = (assets / 'runtime.json').read_bytes()
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == assets / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'): update(agents[:1])
+    assert not target.exists() and (assets / 'runtime.json').read_bytes() == active
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    second = update(agents[:1])
+    assert 'revision B' in (target / 'SKILL.md').read_text()
+    entries = _target_entries(second, target)
+    assert len(entries) == len(agents)
+    assert {(i['original_backup'], i['original_sha256']) for i in entries} == baseline
+    assert not any(i.get('backup') or i.get('existing_sha256') for i in entries)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+    assert sorted(p.name for p in target.iterdir()) == ['SKILL.md']
+    assert (target / 'SKILL.md').read_text() == 'user original skill'
+    assert not (assets / 'runtime.json').exists()
+
+
 def test_update_restores_gemini_when_replacement_fails_before_write(official_repository, source_tree, tmp_path):
     from ai_skills.update import UpdateConfig, run_update
     home, repository = tmp_path / 'home', official_repository.as_uri()

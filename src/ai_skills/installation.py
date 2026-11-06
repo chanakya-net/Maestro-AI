@@ -292,6 +292,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                         raise ValueError(f'unowned adapter registration already exists: {target}; use --dry-run --replace-existing to review its backup')
                     item.update(existing_sha256=digest, backup=_transition_backup(prefix, registration['agent'], hashlib.sha256(str(target).encode()).hexdigest(), digest))
                     if external_owned.get(str(target)) == digest: _carry_original(item, prior_entries.get(str(target)))
+                else: _carry_original(item, prior_entries.get(str(target)))  # recreating a missing managed target
                 registration['paths'].append(item)
             continue
         target = Path(registration['target'])
@@ -308,6 +309,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
             registration.update(backup=_transition_backup(prefix, registration['agent'], registration['skill'], digest),
                                 existing_sha256=digest, existing_owned=owned)
             if owned: _carry_original(registration, prior_entries.get(str(target)))
+        else: _carry_original(registration, prior_entries.get(str(target)))  # recreating a missing managed target
     return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision)
 
 
@@ -589,10 +591,9 @@ class _AdapterActivation:
             for item in registration.get('paths', []):
                 owners = self.owners.get(item['target'])
                 if not owners: continue
-                if owners[0].get('backup'):
-                    for key in _BASELINE_KEYS:
-                        if key in owners[0]: item[key] = owners[0][key]
-                        else: item.pop(key, None)
+                for key in _BASELINE_KEYS:
+                    if key in owners[0]: item[key] = owners[0][key]
+                    else: item.pop(key, None)
                 self.settle_owners(item['target'], [item], self.current.get(item['target']))
 
     def rollback(self, registration, handled):
