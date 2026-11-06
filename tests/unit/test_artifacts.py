@@ -241,3 +241,50 @@ def test_coordinator_writer_rejects_malformed_report_atomically(tmp_path):
     target=tmp_path/'report.json'
     assert artifacts.main(['write-json','--role','sub-coord','--issue','7','--payload-file',str(source),'--result-file',str(target)]) == 1
     assert not target.exists()
+
+
+def test_check_evidence_reason_table():
+    from ai_skills.verification import check_evidence_reason
+
+    sha = 'a' * 40
+    check = {'command': 'check', 'passed': True, 'evidence': 'exit 0'}
+    passing = {'passed': True, 'commit_sha': sha, 'checks': [check]}
+    for report, reason in (
+        (passing, ''),
+        (None, 'implementation-verification-failed'),
+        ({**passing, 'commit_sha': 'b' * 40}, 'verification-evidence-commit-mismatch'),
+        ({**passing, 'checks': []}, 'verification-checks-incomplete'),
+        ({**passing, 'checks': [{**check, 'command': 'other'}]}, 'verification-checks-incomplete'),
+        ({**passing, 'checks': [{**check, 'evidence': ' '}]}, 'verification-check-not-passed'),
+    ):
+        assert check_evidence_reason(report, expected_commit=sha, required_checks=['check']) == reason
+
+
+def _closure(*ids, **changes):
+    return [{'id': comment, 'status': 'addressed', 'action': 'Fixed ' + comment, 'files_changed': ['a.py'],
+             'verification': ['pytest passed'], **changes} for comment in ids]
+
+
+@pytest.mark.parametrize(('closure', 'expected', 'reason'), [
+    (_closure('R1', 'R2'), ['R1', 'R2'], ''),
+    (_closure('R2', 'R1'), ['R1', 'R2'], ''),
+    (_closure('R1', status='declined', files_changed=[], extra='kept'), ['R1'], ''),
+    ([], [], ''),
+    (_closure('R1'), [], 'review-comment-closure-unexpected-id'),
+    (_closure('R1'), ['R1', 'R2'], 'review-comment-closure-incomplete'),
+    (_closure('R1', 'R1'), ['R1'], 'review-comment-closure-duplicate-id'),
+    (_closure('r1'), ['R1'], 'review-comment-closure-unexpected-id'),
+    (_closure('R1', status='blocked'), ['R1'], 'review-comment-unresolved'),
+    (_closure('R1', action=''), ['R1'], 'review-comment-closure-action-missing'),
+    (_closure('R1', action=None), ['R1'], 'review-comment-closure-action-missing'),
+    (_closure('R1', files_changed=[None]), ['R1'], 'invalid-review-comment-closure'),
+    (_closure('R1', verification=['ok', '']), ['R1'], 'review-comment-closure-evidence-missing'),
+    (_closure('R1', status='declined', verification=None), ['R1'], 'review-comment-closure-evidence-missing'),
+    ([[]], ['R1'], 'invalid-review-comment-closure'),
+    ([{'id': ['R1']}], ['R1'], 'invalid-review-comment-closure'),
+    (None, [], 'invalid-review-comment-closure'),
+])
+def test_review_comment_closure_reason_table(closure, expected, reason):
+    payload = {'review_comment_closure': closure} if closure is not None else {}
+    assert artifacts.review_comment_closure_reason(payload, expected) == reason
+    assert artifacts.review_comment_closure_reason(None, expected) == 'invalid-review-comment-closure'

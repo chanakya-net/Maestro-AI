@@ -100,9 +100,9 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 1. Read `SUB_COORD_STATE_FILE` if provided; otherwise read `$RUN_WITH_IT_ISSUE_DIR/sub-state.json`.
 2. Emit `STATUS|type=sub-resume|state_file=<path>|cycles_used=<n>|non_approval_count=<n>` to `$SUB_COORD_LOG_FILE`, `$RUN_WITH_IT_STATUS_FILE`, and `$RUN_WITH_IT_EVENTS_LOG` when set.
 3. Reuse `feature_branch`, `issue_branch`, `worktree_path`, `issue_base_sha`, `impl_commit_sha`, `modify_commit_sha`, `review_head_sha`, `review_history`, and `model_usage` from state when present.
-4. Inspect only structured worker artifacts referenced by `in_flight_agents`: `state_file`, `done_file`, and `result_file`. Do not read raw worker logs into context.
+4. Inspect only structured worker artifacts for the saved `in_flight_agents` entry: `state_file`, its dispatcher outcome record, `done_file`, and `result_file`. Do not read raw worker logs into context.
 5. If a worker is still `running`, `quiet`, or `stalled` and lacks a valid result artifact, continue monitoring that worker instead of spawning another worker for the same role/cycle.
-6. If a worker has a valid result artifact, process that artifact and continue from the next phase. For example, a completed `modify` worker should update `modify_commit_sha` / `review_head_sha`, then continue into the next review cycle.
+6. For a finalized `modify` attempt, apply the post-dispatch modifier outcome rules under `verdict=revise` using the saved cycle, reviewed head, and issue baseline. If the transition was already persisted, resume its saved phase and cycle. For other roles with valid finalized artifacts, process the artifact and continue from the next phase.
 7. If a worker failed without a valid artifact, apply the existing Worker Artifact Recovery Contract for that role/cycle, including the Artifact Recovery Worker before any terminal blocked report.
 8. Never rerun complexity, plan, implementation, review, or modification phases that already have valid artifacts in the saved issue directory. A valid `plan.json` (see *Worker Done Files*) plus its done file means the plan phase is complete — reuse `plan.md` and the stored `plan_complexity_level`; do not re-spawn the planner.
 9. Do not create a fresh issue worktree when saved `issue_branch` and `worktree_path` are present and valid. Reuse the saved worktree.
@@ -111,6 +111,8 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 ## Native Worker Configuration
 
 Write one JSON configuration per role/cycle/attempt using file tools; use absolute paths, JSON strings for model names, and arrays for exact extra argv. `agent`/`model` below are examples: replace them with the persisted route decision and preserve `effort` and `selection_reason` in Sub-Coordinator state. Worker selectors never inherit `SUB_COORD_AGENT` or `SUB_COORD_MODEL`.
+
+For ordinary managed implementation on any supported enabled route, include `result_capture` when you can establish the complete list of applicable approved checks. Populate `required_checks` from the issue requirements, grounded plan when present, and governing repository instructions. Include all approved command and manual checks in the task context and use their exact text in the config. Supply an empty `review_comment_ids` list for implementation. If check applicability or completeness is unresolved, omit `result_capture` and use file publication. The dispatcher selects the adapter and falls back to file publication when an otherwise compatible executable lacks capture.
 
 ```json
 {
@@ -121,6 +123,10 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "issue": "42",
   "cycle": "1",
   "issue_base_sha": "<original immutable ISSUE_BASE_SHA>",
+  "result_capture": {
+    "required_checks": ["<approved command or manual check>"],
+    "review_comment_ids": []
+  },
   "context_file": "/absolute/run/.run-with-it/issues/42/context.md",
   "prompt_file": "/absolute/assets/prompt.md",
   "repo_root": "/absolute/run/.run-with-it/worktrees/issue-42",
@@ -138,6 +144,27 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "stall_seconds": 600,
   "hard_limit_seconds": 7200,
   "detach": true
+}
+```
+
+
+For ordinary managed modification on any supported enabled route, include `result_capture` when the finalized review IDs and complete applicable checks are available as described in `verdict=revise`. The dispatcher selects the adapter and falls back to file publication when the executable lacks capture. Replace these fields in the ordinary configuration, keeping the selected route and original issue baseline:
+
+```json
+{
+  "role": "modify",
+  "cycle": "2",
+  "issue_base_sha": "<original immutable ISSUE_BASE_SHA>",
+  "result_capture": {
+    "required_checks": ["<approved command or manual check>", "<additional review-required check>"],
+    "review_comment_ids": ["R001", "R002"]
+  },
+  "context_file": "/absolute/run/.run-with-it/issues/42/workers/modify/cycle-2-attempt-1-context.md",
+  "prompt_file": "/absolute/assets/modifier-prompt.md",
+  "log_file": "/absolute/run/.run-with-it/issues/42/workers/modify/cycle-2-attempt-1.log",
+  "done_file": "/absolute/run/.run-with-it/issues/42/workers/modify/cycle-2-attempt-1.done",
+  "result_file": "/absolute/run/.run-with-it/issues/42/workers/modify/cycle-2-attempt-1-result.json",
+  "state_file": "/absolute/run/.run-with-it/issues/42/workers/modify/cycle-2-attempt-1.state.json"
 }
 ```
 
@@ -403,7 +430,7 @@ Write a fresh attempt-specific `worker.json` using the Native Worker Configurati
 Read `git rev-parse HEAD` with the issue worktree as the explicit working directory. Verify it equals the saved bootstrap base before initial implementation; persist that canonical SHA as `ISSUE_BASE_SHA`. On recovery preserve saved base/implementation SHAs instead of overwriting them.
 
 Store `ISSUE_BASE_SHA` in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` immediately. This value never changes for the lifetime of this issue.
-Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
+Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, including the implementation capture contract when all applicable approved checks are established. Then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together. Inspect the persisted state before any retry.
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=impl`, `cycle=${CYCLE:-1}`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `IMPL_LOG_FILE`, `IMPL_DONE_FILE`, `IMPL_RESULT_FILE`, and `IMPL_STATE_FILE`. Monitor `IMPL_STATE_FILE`; implementation is complete only after the done file and valid artifacts include verification evidence and the implementer result report.
 
@@ -531,7 +558,7 @@ Emit `STATUS|type=gate-attribution|issue=<n>|command=<gate>|verdict=<in-scope|ou
    - The original `PROMPT_FILE` contents
    - **Explicit SHA range** (both fields are required; never substitute `HEAD`):
      - `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` — the commit before any work on this issue
-     - `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` — the specific commit of the work under review
+     - `REVIEW_HEAD_SHA=<saved review_head_sha>` — the specific commit of the work under review
      - Instruction: `Run git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA> to fetch the diff. Do NOT use HEAD — other issues may have committed since this SHA.`
    - A per-file `+added/-deleted` summary only: `git diff --numstat <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — line counts, no diff text. **Do not read the full diff into this payload.**
    - The implementer (or modifier) verification results
@@ -549,8 +576,8 @@ Emit `STATUS|type=gate-attribution|issue=<n>|command=<gate>|verdict=<in-scope|ou
 
 4. Emit before reviewer starts: `STATUS|type=review-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>`
 5. Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=review`, `cycle`, reviewer agent/model, selected route `selection_reason`, `REVIEW_LOG_FILE`, `REVIEW_DONE_FILE`, `REVIEW_RESULT_FILE`, and `REVIEW_STATE_FILE`. Monitor `REVIEW_STATE_FILE`; review is complete only after the done file and valid artifacts include both reviewer JSON files.
-6. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never read `REVIEWER_INSTRUCTIONS_FILE`** — that file is for the modifier only.
-7. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` for this cycle. Do not read its contents.
+6. Read **only** `REVIEWER_STATUS_FILE` after the reviewer completes. This file contains `verdict`, `comment_count`, and `nitpick_only` — the only fields the Sub-Coordinator needs. **Never load `REVIEWER_INSTRUCTIONS_FILE` findings into context** — that file is for the modifier. The only permitted read is narrow metadata extraction for the modifier capture contract (`comments[].id` and `comments[].verification`, see verdict=revise), after the dispatcher has validated the review artifacts.
+7. Store the `REVIEWER_INSTRUCTIONS_FILE` path in `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` for this cycle. Do not read its findings.
 8. Emit after step 6: `STATUS|type=review-result|task=<n>|cycle=<n>|verdict=<approve|revise|reject>|comment_count=<n>`
 
 ### Review Artifact Guardrail
@@ -592,22 +619,21 @@ The implementer (or modifier) has already committed all changes as part of its m
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
-   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<IMPL_COMMIT_SHA or last MODIFY_COMMIT_SHA>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands, `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, `CHECKIN_OWNER=modify-worker`, and `RUN_WITH_IT_PLAN_FILE=<PLAN_FILE>` when the plan artifact exists (the modifier reads it for original intent / cross-cycle continuity).
+   - Pass: original issue context, original `prompt.md` contents, `REVIEW_BASE_SHA=<ISSUE_BASE_SHA>` (never changes — baseline before any work on this issue), `REVIEW_HEAD_SHA=<saved review_head_sha>` (the specific commit the reviewer assessed — modifier fetches accumulated diff via `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>`, **never `..HEAD`**), `REVIEWER_INSTRUCTIONS_FILE=<path>` (modifier reads this file directly for the full comments and fix instructions — do NOT embed the instructions content in the payload), required verification commands plus the resolved mandatory checks (each known applicable command or named manual check with its acceptance criteria, listed once, whether or not `result_capture` is included; explicit review requirements are mandatory, illustrative verification suggestions are not; if applicability stays unresolved use the existing file contract and say so), `RUN_WITH_IT_CYCLE=<current cycle number>`, `RUN_WITH_IT_REPO_ROOT=<ISSUE_WORKTREE_PATH>`, `RUN_WITH_IT_ISSUE_BRANCH=<ISSUE_BRANCH>`, `RUN_WITH_IT_SHARED_FEATURE_BRANCH=<RUN_FEATURE_BRANCH>`, `CHECKIN_TARGET=issue-worktree`, `CHECKIN_OWNER=modify-worker`, and `RUN_WITH_IT_PLAN_FILE=<PLAN_FILE>` when the plan artifact exists (the modifier reads it for original intent / cross-cycle continuity).
+   - For ordinary managed modification on any supported enabled route, include `result_capture` with exactly the comment IDs of the finalized current-cycle review (every `comments[].id` in artifact order): no severity filtering, generated IDs, deduplication or earlier-cycle IDs. The full findings stay in `REVIEWER_INSTRUCTIONS_FILE`, never embedded in the config or payload. Join baseline applicable checks from issue verification, grounded plan and repository instructions with additional review-required checks from each `comments[].verification` concrete command or manual check, exact text, listing each check once. Require a complete checklist.
+   - Bind these inputs to the finalized successful review attempt for the saved issue, saved cycle, saved `review_head_sha` and exact saved `REVIEWER_INSTRUCTIONS_FILE` path for that cycle and attempt. Persist `review_comment_ids`, `required_checks`, that path and SHA in `sub-state.json` before dispatch. Confirm worktree HEAD equals `review_head_sha`; do not set `pre_spawn_head` yourself. If the instructions file is missing or invalid, a comment lacks a nonblank ID, IDs repeat, a review-required check cannot be named exactly, check applicability or completeness is unresolved, or HEAD differs from `review_head_sha`, omit `result_capture` and use the existing file contract; never repair, invent or trim the checklist. Follow existing recovery rules for a head mismatch. The dispatcher selects the adapter and falls back to file publication when the executable lacks capture.
    - Run via this background-worker shape; use the current tool's approved permission-escalation flow if this dispatch is blocked by sandbox permissions:
 
      Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
 
-     Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE`; modification is complete only after the done file and valid artifacts include verification evidence and the modifier result report.
-   - If `MODIFY_STATE_FILE` ends with `state="failed"` for a handoff/artifact reason, apply the Worker Artifact Recovery Contract before advancing the review cycle or writing any terminal report. The next modifier attempt must receive the failed state file path, expected result file path, reviewer instructions path, recovery patch/status paths when present, and the instruction to salvage or replace dirty work in the same issue worktree. Only after `MAX_AGENT_FALLBACKS` modification artifact retries and the Artifact Recovery Worker both fail or decline recovery may this issue become `blocked`.
-   - After the modifier runner completes, **capture and validate the modifier commit**:
-     Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
-     **Exception — verified no-op:** if `MODIFY_COMMIT_SHA` equals `REVIEW_HEAD_SHA` but the modifier's result artifact is valid with `"no_op": true` and `verification.passed=true` (the verified no-op contract in `modifier-prompt.md`, validated by `ai-skills artifact`), treat the modification as success; do not mark `modifier-no-commit`, and keep `REVIEW_HEAD_SHA` unchanged for the next review cycle.
-
-     **Exception — admitted verification-only retry:** a dispatcher-validated `verify_existing` success retains the preserved modification SHA even when no commit was created by this retry. It is not `modifier-no-commit`; preserve review history and use the original issue baseline.
-
-     Store `MODIFY_COMMIT_SHA` in state. For the next review cycle: `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA` (and `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA` — never changes).
-   - **Do not advance to the next review cycle if the modification agent's output does not include passing verification results.** Terminate as `failed-review`.
-3. Increment the cycle counter and return to Per-Cycle Steps.
+     Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=modify`, `cycle`, modifier agent/model, selected route `selection_reason`, `MODIFY_LOG_FILE`, `MODIFY_DONE_FILE`, `MODIFY_RESULT_FILE`, and `MODIFY_STATE_FILE`. Monitor `MODIFY_STATE_FILE` through dispatcher finalization.
+3. **Post-dispatch modifier outcomes** use one path for capture and file publication. Select the first matching branch using the finalized dispatcher outcome and its validated artifacts. The process state alone does not classify the result.
+   - **Typed `blocked` outcome**. Publish the compact issue report with `outcome="blocked"` and preserve the original blocker and smallest next action in the summary and `blocking_reasons`. In state, preserve the saved cycle and review range. End this path immediately before any commit or passing-verification checks. It never advances the review cycle. Do not retry or merge, and do not enter `failed-review` or Worker Artifact Recovery.
+   - **Typed `failed` outcome**. Preserve the report and evidence. For failed verification, apply the Out-of-Scope Gate Rule before reporting `failed-review` with reason `failed-verification`. Follow the existing Verification-only retries rules for a failed admitted `verify_existing` attempt. Do not advance the cycle or send a validated typed failure to artifact recovery solely for lacking passing verification.
+   - **Actual handoff failure**. Apply the Worker Artifact Recovery Contract for missing or invalid artifacts or the dispatcher reason `artifact-recovery-required`. Keep retries in the saved cycle and pass the failed state path, expected result path, reviewer instructions path, available recovery patch/status paths, and same-worktree salvage instructions to the next modifier.
+   - **Verified no-op**. Accept dispatcher-validated success with `no_op=true`, `commit_sha=NONE` and `verification.passed=true` when the assigned worktree is still at the saved reviewed head. A captured no-op also requires `verification.commit_sha` equal to that reviewed SHA. A file-published no-op may omit that field. Keep the saved `REVIEW_HEAD_SHA` and leave `MODIFY_COMMIT_SHA` unchanged.
+   - **Committed or preserved success**. Check passing verification and confirm the assigned Git worktree and branch. For ordinary committed success, use the validated modifier commit. For a dispatcher-validated `verify_existing` success, use the preserved commit under that contract. Store that concrete SHA as `MODIFY_COMMIT_SHA` and set `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA`. An actual verification failure or missing required commit follows the existing failure rules without advancing.
+4. Only verified success reaches this step. Persist the review head selected above, the next review phase and the incremented cycle together in `sub-state.json`, and clear the completed modifier from `in_flight_agents`. Return to Per-Cycle Steps and set `REVIEW_HEAD_SHA` from the saved `review_head_sha`. `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA`. Use both concrete SHAs for the next review.
 
 **`verdict=reject`**
 
@@ -652,8 +678,8 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
   "schema_version": 1,
   "issue_base_sha": "<SHA captured before any work — never changes>",
   "impl_commit_sha": "<SHA captured after implementer's mandatory commit — null until set>",
-  "modify_commit_sha": "<SHA captured after latest modifier's mandatory commit — null until set>",
-  "review_head_sha": "<current REVIEW_HEAD_SHA for next reviewer — equals impl_commit_sha or modify_commit_sha>",
+  "modify_commit_sha": "<latest successful new or preserved modifier commit SHA — null until set>",
+  "review_head_sha": "<concrete REVIEW_HEAD_SHA for next reviewer — retain on verified no-op>",
   "feature_branch": "Maestro/cunning-fox",
   "issue_branch": "Maestro/cunning-fox-issue-36",
   "worktree_path": ".run-with-it/worktrees/issue-36",
@@ -712,7 +738,7 @@ Write this file before every major phase transition:
 - After implementer done — store `impl_commit_sha` and set `review_head_sha = impl_commit_sha`
 - Before reviewer spawn
 - Before modifier spawn
-- After modifier done — store `modify_commit_sha` and update `review_head_sha = modify_commit_sha`
+- After modifier finalization — persist the state from the post-dispatch rules under `verdict=revise`
 - After any verdict is received
 
 ### Resume After Compaction

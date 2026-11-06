@@ -431,3 +431,162 @@ def test_failed_report_cannot_be_replaced_after_journaling(tmp_path):
     Path(retry.agent_run.result_file).write_text('{}')
     assert adopt_worker(retry.state_file).state == 'unknown'
     assert path.read_bytes() == before
+
+
+def test_verify_existing_ignores_well_formed_capture_for_codex(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    repo, base, head, _, contract = preserved(tmp_path)
+    source = VERIFY.replace("sys.argv[1].split", "sys.stdin.read().split")
+    source = source.replace("head=subprocess", "assert 'result_capture' not in metadata\n"
+                            "assert '--output-last-message' not in sys.argv\nhead=subprocess")
+    retry = retry_config(tmp_path, repo, base, contract, source=source,
+        result_capture={'required_checks': ['unrelated capture check'], 'review_comment_ids': []})
+    run = retry.agent_run.replace(agent='codex')
+    registry = load_json(Path(run.registry_file))
+    registry['agents']['codex'] = registry['agents'].pop('fake')
+    invocation = registry['agents']['codex']['invocation']
+    invocation['prompt_transport'] = 'stdin'
+    invocation['args_template'][-1] = '-'
+    Path(run.registry_file).write_text(json.dumps(registry), encoding='utf-8')
+
+    def unexpected_probe(_):
+        pytest.fail('verification-only attempt probed Codex capture')
+
+    monkeypatch.setattr(dispatch, 'supports_final_response_capture', unexpected_probe)
+    assert dispatch_worker(replace(retry, agent_run=run)).state == 'completed'
+    assert load_json(Path(run.result_file))['commit_sha'] == head
+
+
+def rejected_capture(tmp_path, role):
+    from test_dispatch import (BUILD_CAPTURE, CAPTURE_CHECKS, WRITE_CAPTURE,
+                               build_modify_capture, capture_worker, modify_worker)
+    body = (BUILD_CAPTURE if role == 'impl' else build_modify_capture())
+    body += "\nenvelope['attempt_id'] = 'stale'\n" + WRITE_CAPTURE
+    source = (capture_worker(tmp_path, body, result_capture=CAPTURE_CHECKS) if role == 'impl'
+              else modify_worker(tmp_path, body))
+    result = dispatch_worker(source)
+    return source, result
+
+
+@pytest.mark.parametrize('role', ['impl', 'modify'])
+def test_rejected_capture_enters_existing_recovery(tmp_path, role):
+    import re
+    source, result = rejected_capture(tmp_path, role)
+    assert (result.state, result.return_code, result.reason) == (
+        'artifact-recovery-required', 75, 'artifact-recovery-required')
+    saved = load_json(Path(str(source.state_file) + '.config.json'))
+    outcome = load_json(Path(str(source.state_file) + '.outcome.json'))
+    head = git(source.agent_run.repo_root, 'rev-parse', 'HEAD')
+    assert outcome['status'] == 'failed' and outcome['reason'] == 'artifact-recovery-required'
+    assert outcome['git_progress'] == {'head': head, 'pre_spawn_head': saved['pre_spawn_head'],
+                                       'issue_base_sha': source.issue_base_sha}
+    assert load_json(source.agent_run.result_file)['status'] == 'artifact_recovery_required'
+    lines = Path(source.agent_run.events_log).read_text().splitlines()
+    event, = [line for line in lines if 'type=dispatch-capture-rejected|' in line]
+    for field in (f"run_id={saved['agent_run']['run_id']}", f"attempt_id={saved['agent_run']['attempt_id']}",
+                  'issue=7', f'role={role}', 'cycle=4', 'reason=capture-identity-mismatch'):
+        assert field in event
+    assert re.search(r'\|reason=[a-z0-9-]+$', event)
+    assert all(text not in event for text in ('observed exit 0', 'Fixed R001', '{', '"'))
+    capture = Path(saved['agent_run']['final_response_file'])
+    assert capture.read_bytes() == source.agent_run.result_file.with_name('capture-original').read_bytes()
+    assert source.state_file.with_name('calls').read_text() == 'run\n'
+
+
+@pytest.mark.parametrize('role', ['impl', 'modify'])
+def test_rejected_capture_source_admits_verification_only_retry(tmp_path, role):
+    source, result = rejected_capture(tmp_path, role)
+    assert result.state == 'artifact-recovery-required'
+    saved = load_json(Path(str(source.state_file) + '.config.json'))
+    repo, base = source.agent_run.repo_root, source.issue_base_sha
+    head = git(repo, 'rev-parse', 'HEAD')
+    paths = [Path(str(source.state_file) + '.outcome.json'), source.agent_run.result_file,
+             Path(saved['agent_run']['final_response_file'])]
+    originals = [path.read_bytes() for path in paths]
+    contract = {'source_state_file': str(source.state_file), 'source_attempt_id': saved['agent_run']['attempt_id'],
+                'expected_commit_sha': head, 'required_checks': ['feature acceptance']}
+    verify = VERIFY.replace("Path('feature.txt').read_text()=='implemented\\n'",
+                            "Path('feature.txt').read_text().startswith('implemented')")
+    if role == 'modify':
+        verify = verify.replace("'files_committed':['feature.txt']", "'files_committed':['feature.txt','review.txt']")
+    retry = attempt(tmp_path, repo, 'retry', verify, role, cycle=4, execution_mode='verify_existing',
+                    issue_base_sha=base, retry_contract=contract)
+    result = dispatch_worker(retry)
+    assert result.state == 'completed', result.reason
+    report = load_json(retry.agent_run.result_file)
+    assert report['commit_sha'] == head and not report.get('no_op')
+    assert git(repo, 'rev-parse', 'HEAD') == head and git(repo, 'status', '--porcelain') == ''
+    retry_saved = load_json(Path(str(retry.state_file) + '.config.json'))
+    assert retry_saved['pre_spawn_head'] == head and retry_saved['issue_base_sha'] == base
+    assert retry_saved['agent_run']['role'] == role and retry_saved['agent_run']['cycle'] == 4
+    assert git(repo, 'diff', '--name-only', f'{base}..{head}').splitlines() == (
+        ['feature.txt'] if role == 'impl' else ['feature.txt', 'review.txt'])
+    assert [path.read_bytes() for path in paths] == originals
+    assert adopt_worker(retry.state_file).state == 'completed'
+    assert source.state_file.with_name('calls').read_text() == 'run\n'
+
+
+@pytest.mark.parametrize('kind', ['dirty', 'no-commit', 'accepted'])
+def test_capture_with_ineligible_provenance_uses_normal_recovery(tmp_path, kind):
+    from ai_skills.recovery import RecoveryEvidence, RecoveryPolicy, decide_recovery
+    from test_dispatch import BUILD_CAPTURE, CAPTURE_CHECKS, WRITE_CAPTURE, capture_worker
+    if kind == 'no-commit':
+        body = "capture = Path(args[-2])\ncapture.write_bytes(b'not-json')\nresult_path.with_name('capture-original').write_bytes(b'not-json')\n"
+    else:
+        body = BUILD_CAPTURE + ("\nPath('feature.txt').write_text('dirty')\n" if kind == 'dirty' else '') + WRITE_CAPTURE
+    source = capture_worker(tmp_path, body, result_capture=CAPTURE_CHECKS)
+    result = dispatch_worker(source)
+    saved = load_json(Path(str(source.state_file) + '.config.json'))
+    repo = source.agent_run.repo_root
+    head = git(repo, 'rev-parse', 'HEAD')
+    capture = Path(saved['agent_run']['final_response_file'])
+    assert capture.read_bytes() == source.agent_run.result_file.with_name('capture-original').read_bytes()
+    expected = {'dirty': 'verification-dirty-worktree', 'no-commit': 'verification-source-commit-mismatch',
+                'accepted': 'verification-source-not-terminal'}[kind]
+    contract = {'source_state_file': str(source.state_file), 'source_attempt_id': saved['agent_run']['attempt_id'],
+                'expected_commit_sha': head, 'required_checks': ['feature acceptance']}
+    retry = attempt(tmp_path, repo, 'retry', VERIFY, cycle=4, execution_mode='verify_existing',
+                    issue_base_sha=source.issue_base_sha, retry_contract=contract)
+    with pytest.raises(ValueError, match=expected):
+        dispatch_worker(retry)
+    assert not retry.state_file.exists() and git(repo, 'rev-parse', 'HEAD') == head
+    if kind == 'dirty': assert (repo / 'feature.txt').read_text() == 'dirty'
+    worker = {'role': 'impl', 'cycle': 4, 'state_file': str(source.state_file)}
+    evidence = RecoveryEvidence(issue='7', sub_state={'phase': 'impl'}, workers=((worker,
+        {'state': result.state}, source.agent_run.done_file.exists(), source.agent_run.result_file.exists(),
+        {'alive': False, 'reason': 'pids-dead'}),))
+    decision = decide_recovery(evidence, RecoveryPolicy())
+    reason = {'dirty': 'artifact-recovery-required', 'no-commit': 'in-flight-worker-failed',
+              'accepted': 'in-flight-worker-finished'}[kind]
+    assert (decision.action, decision.reason) == ('spawn_recovery', reason)
+    assert decision.details['max_recovery_attempts'] == 2
+    exhausted = decide_recovery(replace(evidence, recovery_attempts=2), RecoveryPolicy())
+    assert (exhausted.action, exhausted.reason) == ('block', 'sub-coordinator-recovery-attempts-exhausted')
+
+
+def test_captured_evidence_cannot_substitute_for_retry_evidence(tmp_path):
+    from ai_skills.verification import check_evidence_reason
+    from test_dispatch import CAPTURE_CHECKS
+    source, result = rejected_capture(tmp_path, 'impl')
+    assert result.state == 'artifact-recovery-required'
+    saved = load_json(Path(str(source.state_file) + '.config.json'))
+    repo = source.agent_run.repo_root
+    head = git(repo, 'rev-parse', 'HEAD')
+    contract = {'source_state_file': str(source.state_file), 'source_attempt_id': saved['agent_run']['attempt_id'],
+                'expected_commit_sha': head, 'required_checks': list(CAPTURE_CHECKS['required_checks'])}
+    captured = load_json(Path(saved['agent_run']['final_response_file']))['result']
+    assert captured['commit_sha'] == head
+    assert check_evidence_reason(captured['verification'], expected_commit=head,
+                                 required_checks=contract['required_checks']) == ''
+    verify = VERIFY.replace("Path('feature.txt').read_text()=='implemented\\n'",
+                            "Path('feature.txt').read_text().startswith('implemented')")
+    verify = verify.replace('payload_path.write_text(json.dumps(payload))',
+                            "payload['verification'].pop('checks')\npayload_path.write_text(json.dumps(payload))")
+    verify = verify.replace('sys.exit(main(', 'code=main(').replace("'--pre-spawn-head',head]))",
+        "'--pre-spawn-head',head])\nassert code==1\nPath(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps(payload))")
+    retry = attempt(tmp_path, repo, 'retry', verify, cycle=4, execution_mode='verify_existing',
+                    issue_base_sha=source.issue_base_sha, retry_contract=contract)
+    result = dispatch_worker(retry)
+    assert (result.state, result.reason) == ('failed', 'verification-checks-incomplete')
+    assert git(repo, 'rev-parse', 'HEAD') == head

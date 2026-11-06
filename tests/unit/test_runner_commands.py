@@ -100,3 +100,62 @@ def test_process_unset_environment_rejects_invalid_variable_names(tmp_path):
     for names in [('BAD=NAME',),('',),('NUL\0NAME',),(True,)]:
         with pytest.raises(ValueError,match='unset_env'):
             ProcessSpec((sys.executable,),tmp_path,{},unset_env=names)
+
+
+def test_codex_capture_flag_precedes_stdin_and_rejects_conflicts(config):
+    registry = load_registry()
+    context = {'envelope': {'cycle': '4'}, 'required_checks': ['check']}
+    bound = config.replace(dispatcher_managed=True, role='impl', state_file=config.repo_root / 'state.json',
+                           result_file=config.repo_root / 'result.json', final_response_file=config.repo_root / 'final-response.json',
+                           result_capture_context=context)
+    spec = build_invocation(bound, registry)
+    assert spec.argv[-3:] == ('--output-last-message', str(bound.final_response_file), '-')
+    metadata = json.loads(spec.stdin.decode().rsplit('Authoritative attempt metadata:\n', 1)[1])
+    assert metadata['result_capture'] == context
+    for flag in ('-o', '-ofoo', '-qofoo', '--output-last-message', '--output-last-message=foo'):
+        with pytest.raises(ValueError, match='capture'):
+            build_invocation(bound.replace(extra_args=(flag,)), registry)
+    modifier = build_invocation(bound.replace(role='modify'), registry)
+    assert modifier.argv[-3:] == ('--output-last-message', str(bound.final_response_file), '-')
+    assert json.loads(modifier.stdin.decode().rsplit('Authoritative attempt metadata:\n', 1)[1])['result_capture'] == context
+    with pytest.raises(ValueError, match='capture'):
+        build_invocation(bound.replace(role='modify', extra_args=('-o',)), registry)
+    verify = bound.replace(role='modify', verification_context={'execution_mode': 'verify_existing'})
+    for ineligible in (bound.replace(dispatcher_managed=False), bound.replace(agent='claude'),
+                       bound.replace(role='review', result_file=config.repo_root / 'review-status.json'),
+                       bound.replace(role='plan', issue_dir=config.repo_root), verify):
+        spec = build_invocation(ineligible, registry)
+        assert '--output-last-message' not in spec.argv
+        assert b'"result_capture"' not in spec.stdin
+
+
+@pytest.mark.parametrize(('agent', 'source', 'flags', 'conflicts'), [
+    ('claude-code', 'claude-json', ('--output-format', 'json'),
+     ('--output-format=stream-json', '--input-format', '--include-partial-messages')),
+    ('agy-cli', 'agy-stream-json', (),
+     ('--output-format=text', '--input-format=text', '--prompt')),
+    ('open_code', 'opencode-json-v1.16.2', ('--format', 'json'),
+     ('--format=default', '--interactive', '--command')),
+])
+def test_stream_capture_preserves_baseline_arguments_and_rejects_conflicts(config, agent, source, flags, conflicts):
+    registry = load_registry()
+    plain = config.replace(agent=agent, model='configured/model', dispatcher_managed=True, role='impl',
+                           state_file=config.repo_root / 'state.json', result_file=config.repo_root / 'result.json')
+    context = {'source': source}
+    bound = plain.replace(result_capture_context=context)
+    baseline = build_invocation(plain, registry)
+    captured = build_invocation(bound, registry)
+    assert captured.argv == baseline.argv + flags
+    stdin = captured.stdin
+    if source == 'agy-stream-json':
+        assert stdin.count(b'\n') == 1
+        stdin = json.loads(stdin)['message']['content'].encode()
+    assert json.loads(stdin.decode().rsplit('Authoritative attempt metadata:\n', 1)[1])['result_capture'] == context
+    for option in (*conflicts, '--'):
+        with pytest.raises(ValueError, match='capture conflicts'):
+            build_invocation(bound.replace(extra_args=(option,)), registry)
+    for ineligible in (bound.replace(dispatcher_managed=False),
+                       bound.replace(verification_context={'execution_mode': 'verify_existing'})):
+        spec = build_invocation(ineligible, registry)
+        assert spec.argv == baseline.argv
+        assert b'"result_capture"' not in spec.stdin

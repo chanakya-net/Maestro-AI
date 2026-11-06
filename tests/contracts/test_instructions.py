@@ -152,6 +152,32 @@ def test_shared_protocol_failure_examples_validate_and_apply_without_success_com
     assert 'review instructions' in text and 'plan.md' in text
 
 
+def test_capture_failure_instructions_preserve_stop_and_file_precedence():
+    import json
+    from ai_skills.artifacts import role_failure_reason
+
+    protocol = (ROOT / 'assets/artifact-protocol.md').read_text()
+    prompt = (ROOT / 'assets/prompt.md').read_text()
+    modifier = (ROOT / 'assets/modifier-prompt.md').read_text()
+    for instructions in (protocol, prompt, modifier):
+        assert 'existing result path takes precedence' in instructions
+        assert 'pending attempt' in instructions and 'confirmed owned-tree shutdown' in instructions
+        assert 'zero provider and runner exit codes' in instructions and 'no runner failure' in instructions
+        assert 'stop intent prevents capture import even after a zero exit' in instructions.lower()
+        assert re.search(r'If a stop arrives and tools remain available, publish .*interrupted.* directly with '
+                         r'`ai-skills artifact write-json`', instructions)
+        assert 'DONE' in instructions and 'dispatcher' in instructions
+    examples = [json.loads(match.group(1)) for match in re.finditer(r'```json\n(.*?)\n```', protocol, re.S)]
+    captured_failures = [item for item in examples if item.get('artifact_kind') == 'captured_result'
+                         and item['result'].get('artifact_kind') == 'role_failure']
+    assert {item['result']['status'] for item in captured_failures} == {'failed', 'blocked'}
+    for item in captured_failures:
+        identity = {key: item[key] for key in ('issue', 'role', 'run_id', 'attempt_id')}
+        report = item['result']
+        assert role_failure_reason(report, **identity) == ''
+        assert report['evidence'] and 'commit_sha' not in report
+
+
 def test_shared_protocol_preserves_coordinator_ledger_ownership():
     text=(ROOT/'assets/artifact-protocol.md').read_text()
     assert 'dispatcher-owned `state_file` and its claim/config/outcome records' in text
@@ -167,3 +193,94 @@ def test_merge_recovery_reports_failed_verification_without_claiming_completion(
     assert 'Never publish a completed recovery report with failed verification' in text
     assert 'report failed-merge/blocked with the actual failure evidence' in text
     assert 'publish failure even without a commit' in text
+
+
+def test_modifier_capture_contract_overrides_legacy_reporting():
+    import json
+    from ai_skills.artifacts import review_comment_closure_reason, role_failure_reason
+
+    modifier = (ROOT / 'assets/modifier-prompt.md').read_text()
+    protocol = (ROOT / 'assets/artifact-protocol.md').read_text()
+    section = modifier.split('### Captured handoff', 1)[1].split('\n## ', 1)[0]
+    assert 'result_capture' in section and 'review_comment_ids' in section
+    assert 'overrides' in section and 'file publication' in section
+    assert '`MODIFY_COMMIT_SHA`' in section and '`<promise>NO_MORE_TASKS</promise>`' in section
+    assert 'exactly one' in section and 'no fences' in section
+    assert '`addressed`' in section and '`declined`' in section and '`blocked`' in section
+    assert 'exact blocker' in section and 'smallest next action' in section
+    assert 'REVIEW_BASE_SHA' in section and 'pre-spawn' in section
+    assert 'verification_contract' in section
+    for text in (modifier, protocol):
+        assert 'exact blocker' in text and 'smallest next action' in text
+    examples = [json.loads(match.group(1)) for text in (modifier, protocol)
+                for match in re.finditer(r'```json\n(.*?)\n```', text, re.S)]
+    captured = [item for item in examples if item.get('artifact_kind') == 'captured_result'
+                and item['role'] == 'modify']
+    successes = [item['result'] for item in captured if item['result'].get('status') == 'success']
+    blocked = [item for item in captured if item['result'].get('status') == 'blocked']
+    assert successes and blocked
+    for report in successes:
+        ids = [entry['id'] for entry in report['review_comment_closure']]
+        assert review_comment_closure_reason(report, ids) == ''
+        assert {entry['status'] for entry in report['review_comment_closure']} == {'addressed', 'declined'}
+    for item in blocked:
+        identity = {key: item[key] for key in ('issue', 'role', 'run_id', 'attempt_id')}
+        assert role_failure_reason(item['result'], **identity) == ''
+        assert 'next action' in item['result']['summary'].lower()
+
+
+def test_ordinary_impl_capture_uses_selected_enabled_route():
+    import json
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    example = json.loads(re.search(r'```json\n(.*?)\n```', section, re.S)[1])
+    for agent in ('codex', 'claude', 'agy', 'opencode'):
+        config = WorkerConfig.from_sources({**example, 'agent': agent}, {})
+        assert config.agent_run.role == 'impl'
+        assert config.result_capture == {'required_checks': ['<approved command or manual check>'], 'review_comment_ids': []}
+        assert config.agent_run.result_capture_context is None
+    protocol = (ROOT / 'assets/artifact-protocol.md').read_text(encoding='utf-8')
+    assert 'overrides file-only reporting, `IMPL_COMMIT_SHA` output and completion suffixes' in protocol
+    assert '`verification_contract` takes precedence' in protocol
+
+
+def test_ordinary_modifier_capture_uses_selected_enabled_route():
+    import json
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', section, re.S)]
+    modify = next(block for block in blocks if block.get('role') == 'modify')
+    example = {**blocks[0], **modify}
+    assert 'agent' not in modify
+    for agent in ('codex', 'claude', 'agy', 'opencode'):
+        config = WorkerConfig.from_sources({**example, 'agent': agent}, {})
+        assert config.agent_run.role == 'modify' and config.agent_run.cycle == '2'
+        assert config.result_capture == {'required_checks': ['<approved command or manual check>', '<additional review-required check>'], 'review_comment_ids': ['R001', 'R002']}
+        assert config.agent_run.result_capture_context is None
+        assert config.issue_base_sha == blocks[0]['issue_base_sha'] and config.pre_spawn_head == ''
+    assert modify['prompt_file'].endswith('modifier-prompt.md')
+    assert '/workers/modify/' in modify['result_file']
+
+
+def test_modifier_capture_falls_back_to_file_contract_on_ambiguous_ids():
+    import json
+    import pytest
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    blocks = [json.loads(block) for block in re.findall(r'```json\n(.*?)\n```', section, re.S)]
+    example = {**blocks[0], **next(b for b in blocks if b.get('role') == 'modify')}
+    assert WorkerConfig.from_sources({k: v for k, v in example.items() if k != 'result_capture'}, {}).result_capture is None
+    for ids in (['R001', 'R001'], ['R001', ' '], 'R001'):
+        with pytest.raises(ValueError):
+            WorkerConfig.from_sources({**example, 'result_capture': {'required_checks': ['check'], 'review_comment_ids': ids}}, {})
+    with pytest.raises(ValueError):
+        WorkerConfig.from_sources({**example, 'result_capture': {'required_checks': [], 'review_comment_ids': ['R001']}}, {})
+    revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    for phrase in ('IDs repeat', 'review-required check cannot be named exactly', 'use the existing file contract', 'dispatcher selects the adapter'):
+        assert phrase in revise

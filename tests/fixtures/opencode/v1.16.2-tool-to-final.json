@@ -1,0 +1,15 @@
+{
+  "version": "1.16.2",
+  "commit": "76c631d198f9ff620e15468e45f3457d50481b57",
+  "provenance": "Synthetic, source-derived fixture for the JSON emitter in packages/opencode/src/cli/cmd/run.ts and step/message framing in packages/opencode/src/session/processor.ts at the pinned commit.",
+  "source": "https://github.com/anomalyco/opencode/blob/76c631d198f9ff620e15468e45f3457d50481b57/packages/opencode/src/cli/cmd/run.ts#L613-L729",
+  "events": [
+    {"type":"step_start","timestamp":1000,"sessionID":"ses_fixture","part":{"type":"step-start","id":"prt_1","sessionID":"ses_fixture","messageID":"msg_tool"}},
+    {"type":"text","timestamp":1001,"sessionID":"ses_fixture","part":{"type":"text","id":"prt_2","sessionID":"ses_fixture","messageID":"msg_tool","time":{"start":1000,"end":1001},"text":"<intermediate>"}},
+    {"type":"tool_use","timestamp":1002,"sessionID":"ses_fixture","part":{"type":"tool","id":"prt_3","sessionID":"ses_fixture","messageID":"msg_tool","callID":"call_1","tool":"bash","state":{"status":"completed","input":{"command":"git status"},"output":"<tool>","title":"Check status","metadata":{},"time":{"start":1001,"end":1002}}}},
+    {"type":"step_finish","timestamp":1003,"sessionID":"ses_fixture","part":{"type":"step-finish","id":"prt_4","sessionID":"ses_fixture","messageID":"msg_tool","reason":"tool-calls","tokens":{"input":40,"output":30,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0}},
+    {"type":"step_start","timestamp":1004,"sessionID":"ses_fixture","part":{"type":"step-start","id":"prt_5","sessionID":"ses_fixture","messageID":"msg_final"}},
+    {"type":"text","timestamp":1005,"sessionID":"ses_fixture","part":{"type":"text","id":"prt_6","sessionID":"ses_fixture","messageID":"msg_final","time":{"start":1004,"end":1005},"text":"<final>"}},
+    {"type":"step_finish","timestamp":1006,"sessionID":"ses_fixture","part":{"type":"step-finish","id":"prt_7","sessionID":"ses_fixture","messageID":"msg_final","reason":"stop","tokens":{"input":70,"output":40,"reasoning":0,"cache":{"read":0,"write":0}},"cost":0}}
+  ]
+}

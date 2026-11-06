@@ -125,6 +125,60 @@ def test_real_restart_adopts_live_provider_without_second_launch(tmp_path,monkey
     assert (tmp_path/'dirty.txt').read_text()=='preserve dirty work'
 
 
+@pytest.mark.parametrize('boundary', ['outcome', 'state', 'done'])
+def test_restart_adopts_interrupted_publication_without_relaunch(tmp_path, monkeypatch, boundary):
+    from ai_skills import dispatch
+    from pool_support import real_pool_fixture
+
+    monkeypatch.setenv('RUN_WITH_IT_GITHUB_UPDATES', '0')
+    config = real_pool_fixture(tmp_path, delay=0)
+    first = PoolSupervisor(config)
+    assert first.initialize() is None
+    worker = replace(first.worker('1'), detach=False)
+    first._intent('1', worker)
+    state_file = Path(worker.state_file).resolve()
+    journal = dispatch.outcome_path(state_file)
+    write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
+
+    def publish_json(path, value):
+        if boundary == 'outcome' and path == journal and value['status'] == 'success':
+            raise OSError('injected pool publication failure')
+        if boundary == 'state' and path == state_file and value.get('state') == 'completed':
+            raise OSError('injected pool publication failure')
+        return write_json(path, value)
+
+    def publish_text(path, value, *, exclusive=False):
+        if boundary == 'done' and path == Path(worker.agent_run.done_file).resolve():
+            raise OSError('injected pool publication failure')
+        return write_text(path, value, exclusive=exclusive)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dispatch, 'write_json_atomic', publish_json)
+        patch.setattr(dispatch, 'write_text_atomic', publish_text)
+        with pytest.raises(OSError, match='injected pool publication failure'):
+            dispatch.dispatch_worker(worker)
+
+    report = Path(worker.agent_run.result_file)
+    original_report = report.read_bytes()
+    journal_before = journal.read_bytes()
+    assert json.loads(journal_before)['status'] == ('pending' if boundary == 'outcome' else 'success')
+    assert not Path(worker.agent_run.done_file).exists()
+    state = load_json(state_file)
+    state['launcher_identity']['created_at'] += 1
+    write_json_atomic(state_file, state)
+    assert run_pool(config).state == 'pool-empty'
+    saved = first.read()
+    assert saved['issue_registry']['1']['status'] == 'completed'
+    assert saved['pool_attempts']['1']['status'] == 'finalized'
+    outcome = load_json(journal)
+    assert (outcome['status'], outcome['issue_outcome']) == ('success', 'completed')
+    if boundary != 'outcome':
+        assert journal.read_bytes() == journal_before
+    assert '|status=success|source=dispatcher|' in Path(worker.agent_run.done_file).read_text(encoding='utf-8')
+    assert report.read_bytes() == original_report
+    assert len((tmp_path / 'launches.log').read_text(encoding='utf-8').splitlines()) == 1
+
+
 def test_real_detached_pool_preserves_options_and_worker_overrides(tmp_path,monkeypatch):
     import time
     from ai_skills.dispatch import stop_run
@@ -399,3 +453,58 @@ def test_pending_policy_report_never_overrides_unknown_worker_journal(tmp_path,m
     assert journal_path.read_bytes()==before
     assert first.read()['issue_registry']['1']['status']=='in_progress'
     assert len((tmp_path/'launches.log').read_text().splitlines())==1
+
+
+@pytest.mark.parametrize('boundary', ['result', 'outcome', 'state', 'done'])
+def test_stream_capture_restart_keeps_original_attempt(tmp_path, monkeypatch, boundary):
+    from ai_skills import dispatch, runner
+    from ai_skills.git import current_head
+    from test_dispatch import CLAUDE_CAPTURE, stream_capture_worker
+
+    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', CLAUDE_CAPTURE, role='modify')
+    state_file = config.state_file.resolve()
+    journal = dispatch.outcome_path(state_file)
+    run = config.agent_run
+    write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
+
+    def publish_json(path, value):
+        if ((boundary == 'outcome' and path == journal and value.get('status') == 'success') or
+                (boundary == 'state' and path == state_file and value.get('state') == 'completed')):
+            raise OSError('injected publication failure')
+        return write_json(path, value)
+
+    def publish_text(path, value, *, exclusive=False):
+        if ((boundary == 'result' and path == run.result_file and exclusive) or
+                (boundary == 'done' and path == run.done_file)):
+            raise OSError('injected publication failure')
+        return write_text(path, value, exclusive=exclusive)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dispatch, 'write_json_atomic', publish_json)
+        patch.setattr(dispatch, 'write_text_atomic', publish_text)
+        with pytest.raises(OSError, match='injected publication failure'):
+            dispatch.dispatch_worker(config)
+
+    head = current_head(str(run.repo_root))
+    initial_outcome = load_json(journal)
+    original_report = run.result_file.read_bytes() if run.result_file.exists() else None
+    state = load_json(state_file)
+    state['launcher_identity']['created_at'] += 1
+    write_json_atomic(state_file, state)
+
+    def forbid_launch(*args, **kwargs):
+        raise AssertionError('adoption must not launch or probe again')
+
+    monkeypatch.setattr(dispatch, 'run_agent', forbid_launch)
+    monkeypatch.setattr(dispatch, 'supports_final_response_capture', forbid_launch)
+    monkeypatch.setattr(runner, 'resolve_executable', forbid_launch)
+    assert dispatch.adopt_worker(state_file).state == 'completed'
+    report, outcome, done = (path.read_bytes() for path in (run.result_file, journal, run.done_file))
+    assert dispatch.adopt_worker(state_file).state == 'completed'
+    assert (report, outcome, done) == tuple(path.read_bytes() for path in (run.result_file, journal, run.done_file))
+    if original_report is not None:
+        assert report == original_report
+    assert json.loads(report)['commit_sha'] == head
+    assert [entry['id'] for entry in json.loads(report)['review_comment_closure']] == ['R001', 'R002']
+    assert all(json.loads(outcome)[key] == initial_outcome[key] for key in ('run_id', 'attempt_id'))
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
