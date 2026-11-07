@@ -69,6 +69,14 @@ def test_codex_default_invocation_uses_sol_6_1(config):
     assert spec.argv[model_flag + 1] == 'gpt-6.1-sol'
 
 
+@pytest.mark.parametrize('model', ['gemini-4-argon-high', 'claude-opus-5-5-medium'])
+def test_agy_invocation_forwards_selected_model_unchanged(config, model):
+    spec = build_invocation(config.replace(agent='agy', model=model), load_registry())
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', model)
+    assert spec.argv[-4:] == ('--input-format', 'stream-json', '--output-format', 'stream-json')
+
+
 def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
     registry = load_registry()
     registry['agents']['github-copilot'].pop('routing_disabled')
