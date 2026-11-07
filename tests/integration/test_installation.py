@@ -1059,6 +1059,33 @@ def test_update_backs_up_edited_adapter_path_before_replacement(official_reposit
     assert _tree_hash(backup) == edited_hash
 
 
+@pytest.mark.parametrize('link_kind', ['directory', 'file'])
+def test_update_rejects_edited_adapter_symlinks(official_repository, source_tree, tmp_path, link_kind):
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    shared = home / '.agents/skills/pair-colleague'
+    adapter = _skills_adapter(home)
+    apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home,
+                                            agents=('copilot', 'antigravity'))),
+                  package_installer=fake_package_installer, registrar=adapter)
+    outside = tmp_path / 'outside/SKILL.md'
+    outside.parent.mkdir(); outside.write_text('precious user skill')
+    if link_kind == 'directory':
+        shutil.rmtree(shared)
+        shared.symlink_to(outside.parent, target_is_directory=True)
+    else:
+        (shared / 'SKILL.md').unlink()
+        (shared / 'SKILL.md').symlink_to(outside)
+    active = (assets / 'runtime.json').read_bytes()
+    _commit_skill(official_repository, 'revision B')
+    with pytest.raises(ValueError, match='--replace-existing'):
+        run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                   package_installer=fake_package_installer, registrar=adapter)
+    assert outside.read_text() == 'precious user skill'
+    assert (assets / 'runtime.json').read_bytes() == active
+    assert not list((assets / 'runtimes').glob('*/registration-backups/*/*.edited-*'))
+
+
 def test_edited_copy_rollback_restores_edit_and_uninstall_keeps_original(official_repository, source_tree, tmp_path,
                                                                        monkeypatch):
     import ai_skills.installation as installation

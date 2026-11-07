@@ -343,7 +343,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                     digest = _tree_hash(target)
                     managed = str(target) in external_owned
                     edited = managed and external_owned[str(target)] != digest
-                    if not managed and not config.replace_existing:
+                    if not config.replace_existing and (not managed or (edited and _contains_symlink(target))):
                         raise ValueError(f'unowned adapter registration already exists: {target}; use --dry-run --replace-existing to review its backup')
                     item.update(existing_sha256=digest, backup=_transition_backup(prefix, registration['agent'], hashlib.sha256(str(target).encode()).hexdigest(), digest, stamp if edited else None))
                     if edited: item['existing_edited'] = True
@@ -497,6 +497,11 @@ def _registration_receipt(path):
         child = path / name
         if not child.resolve().is_relative_to(path.resolve()) or not child.is_file() or _hash(child) != digest: raise ValueError(f'edited or escaped skill registration: {child}')
     return receipt
+
+
+def _contains_symlink(path):
+    if path.is_symlink(): return True
+    return path.is_dir() and any(_contains_symlink(child) for child in path.iterdir())
 
 
 def _tree_hash(path):
