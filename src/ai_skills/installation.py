@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import ast
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import email
 import hashlib
 from importlib import metadata
@@ -209,13 +210,18 @@ def _carry_original(entry, prior):
     entry['original_backup'], entry['original_sha256'] = (prior.get(key) for key in keys)
 
 
-def _transition_backup(prefix, agent, name, digest):
+def _backup_stamp():
+    return datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+
+def _transition_backup(prefix, agent, name, digest, stamp=None):
     """Rollback snapshot of one prior registration state for this candidate.
 
     Keyed by the prior content digest so reactivating a retained prefix after a
     different registration was active gets its own snapshot instead of colliding
     with the one taken on that prefix's first activation.
     """
+    if stamp: name += '.edited-' + stamp
     return str(prefix / 'registration-backups' / agent / (name + '.' + digest))
 
 
@@ -325,6 +331,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
             for p in r.get('paths', []):
                 prior_entries[p['target']] = p
                 if p.get('installed_sha256'): external_owned[p['target']] = p['installed_sha256']
+    stamp = _backup_stamp()
     for registration in registrations:
         if registration['kind'] != 'copy':
             registration['paths'] = []
@@ -334,10 +341,13 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                 item = {'target': str(target)}
                 if target.exists() or target.is_symlink():
                     digest = _tree_hash(target)
-                    if external_owned.get(str(target)) != digest and not config.replace_existing:
+                    managed = str(target) in external_owned
+                    edited = managed and external_owned[str(target)] != digest
+                    if not config.replace_existing and (not managed or (edited and _contains_symlink(target))):
                         raise ValueError(f'unowned adapter registration already exists: {target}; use --dry-run --replace-existing to review its backup')
-                    item.update(existing_sha256=digest, backup=_transition_backup(prefix, registration['agent'], hashlib.sha256(str(target).encode()).hexdigest(), digest))
-                    if external_owned.get(str(target)) == digest: _carry_original(item, prior_entries.get(str(target)))
+                    item.update(existing_sha256=digest, backup=_transition_backup(prefix, registration['agent'], hashlib.sha256(str(target).encode()).hexdigest(), digest, stamp if edited else None))
+                    if edited: item['existing_edited'] = True
+                    if managed: _carry_original(item, prior_entries.get(str(target)))
                 else: _carry_original(item, prior_entries.get(str(target)))  # recreating a missing managed target
                 registration['paths'].append(item)
             continue
@@ -345,16 +355,20 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
         for ancestor in target.parents:
             if ancestor.is_symlink(): raise ValueError(f'symlink escape in registration path: {ancestor}')
         if target.exists() or target.is_symlink():
-            owned = False
+            owned = edited = False
             try:
                 _registration_receipt(target); owned = True
             except ValueError:
-                if not config.replace_existing:
-                    raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
+                try:
+                    _managed_receipt(target); edited = True
+                except ValueError:
+                    if not config.replace_existing:
+                        raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
             digest = _tree_hash(target)
-            registration.update(backup=_transition_backup(prefix, registration['agent'], registration['skill'], digest),
-                                existing_sha256=digest, existing_owned=owned)
-            if owned: _carry_original(registration, prior_entries.get(str(target)))
+            registration.update(backup=_transition_backup(prefix, registration['agent'], registration['skill'], digest, stamp if edited else None),
+                                existing_sha256=digest, existing_owned=owned or edited)
+            if edited: registration['existing_edited'] = True
+            if owned or edited: _carry_original(registration, prior_entries.get(str(target)))
         else: _carry_original(registration, prior_entries.get(str(target)))  # recreating a missing managed target
     return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision, snapshot)
 
@@ -466,11 +480,16 @@ def _verify_payload(receipt, prefix):
             raise ValueError(f'installed runtime payload changed: {path}')
 
 
-def _registration_receipt(path):
+def _managed_receipt(path):
     receipt_path = path / '.ai-skills-registration.json'
     if path.is_symlink() or not receipt_path.is_file(): raise ValueError(f'unowned or symlinked skill registration: {path}')
     receipt = _object(receipt_path)
     if receipt.get('owner') != OWNER or receipt.get('path') != str(path): raise ValueError(f'unowned skill registration: {path}')
+    return receipt
+
+
+def _registration_receipt(path):
+    receipt = _managed_receipt(path)
     files = receipt.get('files', {})
     if set(files) != {'SKILL.md'} or {p.name for p in path.iterdir()} != {'SKILL.md', '.ai-skills-registration.json'}:
         raise ValueError(f'unowned additional content in skill registration: {path}')
@@ -478,6 +497,11 @@ def _registration_receipt(path):
         child = path / name
         if not child.resolve().is_relative_to(path.resolve()) or not child.is_file() or _hash(child) != digest: raise ValueError(f'edited or escaped skill registration: {child}')
     return receipt
+
+
+def _contains_symlink(path):
+    if path.is_symlink(): return True
+    return path.is_dir() and any(_contains_symlink(child) for child in path.iterdir())
 
 
 def _tree_hash(path):
@@ -801,8 +825,9 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                 target = Path(registration.get('target', ''))
                 # Fast path only for a live registration; a partly uninstalled one is recreated.
                 if prior and registration['kind'] == 'copy' and (target.exists() or target.is_symlink()):
-                    current = _registration_receipt(target)
-                    if current['fingerprint'] == plan.fingerprint:
+                    try: current = _registration_receipt(target)
+                    except ValueError: current = None
+                    if current and current['fingerprint'] == plan.fingerprint:
                         registrations.append(prior); continue
                 if registration['kind'] == 'copy': _register_copy(registration, root, plan.fingerprint)
                 else:
