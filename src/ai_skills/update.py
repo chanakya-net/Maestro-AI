@@ -16,11 +16,17 @@ import re
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 
-from ai_skills.installation import AGENTS, InstallConfig, _recover_installation, _registration_receipt, apply_install, plan_install
+import psutil
+
+from ai_skills.installation import (
+    AGENTS, InstallConfig, _absolute, _active_manifest, _recover_installation,
+    _registration_receipt, _safe_assets, apply_install, default_assets_dest, plan_install,
+)
 
 OFFICIAL_REPOSITORY = 'https://github.com/chanakya-net/Maestro-AI.git'
 OFFICIAL_BRANCH = 'main'
@@ -36,6 +42,22 @@ class UpdateConfig:
     force: bool = False
 
 
+def _stop_git(process):
+    """Terminate the transport children too, including inherited pipe writers."""
+    if os.name == 'posix':
+        try: os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+    else:
+        try:
+            parent = psutil.Process(process.pid)
+            for child in reversed(parent.children(recursive=True)):
+                try: child.kill()
+                except psutil.NoSuchProcess: pass
+            parent.kill()
+        except psutil.NoSuchProcess: pass
+    process.communicate(timeout=5)
+
+
 def _git(*args, cwd=None, timeout=CLONE_TIMEOUT_SECONDS):
     git = shutil.which('git')
     if not git: raise ValueError('official source requires git on PATH')
@@ -44,12 +66,17 @@ def _git(*args, cwd=None, timeout=CLONE_TIMEOUT_SECONDS):
            and key.upper() not in ('SSL_CERT_FILE', 'SSL_CERT_DIR', 'CURL_CA_BUNDLE')}
     env.update(GIT_TERMINAL_PROMPT='0', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
     try:
-        result = subprocess.run([git, *args], cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
+        options = {'start_new_session': True} if os.name == 'posix' else {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
+        with subprocess.Popen([git, *args], cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **options) as process:
+            try: stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _stop_git(process)
+                raise
     except subprocess.TimeoutExpired as error:
         raise ValueError(f'official source git timed out after {timeout}s') from error
-    if result.returncode:
-        raise ValueError(f'official source git {args[0]} failed: {result.stderr.strip() or result.stdout.strip()}')
-    return result.stdout.strip()
+    if process.returncode:
+        raise ValueError(f'official source git {args[0]} failed: {stderr.strip() or stdout.strip()}')
+    return stdout.strip()
 
 
 @contextmanager
@@ -61,15 +88,36 @@ def official_source(repository=None, branch=None, *, timeout=CLONE_TIMEOUT_SECON
         checkout = Path(scratch) / 'source'
         template = Path(scratch) / 'empty-template'
         template.mkdir()
-        _git('-c', 'core.autocrlf=false', '-c', f'core.hooksPath={template}', '-c', f'core.attributesFile={os.devnull}', 'clone', '--template', str(template), '--quiet', '--depth', '1', '--single-branch', '--no-tags',
-             '--branch', branch, '--', repository, str(checkout), timeout=timeout)
-        sha = _git('rev-parse', f'refs/remotes/origin/{branch}^{{commit}}', cwd=checkout, timeout=timeout)
+        try:
+            _git('-c', 'core.autocrlf=false', '-c', f'core.hooksPath={template}', '-c', f'core.attributesFile={os.devnull}', 'clone', '--template', str(template), '--quiet', '--depth', '1', '--single-branch', '--no-tags',
+                 '--branch', branch, '--', repository, str(checkout), timeout=timeout)
+            sha = _git('rev-parse', f'refs/remotes/origin/{branch}^{{commit}}', cwd=checkout, timeout=timeout)
+        except (OSError, ValueError, subprocess.SubprocessError) as cause:
+            error = ValueError(str(cause) if str(cause).startswith('official source') else f'official source failed: {cause}')
+            error.add_note(f'Cannot fetch {repository} branch {branch}; check Git, network access and repository availability, then retry the update.')
+            raise error from cause
         yield checkout, sha
+
+
+def _preflight(config):
+    home = _absolute(config.home or Path.home())
+    destination = _safe_assets(config.assets_dest or default_assets_dest(), home)
+    try:
+        if config.agents and (destination / 'runtime.json').is_symlink():
+            raise ValueError('active runtime manifest is a symlink')
+        _active_manifest(destination, home, automatic=not config.agents)
+    except (OSError, ValueError) as error:
+        if not (destination / 'runtime.json').exists() and not (destination / 'runtime.json').is_symlink():
+            error.add_note('Bootstrap with ai-skills install --source <checkout-or-wheel> from a separate bootstrap environment, or ai-skills update --only <integration>.')
+        else:
+            error.add_note('Back up the invalid manifest or unowned runtime; inspect ownership, remove only the invalid manifest, and reinstall from a separate bootstrap environment. See README Existing installations.')
+        raise
 
 
 def run_update(config: UpdateConfig, *, repository=None, package_installer=None, registrar=None):
     recovery = _recover_installation(config.assets_dest, config.home, dry_run=config.dry_run)
     try:
+        _preflight(config)
         repository = repository or OFFICIAL_REPOSITORY
         with official_source(repository) as (checkout, sha):
             revision = {'repository': repository, 'branch': OFFICIAL_BRANCH, 'commit': sha}
@@ -155,6 +203,8 @@ def _report_failure(error):
     if recovery:
         description = {'restored': 'prior installation restored', 'incomplete': 'recovery incomplete'}.get(recovery, recovery)
         print(f'ai-skills update: {description}', file=sys.stderr)
+    else:
+        print('ai-skills update: active installation unchanged', file=sys.stderr)
     for note in getattr(error, '__notes__', ()):
         print(f'ai-skills update: {note}', file=sys.stderr)
 

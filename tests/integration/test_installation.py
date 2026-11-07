@@ -2301,3 +2301,180 @@ def test_update_transaction_preserves_adapter_error_when_journal_save_fails(sour
     assert failure.value.returncode == 19 and denied
     assert _tree_snapshot(config.home) == before
     assert not (config.assets_dest / '.installation-transaction.json').exists()
+
+
+def test_update_reports_bootstrap_guidance_before_fetching_source(tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'official_source', lambda *a, **k: pytest.fail('source fetched before preflight'))
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    with pytest.raises(ValueError, match='install first') as caught:
+        update.run_update(update.UpdateConfig(assets, home))
+    assert 'ai-skills install --source' in ' '.join(caught.value.__notes__)
+    assert '--only' in ' '.join(caught.value.__notes__)
+    assert update.main(['--assets-dest', str(assets), '--home', str(home)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == '' and 'install --source' in captured.err
+    assert not assets.exists() and not home.exists()
+
+
+@pytest.mark.parametrize('case', ['corrupt', 'null', 'owner', 'symlink', 'receipt', 'registration'])
+@pytest.mark.parametrize('explicit', [False, True])
+def test_update_reports_repair_guidance_for_invalid_manifest_before_fetch(source_tree, tmp_path, monkeypatch, case, explicit):
+    import ai_skills.update as update
+    plan = plan_install(make_config(source_tree, tmp_path))
+    manifest = apply_install(plan, package_installer=fake_package_installer)
+    active = plan.assets_dest / 'runtime.json'
+    if case == 'corrupt': active.write_text('{bad')
+    elif case == 'null': active.write_text('null')
+    elif case == 'owner':
+        manifest['owner'] = 'foreign'; write_json_atomic(active, manifest)
+    elif case == 'symlink':
+        other = plan.assets_dest / 'other.json'; active.rename(other); active.symlink_to(other)
+    elif case == 'receipt': (plan.prefix / '.ai-skills-runtime.json').unlink()
+    else:
+        manifest['registrations'][0]['agent'] = 'unknown'; write_json_atomic(active, manifest)
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    monkeypatch.setattr(update, 'official_source', lambda *a, **k: pytest.fail('source fetched before validation'))
+    config = update.UpdateConfig(plan.assets_dest, tmp_path / 'home', ('codex',) if explicit else ())
+    if explicit and case in ('receipt', 'registration'):
+        update._preflight(config)  # preserve explicit registration repair semantics
+    else:
+        with pytest.raises(ValueError) as caught: update.run_update(config)
+        assert 'Back up' in ' '.join(caught.value.__notes__)
+        assert 'reinstall' in ' '.join(caught.value.__notes__)
+    assert {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()} == before
+
+
+@pytest.mark.parametrize('failure', ['missing', 'branch', 'no-git', 'network', 'hang'])
+def test_update_source_failures_are_bounded_and_clean_scratch(official_repository, tmp_path, monkeypatch, failure):
+    import tempfile
+    import time
+    import ai_skills.update as update
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = config.assets_dest / 'runtime.json'
+    before = active.read_bytes()
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    repository = official_repository.as_uri()
+    child_file = tmp_path / 'child-pid'
+    if failure == 'missing': repository = (tmp_path / 'missing').as_uri()
+    elif failure == 'branch': _git(official_repository, 'branch', '-m', 'main', 'other')
+    elif failure == 'no-git': monkeypatch.setattr(update.shutil, 'which', lambda _: None)
+    elif failure == 'network':
+        def offline(*a, **k): raise OSError('network unavailable')
+        monkeypatch.setattr(update.subprocess, 'Popen', offline)
+    else:
+        if os.name == 'nt': pytest.skip('POSIX executable shim')
+        shim = tmp_path / 'hanging-git'
+        shim.write_text(f'#!{sys.executable}\nimport subprocess,sys,time\nfrom pathlib import Path\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"])\nPath({str(child_file)!r}).write_text(str(p.pid))\ntime.sleep(60)\n')
+        shim.chmod(0o755)
+        monkeypatch.setattr(update.shutil, 'which', lambda _: str(shim))
+    started = time.monotonic()
+    with pytest.raises(ValueError, match='official source') as caught:
+        with update.official_source(repository, timeout=.5): pytest.fail('unexpected source')
+    assert time.monotonic() - started < 10
+    notes = ' '.join(caught.value.__notes__)
+    assert repository in notes and 'network' in notes and 'retry' in notes
+    assert active.read_bytes() == before
+    assert not list(tmp_path.glob('ai-skills-update-*'))
+    if failure == 'hang':
+        assert 'timed out' in str(caught.value)
+        pid = int(child_file.read_text())
+        deadline = time.monotonic() + 3
+        while psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+
+
+@pytest.mark.parametrize('requirement', ['psutil>=999', 'maestro-missing-dep>=1'])
+def test_update_rejects_incompatible_target_dependencies_before_staging(official_repository, tmp_path, monkeypatch, requirement):
+    import tempfile
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = config.assets_dest / 'runtime.json'
+    before = {p: p.read_bytes() for root in (config.assets_dest, config.home) for p in root.rglob('*') if p.is_file()}
+    prefixes = set((config.assets_dest / 'runtimes').iterdir())
+    project = official_repository / 'pyproject.toml'
+    project.write_text(project.read_text().replace('psutil>=7', requirement))
+    _git(official_repository, 'commit', '-qam', 'incompatible dependency')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    with pytest.raises(ValueError, match=re.escape(requirement)) as caught:
+        run_update(config, repository=official_repository.as_uri(), package_installer=lambda _: pytest.fail('staged incompatible runtime'))
+    assert 'installed' in str(caught.value)
+    assert 'fresh official checkout' in ' '.join(caught.value.__notes__)
+    assert set((config.assets_dest / 'runtimes').iterdir()) == prefixes
+    assert {p: p.read_bytes() for root in (config.assets_dest, config.home) for p in root.rglob('*') if p.is_file()} == before
+    assert active.is_file() and not list(tmp_path.glob('ai-skills-update-*'))
+
+
+@pytest.mark.parametrize('version,specifier,expected', [
+    ('7.2.2', '>=7', True), ('7.2.2', '>=999', False), ('7.2', '==7.2.0', True),
+    ('7.2', '!=7.2', False), ('7.2', '<=7.2', True), ('7.2', '<7.2', False),
+    ('7.2', '>7.1', True), ('7.2', '>7.2', False), ('7.2', '==7.*', True),
+    ('7.2', '!=7.*', False), ('7.2', '==8.*', False), ('7.2', '~=7.1', True),
+    ('8', '~=7.1', False), ('7.3', '~=7.2.1', False), ('7.2.9', '~=7.2.1', True),
+    ('7.2', '>=7, <8, !=7.1', True), ('7.2', '(>=7, <8)', True),
+])
+def test_dependency_specifier_compatibility(version, specifier, expected):
+    from ai_skills.installation import _satisfies
+    assert _satisfies(version, specifier) is expected
+
+
+@pytest.mark.parametrize('specifier', ['===7', '>=7.*', '~=7', '==7+local', '>=7; bad', '[extra]>=7', '>=7,', '>=7 || <9'])
+def test_dependency_specifier_rejects_unsupported_syntax(specifier):
+    from ai_skills.installation import _satisfies
+    with pytest.raises(ValueError, match='unsupported dependency specifier'):
+        _satisfies('7.2', specifier)
+
+
+def test_candidate_pip_check_failure_reports_dependency_conflict_and_removes_candidate(source_tree, tmp_path, monkeypatch):
+    import dataclasses
+    import ai_skills.installation as installation
+    wheel = _fixture_wheel(tmp_path / 'wheels')
+    with zipfile.ZipFile(wheel) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    metadata_path = 'auditproof-1.0.dist-info/METADATA'
+    contents[metadata_path] += b'Requires-Dist: psutil>=999\n'
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        for name, payload in contents.items(): archive.writestr(name, payload)
+    monkeypatch.setenv('PIP_NO_INDEX', '1')
+    monkeypatch.setenv('PIP_FIND_LINKS', str(wheel.parent))
+    monkeypatch.setenv('PIP_DISABLE_PIP_VERSION_CHECK', '1')
+    plan = plan_install(make_config(source_tree, tmp_path))
+    def installer(plan):
+        pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
+        return installation._install_package(dataclasses.replace(plan, pip_commands=(pip,)))
+    with pytest.raises(ValueError, match='dependenc') as caught:
+        apply_install(plan, package_installer=installer)
+    assert 'auditproof' in str(caught.value) and 'psutil' in str(caught.value)
+    assert not plan.prefix.exists() and not (plan.assets_dest / 'runtime.json').exists()
+    assert not (tmp_path / 'home').exists()
+
+
+@pytest.mark.parametrize('failure', ['preflight', 'fetch', 'dependency', 'stage'])
+def test_update_cli_reports_unchanged_installation_for_prefetch_failures(official_repository, tmp_path, monkeypatch, capsys, failure):
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    config = update.UpdateConfig(assets, home, ('codex',))
+    if failure != 'preflight':
+        update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    before = {p: p.read_bytes() for root in (assets, home) for p in root.rglob('*') if p.is_file()}
+    repository = (tmp_path / 'missing').as_uri() if failure == 'fetch' else official_repository.as_uri()
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', repository)
+    if failure == 'dependency':
+        project = official_repository / 'pyproject.toml'
+        project.write_text(project.read_text().replace('psutil>=7', 'psutil>=999'))
+        _git(official_repository, 'commit', '-qam', 'incompatible')
+    if failure == 'stage':
+        _commit_skill(official_repository, 'next candidate')
+        def fail(plan): raise RuntimeError('candidate staging failed')
+        monkeypatch.setattr(update, 'apply_install', lambda plan, **kwargs: apply_install(plan, package_installer=fail))
+    capsys.readouterr()
+    assert update.main(['--assets-dest', str(assets), '--home', str(home)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ai-skills update: active installation unchanged' in captured.err
+    assert 'Traceback' not in captured.err
+    after = {p: p.read_bytes() for root in (assets, home) for p in root.rglob('*') if p.is_file()}
+    assert after == before
