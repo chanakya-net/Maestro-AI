@@ -189,3 +189,25 @@ def test_dry_run_reports_adjusted_effort_and_matches_execution(tmp_path, monkeyp
     assert 'requested max, effective high' in captured.err
     assert main(['run']) == 0
     assert "'--effort', 'high'" in capsys.readouterr().out
+
+
+def test_planning_default_dry_run_matches_fake_provider_without_request(tmp_path, monkeypatch, capsys):
+    config = fixture_config(tmp_path, '')
+    registry = json.loads(config.registry_file.read_text())
+    registry['agents'] = {'claude': {**registry['agents']['fake'], 'model': {'default': 'm'},
+        'invocation': {'command': sys.executable, 'args_template': ['-c', 'import sys; print(sys.argv[1:])', '{{model_settings}}']}}}
+    registry['model_catalog'] = {'m': {'reasoning_effort': 'low'}}
+    config.registry_file.write_text(json.dumps(registry))
+    for key, value in {'AGENT': 'claude', 'AGENT_REGISTRY_FILE': str(config.registry_file),
+                       'CONTEXT_PAYLOAD_FILE': str(config.context_file), 'PROMPT_FILE': str(config.prompt_file),
+                       'REPO_ROOT': str(tmp_path), 'GUI_MODE': '0', 'RUN_WITH_IT_ROLE': 'plan'}.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv('MODEL_EFFORT', raising=False)
+    assert main(['run', '--dry-run']) == 0
+    dry = capsys.readouterr()
+    assert '--effort xhigh' in dry.out
+    assert 'requested' not in dry.err
+    assert main(['run']) == 0
+    actual = capsys.readouterr()
+    assert "'--effort', 'xhigh'" in actual.out
+    assert 'requested_effort=' not in actual.err

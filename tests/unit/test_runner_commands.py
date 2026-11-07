@@ -234,3 +234,47 @@ def test_unknown_effort_fails_before_launch(config):
 def test_agy_effort_untouched(config):
     spec = build_invocation(config.replace(agent='agy', model='claude-opus-5-5-high', effort='max'), load_registry())
     assert 'max' not in spec.argv and '--effort' not in spec.argv
+
+
+@pytest.mark.parametrize('default', ['low', 'medium', 'high', 'xhigh', 'max', 'maximum'])
+@pytest.mark.parametrize('role', ['plan', 'impl'])
+@pytest.mark.parametrize('agent', ['claude', 'claude-code'])
+@pytest.mark.parametrize('explicit', ['', 'low'])
+def test_custom_default_is_not_an_explicit_request(config, default, role, agent, explicit):
+    from ai_skills.runner import effective_config
+    registry = copy.deepcopy(load_registry())
+    registry['model_catalog']['custom'] = {'reasoning_effort': default}
+    run = config.replace(agent=agent, model='custom', role=role, effort=explicit)
+    effective = effective_config(run, registry)
+    expected = explicit or ('xhigh' if role == 'plan' else
+                            default if default in ('low', 'medium', 'high') else 'high')
+    assert effective.effort == expected
+    assert effective.requested_effort == ''
+    assert effective_config(effective, registry) == effective
+    argv = build_invocation(run, registry).argv
+    assert ('--effort', expected) == argv[argv.index('--effort'):argv.index('--effort') + 2]
+
+
+def test_codex_default_planning_does_not_invent_request(config):
+    from ai_skills.runner import effective_config
+    effective = effective_config(config.replace(agent='codex-cli', role='plan', effort=''), load_registry())
+    assert (effective.effort, effective.requested_effort) == ('xhigh', '')
+    assert effective_config(effective, load_registry()) == effective
+
+
+def test_original_positional_config_order_and_optional_provenance(tmp_path):
+    context, prompt = tmp_path / 'context', tmp_path / 'prompt'
+    run = AgentRunConfig('claude', 'm', 'high', context, prompt, tmp_path, 'safe', '1', True,
+                         requested_effort='maximum')
+    assert (run.context_file, run.prompt_file, run.repo_root, run.permission_mode, run.gui_mode, run.unattended) == (
+        context, prompt, tmp_path, 'safe', '1', True)
+    assert run.requested_effort == 'maximum'
+    assert AgentRunConfig(**{'agent': 'claude'}).requested_effort == ''
+
+
+def test_explicit_adjustment_survives_repeated_preparation(config):
+    from ai_skills.runner import effective_config
+    registry = load_registry()
+    effective = effective_config(config.replace(agent='claude', role='plan', effort='maximum'), registry)
+    assert (effective.effort, effective.requested_effort) == ('xhigh', 'maximum')
+    assert effective_config(effective, registry) == effective

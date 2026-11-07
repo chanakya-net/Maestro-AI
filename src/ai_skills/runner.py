@@ -42,7 +42,6 @@ class AgentRunConfig:
     agent: str
     model: str = ''
     effort: str = ''
-    requested_effort: str = ''
     context_file: Path | None = None
     prompt_file: Path | None = None
     repo_root: Path = field(default_factory=Path.cwd)
@@ -73,6 +72,7 @@ class AgentRunConfig:
     verification_context: dict | None = None
     final_response_file: Path | None = None
     result_capture_context: dict | None = None
+    requested_effort: str = ''
 
     def replace(self, **values):
         return replace(self, **values)
@@ -200,9 +200,15 @@ def effective_config(config: AgentRunConfig, registry: dict) -> AgentRunConfig:
     """Apply the shared effort policy once, keeping an adjusted explicit request."""
     name, agent = _agent(registry, config.agent)
     model = config.model or agent.get('model', {}).get('default', '')
-    configured = config.effort or registry.get('model_catalog', {}).get(model, {}).get('reasoning_effort', '')
-    resolution = resolve_effort(name, configured, config.role)
-    requested = resolution.requested or config.requested_effort
+    configured = registry.get('model_catalog', {}).get(model, {}).get('reasoning_effort', '')
+    if config.effort:
+        resolution = resolve_effort(name, config.effort, config.role)
+        requested = config.requested_effort or resolution.requested
+    else:
+        resolution = resolve_effort(name, configured, config.role)
+        if name == 'claude' and config.role == 'plan':
+            resolution = resolve_effort(name, '', config.role)
+        requested = config.requested_effort
     return config.replace(effort=resolution.effective, requested_effort=requested)
 
 
