@@ -78,7 +78,12 @@ ai-skills agent list --detected-only
 ai-skills agent models <agent>
 ```
 
-Effort must be one of `low|medium|high|xhigh|max|maximum` (`maximum` is normalized to `max`).
+Effort must be one of `low|medium|high|xhigh|max|maximum`. New ordinary runs
+apply the shared non-planning policy to direct Codex and Claude harnesses:
+Codex always uses `high`; Claude keeps `low`/`medium`/`high` and caps
+`xhigh`/`max`/`maximum` at `high`. Adjusted requests remain in run provenance,
+and startup reports requested and effective values. Other harnesses and AGY
+model suffixes retain their configured effort semantics.
 
 Both colleagues run in the harness's registered **read-only** profile, because they must not
 modify the repository they are discussing. A harness whose registry entry declares no read-only

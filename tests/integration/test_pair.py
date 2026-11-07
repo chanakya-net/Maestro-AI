@@ -36,6 +36,7 @@ payload=sys.argv[-1]
 round_no=int(re.search(r'round (\\d+)', payload, re.I).group(1))
 model=sys.argv[1]
 root=pathlib.Path(os.environ['REPO_ROOT'])
+(root / (model + '-argv.json')).write_text(json.dumps(sys.argv[1:]))
 count=root / (model + '-r' + str(round_no) + '.count')
 n=int(count.read_text()) + 1 if count.exists() else 1
 count.write_text(str(n))
@@ -121,6 +122,49 @@ def test_full_rounds_decisions_snapshots_and_finalization(pair_fixture, capsys):
     assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 2
     final.write_text(final.read_text() + '\nConflict\n')
     assert invoke(capsys, 'finalize', '--run-dir', str(run), '--final-file', str(final))[0] == 2
+
+
+@pytest.mark.parametrize(('slot', 'harness', 'requested', 'effective', 'flag'), [
+    ('1', 'codex-alias', value, 'high', '-c model_reasoning_effort=high')
+    for value in ('low', 'medium', 'high', 'xhigh', 'max', 'maximum')
+] + [
+    ('2', 'claude-alias', value, expected, '--effort ' + expected)
+    for value, expected in (('low', 'low'), ('medium', 'medium'), ('high', 'high'),
+                            ('xhigh', 'high'), ('max', 'high'), ('maximum', 'high'))
+])
+def test_pair_resolves_direct_harness_effort_before_freezing_inputs(
+        pair_fixture, capsys, slot, harness, requested, effective, flag):
+    start, root, registry_file = pair_fixture
+    registry = json.loads(registry_file.read_text())
+    fake = registry['agents'].pop('fake')
+    fake['invocation']['args_template'] = [
+        fake['invocation']['args_template'][0], '{{model_flag}}', '{{model_settings}}',
+        '{{permission_mode}}', '{{prompt}}']
+    for name in ('codex', 'claude'):
+        registry['agents'][name] = {**fake, 'model': {**fake['model'], 'known_models': ['one', 'two']}}
+    registry['aliases'] = {'codex-alias': 'codex', 'claude-alias': 'claude'}
+    registry_file.write_text(json.dumps(registry))
+    args = ['--agent-1-harness', 'codex-alias', '--agent-1-model', 'one', '--agent-1-effort', 'xhigh',
+            '--agent-2-harness', 'claude-alias', '--agent-2-model', 'two', '--agent-2-effort', 'maximum']
+    args[args.index('--agent-' + slot + '-harness') + 1] = harness
+    args[args.index('--agent-' + slot + '-effort') + 1] = requested
+    code, values, error = invoke(capsys, 'start', str(root / 'task.md'), *args)
+    assert code == 0, error
+    run = Path(values['RUN_DIR'])
+    config = json.loads((run / 'config.json').read_text())
+    agent = config['agents'][slot]
+    assert agent['effort'] == effective
+    assert agent.get('requested_effort', '') == (requested if requested != effective else '')
+    if requested != effective:
+        assert values[f'AGENT_{slot}_EFFORT'] == f'requested {requested}, effective {effective}'
+    assert agent['harness'] == ('codex' if slot == '1' else 'claude')
+
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    prompt = (run / f'rounds/round-01/agent-{slot}-prompt.md').read_text()
+    assert f'configured effort level is **{effective}**' in prompt
+    other_model = 'one' if slot == '1' else 'two'
+    argv = json.loads((root / f'{other_model}-argv.json').read_text())
+    assert flag.split() == argv[1:3]
 
 
 def test_retry_only_failed_colleague_and_block_after_cap(pair_fixture, monkeypatch, capsys):
