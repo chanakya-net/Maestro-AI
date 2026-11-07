@@ -203,11 +203,52 @@ def test_planning_default_dry_run_matches_fake_provider_without_request(tmp_path
                        'REPO_ROOT': str(tmp_path), 'GUI_MODE': '0', 'RUN_WITH_IT_ROLE': 'plan'}.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('MODEL_EFFORT', raising=False)
-    assert main(['run', '--dry-run']) == 0
+    assert main(['run', '--role', 'plan', '--dry-run']) == 0
     dry = capsys.readouterr()
     assert '--effort xhigh' in dry.out
     assert 'requested' not in dry.err
-    assert main(['run']) == 0
+    assert main(['run', '--role', 'plan']) == 0
     actual = capsys.readouterr()
     assert "'--effort', 'xhigh'" in actual.out
     assert 'requested_effort=' not in actual.err
+
+
+@pytest.mark.parametrize('agent,canonical', [('claude', 'claude'), ('claude-code', 'claude'),
+                                               ('codex', 'codex'), ('codex-cli', 'codex')])
+@pytest.mark.parametrize('role,expected', [(None, 'high'), ('plan', 'xhigh'), ('review', 'high'), ('complexity', 'high')])
+def test_standalone_role_boundary_matches_provider_argv(tmp_path, monkeypatch, capsys, agent, canonical, role, expected):
+    config = fixture_config(tmp_path, '')
+    registry = json.loads(config.registry_file.read_text())
+    registry['agents'] = {canonical: {**registry['agents']['fake'], 'model': {'default': 'm'},
+        'invocation': {'command': sys.executable, 'args_template': ['-c', 'import sys; print(sys.argv[1:])', '{{model_settings}}']}}}
+    registry['aliases'] = {agent: canonical}
+    config.registry_file.write_text(json.dumps(registry))
+    config.prompt_file.write_text('Create a detailed plan for this difficult task')
+    for key, value in {'AGENT': agent, 'AGENT_REGISTRY_FILE': str(config.registry_file),
+                       'PROMPT_FILE': str(config.prompt_file), 'CONTEXT_PAYLOAD_FILE': str(config.context_file),
+                       'REPO_ROOT': str(tmp_path), 'GUI_MODE': '0', 'RUN_WITH_IT_ROLE': 'plan', 'MODEL_EFFORT': 'maximum'}.items():
+        monkeypatch.setenv(key, value)
+    args = ['run'] + (['--role', role] if role else [])
+    flag = f'model_reasoning_effort={expected}' if canonical == 'codex' else expected
+    assert main([*args, '--dry-run']) == 0
+    assert flag in capsys.readouterr().out
+    assert main(args) == 0
+    assert flag in capsys.readouterr().out
+
+@pytest.mark.parametrize('role', ['impl', 'modify', 'review', 'complexity'])
+def test_cli_preserves_inherited_nonplanning_worker_role_and_artifact(tmp_path, monkeypatch, role):
+    config = fixture_config(tmp_path, '')
+    result_file = tmp_path / 'worker-result.json'
+    for key, value in {'AGENT': 'fake', 'AGENT_REGISTRY_FILE': str(config.registry_file),
+                       'CONTEXT_PAYLOAD_FILE': str(config.context_file), 'PROMPT_FILE': str(config.prompt_file),
+                       'REPO_ROOT': str(tmp_path), 'GUI_MODE': '0', 'RUN_WITH_IT_ROLE': role,
+                       'RUN_WITH_IT_RESULT_FILE': str(result_file)}.items():
+        monkeypatch.setenv(key, value)
+    captured = []
+    def capture(run):
+        captured.append(run)
+        return type('Result', (), {'return_code': 0})()
+    monkeypatch.setattr('ai_skills.runner.run_agent', capture)
+    assert main(['run']) == 0
+    assert captured[0].role == role
+    assert Path(captured[0].result_file) == result_file

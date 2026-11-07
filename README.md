@@ -351,6 +351,18 @@ sent to Claude or Codex. When normalization changes an explicit request, the
 effective value is used in argv and dry-run output, and the original is kept as
 `requested_effort`. AGY and other harnesses are unchanged.
 
+Standalone planning requires an explicit role, for example:
+
+```sh
+ai-skills agent run --agent codex --role plan --context-file context.md --unattended --dry-run
+```
+
+This previews Codex effort `xhigh`; omitting `--role plan` uses `high` even
+if `RUN_WITH_IT_ROLE=plan` is inherited or the prompt asks for a plan. An
+explicit non-planning role takes precedence over the inherited role. Other
+inherited worker roles retain their existing artifact behavior. Structured API
+and dispatcher configurations can still explicitly set the `plan` role.
+
 To add a model, add one entry with its supported agents and desired bands. To
 change effort, edit that entry's `effort_by_band`. To change usage percentages,
 edit `model_routing.usage_distribution`:

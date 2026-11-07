@@ -278,3 +278,13 @@ def test_explicit_adjustment_survives_repeated_preparation(config):
     effective = effective_config(config.replace(agent='claude', role='plan', effort='maximum'), registry)
     assert (effective.effort, effective.requested_effort) == ('xhigh', 'maximum')
     assert effective_config(effective, registry) == effective
+
+
+@pytest.mark.parametrize('agent', ['codex', 'codex-cli', 'claude', 'claude-code'])
+@pytest.mark.parametrize('role', ['review', 'complexity'])
+def test_structured_ordinary_roles_remain_capped_for_difficult_prompts(config, agent, role, tmp_path):
+    prompt = tmp_path / 'difficult-plan.md'
+    prompt.write_text('Plan a holy-fuck complexity task')
+    argv = build_invocation(config.replace(agent=agent, role=role, effort='maximum', prompt_file=prompt), load_registry()).argv
+    assert ('model_reasoning_effort=high' in argv if agent.startswith('codex') else
+            argv[argv.index('--effort') + 1] == 'high')
