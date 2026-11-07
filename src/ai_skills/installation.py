@@ -29,6 +29,7 @@ import zipfile
 
 import psutil
 
+from ai_skills.dependency_constraints import _satisfies
 from ai_skills.resources import RESOURCE_NAMES, SKILL_NAMES
 from ai_skills.storage import DirectoryLock, load_json, replace_file_atomic, write_json_atomic
 
@@ -127,11 +128,21 @@ def _dependency_pins(dependencies):
             match = re.fullmatch(r"sys_platform\s*==\s*'([^']+)'", marker)
             if not match: raise ValueError(f'unsupported dependency marker; install a matching wheel first: {marker}')
             if sys.platform != match.group(1): continue
-        match = re.match(r'([A-Za-z0-9_.-]+)', requirement.strip())
+        match = re.fullmatch(r'([A-Za-z0-9_.-]+)\s*(.*)', requirement.strip())
         if not match: raise ValueError(f'invalid dependency requirement: {requirement}')
         name = match.group(1)
         try: version = metadata.version(name)
-        except metadata.PackageNotFoundError as error: raise ValueError(f'dependency {name} must be installed in the invoking runtime before creating a pinned installation') from error
+        except metadata.PackageNotFoundError as cause:
+            error = ValueError(f'incompatible dependency {requirement}: not installed in the invoking runtime')
+            error.add_note('Re-bootstrap from a fresh official checkout with its dependencies; see README Existing installations.')
+            raise error from cause
+        try:
+            if not _satisfies(version, match.group(2)):
+                raise ValueError(f'incompatible dependency {requirement}: installed version {version}')
+        except ValueError as error:
+            error.add_note(f'Target requirement {requirement}; installed invoking version {version}.')
+            error.add_note('Re-bootstrap from a fresh official checkout with compatible dependencies; see README Existing installations.')
+            raise
         pins.append(name + '==' + version)
     return tuple(sorted(pins))
 
@@ -282,6 +293,20 @@ def _manifest_registrations(manifest, destination, home):
     return selected
 
 
+def _active_manifest(destination, home, *, automatic):
+    """Read owned state without fetching source or changing the installation."""
+    active = destination / 'runtime.json'
+    if automatic and (active.is_symlink() or not active.is_file()):
+        raise ValueError('no owned active runtime manifest; install first')
+    snapshot = active.read_bytes() if active.exists() else None
+    previous = json.loads(snapshot) if snapshot is not None else None
+    if snapshot is not None:
+        if not isinstance(previous, dict): raise ValueError(f'expected JSON object: {active}')
+        if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
+    selected = _manifest_registrations(previous, destination, home) if automatic else None
+    return previous, snapshot, selected
+
+
 def plan_install(config: InstallConfig) -> InstallationPlan:
     if sys.version_info < (3, 12): raise ValueError('Python 3.12 or newer is required')
     revision = _check_source_revision(config.source_revision)
@@ -301,16 +326,8 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
     pip_commands = []
     if pins: pip_commands.append((str(python), '-I', '-m', 'pip', 'install', *pins))
     pip_commands.append((str(python), '-I', '-m', 'pip', 'install', '--no-deps', str(source)))
-    active = destination / 'runtime.json'
     automatic = revision is not None and not config.agents
-    if automatic and (active.is_symlink() or not active.is_file()):
-        raise ValueError('no owned active runtime manifest; install first')
-    snapshot = active.read_bytes() if active.exists() else None
-    previous = json.loads(snapshot) if snapshot is not None else None
-    if previous is not None:
-        if not isinstance(previous, dict): raise ValueError(f'expected JSON object: {active}')
-        if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
-    selected = _manifest_registrations(previous, destination, home) if automatic else None
+    previous, snapshot, selected = _active_manifest(destination, home, automatic=automatic)
     agents = tuple(dict.fromkeys(agent for agent, _ in selected)) if automatic else (config.agents or _detect(home))
     registrations = []
     for agent in dict.fromkeys(agents):
@@ -468,7 +485,15 @@ def _install_package(plan):
     # cwd and pip configuration, so relative constraints and find-links resolve.
     if plan.source_revision: env, cwd = _pip_environment(plan.python, env, plan.prefix), plan.prefix
     for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
-    _run_child([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env)
+    try:
+        result = subprocess.run([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env,
+                                capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as cause:
+        detail = '\n'.join(text.strip() for text in (cause.stdout, cause.stderr) if text and text.strip())
+        error = ValueError(f'candidate dependency check failed for {", ".join(plan.dependencies)}: {detail}')
+        error.add_note('Re-bootstrap with compatible target dependencies from a fresh official checkout; see README Existing installations.')
+        raise error from cause
+    if result.stdout: print(result.stdout, end='')
     return _runtime_root(plan.python)
 
 
