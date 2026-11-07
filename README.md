@@ -119,6 +119,8 @@ Retain your chosen `--assets-dest` and `--only` options on both install commands
 
 Existing unowned skill directories are protected. Inspect the dry-run output, then use `--replace-existing` to migrate an older installation explicitly; the installer preserves backups and records ownership. Registration uses local packaged content rather than fetching a changing branch.
 
+Updates skip an already recorded source commit without changing the installation. Use `python -m ai_skills update --force` to refresh managed registrations at the same commit, with the usual ownership checks and backups. Existing immutable runtimes are verified and reused, preserving pinned runs. Missing legacy commit metadata is treated as unknown and triggers an update. `--dry-run --force` previews the refresh.
+
 Preview an official update before applying it with `python -m ai_skills update --dry-run`. The JSON output includes the resolved main commit, selected integrations, any planned registration backup paths (backups of user-edited registrations include a timestamp chosen when the update applies, so preview shows `.edited-<UTC-timestamp>.` with `time_dependent: true` instead of an exact path), and whether the active runtime already matches. Preview downloads source into temporary storage, removes it afterward, and does not install a runtime or change registrations. Pass `--only <integration>` to preview an explicit selection; repeat the option to select multiple integrations.
 
 ```text

@@ -533,13 +533,13 @@ def test_update_cli_dry_run_reports_backup_without_creating_it(official_reposito
     (target / 'SKILL.md').write_text('user edit')
     before = _tree_snapshot(config.assets_dest), _tree_snapshot(config.home)
 
-    assert update.main(['--dry-run', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
     preview = json.loads(capsys.readouterr().out)
 
     assert preview['no_op'] is False
     assert preview['integrations'] == ['codex']
-    assert [item['target'] for item in preview['backups']] == [str(target)]
-    assert not Path(preview['backups'][0]['path']).exists()
+    edited = next(item for item in preview['backups'] if item['target'] == str(target))
+    assert not Path(edited['path']).exists()
     assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
 
 
@@ -587,13 +587,13 @@ def test_update_cli_dry_run_detects_deleted_copy_target_and_apply_repairs(offici
     shutil.rmtree(target)
     before = _tree_snapshot(assets), _tree_snapshot(home)
 
-    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
     preview = json.loads(capsys.readouterr().out)
 
     assert preview['no_op'] is False
-    assert preview['backups'] == []
+    assert str(target) not in [item['target'] for item in preview['backups']]
     assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
-    update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+    update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
                       package_installer=fake_package_installer)
     assert (target / 'SKILL.md').is_file()
     assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
@@ -619,7 +619,7 @@ def test_update_cli_dry_run_detects_edited_or_removed_adapter_target_and_apply_r
         shutil.rmtree(target)
     before = _tree_snapshot(assets), _tree_snapshot(home)
 
-    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
     preview = json.loads(capsys.readouterr().out)
 
     assert preview['no_op'] is False
@@ -630,7 +630,7 @@ def test_update_cli_dry_run_detects_edited_or_removed_adapter_target_and_apply_r
         assert [i['time_dependent'] for i in preview['backups'] if i['target'] == str(target)] == [True]
     else:
         assert str(target) not in by_target and by_target
-    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+    manifest = update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
                                  package_installer=fake_package_installer, registrar=adapter)
     assert (target / 'SKILL.md').is_file() and (target / 'SKILL.md').read_text() != 'user edit'
     if change == 'edit':
@@ -650,14 +650,14 @@ def test_update_cli_dry_run_unchanged_adapter_reports_reexecution_semantics(offi
                       package_installer=fake_package_installer, registrar=adapter)
     before = _tree_snapshot(assets), _tree_snapshot(home)
 
-    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
     preview = json.loads(capsys.readouterr().out)
 
     assert preview['no_op'] is False
     assert len(preview['backups']) == 1 and preview['backups'][0]['target'] == str(extension)
     assert not Path(preview['backups'][0]['path']).exists()
     assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
-    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+    manifest = update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
                                  package_installer=fake_package_installer, registrar=adapter)
     assert manifest['registrations'][0]['paths'][0]['backup'] == preview['backups'][0]['path']
     assert Path(preview['backups'][0]['path']).is_dir()
@@ -729,7 +729,7 @@ def test_update_rejects_retained_runtime_with_missing_interpreter(official_repos
     active = (config.assets_dest / 'runtime.json').read_bytes()
     Path(first['python']).unlink()
     with pytest.raises(ValueError, match='interpreter missing'):
-        run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+        run_update(UpdateConfig(config.assets_dest, config.home, config.agents, force=True), repository=official_repository.as_uri(), package_installer=fake_package_installer)
     assert (config.assets_dest / 'runtime.json').read_bytes() == active
 
 
@@ -986,7 +986,7 @@ def test_update_restores_partially_uninstalled_copy_registrations(official_repos
     apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=both.assets_dest, home=home, agents=('codex',))))
     assert not any((home / '.codex/skills' / name).exists() for name in SKILL_NAMES)
     def must_not_install_again(_): raise AssertionError('retained revision must reuse its runtime')
-    again = run_update(UpdateConfig(both.assets_dest, home, ('codex',)), repository=repository,
+    again = run_update(UpdateConfig(both.assets_dest, home, ('codex',), force=True), repository=repository,
                        package_installer=must_not_install_again)
     assert again['prefix'] == first['prefix'] and again['python'] == first['python']
     assert again['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
@@ -1613,13 +1613,59 @@ def test_update_cli_dry_run_edited_backup_is_pattern_matching_later_apply(offici
                       if r.get('kind') == 'copy' and r['skill'] == 'pair-colleague')
     (target / 'SKILL.md').write_text('user edit')
     monkeypatch.setattr(installation, '_backup_stamp', lambda: '20200101T000000Z')
-    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
     entry = next(i for i in json.loads(capsys.readouterr().out)['backups'] if i['target'] == str(target))
     assert entry['time_dependent'] is True and '20200101T000000Z' not in entry['path']
     monkeypatch.setattr(installation, '_backup_stamp', lambda: '20300202T020202Z')
-    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+    manifest = update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
                                  package_installer=fake_package_installer, registrar=adapter)
     actual = _target_entries(manifest, target)[0]['backup']
     assert fnmatch.fnmatch(actual, entry['path'].replace('<UTC-timestamp>', '*'))
     assert '20300202T020202Z' in actual
     assert (Path(actual) / 'SKILL.md').read_text() == 'user edit'
+
+
+def test_update_matching_revision_skips_all_changes_and_force_refreshes(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    repository = official_repository.as_uri()
+    config = update.UpdateConfig(assets, home, ('codex',))
+    manifest = update.run_update(config, repository=repository, package_installer=fake_package_installer)
+    run = tmp_path / 'run'; (run / '.run-with-it').mkdir(parents=True)
+    write_json_atomic(run / '.run-with-it/engine.json', {'schema_version': 1, 'engine': 'python',
+                                                       'engine_version': 1, 'python': manifest['python']})
+    target = Path(manifest['registrations'][0]['target'])
+    (target / 'SKILL.md').write_text('user edit')
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+    assert update.run_update(config, repository=repository, package_installer=fake_package_installer) == manifest
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', repository)
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    args = ['--assets-dest', str(assets), '--home', str(home), '--only', 'codex', '--force']
+    assert update.main(['--dry-run', *args]) == 0
+    assert json.loads(capsys.readouterr().out)['no_op'] is False
+    assert update.main(args) == 0
+    refreshed = json.loads(capsys.readouterr().out)
+    assert (target / 'SKILL.md').read_text() != 'user edit'
+    backup = Path(next(r['backup'] for r in refreshed['registrations'] if r['target'] == str(target)))
+    assert (backup / 'SKILL.md').read_text() == 'user edit'
+    assert resolve_runtime(run, assets_dest=assets) == Path(manifest['python'])
+    assert Path(manifest['python']).is_file()
+
+
+@pytest.mark.parametrize('missing', [True, False])
+def test_update_unknown_or_different_revision_is_not_skipped(official_repository, tmp_path, missing):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    repository = official_repository.as_uri()
+    first = run_update(config, repository=repository, package_installer=fake_package_installer)
+    if missing:
+        active = config.assets_dest / 'runtime.json'
+        legacy = json.loads(active.read_text()); legacy.pop('source_revision')
+        write_json_atomic(active, legacy)
+    else:
+        _commit_skill(official_repository, 'different revision')
+    result = run_update(config, repository=repository, package_installer=fake_package_installer)
+    assert result['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    if not missing: assert result['source_revision'] != first['source_revision']

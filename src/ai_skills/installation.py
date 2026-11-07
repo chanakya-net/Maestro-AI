@@ -146,6 +146,8 @@ class InstallConfig:
     dry_run: bool = False
     replace_existing: bool = False
     source_revision: dict | None = None
+    skip_current_revision: bool = False
+    refresh_registrations: bool = False
 
 
 @dataclass(frozen=True)
@@ -775,6 +777,11 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
         snapshot = active_path.read_bytes() if active_path.exists() else None
         if snapshot != plan.active_snapshot or (plan.source_revision and not plan.config.agents and active_path.is_symlink()):
             plan = plan_install(plan.config)
+        if plan.config.skip_current_revision and plan.source_revision and snapshot is not None:
+            active = _object(active_path)
+            revision = active.get('source_revision')
+            if isinstance(revision, dict) and revision.get('commit') == plan.source_revision['commit']:
+                return active
         if plan.prefix.exists() and not _receipt(plan.prefix).exists(): _clean_interrupted(plan.prefix)
         if plan.prefix.exists():
             receipt = _owned_receipt(plan.prefix, plan.fingerprint); _verify_payload(receipt, plan.prefix)
@@ -824,7 +831,7 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
                 prior = prior_by_key.get(key)
                 target = Path(registration.get('target', ''))
                 # Fast path only for a live registration; a partly uninstalled one is recreated.
-                if prior and registration['kind'] == 'copy' and (target.exists() or target.is_symlink()):
+                if not plan.config.refresh_registrations and prior and registration['kind'] == 'copy' and (target.exists() or target.is_symlink()):
                     try: current = _registration_receipt(target)
                     except ValueError: current = None
                     if current and current['fingerprint'] == plan.fingerprint:
