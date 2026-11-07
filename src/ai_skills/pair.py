@@ -154,9 +154,6 @@ class PairRun:
             a.setdefault('name', f'Agent {slot}')
             if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}', a['name']):
                 raise PairError(f'agent {slot} name must be 1-64 letters, digits, spaces, dot, underscore, or hyphen')
-            a['effort'] = 'max' if a['effort'] == 'maximum' else a['effort']
-            if a['effort'] not in ('low', 'medium', 'high', 'xhigh', 'max'):
-                raise PairError(f'agent {slot} effort must be low, medium, high, xhigh, max, or maximum')
             agents[slot] = a
         from ai_skills.runner import load_registry, _agent, _configured, runner_environment, AgentRunConfig
         registry = load_registry(options.registry_file)
@@ -182,6 +179,18 @@ class PairRun:
             if not profile and not options.allow_unverified_safe:
                 raise PairError(f'agent {slot} harness "{requested}" has no registered read-only profile')
             a['safety_profile'] = profile or 'unverified'
+        from ai_skills.effort import resolve_effort
+        for slot, a in agents.items():
+            raw_effort = a['effort']
+            try:
+                resolution = resolve_effort(a['harness'], raw_effort, 'general', registry)
+            except ValueError as error:
+                raise PairError(f'agent {slot} {error}') from error
+            a['effort'] = resolution.effective
+            if resolution.requested:
+                a['requested_effort'] = resolution.requested
+            elif a['harness'] not in ('codex', 'claude') and raw_effort == 'maximum':
+                a['effort'] = 'max'
         prompt = options.prompt_file or Path(str(resource_path('pair-colleague-agent-prompt.md')))
         if not Path(prompt).is_file():
             raise PairError(f'missing colleague prompt: {prompt}')
@@ -215,7 +224,12 @@ class PairRun:
                       'completion_reason': '', 'created_at': created, 'assets': assets, 'rounds': {}}
         self.state['rounds']['1'] = _new_round(documents.freeze_snapshot(self.path, 1))
         self.save()
-        return PairResult(0, self.values('initialized'))
+        values = self.values('initialized')
+        for slot, agent in agents.items():
+            if agent.get('requested_effort'):
+                values[f'AGENT_{slot}_EFFORT'] = (
+                    f'requested {agent["requested_effort"]}, effective {agent["effort"]}')
+        return PairResult(0, values)
 
     def load(self):
         if not self.path or not (self.path / 'state.json').is_file():
@@ -608,6 +622,7 @@ def _attempt(spec_path):
     signal.signal(signal.SIGINT, interrupted)
     try:
         config = AgentRunConfig(agent=a['harness'], model=a['model'], effort=a['effort'],
+                                requested_effort=a.get('requested_effort', ''),
                                 context_file=Path(spec['context']), prompt_file=Path(spec['prompt']),
                                 repo_root=Path(record['workspace_root']), unattended=True, gui_mode='0', permission_mode='safe' if a.get('safety_profile') != 'unverified' else '',
                                 registry_file=Path(spec['registry_file']) if spec['registry_file'] else None,

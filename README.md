@@ -355,6 +355,11 @@ sent to Claude or Codex. When normalization changes an explicit request, the
 effective value is used in argv and dry-run output, and the original is kept as
 `requested_effort`. AGY and other harnesses are unchanged.
 
+New ordinary pair-colleague runs use the same non-planning policy after
+resolving harness aliases. Their saved configuration, colleague prompts, and
+provider arguments use effective effort; adjusted explicit requests remain in
+`requested_effort` and appear in the startup report and final dossier record.
+
 Standalone planning requires an explicit role, for example:
 
 ```sh

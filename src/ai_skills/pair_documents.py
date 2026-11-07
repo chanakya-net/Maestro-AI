@@ -319,6 +319,8 @@ def agent_identity_errors(record: str, slot: str, agent: dict[str, str]) -> list
         ]
 
     expected = [agent.get(key, "") for key in ("name", "harness", "model", "effort")]
+    if agent.get("requested_effort"):
+        expected.append(f"requested effort {agent['requested_effort']}")
     fields = [field.strip() for field in values[0].split(",") if field.strip()]
     if sorted(fields) != sorted(expected):
         return [

@@ -78,7 +78,12 @@ ai-skills agent list --detected-only
 ai-skills agent models <agent>
 ```
 
-Effort must be one of `low|medium|high|xhigh|max|maximum` (`maximum` is normalized to `max`).
+Effort must be one of `low|medium|high|xhigh|max|maximum`. New ordinary runs
+apply the shared non-planning policy to direct Codex and Claude harnesses:
+Codex always uses `high`; Claude keeps `low`/`medium`/`high` and caps
+`xhigh`/`max`/`maximum` at `high`. Adjusted requests remain in run provenance,
+and startup reports requested and effective values. Other harnesses and AGY
+model suffixes retain their configured effort semantics.
 
 Both colleagues run in the harness's registered **read-only** profile, because they must not
 modify the repository they are discussing. A harness whose registry entry declares no read-only
@@ -219,8 +224,8 @@ Required structure (every heading exactly once, no placeholder text):
 
 ```markdown
 - Coordinator: current invoking agent
-- Agent 1: <name, harness, model, effort>
-- Agent 2: <name, harness, model, effort>
+- Agent 1: <name, harness, model, effective effort[, requested effort <value>]>
+- Agent 2: <name, harness, model, effective effort[, requested effort <value>]>
 - Completed rounds: <n>
 - Minimum rounds: <n>
 - Maximum rounds: <n>
@@ -229,6 +234,8 @@ Required structure (every heading exactly once, no placeholder text):
 ```
 
 Read `COMPLETED_ROUNDS`, `MIN_ROUNDS`, `MAX_ROUNDS`, `COMPLETION_REASON`, and `RUN_DIR` from `status` rather than recalling them.
+
+Each `Agent` line uses the saved effective effort. Append `, requested effort <value>` only when startup reported an adjusted effort (`AGENT_<n>_EFFORT` = `requested <value>, effective <value>`); the requested value is the one the user supplied, and the effective value is the one in the saved config. Example: `- Agent 1: Agent 1, codex, gpt-x, high, requested effort xhigh`.
 
 ```text
 ai-skills pair finalize --run-dir <run-dir> --final-file /path/to/final-solution-draft.md
