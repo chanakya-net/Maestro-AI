@@ -205,12 +205,12 @@ def test_nonobject_ledger_rejected(payload):
 
 
 @pytest.mark.parametrize("band, model, effort", [
-    ("quite-easy", "claude-haiku-5-5", ""),
-    ("easy", "claude-haiku-5-5", ""),
+    ("quite-easy", "claude-haiku-5-5", "high"),
+    ("easy", "claude-haiku-5-5", "high"),
     ("medium", "claude-sonnet-5-5", "medium"),
     ("medium-hard", "claude-opus-5-5", "high"),
-    ("complex", "claude-opus-5-5", "xhigh"),
-    ("holy-fuck", "claude-fable-5-1", "max"),
+    ("complex", "claude-opus-5-5", "high"),
+    ("holy-fuck", "claude-fable-5-1", "high"),
 ])
 def test_claude_routes_use_current_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="claude"), load_registry(SOURCE_REGISTRY), {})
@@ -238,8 +238,8 @@ def test_retired_claude_models_cannot_be_routed(model):
     ("easy", "gpt-6-luna", "high"),
     ("medium", "gpt-6.1-terra", "high"),
     ("medium-hard", "gpt-6.1-sol", "high"),
-    ("complex", "gpt-6.1-sol", "xhigh"),
-    ("holy-fuck", "gpt-6-astra", "max"),
+    ("complex", "gpt-6.1-sol", "high"),
+    ("holy-fuck", "gpt-6-astra", "high"),
 ])
 def test_codex_routes_use_requested_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -248,7 +248,7 @@ def test_codex_routes_use_requested_model_families(band, model, effort):
 
 @pytest.mark.parametrize("band, model, effort", [
     ("quite-easy", "gpt-6-luna", "high"), ("easy", "gpt-6-luna", "high"), ("medium", "gpt-6.1-terra", "high"),
-    ("medium-hard", "gpt-6.1-sol", "high"), ("complex", "gpt-6.1-sol", "xhigh"), ("holy-fuck", "gpt-6.1-sol", "xhigh"),
+    ("medium-hard", "gpt-6.1-sol", "high"), ("complex", "gpt-6.1-sol", "high"), ("holy-fuck", "gpt-6.1-sol", "high"),
 ])
 def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, model, effort):
     decision = select_route(RouteRequest(role="complexity", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -265,3 +265,70 @@ def test_requested_codex_models_can_be_forced(model):
 def test_retired_codex_models_cannot_be_routed_on_codex(model):
     with pytest.raises(SystemExit):
         select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(SOURCE_REGISTRY), {})
+
+
+DIRECT_HARNESSES = ("claude", "codex")
+BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck")
+NON_PLANNING_ROLES = ("impl", "review", "modify", "complexity", "artifact-recovery", "merge-recovery")
+DIRECT_MODELS = [
+    (agent, model)
+    for model, entry in json.loads(SOURCE_REGISTRY.read_text())["model_catalog"].items()
+    for agent in entry.get("agents", [])
+    if agent in DIRECT_HARNESSES
+]
+
+
+@pytest.mark.parametrize("band", BANDS)
+@pytest.mark.parametrize("role", NON_PLANNING_ROLES)
+@pytest.mark.parametrize("agent, model", DIRECT_MODELS)
+def test_direct_non_planning_effort_is_high_or_lower_configured(agent, model, role, band):
+    decision = select_route(
+        RouteRequest(role=role, complexity_level=band, forced_agent=agent, forced_model=model),
+        load_registry(SOURCE_REGISTRY), {})
+    assert decision.model == model
+    if agent == "codex":
+        assert decision.effort == "high"
+    else:
+        assert decision.effort in {"low", "medium", "high"}
+
+
+@pytest.mark.parametrize("band", BANDS)
+@pytest.mark.parametrize("agent, model", DIRECT_MODELS)
+def test_direct_planning_effort_is_xhigh_for_every_band(agent, model, band):
+    decision = select_route(
+        RouteRequest(role="plan", complexity_level=band, forced_agent=agent, forced_model=model),
+        load_registry(SOURCE_REGISTRY), {})
+    assert decision.model == model
+    assert decision.effort == "xhigh"
+
+
+@pytest.mark.parametrize("band", BANDS)
+@pytest.mark.parametrize("agent, model", DIRECT_MODELS)
+def test_high_difficulty_never_grants_planning_effort_to_ordinary_roles(agent, model, band):
+    decision = select_route(
+        RouteRequest(role="review", complexity_level=band, forced_agent=agent, forced_model=model),
+        load_registry(SOURCE_REGISTRY), {})
+    assert decision.effort != "xhigh"
+    assert decision.effort not in {"max", "maximum"}
+
+
+@pytest.mark.parametrize("band, effort", [("quite-easy", "low"), ("easy", "medium"), ("medium", "medium")])
+def test_claude_lower_configured_efforts_survive_non_planning_routes(band, effort):
+    decision = select_route(
+        RouteRequest(role="impl", complexity_level=band, forced_agent="claude", forced_model="claude-sonnet-5-5"),
+        load_registry(SOURCE_REGISTRY), {})
+    assert decision.effort == effort
+
+
+def test_claude_automatic_planning_defaults_to_xhigh_over_lower_configured_effort():
+    decision = select_route(
+        RouteRequest(role="plan", complexity_level="quite-easy", forced_agent="claude", forced_model="claude-sonnet-5-5"),
+        load_registry(SOURCE_REGISTRY), {})
+    assert (decision.model, decision.effort) == ("claude-sonnet-5-5", "xhigh")
+
+
+def test_planning_effort_uses_original_plan_role_not_routing_level():
+    decision = select_route(
+        RouteRequest(role="plan", complexity_level="quite-easy", forced_agent="codex"),
+        load_registry(SOURCE_REGISTRY), {})
+    assert (decision.routing_level, decision.effort) == ("medium", "xhigh")

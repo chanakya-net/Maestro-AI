@@ -21,7 +21,7 @@
       "agents": ["claude"],
       "work_bands": ["medium-hard", "complex", "holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "max"}
+      "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
     },
     "claude-fable-5-1": {
       "provider": "anthropic",
@@ -32,7 +32,7 @@
       "agents": ["claude"],
       "work_bands": ["holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"holy-fuck": "max"}
+      "effort_by_band": {"holy-fuck": "high"}
     },
     "claude-sonnet-5-5": {
       "provider": "anthropic",
@@ -53,7 +53,7 @@
       "agents": ["codex"],
       "work_bands": ["holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"holy-fuck": "max"}
+      "effort_by_band": {"holy-fuck": "high"}
     },
     "gpt-6-luna": {
       "provider": "openai",
@@ -87,7 +87,7 @@
       "agents": ["codex"],
       "work_bands": ["medium-hard", "complex", "holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
+      "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"},
       "complexity_bands": ["medium-hard", "complex", "holy-fuck"]
     },
     "gpt-5.4-mini": {
