@@ -90,7 +90,12 @@ def test_agy_authoritative_result_restores_multiline_status_and_markdown(tmp_pat
     narrative = '# Result λ\n\n```json\n{"decision":"ship"}\n```\nSTATUS|type=artifact-written|path=result.md\n'
     events = [{'event':'step_update','step_update':{'text_delta':'untrusted partial'}}, {'event':'result','result':{'status':'SUCCESS','response':narrative}}]
     config = configuration(tmp_path, 'agy', response=f"for event in {events!r}: print(json.dumps(event, ensure_ascii=False))")
+    config = config.replace(model='claude-sonnet-5-5-high')
     assert run_agent(config).return_code == 0
+    argv = json.loads((tmp_path/'argv.json').read_text(encoding='utf-8'))
+    model_flag = argv.index('--model')
+    assert argv[model_flag:model_flag + 2] == ['--model', 'claude-sonnet-5-5-high']
+    assert argv[-4:] == ['--input-format', 'stream-json', '--output-format', 'stream-json']
     output = capsys.readouterr().out
     assert output == narrative
     assert 'type=artifact-written|path=result.md' in config.events_log.read_text()
