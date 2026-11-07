@@ -53,6 +53,9 @@ def fake_package_installer(plan):
     purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': str(plan.prefix), 'platbase': str(plan.prefix)}))
     (purelib / 'fixture-payload.pth').write_text(str(root.parent) + '\n')
     (root / '__init__.py').write_text('# fixture package ' + plan.version)
+    (root / 'cli.py').write_text('# fixture CLI')
+    (root.parent / 'psutil.py').write_text('# fixture dependency')
+    if sys.platform == 'win32': (root.parent / 'win32api.py').write_text('# fixture dependency')
     if plan.source.is_dir():
         (root / 'data').mkdir()
         for name in RESOURCE_NAMES: shutil.copy2(plan.source / 'assets' / name, root / 'data' / name)
@@ -1055,3 +1058,64 @@ def test_update_cli_reports_incomplete_rollback(official_repository, tmp_path, m
     assert 'returned non-zero exit status 1' in captured.err
     assert 'rollback incomplete' in captured.err and str(extension) in captured.err
     assert str(tmp_path / 'assets/runtimes') in captured.err and 'registration-backups' in captured.err
+
+
+def test_update_rejects_retained_runtime_with_missing_dependency(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    def installer(plan):
+        root = fake_package_installer(plan)
+        shutil.copytree(plan.source / 'src/ai_skills', root, dirs_exist_ok=True)
+        purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': str(plan.prefix), 'platbase': str(plan.prefix)}))
+        (root.parent / 'psutil.py').unlink()
+        shutil.copytree(Path(psutil.__file__).parent, purelib / 'psutil')
+        (purelib / 'psutil-7.0.dist-info').mkdir()
+        return root
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update = lambda: run_update(config, repository=official_repository.as_uri(), package_installer=installer)
+    sha = _git(official_repository, 'rev-parse', 'main'); first = update()
+    _commit_readme(official_repository, 'next revision'); update()
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    target = config.home / '.codex/skills/pair-colleague/SKILL.md'; contents = target.read_bytes()
+    purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': first['prefix'], 'platbase': first['prefix']}))
+    shutil.rmtree(purelib / 'psutil')
+    _git(official_repository, 'reset', '-q', '--hard', sha)
+    with pytest.raises(ValueError, match='interpreter unusable'): update()
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active and target.read_bytes() == contents
+
+
+def test_update_keeps_npm_cache_outside_checkout(official_repository, tmp_path, monkeypatch):
+    from ai_skills.update import UpdateConfig, run_update
+    if not shutil.which('npx'): pytest.skip('npx unavailable')
+    checkout = tmp_path / 'checkout'; checkout.mkdir()
+    _git(checkout, 'init', '-q'); (checkout / 'tracked').write_text('content')
+    _git(checkout, 'add', 'tracked')
+    before = _git(checkout, 'status', '--porcelain', '--ignored')
+    monkeypatch.chdir(checkout)
+    monkeypatch.setenv('npm_config_cache', str(checkout / '.npm'))
+    monkeypatch.setenv('npm_config_offline', 'true')
+    with pytest.raises(subprocess.CalledProcessError):
+        run_update(UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('copilot',)),
+                   repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert _git(checkout, 'status', '--porcelain', '--ignored') == before
+    assert not (checkout / '.npm').exists()
+
+
+def test_update_revalidates_uninstall_baseline_under_lock(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update, official_source
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / '.agents/skills/pair-colleague'; target.mkdir(parents=True)
+    (target / 'SKILL.md').write_text('original X')
+    adapter = _skills_adapter(home)
+    config = InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('copilot',), replace_existing=True)
+    apply_install(plan_install(config), package_installer=fake_package_installer, registrar=adapter)
+    run_update(UpdateConfig(assets, home, ('copilot',)), repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+    _commit_readme(official_repository, 'revision B')
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        stale = plan_install(InstallConfig(source=checkout, assets_dest=assets, home=home, agents=('copilot',), source_revision={'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}))
+        apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+        (target / 'SKILL.md').write_text('original Y')
+        apply_install(plan_install(config), package_installer=fake_package_installer, registrar=adapter)
+        run_update(UpdateConfig(assets, home, ('copilot',)), repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+        apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+    assert (target / 'SKILL.md').read_text() == 'original Y'

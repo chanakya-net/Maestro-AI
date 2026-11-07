@@ -161,6 +161,7 @@ class InstallationPlan:
     pip_commands: tuple[tuple[str, ...], ...]
     registrations: tuple[dict, ...]
     source_revision: dict | None = None
+    active_snapshot: bytes | None = None
 
     def to_record(self):
         record = {'source': str(self.source), 'assets_dest': str(self.assets_dest), 'prefix': str(self.prefix),
@@ -271,8 +272,10 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                                   'undo': ['npx', '-y', 'skills', 'remove', *(s for s in SKILL_NAMES), '-a', PROFILES[agent], '--yes', '--global']})
     active = destination / 'runtime.json'
     external_owned, prior_entries = {}, {}
-    if active.exists():
-        previous = _object(active)
+    snapshot = active.read_bytes() if active.exists() else None
+    if snapshot is not None:
+        previous = json.loads(snapshot)
+        if not isinstance(previous, dict): raise ValueError(f'expected JSON object: {active}')
         if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
         for r in previous.get('registrations', []):
             if r.get('kind') == 'copy': prior_entries[r['target']] = r
@@ -310,7 +313,7 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                                 existing_sha256=digest, existing_owned=owned)
             if owned: _carry_original(registration, prior_entries.get(str(target)))
         else: _carry_original(registration, prior_entries.get(str(target)))  # recreating a missing managed target
-    return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision)
+    return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision, snapshot)
 
 
 def _receipt(prefix):
@@ -371,8 +374,9 @@ def _run_child(argv, *, cwd=None, env=None):
     return result
 
 
-def _runtime_root(python):
-    code = 'import ai_skills,json;from pathlib import Path;print(json.dumps(str(Path(ai_skills.__file__).parent)))'
+def _runtime_root(python, *, verify_dependencies=False):
+    imports = 'import ai_skills.cli,psutil,sys;exec("import win32api") if sys.platform == "win32" else None;' if verify_dependencies else ''
+    code = imports + 'import ai_skills,json;from pathlib import Path;print(json.dumps(str(Path(ai_skills.__file__).parent)))'
     result = subprocess.run([str(python), '-I', '-c', code], capture_output=True, text=True, check=True,
                             cwd=Path(python).parents[1], env=_isolated_environment())
     return Path(json.loads(result.stdout))
@@ -381,7 +385,7 @@ def _runtime_root(python):
 def _verify_interpreter(python, package_root):
     """A retained runtime must launch and import its own recorded package."""
     if not python.is_file(): raise ValueError(f'installed venv interpreter missing: {python}')
-    try: root = _runtime_root(python)
+    try: root = _runtime_root(python, verify_dependencies=True)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         raise ValueError(f'installed venv interpreter unusable: {python}: {error}') from error
     if root.resolve() != Path(package_root).resolve():
@@ -671,6 +675,10 @@ def _run_registration(argv, *, home=None):
             drive, tail = os.path.splitdrive(selected)
             environment.update(HOMEDRIVE=drive, HOMEPATH=tail)
     with tempfile.TemporaryDirectory(prefix='ai-skills-adapter-') as cwd:
+        for key in list(environment):
+            if key.upper() in ('NPM_CONFIG_CACHE', 'NPM_CONFIG_LOGS_DIR'): environment.pop(key)
+        environment['npm_config_cache'] = str(Path(cwd) / 'npm-cache')
+        environment['npm_config_logs_dir'] = str(Path(cwd) / 'npm-logs')
         _run_child(resolve_executable(tuple(argv), environment), cwd=cwd, env=environment)
 
 
@@ -696,6 +704,10 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
     _safe_assets(plan.assets_dest, plan.config.home or Path.home())
     plan.assets_dest.mkdir(parents=True, exist_ok=True)
     with DirectoryLock(plan.assets_dest / '.installation', timeout_seconds=.1):
+        active_path = plan.assets_dest / 'runtime.json'
+        snapshot = active_path.read_bytes() if active_path.exists() else None
+        if snapshot != plan.active_snapshot:
+            plan = plan_install(plan.config)
         if plan.prefix.exists() and not _receipt(plan.prefix).exists(): _clean_interrupted(plan.prefix)
         if plan.prefix.exists():
             receipt = _owned_receipt(plan.prefix, plan.fingerprint); _verify_payload(receipt, plan.prefix)
