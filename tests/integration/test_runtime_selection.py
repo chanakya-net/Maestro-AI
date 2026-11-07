@@ -112,3 +112,13 @@ def test_launcher_preserves_pin_precedence(tmp_path, monkeypatch, discovery):
         pin.write_text(invalid)
         with pytest.raises(ValueError):
             cli.runtime_command(args)
+
+
+def test_update_runs_locally_regardless_of_pin(tmp_path, monkeypatch):
+    root = tmp_path / 'project'
+    (root / '.run-with-it').mkdir(parents=True)
+    (root / '.run-with-it/engine.json').write_text(json.dumps({'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(tmp_path / 'missing-python')}))
+    monkeypatch.delenv('AI_SKILLS_RUN_ROOT', raising=False)
+    monkeypatch.setenv('ASSETS_DEST', str(tmp_path / 'assets'))
+    monkeypatch.chdir(root)
+    assert cli.runtime_command(['update', '--only', 'codex']) is None

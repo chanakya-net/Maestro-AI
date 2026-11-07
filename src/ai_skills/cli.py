@@ -24,7 +24,7 @@ def runtime_command(arguments: list[str]) -> list[str] | None:
     """Select the run's immutable interpreter before importing its commands."""
     if not arguments or any(arg in ('--help', '-h', '--version') for arg in arguments):
         return None
-    if arguments[0] in ('doctor', 'install', 'uninstall'):
+    if arguments[0] in ('doctor', 'install', 'uninstall', 'update'):
         return None
 
     def option(name):
@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     modules = {'agent': 'runner', 'worker': 'dispatch', 'pair': 'pair',
                'state': 'state', 'route': 'routing', 'artifact': 'artifacts',
                'github': 'github', 'report': 'reports', 'git': 'git_operations',
-               'install': 'installation', 'uninstall': 'installation'}
+               'install': 'installation', 'uninstall': 'installation', 'update': 'update'}
     if arguments and arguments[0] == 'run':
         operation = arguments[1] if len(arguments) > 1 else '--help'
         if operation in ('watch', 'stop', 'inspect'):

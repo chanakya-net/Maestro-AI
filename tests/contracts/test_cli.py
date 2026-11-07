@@ -99,6 +99,6 @@ def test_bootstrap_commands_remain_local(tmp_path):
     (assets / "runtime.json").write_text("not json")
     env = {"ASSETS_DEST": str(assets)}
     for args in ((), ("--help",), ("--version",), ("doctor", "--json"),
-                 ("install", "--list"), ("uninstall", "--list")):
+                 ("install", "--list"), ("uninstall", "--list"), ("update", "--help")):
         result = invoke(*args, cwd=tmp_path, extra_env=env)
         assert result.returncode == 0, result.stderr
