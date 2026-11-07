@@ -150,7 +150,7 @@ def _preview(plan, revision):
 
 
 def _report_failure(error):
-    print(f'ai-skills update: {error or "interrupted"}', file=sys.stderr)
+    print(f'ai-skills update: {str(error) or "interrupted"}', file=sys.stderr)
     recovery = getattr(error, '_installation_recovery', None)
     if recovery:
         description = {'restored': 'prior installation restored', 'incomplete': 'recovery incomplete'}.get(recovery, recovery)

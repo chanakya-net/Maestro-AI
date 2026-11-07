@@ -537,7 +537,7 @@ def _copy_tree(source, destination):
         shutil.copytree(source, destination, symlinks=True)
 
 
-def _register_copy(registration, root, fingerprint, transaction=None):
+def _register_copy(registration, root, fingerprint, transaction):
     target = Path(registration['target'])
     for ancestor in target.parents:
         if ancestor.is_symlink(): raise ValueError(f'symlink escape in registration path: {ancestor}')
@@ -556,31 +556,21 @@ def _register_copy(registration, root, fingerprint, transaction=None):
         raise ValueError(f'skill registration disappeared after planning: {target}')
     payload = (root / 'skills' / registration['skill'] / 'SKILL.md').read_text(encoding='utf-8')
     target.parent.mkdir(parents=True, exist_ok=True)
-    token = transaction.state['token'] if transaction else uuid.uuid4().hex
+    token = transaction.state['token']
     staged = target.with_name('.' + target.name + '.staging.' + token)
-    staged.mkdir()
-    (staged / 'SKILL.md').write_text(payload, encoding='utf-8')
-    write_json_atomic(staged / '.ai-skills-registration.json', {'owner': OWNER, 'path': str(target), 'fingerprint': fingerprint, 'files': {'SKILL.md': _hash(staged / 'SKILL.md')}})
-    previous = None
-    if transaction:
-        transaction.expect(target, _tree_hash(staged))
-        if exists: previous = target.with_name('.' + target.name + '.previous.' + token)
-        if previous: target.rename(previous)
-        staged.rename(target)
-        return  # The journal owns cleanup and restoration, including post-rename errors.
     try:
-        if exists:
-            previous = target.with_name('.' + target.name + '.previous.' + uuid.uuid4().hex)
-            target.rename(previous)
-        staged.rename(target)
-        if previous:
-            if previous.is_symlink(): previous.unlink()
-            else: shutil.rmtree(previous)
+        staged.mkdir()
+        (staged / 'SKILL.md').write_text(payload, encoding='utf-8')
+        write_json_atomic(staged / '.ai-skills-registration.json', {'owner': OWNER, 'path': str(target), 'fingerprint': fingerprint, 'files': {'SKILL.md': _hash(staged / 'SKILL.md')}})
     except BaseException:
-        if previous and (previous.exists() or previous.is_symlink()) and not target.exists(): previous.rename(target)
+        # Before expect(), this token's directory is scratch; the target is untouched.
+        try:
+            if staged.exists() or staged.is_symlink(): _remove_tree(staged)
+        except OSError: pass  # Journal recovery retries cleanup without masking the failure.
         raise
-    finally:
-        if staged.exists(): shutil.rmtree(staged)
+    transaction.expect(target, _tree_hash(staged))
+    if exists: target.rename(target.with_name('.' + target.name + '.previous.' + token))
+    staged.rename(target)  # The journal owns cleanup and restoration after expect().
 
 
 def _restore_copy(registration, fingerprint):
@@ -625,7 +615,7 @@ class _AdapterActivation:
     later adapters inherit that baseline, so rollback and uninstall restore it once.
     """
 
-    def __init__(self, transaction=None):
+    def __init__(self, transaction):
         self.current, self.owners = {}, {}  # target -> digest written here | items sharing it
         self.transaction = transaction
 
@@ -662,12 +652,12 @@ class _AdapterActivation:
         """Expect each target as observed after this activation's own undo succeeded."""
         for item in registration.get('paths', []):
             self.current[item['target']] = _adapter_state(item['target'])
-        if self.transaction: self.transaction.settle(registration)
+        self.transaction.settle(registration)
 
     def record(self, registration):
         for item in registration.get('paths', []):
             self.settle_owners(item['target'], self.owners[item['target']], _adapter_state(item['target']))
-        if self.transaction: self.transaction.settle(registration)
+        self.transaction.settle(registration)
 
     def settle_owners(self, target, owners, digest):
         self.current[target] = digest
@@ -685,36 +675,6 @@ class _AdapterActivation:
                     if key in owners[0]: item[key] = owners[0][key]
                     else: item.pop(key, None)
                 self.settle_owners(item['target'], [item], self.current.get(item['target']))
-
-    def rollback(self, registration, handled):
-        """Restore each target once; keep output this activation cannot explain."""
-        failures = []
-        for item in registration.get('paths', []):
-            if item['target'] in handled: continue
-            handled.add(item['target'])
-            try: self._restore(item)
-            except (OSError, ValueError) as failure: failures.append(str(failure))
-        return failures
-
-    def _restore(self, item):
-        target = Path(item['target'])
-        actual = _adapter_state(target)
-        if actual != self.expected(item):
-            kept = f'; its backup is kept at {item["backup"]}' if item.get('backup') else ''
-            raise ValueError(f'unverified adapter output preserved at {target}{kept}')
-        if actual is not None: _remove_tree(target)
-        if item.get('backup'): _restore_backup(item)
-
-
-def _rollback(applied, fingerprint, adapters):
-    """Attempt to undo every applied registration; return what could not be restored."""
-    failures, handled = [], set()
-    for registration in reversed(applied):
-        if registration['kind'] != 'copy':
-            failures += adapters.rollback(registration, handled); continue
-        try: _restore_copy(registration, fingerprint)
-        except (OSError, ValueError) as failure: failures.append(str(failure))
-    return failures
 
 
 def _restore_adapter(registration):
@@ -814,6 +774,8 @@ class _ActivationTransaction:
     Before-images outlive temporary sources and remain with the receipted runtime.
     Only observed successful adapter output is owned; an unfinished external call
     cannot be inferred safe merely because its installer process has died.
+    Stop the adapter, verify affected targets against their backups and repair
+    them manually, then remove the journal before retrying an unfinished call.
     """
 
     def __init__(self, destination, state):
@@ -970,7 +932,8 @@ class _ActivationTransaction:
                                ('restoring', item['before']), ('displaced', item['after'])):
             path = self.auxiliary(item, suffix)
             if not path.exists() and not path.is_symlink(): continue
-            if _adapter_state(path) != digest:
+            scratch = suffix == 'staging' and item['after'] == item['before']
+            if not scratch and _adapter_state(path) != digest:
                 raise ValueError(f'edited recovery staging content preserved: {path}')
             _remove_tree(path)
 
@@ -979,7 +942,9 @@ class _ActivationTransaction:
         backup = self.checked_backup(item)
         actual = _transaction_digest(target, item['kind'])
         if item['target'] in self.state['external_pending']:
-            raise ValueError(f'unfinished adapter execution; output preserved: {target}; backup: {backup}')
+            raise ValueError(f'unfinished adapter execution; output preserved: {target}; backup: {backup}; '
+                             f'stop the adapter, verify {target} against {backup}, '
+                             f'repair it manually, then remove {self.path} before retrying')
         if actual == item['before']:
             self.cleanup_entry(item); return
         if actual is not None and actual != item['after']:
@@ -996,6 +961,8 @@ class _ActivationTransaction:
     def restore_tree(self, item, target, backup, actual):
         staged, displaced = (self.auxiliary(item, suffix) for suffix in ('restoring', 'displaced'))
         if item['before'] is not None:
+            if (staged.exists() or staged.is_symlink()) and _adapter_state(staged) != item['before']:
+                _remove_tree(staged)  # An interrupted copy is scratch, unlike displaced content.
             if not staged.exists() and not staged.is_symlink():
                 target.parent.mkdir(parents=True, exist_ok=True); _copy_tree(backup, staged)
             if _adapter_state(staged) != item['before']: raise ValueError(f'changed recovery staging: {staged}')
@@ -1198,6 +1165,8 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
             snapshot = active_path.read_bytes() if active_path.exists() else None
             if snapshot != plan.active_snapshot or active_path.is_symlink():
                 plan = plan_install(plan.config)
+            if active_path.is_symlink():
+                raise ValueError(f'active runtime manifest is a symlink; refusing to replace it: {active_path}')
             _check_install_source(plan)
             if plan.config.skip_current_revision and plan.source_revision and snapshot is not None:
                 active = _object(active_path)

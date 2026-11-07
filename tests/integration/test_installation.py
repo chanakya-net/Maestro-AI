@@ -1603,6 +1603,24 @@ def test_default_update_rechecks_manifest_symlink_under_lock(official_repository
             apply_install(stale, package_installer=lambda plan: pytest.fail('unexpected installer'))
 
 
+@pytest.mark.parametrize('before_planning', [True, False])
+def test_explicit_install_rejects_manifest_symlink_before_staging(source_tree, tmp_path, before_planning):
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('new runtime candidate')
+    active, other = first.assets_dest / 'runtime.json', first.assets_dest / 'other.json'
+    if not before_planning: candidate = plan_install(config)
+    active.rename(other); active.symlink_to(other)
+    if before_planning: candidate = plan_install(config)
+    prefixes = set((first.assets_dest / 'runtimes').iterdir())
+    with pytest.raises(ValueError, match='active runtime manifest is a symlink') as failure:
+        apply_install(candidate, package_installer=lambda plan: pytest.fail('unexpected installer'))
+    assert str(active) in str(failure.value)
+    assert set((first.assets_dest / 'runtimes').iterdir()) == prefixes
+    assert active.is_symlink()
+
+
 @pytest.mark.parametrize('kind', ['adapter', 'copy'])
 def test_update_cli_dry_run_edited_backup_is_pattern_matching_later_apply(official_repository, tmp_path, monkeypatch, capsys, kind):
     import fnmatch
@@ -1729,6 +1747,38 @@ def test_update_transaction_restores_prior_installation(source_tree, tmp_path, m
     assert not getattr(failure.value, '__notes__', [])
     assert first.python.is_file() and second.python.is_file()
     assert not (first.assets_dest / '.installation-transaction.json').exists()
+
+
+@pytest.mark.parametrize('boundary', ['receipt-before', 'receipt-after', 'expect-before'])
+def test_update_transaction_restores_after_staging_write_failure(source_tree, tmp_path, monkeypatch, boundary):
+    import ai_skills.installation as installation
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    active = first.assets_dest / 'runtime.json'
+    before = active.read_bytes(), _tree_snapshot(config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('staging failure candidate')
+    candidate = plan_install(config)
+    injected = OSError('injected staging failure')
+    real_write, real_expect = installation.write_json_atomic, installation._ActivationTransaction.expect
+    def write(path, value):
+        if '.staging.' in Path(path).parent.name and boundary != 'expect-before':
+            if boundary == 'receipt-after': real_write(path, value)
+            raise injected
+        real_write(path, value)
+    def expect(self, target, digest):
+        if Path(target).parent == config.home / '.codex/skills': raise injected
+        real_expect(self, target, digest)
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    if boundary == 'expect-before': monkeypatch.setattr(installation._ActivationTransaction, 'expect', expect)
+    with pytest.raises(OSError, match='injected staging failure') as failure:
+        apply_install(candidate, package_installer=fake_package_installer)
+    assert failure.value is injected
+    assert getattr(failure.value, '_installation_recovery') == 'restored'
+    assert not getattr(failure.value, '__notes__', [])
+    assert not (first.assets_dest / '.installation-transaction.json').exists()
+    assert (active.read_bytes(), _tree_snapshot(config.home)) == before
+    assert not list((config.home / '.codex/skills').glob('.*'))
 
 
 @pytest.mark.parametrize('fault', ['interpreter', 'cli-import', 'module-entry'])
@@ -1879,7 +1929,10 @@ def test_update_transaction_recovers_interrupted_activation(source_tree, tmp_pat
     if checkpoint == 'adapter-running':
         with pytest.raises(ValueError, match='unfinished adapter') as failure: update.run_update(options)
         assert journal.is_file()
-        assert str(config.home / '.gemini/extensions/ai-skill-collections') in str(failure.value)
+        target = config.home / '.gemini/extensions/ai-skill-collections'
+        entry = next(item for item in json.loads(journal.read_text())['entries'] if item['target'] == str(target))
+        assert f'verify {target} against {entry["backup"]}' in str(failure.value)
+        assert f'repair it manually, then remove {journal} before retrying' in str(failure.value)
         assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
         return
     for _ in range(2):
@@ -1894,6 +1947,23 @@ def test_update_transaction_recovers_interrupted_activation(source_tree, tmp_pat
         assert not (candidate.prefix / 'runtime.json').exists()
     assert first.python.is_file() and candidate.python.is_file()
     assert list((candidate.prefix / 'registration-backups').glob('activation-*'))
+
+
+@pytest.mark.parametrize('displaced', [False, True])
+def test_update_transaction_recovers_partial_restoration_copy(source_tree, tmp_path, displaced):
+    import ai_skills.installation as installation
+    config, _, _, before = _crash_activation(source_tree, tmp_path, 'active')
+    journal = config.assets_dest / '.installation-transaction.json'
+    token = json.loads(journal.read_text())['token']
+    target = config.home / '.codex/skills/pair-colleague'
+    staged = target.with_name(f'.{target.name}.restoring.{token}')
+    staged.mkdir()
+    (staged / 'SKILL.md').write_text('partial restoration')
+    if displaced: target.rename(target.with_name(f'.{target.name}.displaced.{token}'))
+    assert installation._recover_installation(config.assets_dest, config.home) == 'restored'
+    assert not journal.exists()
+    assert _tree_snapshot(config.home) == before['home']
+    assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
 
 
 @pytest.mark.parametrize('fault', ['manifest-restore', 'copy-restore', 'missing-backup', 'damaged-backup', 'target-edit'])
@@ -2063,6 +2133,7 @@ def test_update_transaction_cli_reports_recovery_outcome(official_repository, tm
     assert update.main(args) == (130 if outcome == 'interrupted' else 2)
     captured = capsys.readouterr()
     assert captured.out == ''
+    if outcome == 'interrupted': assert 'ai-skills update: interrupted' in captured.err
     if outcome.startswith('committed'):
         assert 'committed' in captured.err and 'restored' not in captured.err
         assert json.loads((assets / 'runtime.json').read_text())['fingerprint'] != first['fingerprint']
