@@ -1,10 +1,13 @@
 """Registry edits must reach both model selection and CLI invocation."""
 import json
+from pathlib import Path
 
 import pytest
 
 from ai_skills import routing
 from ai_skills.runner import AgentRunConfig, build_invocation, load_registry
+
+SOURCE_REGISTRY = Path(__file__).parents[2] / "assets" / "agent-registry.json"
 
 
 @pytest.fixture
@@ -141,3 +144,66 @@ def test_malformed_nested_configuration_reports_a_validation_error(registry_file
     registry_file.write_text(json.dumps(payload))
     with pytest.raises(ValueError):
         load_registry(registry_file)
+
+
+def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_excluded():
+    catalog = json.loads(SOURCE_REGISTRY.read_text())["model_catalog"]
+    assert {
+        model: {
+            "agents": catalog[model]["agents"],
+            "work_bands": catalog[model]["work_bands"],
+            "complexity_weight": catalog[model]["complexity_weight"],
+            "exclude_from_complexity": catalog[model]["exclude_from_complexity"],
+        }
+        for model in ("gemini-3.8-flash-low", "gemini-3.8-flash-medium")
+    } == {
+        "gemini-3.8-flash-low": {
+            "agents": ["agy"], "work_bands": ["quite-easy"],
+            "complexity_weight": 3, "exclude_from_complexity": True,
+        },
+        "gemini-3.8-flash-medium": {
+            "agents": ["agy"], "work_bands": ["easy"],
+            "complexity_weight": 4, "exclude_from_complexity": True,
+        },
+    }
+
+
+def test_agy_direct_membership_and_usage_targets_remain_intact():
+    source = json.loads(SOURCE_REGISTRY.read_text())
+    agy_models = sorted(
+        model for model, entry in source["model_catalog"].items()
+        if "agy" in entry.get("agents", [])
+    )
+    assert agy_models == sorted([
+        "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
+        "gemini-3.5-flash-medium", "gemini-3.8-flash-low", "gemini-3.8-flash-medium",
+        "gpt-0ss-120b-medium",
+    ])
+    assert source["model_routing"]["usage_distribution"] == {
+        "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
+        "role_target_percent": {
+            "complexity": {"agy": 50, "codex": 25, "claude": 25},
+            "impl": {"codex": 65, "claude": 30, "agy": 5},
+            "review": {"claude": 60, "codex": 35, "agy": 5},
+            "modify": {"codex": 65, "claude": 30, "agy": 5},
+            "artifact-recovery": {"codex": 60, "claude": 40, "agy": 0},
+            "merge-recovery": {"codex": 60, "claude": 40, "agy": 0},
+            "plan": {"claude": 70, "codex": 30, "agy": 0},
+        },
+        "non_complexity_band_target_percent": {
+            "default": {"codex": 70, "claude": 30, "agy": 0},
+            "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
+            "easy": {"codex": 55, "claude": 40, "agy": 5},
+            "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
+        },
+        "role_band_target_percent": {
+            "complexity": {
+                "default": {"agy": 50, "codex": 25, "claude": 25},
+                "quite-easy": {"codex": 40, "claude": 35, "agy": 25},
+            }
+        },
+        "role_agent_preference": {
+            "default": ["codex", "claude", "agy"],
+            "complexity": ["claude", "codex", "agy"],
+        },
+    }

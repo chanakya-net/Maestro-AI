@@ -147,6 +147,22 @@
       "context_window": 1048576,
       "agents": ["agy"]
     },
+    "gemini-3.8-flash-low": {
+      "provider": "google",
+      "ability": "fast",
+      "complexity_weight": 3,
+      "exclude_from_complexity": true,
+      "agents": ["agy"],
+      "work_bands": ["quite-easy"]
+    },
+    "gemini-3.8-flash-medium": {
+      "provider": "google",
+      "ability": "balanced",
+      "complexity_weight": 4,
+      "exclude_from_complexity": true,
+      "agents": ["agy"],
+      "work_bands": ["easy"]
+    },
     "gemini-3.1-pro-low": {
       "provider": "google",
       "ability": "balanced",
@@ -181,10 +197,10 @@
     ],
     "non_complexity_band_policy": {
       "quite-easy": {
-        "providers": ["google"]
+        "models": ["gemini-3.8-flash-low"]
       },
       "easy": {
-        "providers": ["google"]
+        "models": ["gemini-3.8-flash-medium"]
       }
     },
     "usage_distribution": {

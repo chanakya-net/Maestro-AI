@@ -365,11 +365,15 @@ edit `model_routing.usage_distribution`:
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
 
-The `non_complexity_band_policy` provider entries additionally admit Google models
-at the two simple work bands. Google models still execute through AGY only.
-Review moves the task up one band; planning moves it up two, capped at the highest.
-Explicit agent/model overrides retain their existing compatibility and
-availability checks and can select models outside automatic band lists.
+Automatic non-scoring work uses AGY Flash Low (`gemini-3.8-flash-low`) at the
+effective `quite-easy` band and Flash Medium (`gemini-3.8-flash-medium`) at
+`easy`. These are the only AGY worker models admitted automatically at those
+bands; AGY has no automatic worker at medium or harder bands. Review raises the
+effective band by one and planning by two, capped at the highest. Both Flash
+worker entries are excluded from complexity scoring, whose existing model
+policy remains unchanged. Existing usage targets and older direct model
+memberships remain unchanged. Explicit agent/model overrides retain compatibility
+and availability checks and may select a model outside automatic band lists.
 
 `selection_strategy: "usage-share-debt"` describes the existing deterministic
 algorithm. The router ranks eligible agent/model pairs by global and role usage
