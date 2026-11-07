@@ -861,7 +861,7 @@ def test_update_rolls_back_other_registrations_after_adapter_failure(official_re
 
 def _skills_adapter(home):
     """npx skills stand-in: add copies into ~/.agents/skills plus the profile root; remove deletes both."""
-    profiles = {'github-copilot': '.copilot/skills', 'antigravity': '.gemini/antigravity/skills'}
+    profiles = {'github-copilot': '.copilot/skills', 'antigravity': '.gemini/antigravity/skills', 'agy': '.agy/skills'}
     def adapter(argv):
         roots = [home / '.agents/skills', home / profiles[argv[argv.index('-a') + 1]]]
         if 'remove' in argv:
@@ -971,9 +971,10 @@ def _target_entries(manifest, target):
     return [i for i in entries if i.get('target') == str(target)]
 
 
+@pytest.mark.parametrize('default_selection', [False, True])
 @pytest.mark.parametrize('agents', [('codex',), ('copilot', 'antigravity')])
 def test_update_restores_original_after_recreating_missing_registration(official_repository, source_tree, tmp_path,
-                                                                         monkeypatch, agents):
+                                                                         monkeypatch, agents, default_selection):
     import ai_skills.installation as installation
     from ai_skills.update import UpdateConfig, run_update
     home, assets = tmp_path / 'home', tmp_path / 'assets'
@@ -995,10 +996,11 @@ def test_update_restores_original_after_recreating_missing_registration(official
         if path == assets / 'runtime.json': raise OSError('activation failed')
         return write(path, value)
     monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
-    with pytest.raises(OSError, match='activation failed'): update(agents[:1])
+    selected = () if default_selection else agents[:1]
+    with pytest.raises(OSError, match='activation failed'): update(selected)
     assert not target.exists() and (assets / 'runtime.json').read_bytes() == active
     monkeypatch.setattr(installation, 'write_json_atomic', write)
-    second = update(agents[:1])
+    second = update(selected)
     assert 'revision B' in (target / 'SKILL.md').read_text()
     entries = _target_entries(second, target)
     assert len(entries) == len(agents)
@@ -1119,3 +1121,121 @@ def test_update_revalidates_uninstall_baseline_under_lock(official_repository, s
         apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
     apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
     assert (target / 'SKILL.md').read_text() == 'original Y'
+
+
+def test_default_update_refreshes_only_manifest_copy_registrations(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home,
+                                                     agents=('codex', 'claude'))), package_installer=fake_package_installer)
+    removed = next(r for r in first['registrations'] if r['agent'] == 'codex' and r['skill'] != 'pair-colleague')
+    first['registrations'].remove(removed)
+    write_json_atomic(assets / 'runtime.json', first)
+    untouched = Path(removed['target']) / 'SKILL.md'; before = untouched.read_bytes()
+    other = home / '.gemini/extensions/ai-skill-collections/user'; other.parent.mkdir(parents=True); other.write_text('user')
+    _commit_skill(official_repository, 'new copy payload')
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    updated = run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    key = lambda r: (r['agent'], r['kind'], r.get('skill'))
+    assert {key(r) for r in updated['registrations']} == {key(r) for r in first['registrations']}
+    assert 'new copy payload' in (home / '.codex/skills/pair-colleague/SKILL.md').read_text()
+    assert untouched.read_bytes() == before and other.read_text() == 'user'
+
+
+@pytest.mark.parametrize('agents', [('gemini',), ('copilot', 'antigravity'), ('agy',)])
+def test_default_update_refreshes_only_manifest_command_registrations(official_repository, source_tree, tmp_path, monkeypatch, agents):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    adapter = _deterministic_gemini(home / '.gemini/extensions/ai-skill-collections') if agents == ('gemini',) else _skills_adapter(home)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=agents))
+    first = apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    for entry in first['registrations']:
+        entry['argv'] = ['untrusted']; entry['undo'] = ['untrusted']
+    write_json_atomic(assets / 'runtime.json', first)
+    _commit_skill(official_repository, 'new command payload')
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    calls = []
+    def registrar(argv):
+        calls.append(argv); adapter(argv)
+    updated = run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                         package_installer=fake_package_installer, registrar=registrar)
+    assert [r['agent'] for r in updated['registrations']] == list(agents)
+    installs = [c for c in calls if 'install' in c or 'add' in c]
+    assert len(installs) == len(agents) and all(str(updated['prefix']) in ' '.join(c) for c in installs)
+    assert all(c != ['untrusted'] for c in calls)
+    assert all(r['argv'] != ['untrusted'] and r['undo'] != ['untrusted'] for r in updated['registrations'])
+    if agents != ('gemini',): assert 'new command payload' in (home / '.agents/skills/pair-colleague/SKILL.md').read_text()
+
+
+@pytest.mark.parametrize('state', ['missing', 'empty', 'legacy'])
+def test_default_update_without_registrations_never_detects_agents(official_repository, source_tree, tmp_path, monkeypatch, state):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    if state != 'missing':
+        first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('codex',))), package_installer=fake_package_installer)
+        apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home, agents=('codex',))))
+        if state == 'legacy':
+            first = json.loads((assets / 'runtime.json').read_text()); first.pop('registrations'); write_json_atomic(assets / 'runtime.json', first)
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    kwargs = dict(repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=lambda argv: pytest.fail('unexpected registrar'))
+    if state == 'missing':
+        with pytest.raises(ValueError, match='install first'): run_update(UpdateConfig(assets, home), **kwargs)
+    else:
+        updated = run_update(UpdateConfig(assets, home), **kwargs)
+        assert updated['registrations'] == [] and not (home / '.claude').exists()
+
+
+@pytest.mark.parametrize('case', ['copy', 'command', 'owner', 'identity', 'path', 'symlink'])
+def test_default_update_rejects_unowned_registration_sources(official_repository, source_tree, tmp_path, case):
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    agents = ('copilot',) if case == 'command' else ('codex',)
+    adapter = _skills_adapter(home) if case == 'command' else None
+    first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=agents)), package_installer=fake_package_installer, registrar=adapter)
+    active = assets / 'runtime.json'
+    if case in ('copy', 'command'):
+        target = Path(first['registrations'][0]['target'] if case == 'copy' else first['registrations'][0]['paths'][0]['target'])
+        shutil.rmtree(target); target.mkdir(parents=True); (target / 'user').write_text('foreign')
+    elif case == 'owner': first['owner'] = 'foreign'
+    elif case == 'identity': first['registrations'][0]['agent'] = 'gemini'
+    elif case == 'path': first['registrations'][0]['target'] = str(tmp_path / 'foreign')
+    if case not in ('copy', 'command', 'symlink'): write_json_atomic(active, first)
+    if case == 'symlink':
+        other = assets / 'other.json'; active.rename(other); active.symlink_to(other)
+    before = active.read_bytes()
+    calls = []
+    with pytest.raises(ValueError):
+        run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(), package_installer=lambda p: calls.append(p), registrar=calls.append)
+    assert calls == [] and active.read_bytes() == before
+    if case in ('copy', 'command'): assert (target / 'user').read_text() == 'foreign'
+
+
+def test_default_update_reselects_registrations_after_manifest_change(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import official_source
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('codex', 'claude'))), package_installer=fake_package_installer)
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        revision = {'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}
+        stale = plan_install(InstallConfig(source=checkout, assets_dest=assets, home=home, source_revision=revision))
+        apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home, agents=('claude',))))
+        updated = apply_install(stale, package_installer=fake_package_installer)
+    assert {r['agent'] for r in updated['registrations']} == {'codex'}
+    assert not (home / '.claude/skills/pair-colleague').exists()
+
+
+def test_default_update_rechecks_manifest_symlink_under_lock(official_repository, source_tree, tmp_path):
+    from ai_skills.update import official_source
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('codex',))), package_installer=fake_package_installer)
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        revision = {'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}
+        stale = plan_install(InstallConfig(source=checkout, assets_dest=assets, home=home, source_revision=revision))
+        active = assets / 'runtime.json'; other = assets / 'other.json'
+        active.rename(other); active.symlink_to(other)
+        with pytest.raises(ValueError, match='owned active runtime manifest'):
+            apply_install(stale, package_installer=lambda plan: pytest.fail('unexpected installer'))

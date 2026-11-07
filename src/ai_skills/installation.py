@@ -237,6 +237,43 @@ def _owned_backup(backup, destination):
     return True
 
 
+def _manifest_registrations(manifest, destination, home):
+    """Validate the manifest authority before deriving automatic update targets."""
+    if type(manifest.get('schema_version')) is not int or manifest['schema_version'] != 1:
+        raise ValueError('unsupported active runtime manifest schema')
+    def check_runtime(prefix, fingerprint):
+        if not isinstance(prefix, str) or not isinstance(fingerprint, str) or not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
+            raise ValueError('invalid registration runtime reference')
+        path = _absolute(prefix)
+        if str(path) != prefix or path.parent != destination / 'runtimes' or path.is_symlink() or path.parent.is_symlink():
+            raise ValueError('registration runtime prefix escapes owned runtimes')
+        _owned_receipt(path, fingerprint)
+    check_runtime(manifest.get('prefix'), manifest.get('fingerprint'))
+    entries = manifest.get('registrations', [])
+    if not isinstance(entries, list): raise ValueError('invalid manifest registrations')
+    selected, seen = [], set()
+    for entry in entries:
+        if not isinstance(entry, dict): raise ValueError('invalid manifest registration')
+        agent, kind = entry.get('agent'), entry.get('kind')
+        if not isinstance(agent, str) or agent not in AGENTS or kind != ('copy' if agent in ('codex', 'claude') else 'command'):
+            raise ValueError('invalid manifest registration identity')
+        check_runtime(entry.get('runtime_prefix', manifest['prefix']), entry.get('fingerprint', manifest['fingerprint']))
+        if kind == 'copy':
+            skill = entry.get('skill')
+            if not isinstance(skill, str) or skill not in SKILL_NAMES or entry.get('target') != str(home / ('.codex' if agent == 'codex' else '.claude') / 'skills' / skill):
+                raise ValueError('invalid manifest copy target')
+            key = (agent, skill)
+        else:
+            key = (agent, None)
+            paths = entry.get('paths', [])
+            allowed = {str(path) for path in _external_paths(agent, home)}
+            if not isinstance(paths, list) or any(not isinstance(item, dict) or item.get('target') not in allowed for item in paths):
+                raise ValueError('invalid manifest adapter target')
+        if key in seen: raise ValueError('duplicate manifest registration')
+        seen.add(key); selected.append(key)
+    return selected
+
+
 def plan_install(config: InstallConfig) -> InstallationPlan:
     if sys.version_info < (3, 12): raise ValueError('Python 3.12 or newer is required')
     revision = _check_source_revision(config.source_revision)
@@ -255,13 +292,24 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
     pip_commands = []
     if pins: pip_commands.append((str(python), '-I', '-m', 'pip', 'install', *pins))
     pip_commands.append((str(python), '-I', '-m', 'pip', 'install', '--no-deps', str(source)))
-    agents = config.agents or _detect(home)
+    active = destination / 'runtime.json'
+    automatic = revision is not None and not config.agents
+    if automatic and (active.is_symlink() or not active.is_file()):
+        raise ValueError('no owned active runtime manifest; install first')
+    snapshot = active.read_bytes() if active.exists() else None
+    previous = json.loads(snapshot) if snapshot is not None else None
+    if previous is not None:
+        if not isinstance(previous, dict): raise ValueError(f'expected JSON object: {active}')
+        if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
+    selected = _manifest_registrations(previous, destination, home) if automatic else None
+    agents = tuple(dict.fromkeys(agent for agent, _ in selected)) if automatic else (config.agents or _detect(home))
     registrations = []
     for agent in dict.fromkeys(agents):
         if agent not in AGENTS: raise ValueError(f'unsupported registration agent: {agent}')
         if agent in ('codex', 'claude'):
             root = home / ('.codex' if agent == 'codex' else '.claude') / 'skills'
             for skill in SKILL_NAMES:
+                if automatic and (agent, skill) not in selected: continue
                 registrations.append({'kind': 'copy', 'agent': agent, 'skill': skill, 'target': str(root / skill)})
         elif agent == 'gemini':
             registrations.append({'kind': 'command', 'agent': agent, 'argv': ['gemini', 'extensions', 'install', '--consent', str(prefix / 'registration/gemini')],
@@ -270,13 +318,8 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
             registrations.append({'kind': 'command', 'agent': agent,
                                   'argv': ['npx', '-y', 'skills', 'add', str(prefix / 'registration/skills'), '-a', PROFILES[agent], '--yes', '--global'],
                                   'undo': ['npx', '-y', 'skills', 'remove', *(s for s in SKILL_NAMES), '-a', PROFILES[agent], '--yes', '--global']})
-    active = destination / 'runtime.json'
     external_owned, prior_entries = {}, {}
-    snapshot = active.read_bytes() if active.exists() else None
-    if snapshot is not None:
-        previous = json.loads(snapshot)
-        if not isinstance(previous, dict): raise ValueError(f'expected JSON object: {active}')
-        if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
+    if previous is not None:
         for r in previous.get('registrations', []):
             if r.get('kind') == 'copy': prior_entries[r['target']] = r
             for p in r.get('paths', []):
@@ -706,7 +749,7 @@ def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=N
     with DirectoryLock(plan.assets_dest / '.installation', timeout_seconds=.1):
         active_path = plan.assets_dest / 'runtime.json'
         snapshot = active_path.read_bytes() if active_path.exists() else None
-        if snapshot != plan.active_snapshot:
+        if snapshot != plan.active_snapshot or (plan.source_revision and not plan.config.agents and active_path.is_symlink()):
             plan = plan_install(plan.config)
         if plan.prefix.exists() and not _receipt(plan.prefix).exists(): _clean_interrupted(plan.prefix)
         if plan.prefix.exists():
