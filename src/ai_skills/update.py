@@ -12,6 +12,7 @@ import argparse
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -19,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 
-from ai_skills.installation import AGENTS, InstallConfig, apply_install, plan_install
+from ai_skills.installation import AGENTS, InstallConfig, _registration_receipt, apply_install, plan_install
 
 OFFICIAL_REPOSITORY = 'https://github.com/chanakya-net/Maestro-AI.git'
 OFFICIAL_BRANCH = 'main'
@@ -31,6 +32,7 @@ class UpdateConfig:
     assets_dest: Path | None = None
     home: Path | None = None
     agents: tuple[str, ...] = ()
+    dry_run: bool = False
 
 
 def _git(*args, cwd=None, timeout=CLONE_TIMEOUT_SECONDS):
@@ -69,18 +71,81 @@ def run_update(config: UpdateConfig, *, repository=None, package_installer=None,
     with official_source(repository) as (checkout, sha):
         revision = {'repository': repository, 'branch': OFFICIAL_BRANCH, 'commit': sha}
         plan = plan_install(InstallConfig(source=checkout, assets_dest=config.assets_dest, home=config.home,
-                                          agents=config.agents, source_revision=revision))
+                                          agents=config.agents, source_revision=revision,
+                                          dry_run=config.dry_run))
+        if config.dry_run:
+            return _preview(plan, revision)
         return apply_install(plan, package_installer=package_installer, registrar=registrar)
+
+
+def _copy_is_current(item, fingerprint, prior_by_key):
+    if item.get('kind') != 'copy' or (item.get('agent'), item.get('target', '')) not in prior_by_key:
+        return False
+    target = Path(item.get('target', ''))
+    if not (target.exists() or target.is_symlink()):
+        return False
+    try:
+        return _registration_receipt(target).get('fingerprint') == fingerprint
+    except ValueError:
+        return False
+
+
+def _backup_entry(agent, target, item):
+    """Report a planned backup; edited targets carry the apply-time stamp, so only a pattern is stable."""
+    entry = {'integration': agent, 'target': target, 'path': item['backup']}
+    if item.get('existing_edited'):
+        entry['path'] = re.sub(r'\.edited-\d{8}T\d{6}Z\.', '.edited-<UTC-timestamp>.', item['backup'])
+        entry['time_dependent'] = True
+    return entry
+
+
+def _preview(plan, revision):
+    """Describe planned update effects without creating persistent state."""
+    active_path = plan.assets_dest / 'runtime.json'
+    active = json.loads(active_path.read_text(encoding='utf-8')) if active_path.is_file() else {}
+    committed_path = plan.prefix / 'runtime.json'
+    committed = json.loads(committed_path.read_text(encoding='utf-8')) if committed_path.is_file() else {}
+    active_by_key = {(item.get('agent'), item.get('target', '')): item
+                     for item in active.get('registrations', [])}
+    prior_by_key = {(item.get('agent'), item.get('target', '')): item
+                    for item in committed.get('registrations', [])}
+    no_op = active.get('fingerprint') == plan.fingerprint and active.get('source_revision') == revision
+    backups, seen_targets = [], set()
+    for item in plan.registrations:
+        key = (item.get('agent'), item.get('target', ''))
+        if _copy_is_current(item, plan.fingerprint, prior_by_key):
+            if active_by_key.get(key, {}).get('fingerprint') != plan.fingerprint:
+                no_op = False
+            continue
+        no_op = False
+        if item.get('kind') == 'copy':
+            if item.get('backup'):
+                backups.append(_backup_entry(item['agent'], item['target'], item))
+            continue
+        for path_item in item.get('paths', []):
+            target = path_item['target']
+            if target in seen_targets:
+                continue
+            seen_targets.add(target)
+            if path_item.get('backup'):
+                backups.append(_backup_entry(item['agent'], target, path_item))
+    return {
+        'source_revision': revision,
+        'integrations': list(dict.fromkeys(item['agent'] for item in plan.registrations)),
+        'backups': backups,
+        'no_op': no_op,
+    }
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ai-skills update', description=__doc__)
     parser.add_argument('--assets-dest', type=Path); parser.add_argument('--home', type=Path)
     parser.add_argument('--only', action='append', choices=AGENTS, default=[])
+    parser.add_argument('--dry-run', action='store_true', help='preview the resolved update without changing persistent state')
     try:
         options = parser.parse_args(argv)
         with redirect_stdout(sys.stderr):
-            manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only)))
+            manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only), options.dry_run))
         print(json.dumps(manifest, indent=2)); return 0
     except SystemExit as error: return int(error.code or 0)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

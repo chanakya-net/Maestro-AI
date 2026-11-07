@@ -481,6 +481,208 @@ def test_update_cli_reports_installed_commit(official_repository, tmp_path, monk
     assert update.main(['--only', 'bogus']) == 2
 
 
+def test_update_cli_dry_run_previews_plan_without_persistent_changes(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', lambda plan: pytest.fail('dry run installed package'))
+    monkeypatch.setattr(update.tempfile, 'tempdir', str(tmp_path))
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    before_scratch = set(tmp_path.glob('ai-skills-update-*'))
+    args = ['--dry-run', '--assets-dest', str(assets), '--home', str(home), '--only', 'codex']
+
+    assert update.main(args) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert preview['integrations'] == ['codex']
+    assert preview['backups'] == []
+    assert preview['no_op'] is False
+    assert not assets.exists() and not home.exists()
+    assert set(tmp_path.glob('ai-skills-update-*')) == before_scratch
+
+
+def test_update_cli_dry_run_reports_no_op_for_current_revision(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    before = _tree_snapshot(tmp_path / 'assets'), _tree_snapshot(tmp_path / 'home')
+
+    assert update.main(['--dry-run', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is True
+    assert preview['integrations'] == ['codex']
+    assert preview['backups'] == []
+    assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert not list((config.assets_dest / 'runtimes').glob('*/registration-backups'))
+
+
+def test_update_cli_dry_run_reports_backup_without_creating_it(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    target = Path(next(item['target'] for item in manifest['registrations'] if item['agent'] == 'codex'))
+    (target / 'SKILL.md').write_text('user edit')
+    before = _tree_snapshot(config.assets_dest), _tree_snapshot(config.home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert preview['integrations'] == ['codex']
+    assert [item['target'] for item in preview['backups']] == [str(target)]
+    assert not Path(preview['backups'][0]['path']).exists()
+    assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+
+
+def test_update_cli_dry_run_reports_adapter_and_copy_backups_matching_apply(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(assets, home, ('codex', 'copilot', 'antigravity'))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+    _commit_skill(official_repository, 'revision B')
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert preview['integrations'] == ['codex', 'copilot', 'antigravity']
+    assert preview['backups'] and not any(Path(item['path']).exists() for item in preview['backups'])
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    seen, expected = set(), []
+    for reg in manifest['registrations']:
+        items = [reg] if reg['kind'] == 'copy' else reg.get('paths', [])
+        for item in items:
+            if item['target'] not in seen and item.get('backup'):
+                seen.add(item['target'])
+                expected.append({'integration': reg['agent'], 'target': item['target'], 'path': item['backup']})
+    assert preview['backups'] == expected
+    assert all(Path(item['path']).is_dir() for item in preview['backups'])
+
+
+def test_update_cli_dry_run_detects_deleted_copy_target_and_apply_repairs(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    manifest = update.run_update(update.UpdateConfig(assets, home, ('codex',)),
+                                 repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    target = Path(manifest['registrations'][0]['target'])
+    shutil.rmtree(target)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert preview['backups'] == []
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer)
+    assert (target / 'SKILL.md').is_file()
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    after = json.loads(capsys.readouterr().out)
+    assert after['no_op'] is True and after['backups'] == []
+
+
+@pytest.mark.parametrize('change', ['edit', 'remove'])
+def test_update_cli_dry_run_detects_edited_or_removed_adapter_target_and_apply_repairs(official_repository, tmp_path,
+                                                                                       monkeypatch, capsys, change):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    update.run_update(update.UpdateConfig(assets, home, ('copilot',)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    target = home / '.agents/skills/pair-colleague'
+    if change == 'edit':
+        (target / 'SKILL.md').write_text('user edit')
+    else:
+        shutil.rmtree(target)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    by_target = {item['target']: item['path'] for item in preview['backups']}
+    if change == 'edit':
+        assert '.edited-<UTC-timestamp>.' in Path(by_target[str(target)]).name and not Path(by_target[str(target)]).exists()
+        assert [i['time_dependent'] for i in preview['backups'] if i['target'] == str(target)] == [True]
+    else:
+        assert str(target) not in by_target and by_target
+    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    assert (target / 'SKILL.md').is_file() and (target / 'SKILL.md').read_text() != 'user edit'
+    if change == 'edit':
+        actual = Path(_target_entries(manifest, target)[0]['backup'])
+        assert (actual / 'SKILL.md').read_text() == 'user edit'
+
+
+def test_update_cli_dry_run_unchanged_adapter_reports_reexecution_semantics(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    update.run_update(update.UpdateConfig(assets, home, ('gemini',)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert len(preview['backups']) == 1 and preview['backups'][0]['target'] == str(extension)
+    assert not Path(preview['backups'][0]['path']).exists()
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    assert manifest['registrations'][0]['paths'][0]['backup'] == preview['backups'][0]['path']
+    assert Path(preview['backups'][0]['path']).is_dir()
+
+
+def test_update_cli_dry_run_cleans_source_when_planning_fails(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(update.tempfile, 'tempdir', str(tmp_path))
+    monkeypatch.setattr(update, 'plan_install', lambda config: (_ for _ in ()).throw(ValueError('plan failed')))
+
+    assert update.main(['--dry-run', '--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 2
+    assert 'plan failed' in capsys.readouterr().err
+    assert not (tmp_path / 'assets').exists() and not (tmp_path / 'home').exists()
+    assert not list(tmp_path.glob('ai-skills-update-*'))
+
+
+def _tree_snapshot(root):
+    root = Path(root)
+    if not root.exists():
+        return None
+    return {str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+            for path in sorted(root.rglob('*'))}
+
+
 def test_update_cli_error_exits_2_without_traceback(tmp_path, monkeypatch, capsys):
     import ai_skills.update as update
     monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', (tmp_path / 'missing').as_uri())
@@ -1392,3 +1594,32 @@ def test_default_update_rechecks_manifest_symlink_under_lock(official_repository
         active.rename(other); active.symlink_to(other)
         with pytest.raises(ValueError, match='owned active runtime manifest'):
             apply_install(stale, package_installer=lambda plan: pytest.fail('unexpected installer'))
+
+
+@pytest.mark.parametrize('kind', ['adapter', 'copy'])
+def test_update_cli_dry_run_edited_backup_is_pattern_matching_later_apply(official_repository, tmp_path, monkeypatch, capsys, kind):
+    import fnmatch
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    agent, target = ('copilot', home / '.agents/skills/pair-colleague') if kind == 'adapter' else ('codex', None)
+    update.run_update(update.UpdateConfig(assets, home, (agent,)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    if target is None:
+        target = next(Path(r['target']) for r in json.loads(next(assets.rglob('runtime.json')).read_text())['registrations']
+                      if r.get('kind') == 'copy' and r['skill'] == 'pair-colleague')
+    (target / 'SKILL.md').write_text('user edit')
+    monkeypatch.setattr(installation, '_backup_stamp', lambda: '20200101T000000Z')
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    entry = next(i for i in json.loads(capsys.readouterr().out)['backups'] if i['target'] == str(target))
+    assert entry['time_dependent'] is True and '20200101T000000Z' not in entry['path']
+    monkeypatch.setattr(installation, '_backup_stamp', lambda: '20300202T020202Z')
+    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    actual = _target_entries(manifest, target)[0]['backup']
+    assert fnmatch.fnmatch(actual, entry['path'].replace('<UTC-timestamp>', '*'))
+    assert '20300202T020202Z' in actual
+    assert (Path(actual) / 'SKILL.md').read_text() == 'user edit'
