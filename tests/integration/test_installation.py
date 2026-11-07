@@ -1026,13 +1026,20 @@ if args[1] == 'add':
 
 
 def test_update_adapter_ignores_caller_local_skills_binary(official_repository, tmp_path, monkeypatch):
+    import ai_skills.runner as runner
     from ai_skills.update import UpdateConfig, run_update
     checkout, marker = _scratch_checkout(tmp_path / 'checkout'), tmp_path / 'checkout/checkout-marker'
     local = checkout / 'node_modules/.bin/skills'; local.parent.mkdir(parents=True)
     local.write_text(f'from pathlib import Path\nPath({str(marker)!r}).write_text("local skills ran")\n')
     bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
-    npx = bin_dir / 'npx'; npx.write_text(_FAKE_NPX.format(python=sys.executable)); npx.chmod(0o755)
-    monkeypatch.setenv('PATH', str(bin_dir) + os.pathsep + os.environ['PATH'])
+    npx = bin_dir / 'npx.py'; npx.write_text(_FAKE_NPX.format(python=sys.executable))
+    # Windows does not execute Python shebangs from PATH. Substitute only the
+    # executable boundary; keep registration's real child cwd/env isolation.
+    resolve = runner.resolve_executable
+    def resolve_fixture(argv, environment):
+        if argv[0] == 'npx': return (sys.executable, str(npx), *argv[1:])
+        return resolve(argv, environment)
+    monkeypatch.setattr(runner, 'resolve_executable', resolve_fixture)
     monkeypatch.setenv('npm_config_prefix', str(checkout)); monkeypatch.chdir(checkout)
     before = _git(checkout, 'status', '--porcelain', '--ignored')
     config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('copilot',))

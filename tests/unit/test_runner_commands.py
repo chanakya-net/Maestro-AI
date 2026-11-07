@@ -95,6 +95,47 @@ def test_unknown_batch_script_fails_closed(tmp_path):
         resolve_executable((str(shim), '&echo injected'), {}, windows=True)
 
 
+@pytest.mark.parametrize('command', ['npm', 'npx'])
+def test_npm_cli_variable_shim_preserves_payload_without_cmd_shell(tmp_path, command):
+    # npm/cli v11.19.1 bin/npm.cmd and bin/npx.cmd use this variable-based form.
+    root = tmp_path / 'node installation'
+    root.mkdir()
+    shim = root / f'{command}.CMD'
+    node = root / 'node.exe'
+    node.touch()
+    entry = root / 'node_modules/npm/bin' / f'{command}-cli.js'
+    entry.parent.mkdir(parents=True)
+    entry.write_text('console.log(process.argv)', encoding='utf-8')
+    variable = command.upper() + '_CLI_JS'
+    shim.write_text(
+        '@ECHO OFF\nSETLOCAL\n'
+        'SET "NODE_EXE=%~dp0\\node.exe"\n'
+        'IF NOT EXIST "%NODE_EXE%" (\n  SET "NODE_EXE=node"\n)\n'
+        'SET "NPM_PREFIX_JS=%~dp0\\node_modules\\npm\\bin\\npm-prefix.js"\n'
+        f'SET "{variable}=%~dp0\\node_modules\\npm\\bin\\{command}-cli.js"\n'
+        'FOR /F "delims=" %%F IN (\'CALL "%NODE_EXE%" "%NPM_PREFIX_JS%"\') DO (\n'
+        f'  SET "NPM_PREFIX_{variable}=%%F\\node_modules\\npm\\bin\\{command}-cli.js"\n)\n'
+        f'IF EXIST "%NPM_PREFIX_{variable}%" (\n'
+        f'  SET "{variable}=%NPM_PREFIX_{variable}%"\n)\n'
+        f'"%NODE_EXE%" "%{variable}%" %*\n',
+        encoding='utf-8-sig', newline='\r\n')
+    payload = ('with spaces', '&|<>^%!"', '', 'C:\\tail\\')
+    assert resolve_executable((str(shim), *payload), {}, windows=True) == (
+        str(node), str(entry), *payload)
+
+
+@pytest.mark.parametrize('assignment', [
+    'SET "OTHER_CLI_JS=%~dp0\\cli.js"',
+    'SET "NPX_CLI_JS=%UNTRUSTED%\\cli.js"',
+])
+def test_npm_cli_variable_shim_rejects_unresolved_entrypoint(tmp_path, assignment):
+    shim = tmp_path / 'npx.cmd'
+    (tmp_path / 'cli.js').touch()
+    shim.write_text(assignment + '\n"%NODE_EXE%" "%NPX_CLI_JS%" %*\n', encoding='utf-8')
+    with pytest.raises(ValueError, match='unsupported batch'):
+        resolve_executable((str(shim), '&echo injected'), {}, windows=True)
+
+
 def test_process_unset_environment_rejects_invalid_variable_names(tmp_path):
     from ai_skills.processes import ProcessSpec
     for names in [('BAD=NAME',),('',),('NUL\0NAME',),(True,)]:

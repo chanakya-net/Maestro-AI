@@ -307,6 +307,15 @@ def resolve_executable(argv, environment, *, windows=None):
     shim = Path(executable)
     text = shim.read_text(encoding='utf-8-sig')
     matches = re.findall(r'"(?:%~dp0|%dp0%)[\\/]([^"\r\n]+\.(?:js|cjs|mjs))"\s+%\*', text, re.IGNORECASE)
+    if not matches:
+        # npm's own npm.cmd/npx.cmd store their bundled CLI in a variable.
+        # Resolve only that literal relative path, never evaluate batch code.
+        invocation = re.search(r'^"%NODE_EXE%" "%((?:NPM|NPX)_CLI_JS)%" %\*\s*$',
+                               text, re.IGNORECASE | re.MULTILINE)
+        if invocation:
+            matches = re.findall(r'^SET "' + re.escape(invocation[1])
+                                 + r'=%~dp0[\\/]([^"\r\n]+\.(?:js|cjs|mjs))"\s*$',
+                                 text, re.IGNORECASE | re.MULTILINE)
     if len(set(matches)) != 1 or not re.search(r'(?:node(?:\.exe)?|%_prog%)"?', text, re.IGNORECASE):
         raise ValueError(f'unsupported batch executable {executable}; install a native executable or standard npm node shim')
     entry = (shim.parent / Path(matches[0].replace('\\', '/'))).resolve()
