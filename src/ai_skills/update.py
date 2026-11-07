@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 
-from ai_skills.installation import AGENTS, InstallConfig, _registration_receipt, apply_install, plan_install
+from ai_skills.installation import AGENTS, InstallConfig, _recover_installation, _registration_receipt, apply_install, plan_install
 
 OFFICIAL_REPOSITORY = 'https://github.com/chanakya-net/Maestro-AI.git'
 OFFICIAL_BRANCH = 'main'
@@ -68,16 +68,22 @@ def official_source(repository=None, branch=None, *, timeout=CLONE_TIMEOUT_SECON
 
 
 def run_update(config: UpdateConfig, *, repository=None, package_installer=None, registrar=None):
-    repository = repository or OFFICIAL_REPOSITORY
-    with official_source(repository) as (checkout, sha):
-        revision = {'repository': repository, 'branch': OFFICIAL_BRANCH, 'commit': sha}
-        plan = plan_install(InstallConfig(source=checkout, assets_dest=config.assets_dest, home=config.home,
-                                          agents=config.agents, source_revision=revision,
-                                          dry_run=config.dry_run, skip_current_revision=not config.force,
-                                          refresh_registrations=config.force))
-        if config.dry_run:
-            return _preview(plan, revision)
-        return apply_install(plan, package_installer=package_installer, registrar=registrar)
+    recovery = _recover_installation(config.assets_dest, config.home, dry_run=config.dry_run)
+    try:
+        repository = repository or OFFICIAL_REPOSITORY
+        with official_source(repository) as (checkout, sha):
+            revision = {'repository': repository, 'branch': OFFICIAL_BRANCH, 'commit': sha}
+            plan = plan_install(InstallConfig(source=checkout, assets_dest=config.assets_dest, home=config.home,
+                                              agents=config.agents, source_revision=revision,
+                                              dry_run=config.dry_run, skip_current_revision=not config.force,
+                                              refresh_registrations=config.force))
+            if config.dry_run:
+                return _preview(plan, revision)
+            return apply_install(plan, package_installer=package_installer, registrar=registrar)
+    except BaseException as error:
+        if recovery and not hasattr(error, '_installation_recovery'):
+            error._installation_recovery = recovery
+        raise
 
 
 def _copy_is_current(item, fingerprint, prior_by_key):
@@ -143,6 +149,16 @@ def _preview(plan, revision):
     }
 
 
+def _report_failure(error):
+    print(f'ai-skills update: {error or "interrupted"}', file=sys.stderr)
+    recovery = getattr(error, '_installation_recovery', None)
+    if recovery:
+        description = {'restored': 'prior installation restored', 'incomplete': 'recovery incomplete'}.get(recovery, recovery)
+        print(f'ai-skills update: {description}', file=sys.stderr)
+    for note in getattr(error, '__notes__', ()):
+        print(f'ai-skills update: {note}', file=sys.stderr)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ai-skills update', description=__doc__)
     parser.add_argument('--assets-dest', type=Path); parser.add_argument('--home', type=Path)
@@ -155,8 +171,8 @@ def main(argv=None):
             manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only), options.dry_run, options.force))
         print(json.dumps(manifest, indent=2)); return 0
     except SystemExit as error: return int(error.code or 0)
+    except KeyboardInterrupt as error:
+        _report_failure(error); return 130
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-        print(f'ai-skills update: {error}', file=sys.stderr)
-        # Rollback recovery notes name preserved output and backups needing inspection.
-        for note in getattr(error, '__notes__', ()): print(f'ai-skills update: {note}', file=sys.stderr)
+        _report_failure(error)
         return 2
