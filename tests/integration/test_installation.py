@@ -626,7 +626,8 @@ def test_update_cli_dry_run_detects_edited_or_removed_adapter_target_and_apply_r
     assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
     by_target = {item['target']: item['path'] for item in preview['backups']}
     if change == 'edit':
-        assert '.edited-' in Path(by_target[str(target)]).name and not Path(by_target[str(target)]).exists()
+        assert '.edited-<UTC-timestamp>.' in Path(by_target[str(target)]).name and not Path(by_target[str(target)]).exists()
+        assert [i['time_dependent'] for i in preview['backups'] if i['target'] == str(target)] == [True]
     else:
         assert str(target) not in by_target and by_target
     manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
@@ -1593,3 +1594,32 @@ def test_default_update_rechecks_manifest_symlink_under_lock(official_repository
         active.rename(other); active.symlink_to(other)
         with pytest.raises(ValueError, match='owned active runtime manifest'):
             apply_install(stale, package_installer=lambda plan: pytest.fail('unexpected installer'))
+
+
+@pytest.mark.parametrize('kind', ['adapter', 'copy'])
+def test_update_cli_dry_run_edited_backup_is_pattern_matching_later_apply(official_repository, tmp_path, monkeypatch, capsys, kind):
+    import fnmatch
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    agent, target = ('copilot', home / '.agents/skills/pair-colleague') if kind == 'adapter' else ('codex', None)
+    update.run_update(update.UpdateConfig(assets, home, (agent,)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    if target is None:
+        target = next(Path(r['target']) for r in json.loads(next(assets.rglob('runtime.json')).read_text())['registrations']
+                      if r.get('kind') == 'copy' and r['skill'] == 'pair-colleague')
+    (target / 'SKILL.md').write_text('user edit')
+    monkeypatch.setattr(installation, '_backup_stamp', lambda: '20200101T000000Z')
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    entry = next(i for i in json.loads(capsys.readouterr().out)['backups'] if i['target'] == str(target))
+    assert entry['time_dependent'] is True and '20200101T000000Z' not in entry['path']
+    monkeypatch.setattr(installation, '_backup_stamp', lambda: '20300202T020202Z')
+    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    actual = _target_entries(manifest, target)[0]['backup']
+    assert fnmatch.fnmatch(actual, entry['path'].replace('<UTC-timestamp>', '*'))
+    assert '20300202T020202Z' in actual
+    assert (Path(actual) / 'SKILL.md').read_text() == 'user edit'

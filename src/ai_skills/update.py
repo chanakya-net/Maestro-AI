@@ -12,6 +12,7 @@ import argparse
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -89,6 +90,15 @@ def _copy_is_current(item, fingerprint, prior_by_key):
         return False
 
 
+def _backup_entry(agent, target, item):
+    """Report a planned backup; edited targets carry the apply-time stamp, so only a pattern is stable."""
+    entry = {'integration': agent, 'target': target, 'path': item['backup']}
+    if item.get('existing_edited'):
+        entry['path'] = re.sub(r'\.edited-\d{8}T\d{6}Z\.', '.edited-<UTC-timestamp>.', item['backup'])
+        entry['time_dependent'] = True
+    return entry
+
+
 def _preview(plan, revision):
     """Describe planned update effects without creating persistent state."""
     active_path = plan.assets_dest / 'runtime.json'
@@ -110,7 +120,7 @@ def _preview(plan, revision):
         no_op = False
         if item.get('kind') == 'copy':
             if item.get('backup'):
-                backups.append({'integration': item['agent'], 'target': item['target'], 'path': item['backup']})
+                backups.append(_backup_entry(item['agent'], item['target'], item))
             continue
         for path_item in item.get('paths', []):
             target = path_item['target']
@@ -118,7 +128,7 @@ def _preview(plan, revision):
                 continue
             seen_targets.add(target)
             if path_item.get('backup'):
-                backups.append({'integration': item['agent'], 'target': target, 'path': path_item['backup']})
+                backups.append(_backup_entry(item['agent'], target, path_item))
     return {
         'source_revision': revision,
         'integrations': list(dict.fromkeys(item['agent'] for item in plan.registrations)),
