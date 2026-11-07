@@ -654,7 +654,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     action = argv.pop(0) if argv and argv[0] in ('run', 'list', 'models') else 'run'
     parser = argparse.ArgumentParser(prog='ai-skills agent')
-    for name in ('agent', 'model', 'effort', 'context-file', 'prompt-file', 'permission-mode', 'repo-root', 'registry-file', 'gui-mode', 'process-state-file'):
+    for name in ('agent', 'model', 'effort', 'context-file', 'prompt-file', 'permission-mode', 'repo-root', 'registry-file', 'gui-mode', 'process-state-file', 'role'):
         parser.add_argument('--' + name)
     parser.add_argument('--context-payload-file', dest='context_file')
     parser.add_argument('--unattended', action='store_true', default=None)
@@ -680,6 +680,10 @@ def main(argv=None):
         value = env.get('RUN_WITH_IT_' + key.upper())
         if value:
             values[key] = value
+    if args.role is not None:
+        values['role'] = args.role
+    elif values.get('role') == 'plan':
+        values['role'] = 'agent'
     if args.process_state_file:
         values['process_state_file'] = args.process_state_file
     values['environment'] = env

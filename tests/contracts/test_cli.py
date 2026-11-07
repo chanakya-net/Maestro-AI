@@ -102,3 +102,14 @@ def test_bootstrap_commands_remain_local(tmp_path):
                  ("install", "--list"), ("uninstall", "--list"), ("update", "--help")):
         result = invoke(*args, cwd=tmp_path, extra_env=env)
         assert result.returncode == 0, result.stderr
+
+
+def test_agent_role_opt_in_and_ambient_isolation(tmp_path):
+    context = tmp_path / 'context.md'
+    context.write_text('Plan a complex task')
+    env = {'RUN_WITH_IT_ROLE': 'plan', 'CONTEXT_PAYLOAD_FILE': str(context)}
+    base = ('agent', 'run', '--agent', 'codex-cli', '--effort', 'maximum', '--unattended', '--dry-run')
+    for extra, expected in [((), 'high'), (('--role', 'plan'), 'xhigh'), (('--role', 'review'), 'high')]:
+        result = invoke(*base, *extra, cwd=tmp_path, extra_env=env)
+        assert result.returncode == 0, result.stderr
+        assert f'model_reasoning_effort={expected}' in result.stdout
