@@ -55,6 +55,7 @@ def fake_package_installer(plan):
     (purelib / 'fixture-payload.pth').write_text(str(root.parent) + '\n')
     (root / '__init__.py').write_text('# fixture package ' + plan.version)
     (root / 'cli.py').write_text('# fixture CLI')
+    (root / '__main__.py').write_text('from pathlib import Path; print("fixture runtime " + str(Path(__file__).parent))')
     (root.parent / 'psutil.py').write_text('# fixture dependency')
     if sys.platform == 'win32': (root.parent / 'win32api.py').write_text('# fixture dependency')
     if plan.source.is_dir():
@@ -365,9 +366,13 @@ def test_external_registration_and_uninstall_use_planned_home(source_tree, tmp_p
     config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets',
                            home=selected_home, agents=('gemini',))
     calls = []
+    real_run = subprocess.run
+    def run(argv, **kwargs):
+        if argv[0] != 'gemini': return real_run(argv, **kwargs)
+        calls.append((argv, kwargs.get('env')))
+        return SimpleNamespace(returncode=0)
     monkeypatch.setattr(runner, 'resolve_executable', lambda argv, env: argv)
-    monkeypatch.setattr(installation.subprocess, 'run',
-                        lambda argv, **kwargs: (calls.append((argv, kwargs.get('env'))) or SimpleNamespace(returncode=0)))
+    monkeypatch.setattr(installation.subprocess, 'run', run)
     apply_install(plan_install(config), package_installer=fake_package_installer)
     assert calls and calls[0][1] is not None
     assert calls[0][1]['HOME'] == str(selected_home)
@@ -772,8 +777,10 @@ def test_update_cli_stdout_stays_json_with_subprocess_output(official_repository
 def _offline_command(plan):
     script = ("import shutil,sys,sysconfig;from pathlib import Path;s=Path(sys.argv[1]);"
               "r=Path(sysconfig.get_path('purelib'))/'ai_skills';shutil.copytree(s/'src/ai_skills',r);"
-              "shutil.copytree(s/'assets',r/'data');shutil.copytree(s/'skills',r/'skills');print('offline install progress')")
-    return (str(plan.python), '-I', '-c', script, str(plan.source))
+              "shutil.copytree(s/'assets',r/'data');shutil.copytree(s/'skills',r/'skills');"
+              "shutil.copytree(Path(sys.argv[2]),r.parent/'psutil');"
+              "(r.parent/'win32api.py').write_text('# fixture Windows dependency');print('offline install progress')")
+    return (str(plan.python), '-I', '-c', script, str(plan.source), str(Path(psutil.__file__).parent))
 
 
 def offline_package_installer(plan):
@@ -1596,6 +1603,24 @@ def test_default_update_rechecks_manifest_symlink_under_lock(official_repository
             apply_install(stale, package_installer=lambda plan: pytest.fail('unexpected installer'))
 
 
+@pytest.mark.parametrize('before_planning', [True, False])
+def test_explicit_install_rejects_manifest_symlink_before_staging(source_tree, tmp_path, before_planning):
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('new runtime candidate')
+    active, other = first.assets_dest / 'runtime.json', first.assets_dest / 'other.json'
+    if not before_planning: candidate = plan_install(config)
+    active.rename(other); active.symlink_to(other)
+    if before_planning: candidate = plan_install(config)
+    prefixes = set((first.assets_dest / 'runtimes').iterdir())
+    with pytest.raises(ValueError, match='active runtime manifest is a symlink') as failure:
+        apply_install(candidate, package_installer=lambda plan: pytest.fail('unexpected installer'))
+    assert str(active) in str(failure.value)
+    assert set((first.assets_dest / 'runtimes').iterdir()) == prefixes
+    assert active.is_symlink()
+
+
 @pytest.mark.parametrize('kind', ['adapter', 'copy'])
 def test_update_cli_dry_run_edited_backup_is_pattern_matching_later_apply(official_repository, tmp_path, monkeypatch, capsys, kind):
     import fnmatch
@@ -1669,3 +1694,610 @@ def test_update_unknown_or_different_revision_is_not_skipped(official_repository
     result = run_update(config, repository=repository, package_installer=fake_package_installer)
     assert result['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
     if not missing: assert result['source_revision'] != first['source_revision']
+
+
+@pytest.mark.parametrize('boundary', ['copy-before', 'copy-after', 'candidate-before', 'candidate-after', 'active-before', 'active-after'])
+@pytest.mark.parametrize('candidate', ['new', 'retained', 'same'])
+def test_update_transaction_restores_prior_installation(source_tree, tmp_path, monkeypatch, boundary, candidate):
+    import dataclasses
+    import ai_skills.installation as installation
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    original_skill = (source_tree / 'skills/pair-colleague/SKILL.md').read_bytes()
+    if candidate != 'same':
+        (source_tree / 'skills/pair-colleague/SKILL.md').write_text('candidate payload')
+    second = plan_install(dataclasses.replace(config, refresh_registrations=True))
+    if candidate == 'retained':
+        apply_install(second, package_installer=fake_package_installer)
+        (source_tree / 'skills/pair-colleague/SKILL.md').write_bytes(original_skill)
+        apply_install(plan_install(config), package_installer=fake_package_installer)
+        (source_tree / 'skills/pair-colleague/SKILL.md').write_text('candidate payload')
+    active = first.assets_dest / 'runtime.json'
+    # Noncanonical bytes must survive restoration exactly, including retained metadata.
+    active.write_text(json.dumps(json.loads(active.read_text()), separators=(',', ':')) + '\n\n')
+    second = plan_install(dataclasses.replace(config, refresh_registrations=True))
+    paths = [active, second.prefix / 'runtime.json']
+    before = {p: p.read_bytes() if p.exists() else None for p in paths}
+    registrations = _tree_snapshot(tmp_path / 'home')
+    real_write, real_rename = installation.write_json_atomic, Path.rename
+    fired = False
+    def fail_write(path, value):
+        nonlocal fired
+        wanted = active if boundary.startswith('active') else second.prefix / 'runtime.json'
+        if Path(path) == wanted and not fired and not boundary.startswith('copy'):
+            fired = True
+            if boundary.endswith('after'): real_write(path, value)
+            raise OSError('injected publication failure')
+        return real_write(path, value)
+    def fail_rename(path, target):
+        nonlocal fired
+        if '.staging.' in path.name and not fired and boundary.startswith('copy'):
+            fired = True
+            if boundary.endswith('after'): real_rename(path, target)
+            raise OSError('injected copy failure')
+        return real_rename(path, target)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_write)
+    monkeypatch.setattr(Path, 'rename', fail_rename)
+    with pytest.raises(OSError, match='injected') as failure:
+        apply_install(second, package_installer=fake_package_installer)
+    assert fired
+    assert {p: p.read_bytes() if p.exists() else None for p in paths} == before
+    assert _tree_snapshot(tmp_path / 'home') == registrations
+    assert not getattr(failure.value, '__notes__', [])
+    assert first.python.is_file() and second.python.is_file()
+    assert not (first.assets_dest / '.installation-transaction.json').exists()
+
+
+@pytest.mark.parametrize('boundary', ['receipt-before', 'receipt-after', 'expect-before'])
+def test_update_transaction_restores_after_staging_write_failure(source_tree, tmp_path, monkeypatch, boundary):
+    import ai_skills.installation as installation
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    active = first.assets_dest / 'runtime.json'
+    before = active.read_bytes(), _tree_snapshot(config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('staging failure candidate')
+    candidate = plan_install(config)
+    injected = OSError('injected staging failure')
+    real_write, real_expect = installation.write_json_atomic, installation._ActivationTransaction.expect
+    def write(path, value):
+        if '.staging.' in Path(path).parent.name and boundary != 'expect-before':
+            if boundary == 'receipt-after': real_write(path, value)
+            raise injected
+        real_write(path, value)
+    def expect(self, target, digest):
+        if Path(target).parent == config.home / '.codex/skills': raise injected
+        real_expect(self, target, digest)
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    if boundary == 'expect-before': monkeypatch.setattr(installation._ActivationTransaction, 'expect', expect)
+    with pytest.raises(OSError, match='injected staging failure') as failure:
+        apply_install(candidate, package_installer=fake_package_installer)
+    assert failure.value is injected
+    assert getattr(failure.value, '_installation_recovery') == 'restored'
+    assert not getattr(failure.value, '__notes__', [])
+    assert not (first.assets_dest / '.installation-transaction.json').exists()
+    assert (active.read_bytes(), _tree_snapshot(config.home)) == before
+    assert not list((config.home / '.codex/skills').glob('.*'))
+
+
+@pytest.mark.parametrize('fault', ['interpreter', 'cli-import', 'module-entry'])
+def test_update_transaction_launcher_failure_preserves_prior_runtime(source_tree, tmp_path, fault):
+    import tempfile
+    import ai_skills.installation as installation
+    first = plan_install(make_config(source_tree, tmp_path))
+    manifest = apply_install(first, package_installer=fake_package_installer)
+    record = {'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': manifest['python']}
+    run, pair = tmp_path / 'run', tmp_path / 'pair'
+    (run / '.run-with-it').mkdir(parents=True); pair.mkdir()
+    write_json_atomic(run / '.run-with-it/engine.json', record)
+    write_json_atomic(pair / 'config.json', {'engine_runtime': record})
+    before = _tree_snapshot(tmp_path / 'home')
+    active = (first.assets_dest / 'runtime.json').read_bytes()
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('second runtime')
+    second = plan_install(make_config(source_tree, tmp_path))
+    def broken(plan):
+        root = fake_package_installer(plan)
+        if fault == 'interpreter':
+            plan.python.unlink(); plan.python.write_bytes(b'invalid executable'); plan.python.chmod(0o755)
+        elif fault == 'cli-import': (root / 'cli.py').write_text('raise RuntimeError("broken CLI import")')
+        else: (root / '__main__.py').write_text('raise SystemExit(8)')
+        return root
+    with pytest.raises(ValueError, match='unusable'):
+        apply_install(second, package_installer=broken)
+    assert _tree_snapshot(tmp_path / 'home') == before
+    assert (first.assets_dest / 'runtime.json').read_bytes() == active
+    assert resolve_runtime(assets_dest=first.assets_dest) == first.python
+    for directory in (run, pair):
+        assert resolve_runtime(directory, assets_dest=first.assets_dest) == first.python
+        subprocess.run([str(first.python), '-I', '-m', 'ai_skills', '--help'], check=True, capture_output=True)
+    env = {k: v for k, v in installation._isolated_environment().items()
+           if k not in ('AI_SKILLS_RUN_ROOT', 'RUN_ROOT', 'ASSET_ROOT', 'RUN_WITH_IT_REPO_ROOT')}
+    env['ASSETS_DEST'] = str(first.assets_dest)
+    # Keep the ordinary launcher probe outside orchestration ancestry even when
+    # a caller chooses a temporary directory inside an existing run.
+    with tempfile.TemporaryDirectory(prefix='ai-skills-launcher-probe-') as cwd:
+        result = subprocess.run([sys.executable, '-I', '-m', 'ai_skills', 'fixture-probe'], cwd=cwd,
+                                env=env, capture_output=True, text=True, check=True)
+    assert str(first.prefix) in result.stdout
+
+
+def test_update_transaction_verified_adapter_is_restored(source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    home = tmp_path / 'home'
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home, agents=('codex', 'gemini'))
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    before = _tree_snapshot(home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('second runtime')
+    second = plan_install(config)
+    real = installation.write_json_atomic
+    def fail(path, value):
+        if Path(path) == second.assets_dest / 'runtime.json': raise OSError('activation failed')
+        real(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail)
+    with pytest.raises(OSError, match='activation failed') as failure:
+        apply_install(second, package_installer=fake_package_installer, registrar=adapter)
+    assert not getattr(failure.value, '__notes__', [])
+    assert _tree_snapshot(home) == before
+
+
+def _transaction_child(source, tmp_path, checkpoint, *, pause=False):
+    """Faults are installed inside the interpreter, including on Windows spawn."""
+    script = r'''
+import os, runpy, sys
+from pathlib import Path
+import ai_skills.installation as i
+helpers = runpy.run_path(sys.argv[1])
+source, base, checkpoint = Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+real_write, real_rename = i.write_json_atomic, Path.rename
+ready = base / ('ready-' + checkpoint)
+def stop():
+    ready.write_text(checkpoint)
+    print('checkpoint:' + checkpoint, flush=True)
+    if sys.argv[5] == 'pause': sys.stdin.readline()
+    else: os._exit(77)
+def write(path, value):
+    if checkpoint == 'restoring-gap' and Path(path) == base / 'assets/runtime.json':
+        raise OSError('force restoration')
+    real_write(path, value)
+    journal = Path(path).name == '.installation-transaction.json'
+    if journal and ((checkpoint == 'prepared' and value['phase'] == 'prepared') or
+                    (checkpoint == 'committed' and value['phase'] == 'committed')): stop()
+    if not journal and Path(path).name == 'runtime.json':
+        if checkpoint == ('active' if Path(path).parent == base / 'assets' else 'candidate'): stop()
+def rename(path, target):
+    result = real_rename(path, target)
+    if ((checkpoint == 'copy-gap' and '.previous.' in Path(target).name) or
+        (checkpoint == 'copy-swapped' and '.staging.' in path.name) or
+        (checkpoint == 'restoring-gap' and '.displaced.' in Path(target).name)): stop()
+    return result
+adapter = helpers['_deterministic_gemini'](base / 'home/.gemini/extensions/ai-skill-collections')
+def register(argv):
+    adapter(argv)
+    if checkpoint == 'adapter-running' and 'install' in argv: stop()
+real_settle = i._ActivationTransaction.settle
+def settle(self, registration):
+    real_settle(self, registration)
+    if checkpoint == 'adapter-verified' and any(p.get('installed_sha256') for p in registration['paths']): stop()
+i.write_json_atomic, Path.rename, i._ActivationTransaction.settle = write, rename, settle
+config = i.InstallConfig(source=source, assets_dest=base/'assets', home=base/'home', agents=('codex', 'gemini'))
+plan = i.plan_install(config)
+def installer(plan):
+    if checkpoint == 'staging': stop()
+    return helpers['fake_package_installer'](plan)
+i.apply_install(plan, package_installer=installer, registrar=register)
+'''
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('RUN_WITH_IT_', 'AI_SKILLS_'))}
+    return subprocess.Popen([sys.executable, '-I', '-c', script, str(Path(__file__).resolve()), str(source),
+                             str(tmp_path), checkpoint, 'pause' if pause else 'crash'], cwd=tmp_path,
+                            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def _crash_activation(source_tree, tmp_path, checkpoint):
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex', 'gemini'))
+    adapter = _deterministic_gemini(config.home / '.gemini/extensions/ai-skill-collections')
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    before = {'active': (config.assets_dest / 'runtime.json').read_bytes(), 'home': _tree_snapshot(config.home)}
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('interrupted candidate')
+    candidate = plan_install(config)
+    child = _transaction_child(source_tree, tmp_path, checkpoint)
+    try:
+        out, err = child.communicate(timeout=30)
+        assert child.returncode == 77, (out, err)
+        assert (tmp_path / ('ready-' + checkpoint)).read_text() == checkpoint
+    finally:
+        if child.poll() is None: child.kill(); child.communicate(timeout=10)
+    return config, first, candidate, before
+
+
+@pytest.mark.parametrize('checkpoint', ['prepared', 'copy-gap', 'copy-swapped', 'adapter-verified', 'candidate', 'active', 'restoring-gap', 'committed', 'adapter-running'])
+def test_update_transaction_recovers_interrupted_activation(source_tree, tmp_path, monkeypatch, checkpoint):
+    from contextlib import contextmanager
+    import ai_skills.update as update
+    config, first, candidate, before = _crash_activation(source_tree, tmp_path, checkpoint)
+    journal = config.assets_dest / '.installation-transaction.json'
+    assert journal.is_file()
+    shutil.rmtree(source_tree)  # Recovery cannot depend on the vanished checkout.
+    @contextmanager
+    def unavailable(*args, **kwargs):
+        raise ValueError('source acquisition unavailable')
+        yield
+    monkeypatch.setattr(update, 'official_source', unavailable)
+    options = update.UpdateConfig(config.assets_dest, config.home)
+    if checkpoint == 'adapter-running':
+        with pytest.raises(ValueError, match='unfinished adapter') as failure: update.run_update(options)
+        assert journal.is_file()
+        target = config.home / '.gemini/extensions/ai-skill-collections'
+        entry = next(item for item in json.loads(journal.read_text())['entries'] if item['target'] == str(target))
+        assert f'verify {target} against {entry["backup"]}' in str(failure.value)
+        assert f'repair it manually, then remove {journal} before retrying' in str(failure.value)
+        assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+        return
+    for _ in range(2):
+        with pytest.raises(ValueError, match='source acquisition unavailable'): update.run_update(options)
+        assert not journal.exists()
+    if checkpoint == 'committed':
+        assert resolve_runtime(assets_dest=config.assets_dest) == candidate.python
+        assert (candidate.prefix / 'runtime.json').is_file()
+    else:
+        assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+        assert _tree_snapshot(config.home) == before['home']
+        assert not (candidate.prefix / 'runtime.json').exists()
+    assert first.python.is_file() and candidate.python.is_file()
+    assert list((candidate.prefix / 'registration-backups').glob('activation-*'))
+
+
+@pytest.mark.parametrize('displaced', [False, True])
+def test_update_transaction_recovers_partial_restoration_copy(source_tree, tmp_path, displaced):
+    import ai_skills.installation as installation
+    config, _, _, before = _crash_activation(source_tree, tmp_path, 'active')
+    journal = config.assets_dest / '.installation-transaction.json'
+    token = json.loads(journal.read_text())['token']
+    target = config.home / '.codex/skills/pair-colleague'
+    staged = target.with_name(f'.{target.name}.restoring.{token}')
+    staged.mkdir()
+    (staged / 'SKILL.md').write_text('partial restoration')
+    if displaced: target.rename(target.with_name(f'.{target.name}.displaced.{token}'))
+    assert installation._recover_installation(config.assets_dest, config.home) == 'restored'
+    assert not journal.exists()
+    assert _tree_snapshot(config.home) == before['home']
+    assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+
+
+@pytest.mark.parametrize('fault', ['manifest-restore', 'copy-restore', 'missing-backup', 'damaged-backup', 'target-edit'])
+def test_update_transaction_preserves_incomplete_recovery(source_tree, tmp_path, monkeypatch, fault):
+    import ai_skills.installation as installation
+    config, first, candidate, before = _crash_activation(source_tree, tmp_path, 'active')
+    journal = config.assets_dest / '.installation-transaction.json'
+    state = json.loads(journal.read_text())
+    protected = config.home / '.codex/skills/pair-colleague'
+    item = next(item for item in state['entries'] if item['target'] == str(protected))
+    backup = Path(item['backup']); old_backup = _tree_snapshot(backup)
+    real_replace, real_rename = installation.replace_file_atomic, Path.rename
+    def replace(path, target):
+        if Path(target) == config.assets_dest / 'runtime.json': raise OSError('restore denied')
+        real_replace(path, target)
+    def rename(path, target):
+        if '.restoring.' in path.name and Path(target) == protected: raise OSError('restore denied')
+        return real_rename(path, target)
+    if fault == 'manifest-restore': monkeypatch.setattr(installation, 'replace_file_atomic', replace)
+    elif fault == 'copy-restore': monkeypatch.setattr(Path, 'rename', rename)
+    elif fault == 'missing-backup': shutil.rmtree(backup)
+    elif fault == 'damaged-backup': (backup / 'SKILL.md').write_text('damaged backup')
+    else: (protected / 'SKILL.md').write_text('user content after crash')
+    with pytest.raises((OSError, ValueError)) as failure:
+        installation._recover_installation(config.assets_dest, config.home)
+    assert getattr(failure.value, '_installation_recovery') == 'incomplete'
+    assert journal.is_file() and str(journal) in '\n'.join(failure.value.__notes__)
+    assert first.python.is_file() and candidate.python.is_file()
+    safe = config.home / '.codex/skills/break-req/.ai-skills-registration.json'
+    assert safe.read_bytes() == before['home'][str(safe.relative_to(config.home))]
+    with pytest.raises(ValueError, match='pending installation recovery'): plan_install(config)
+    with pytest.raises(ValueError, match='pending installation recovery'):
+        plan_uninstall(UninstallConfig(config.assets_dest, config.home))
+    if fault == 'target-edit':
+        assert (protected / 'SKILL.md').read_text() == 'user content after crash'
+        return
+    monkeypatch.undo()
+    if fault in ('missing-backup', 'damaged-backup'):
+        if backup.exists(): shutil.rmtree(backup)
+        backup.mkdir()
+        for name, data in old_backup.items():
+            path = backup / name
+            if data is None: path.mkdir(parents=True, exist_ok=True)
+            else: path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+    assert installation._recover_installation(config.assets_dest, config.home) == 'restored'
+    assert installation._recover_installation(config.assets_dest, config.home) is None
+    assert _tree_snapshot(config.home) == before['home']
+    assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+
+
+@pytest.mark.parametrize('fault', ['malformed', 'schema', 'missing-field', 'numeric-token', 'foreign-target', 'foreign-backup', 'unknown-owner', 'live-owner', 'symlink-journal', 'symlink-backups'])
+def test_update_transaction_rejects_unsafe_recovery_metadata(source_tree, tmp_path, fault):
+    import ai_skills.installation as installation
+    config, _, candidate, _ = _crash_activation(source_tree, tmp_path, 'copy-swapped')
+    journal = config.assets_dest / '.installation-transaction.json'
+    state = json.loads(journal.read_text())
+    original = journal.read_bytes()
+    if fault == 'malformed': journal.write_text('{bad')
+    elif fault == 'schema': state['schema_version'] = 5
+    elif fault == 'missing-field': del state['entries'][0]['before']
+    elif fault == 'numeric-token': state['token'] = int('1' * 32)
+    elif fault == 'foreign-target': state['entries'][0]['target'] = str(tmp_path / 'unowned')
+    elif fault == 'foreign-backup': state['entries'][0]['backup'] = str(tmp_path / 'unowned')
+    elif fault == 'unknown-owner': state['host'] = 'unverifiable-host'
+    elif fault == 'live-owner': state.update(pid=os.getpid(), create_time=psutil.Process().create_time())
+    elif fault == 'symlink-journal':
+        saved = tmp_path / 'journal-preserved'; journal.rename(saved)
+        try: journal.symlink_to(saved)
+        except OSError: pytest.skip('OS denies symlink creation for this user')
+    elif fault == 'symlink-backups':
+        root = candidate.prefix / 'registration-backups'; saved = candidate.prefix / 'saved-backups'
+        root.rename(saved)
+        try: root.symlink_to(saved, target_is_directory=True)
+        except OSError: pytest.skip('OS denies symlink creation for this user')
+    if fault not in ('malformed', 'symlink-journal', 'symlink-backups'): write_json_atomic(journal, state)
+    before = _tree_snapshot(config.home)
+    with pytest.raises((OSError, ValueError)):
+        installation._recover_installation(config.assets_dest, config.home)
+    assert journal.exists() and _tree_snapshot(config.home) == before
+    if fault == 'symlink-journal': assert (tmp_path / 'journal-preserved').read_bytes() == original
+
+
+@pytest.mark.parametrize('matching', [True, False])
+def test_update_transaction_serializes_concurrent_updates(source_tree, tmp_path, matching):
+    import dataclasses
+    import queue
+    import threading
+    import ai_skills.installation as installation
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex', 'gemini'))
+    adapter = _deterministic_gemini(config.home / '.gemini/extensions/ai-skill-collections')
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('first contender')
+    other_source = source_tree
+    if not matching:
+        other_source = tmp_path / 'other-source'; shutil.copytree(source_tree, other_source)
+        (other_source / 'skills/pair-colleague/SKILL.md').write_text('second contender')
+    stale = plan_install(dataclasses.replace(config, source=other_source))
+    child = _transaction_child(source_tree, tmp_path, 'staging', pause=True)
+    messages = queue.Queue()
+    threading.Thread(target=lambda: messages.put(child.stdout.readline()), daemon=True).start()
+    try:
+        assert messages.get(timeout=20).strip() == 'checkpoint:staging'
+        before = _tree_snapshot(config.assets_dest), _tree_snapshot(config.home)
+        with pytest.raises(TimeoutError, match='owner busy or unknown'):
+            apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
+        assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+        out, err = child.communicate(input='continue\n', timeout=30)
+        assert child.returncode == 0, (out, err)
+        winner = json.loads((config.assets_dest / 'runtime.json').read_text())
+        assert first.fingerprint != winner['fingerprint']
+        result = apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
+        assert (result['fingerprint'] == winner['fingerprint']) == matching
+        assert installation._registration_receipt(config.home / '.codex/skills/pair-colleague')['fingerprint'] == result['fingerprint']
+        assert not (config.assets_dest / '.installation-transaction.json').exists()
+        assert first.python.is_file() and Path(winner['python']).is_file()
+        apply_uninstall(plan_uninstall(UninstallConfig(config.assets_dest, config.home)), registrar=adapter)
+        assert not (config.home / '.codex/skills/pair-colleague').exists()
+        assert not (config.home / '.gemini/extensions/ai-skill-collections').exists()
+    finally:
+        if child.poll() is None: child.kill(); child.communicate(timeout=10)
+
+
+@pytest.mark.parametrize('owner', ['live', 'unknown'])
+def test_update_transaction_refuses_busy_or_unknown_lock(source_tree, tmp_path, owner):
+    plan = plan_install(make_config(source_tree, tmp_path))
+    lock = plan.assets_dest / '.installation.lock'; lock.mkdir(parents=True)
+    write_json_atomic(lock / 'owner.json', {'host': socket.gethostname() if owner == 'live' else 'unknown',
+                      'pid': os.getpid(), 'create_time': psutil.Process().create_time(), 'token': 'existing'})
+    before = _tree_snapshot(plan.assets_dest)
+    with pytest.raises(TimeoutError, match='owner busy or unknown'):
+        apply_install(plan, package_installer=fake_package_installer)
+    assert _tree_snapshot(plan.assets_dest) == before
+
+
+@pytest.mark.parametrize('outcome', ['restored', 'incomplete', 'interrupted', 'committed-cleanup', 'committed-lock'])
+def test_update_transaction_cli_reports_recovery_outcome(official_repository, tmp_path, monkeypatch, capsys, outcome):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    args = ['--assets-dest', str(assets), '--home', str(home), '--only', 'codex']
+    assert update.main(args) == 0
+    first = json.loads(capsys.readouterr().out)
+    before = (assets / 'runtime.json').read_bytes(), _tree_snapshot(home)
+    _commit_skill(official_repository, 'new candidate CLI failure')
+    real_write, real_bytes, real_exit = installation.write_json_atomic, installation._write_bytes_atomic, installation.DirectoryLock.__exit__
+    fired = False
+    def write(path, value):
+        nonlocal fired
+        real_write(path, value)
+        if Path(path) == assets / 'runtime.json' and not fired:
+            fired = True
+            if outcome == 'interrupted': raise KeyboardInterrupt()
+            raise OSError('original activation failure')
+    def restore(path, payload):
+        if Path(path) == assets / 'runtime.json': raise OSError('manifest restore denied')
+        real_bytes(path, payload)
+    def cleanup(self): raise OSError('committed cleanup denied')
+    def release(self, *args):
+        real_exit(self, *args)
+        if args[0] is None: raise OSError('committed lock release denied')
+    if outcome == 'committed-cleanup': monkeypatch.setattr(installation._ActivationTransaction, 'cleanup', cleanup)
+    elif outcome == 'committed-lock': monkeypatch.setattr(installation.DirectoryLock, '__exit__', release)
+    else: monkeypatch.setattr(installation, 'write_json_atomic', write)
+    if outcome == 'incomplete': monkeypatch.setattr(installation, '_write_bytes_atomic', restore)
+    assert update.main(args) == (130 if outcome == 'interrupted' else 2)
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    if outcome == 'interrupted': assert 'ai-skills update: interrupted' in captured.err
+    if outcome.startswith('committed'):
+        assert 'committed' in captured.err and 'restored' not in captured.err
+        assert json.loads((assets / 'runtime.json').read_text())['fingerprint'] != first['fingerprint']
+    else:
+        assert ('prior installation restored' if outcome != 'incomplete' else 'recovery incomplete') in captured.err
+        assert _tree_snapshot(home) == before[1]
+        if outcome != 'incomplete': assert (assets / 'runtime.json').read_bytes() == before[0]
+        else: assert 'original activation failure' in captured.err and str(assets / '.installation-transaction.json') in captured.err
+    assert Path(first['python']).is_file()
+
+
+@pytest.mark.parametrize('force', [False, True])
+def test_update_transaction_recovery_precedes_skip_force_and_preview(official_repository, source_tree, tmp_path, monkeypatch, capsys, force):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    adapter = _deterministic_gemini(home / '.gemini/extensions/ai-skill-collections')
+    config = update.UpdateConfig(assets, home, ('codex', 'gemini'))
+    first = update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('prepared interrupted refresh')
+    child = _transaction_child(source_tree, tmp_path, 'prepared')
+    out, err = child.communicate(timeout=30)
+    assert child.returncode == 77, (out, err)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    monkeypatch.setattr(installation, '_run_registration', lambda argv, *, home=None: adapter(argv))
+    args = ['--assets-dest', str(assets), '--home', str(home)]
+    assert update.main([*args, '--dry-run']) == 2
+    assert 'mutating retry' in capsys.readouterr().err
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    copied, real = [], installation._register_copy
+    def copy(*args, **kwargs): copied.append(args[0]['target']); return real(*args, **kwargs)
+    monkeypatch.setattr(installation, '_register_copy', copy)
+    assert update.main([*args, *(['--force'] if force else [])]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['source_revision'] == first['source_revision']
+    assert bool(copied) == force
+    assert not (assets / '.installation-transaction.json').exists()
+
+
+def test_update_transaction_cli_reports_recovery_before_source_failure(source_tree, tmp_path, monkeypatch, capsys):
+    from contextlib import contextmanager
+    import ai_skills.update as update
+    config, _, _, before = _crash_activation(source_tree, tmp_path, 'active')
+    @contextmanager
+    def unavailable(*args, **kwargs):
+        raise OSError('source acquisition unavailable')
+        yield
+    monkeypatch.setattr(update, 'official_source', unavailable)
+    assert update.main(['--assets-dest', str(config.assets_dest), '--home', str(config.home)]) == 2
+    captured = capsys.readouterr()
+    assert not captured.out and 'source acquisition unavailable' in captured.err
+    assert 'prior installation restored' in captured.err
+    assert _tree_snapshot(config.home) == before['home']
+
+
+@pytest.mark.parametrize('seam', ['receipt', 'rollback-cleanup', 'committed-cleanup', 'committed-unlinked'])
+def test_update_transaction_retains_terminal_evidence(source_tree, tmp_path, monkeypatch, seam):
+    import ai_skills.installation as installation
+    first = plan_install(make_config(source_tree, tmp_path))
+    apply_install(first, package_installer=fake_package_installer)
+    before = (first.assets_dest / 'runtime.json').read_bytes()
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('terminal failure candidate')
+    candidate = plan_install(make_config(source_tree, tmp_path))
+    journal = candidate.assets_dest / '.installation-transaction.json'
+    real_write, real_unlink, real_cleanup = installation.write_json_atomic, Path.unlink, installation._ActivationTransaction.cleanup
+    denied = False
+    def write(path, value):
+        real_write(path, value)
+        if Path(path) == (installation._receipt(candidate.prefix) if seam == 'receipt' else candidate.assets_dest / 'runtime.json'):
+            raise OSError('original failure')
+    def unlink(path, *args, **kwargs):
+        nonlocal denied
+        if path == journal and not denied:
+            denied = True; raise OSError('journal cleanup denied')
+        return real_unlink(path, *args, **kwargs)
+    def cleanup(self):
+        if seam == 'committed-unlinked': real_cleanup(self)
+        raise OSError('committed cleanup failure')
+    with monkeypatch.context() as patch:
+        if seam.startswith('committed'): patch.setattr(installation._ActivationTransaction, 'cleanup', cleanup)
+        else: patch.setattr(installation, 'write_json_atomic', write)
+        if seam == 'rollback-cleanup': patch.setattr(Path, 'unlink', unlink)
+        with pytest.raises(OSError) as failure: apply_install(candidate, package_installer=fake_package_installer)
+        if seam.startswith('committed'): assert failure.value._installation_recovery.startswith('committed')
+    assert installation._owned_receipt(candidate.prefix)['fingerprint'] == candidate.fingerprint
+    if seam != 'receipt':
+        installation._recover_installation(candidate.assets_dest, candidate.config.home)
+    assert not journal.exists()
+    if seam.startswith('committed'): assert resolve_runtime(assets_dest=first.assets_dest) == candidate.python
+    else: assert (first.assets_dest / 'runtime.json').read_bytes() == before
+    assert first.python.is_file() and candidate.python.is_file()
+
+
+@pytest.mark.parametrize('phase,after', [('prepared', False), ('prepared', True), ('committed', False), ('committed', True)])
+def test_update_transaction_journal_write_failure(source_tree, tmp_path, monkeypatch, phase, after):
+    import ai_skills.installation as installation
+    first = plan_install(make_config(source_tree, tmp_path))
+    apply_install(first, package_installer=fake_package_installer)
+    before = (first.assets_dest / 'runtime.json').read_bytes(), _tree_snapshot(first.config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('journal write fault')
+    candidate = plan_install(make_config(source_tree, tmp_path))
+    journal = candidate.assets_dest / '.installation-transaction.json'
+    real = installation.write_json_atomic
+    def write(path, value):
+        if Path(path) == journal and value['phase'] == phase:
+            if after: real(path, value)
+            raise OSError('journal replacement failed')
+        real(path, value)
+    with monkeypatch.context() as patch:
+        patch.setattr(installation, 'write_json_atomic', write)
+        with pytest.raises(OSError, match='journal replacement failed'):
+            apply_install(candidate, package_installer=fake_package_installer)
+    if phase == 'prepared': assert not journal.exists()
+    installation._recover_installation(candidate.assets_dest, candidate.config.home)
+    if phase == 'committed' and after:
+        assert resolve_runtime(assets_dest=first.assets_dest) == candidate.python
+    else:
+        assert ((first.assets_dest / 'runtime.json').read_bytes(), _tree_snapshot(first.config.home)) == before
+    assert candidate.python.is_file() and first.python.is_file()
+
+
+def test_update_transaction_verifies_native_manifest_newlines(source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    plan = plan_install(make_config(source_tree, tmp_path))
+    real = installation.write_json_atomic
+    def write(path, value):
+        if Path(path).name == 'runtime.json':
+            text = json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n'
+            Path(path).write_bytes(text.replace('\n', '\r\n').encode())
+        else: real(path, value)
+    monkeypatch.setattr(installation.os, 'linesep', '\r\n')
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    result = apply_install(plan, package_installer=fake_package_installer)
+    assert result['fingerprint'] == plan.fingerprint
+    assert b'\r\n' in (plan.assets_dest / 'runtime.json').read_bytes()
+    assert not (plan.assets_dest / '.installation-transaction.json').exists()
+
+
+def test_update_transaction_preserves_adapter_error_when_journal_save_fails(source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex', 'gemini'))
+    extension = config.home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    before = _tree_snapshot(config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('adapter error candidate')
+    candidate = plan_install(config)
+    failed, denied, real = False, False, installation.write_json_atomic
+    def fail(argv):
+        nonlocal failed
+        if 'install' in argv:
+            failed = True
+            raise subprocess.CalledProcessError(19, argv)
+        adapter(argv)
+    def write(path, value):
+        nonlocal denied
+        if failed and not denied and Path(path).name == '.installation-transaction.json':
+            denied = True; raise OSError('journal storage failed')
+        real(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        apply_install(candidate, package_installer=fake_package_installer, registrar=fail)
+    assert failure.value.returncode == 19 and denied
+    assert _tree_snapshot(config.home) == before
+    assert not (config.assets_dest / '.installation-transaction.json').exists()
