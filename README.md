@@ -336,6 +336,21 @@ complexity-scoring restrictions and required-pool settings.
 | `required_bands` | Adds the model to complexity-scoring candidate pools at these bands, subject to existing restrictions; selection is still balanced. |
 | `alias_of` | Reuses another model's metadata for a different CLI ID. Declare its own `agents`, `work_bands`, and `required_bands`; these memberships are not inherited. |
 
+Direct Claude and Codex runs apply one effort policy by canonical harness
+(aliases such as `codex-cli` and `claude-code` resolve first) and the run's
+actual role. Task difficulty and model provider never change it.
+
+| Harness | Non-planning role | `plan` role |
+| --- | --- | --- |
+| Codex | Every recognized effort becomes `high` | Every recognized effort becomes `xhigh` |
+| Claude | `low`/`medium`/`high` kept; `xhigh`, `max`, `maximum` become `high`; unset becomes `high` | `low`/`medium`/`high`/`xhigh` kept; `max`, `maximum` become `xhigh`; unset becomes `xhigh` |
+
+Accepted legacy tokens are `low`, `medium`, `high`, `xhigh`, `max`, and
+`maximum`; any other value fails before launch. Neither `max` nor `maximum` is
+sent to Claude or Codex. When normalization changes an explicit request, the
+effective value is used in argv and dry-run output, and the original is kept as
+`requested_effort`. AGY and other harnesses are unchanged.
+
 To add a model, add one entry with its supported agents and desired bands. To
 change effort, edit that entry's `effort_by_band`. To change usage percentages,
 edit `model_routing.usage_distribution`:
