@@ -33,6 +33,7 @@ class UpdateConfig:
     home: Path | None = None
     agents: tuple[str, ...] = ()
     dry_run: bool = False
+    force: bool = False
 
 
 def _git(*args, cwd=None, timeout=CLONE_TIMEOUT_SECONDS):
@@ -72,7 +73,8 @@ def run_update(config: UpdateConfig, *, repository=None, package_installer=None,
         revision = {'repository': repository, 'branch': OFFICIAL_BRANCH, 'commit': sha}
         plan = plan_install(InstallConfig(source=checkout, assets_dest=config.assets_dest, home=config.home,
                                           agents=config.agents, source_revision=revision,
-                                          dry_run=config.dry_run))
+                                          dry_run=config.dry_run, skip_current_revision=not config.force,
+                                          refresh_registrations=config.force))
         if config.dry_run:
             return _preview(plan, revision)
         return apply_install(plan, package_installer=package_installer, registrar=registrar)
@@ -103,17 +105,21 @@ def _preview(plan, revision):
     """Describe planned update effects without creating persistent state."""
     active_path = plan.assets_dest / 'runtime.json'
     active = json.loads(active_path.read_text(encoding='utf-8')) if active_path.is_file() else {}
+    recorded = active.get('source_revision')
+    if not plan.config.refresh_registrations and isinstance(recorded, dict) and recorded.get('commit') == revision['commit']:
+        return {'source_revision': revision, 'integrations': list(dict.fromkeys(item['agent'] for item in plan.registrations)),
+                'backups': [], 'no_op': True}
     committed_path = plan.prefix / 'runtime.json'
     committed = json.loads(committed_path.read_text(encoding='utf-8')) if committed_path.is_file() else {}
     active_by_key = {(item.get('agent'), item.get('target', '')): item
                      for item in active.get('registrations', [])}
     prior_by_key = {(item.get('agent'), item.get('target', '')): item
                     for item in committed.get('registrations', [])}
-    no_op = active.get('fingerprint') == plan.fingerprint and active.get('source_revision') == revision
+    no_op = not plan.config.refresh_registrations and active.get('fingerprint') == plan.fingerprint and active.get('source_revision') == revision
     backups, seen_targets = [], set()
     for item in plan.registrations:
         key = (item.get('agent'), item.get('target', ''))
-        if _copy_is_current(item, plan.fingerprint, prior_by_key):
+        if not plan.config.refresh_registrations and _copy_is_current(item, plan.fingerprint, prior_by_key):
             if active_by_key.get(key, {}).get('fingerprint') != plan.fingerprint:
                 no_op = False
             continue
@@ -141,11 +147,12 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ai-skills update', description=__doc__)
     parser.add_argument('--assets-dest', type=Path); parser.add_argument('--home', type=Path)
     parser.add_argument('--only', action='append', choices=AGENTS, default=[])
+    parser.add_argument('--force', action='store_true', help='refresh managed registrations even at the current revision')
     parser.add_argument('--dry-run', action='store_true', help='preview the resolved update without changing persistent state')
     try:
         options = parser.parse_args(argv)
         with redirect_stdout(sys.stderr):
-            manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only), options.dry_run))
+            manifest = run_update(UpdateConfig(options.assets_dest, options.home, tuple(options.only), options.dry_run, options.force))
         print(json.dumps(manifest, indent=2)); return 0
     except SystemExit as error: return int(error.code or 0)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
