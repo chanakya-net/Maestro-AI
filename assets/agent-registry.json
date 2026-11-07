@@ -195,14 +195,6 @@
       {"score_min": 28, "score_max": 32, "weight_min": 7, "weight_max": 9, "label": "complex"},
       {"score_min": 33, "score_max": 40, "weight_min": 9, "weight_max": 10, "label": "holy-fuck"}
     ],
-    "non_complexity_band_policy": {
-      "quite-easy": {
-        "models": ["gemini-3.8-flash-low"]
-      },
-      "easy": {
-        "models": ["gemini-3.8-flash-medium"]
-      }
-    },
     "usage_distribution": {
       "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
       "role_target_percent": {

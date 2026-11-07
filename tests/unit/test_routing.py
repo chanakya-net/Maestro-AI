@@ -60,6 +60,21 @@ def test_legacy_agy_memberships_do_not_admit_harder_automatic_work(band):
     assert exc.value.code == 2
 
 
+@pytest.mark.parametrize("model, band", [
+    ("gemini-3.8-flash-low", "quite-easy"),
+    ("gemini-3.8-flash-medium", "easy"),
+])
+def test_flash_worker_pool_follows_catalog_work_band_edits(tmp_path, model, band):
+    (tmp_path / "agent-definitions.json").write_text(
+        (Path(SOURCE_REGISTRY).parent / "agent-definitions.json").read_text())
+    payload = json.loads(SOURCE_REGISTRY.read_text())
+    assert model in routing.automatic_policy_model_ids(load_registry(SOURCE_REGISTRY), band)
+    payload["model_catalog"][model]["work_bands"] = ["medium"]
+    registry_file = tmp_path / "agent-registry.json"
+    registry_file.write_text(json.dumps(payload))
+    assert model not in routing.automatic_policy_model_ids(load_registry(registry_file), band)
+
+
 def test_forced_agy_model_keeps_explicit_band_exception():
     selection = select_route(
         RouteRequest(
