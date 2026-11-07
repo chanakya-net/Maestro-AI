@@ -172,3 +172,20 @@ def test_managed_runner_reports_process_exit_without_done_or_worker_success(tmp_
     assert f'type=provider-exit|issue=unknown|role=agent|agent=fake|model=fixture|return_code={code}' in events
     assert 'type=worker-done|' not in events
     assert 'type=agent-complete|' not in events
+
+
+def test_dry_run_reports_adjusted_effort_and_matches_execution(tmp_path, monkeypatch, capsys):
+    config = fixture_config(tmp_path, 'import sys; print(sys.argv[1:])')
+    registry = json.loads(config.registry_file.read_text())
+    registry['agents'] = {'claude': {**registry['agents']['fake'], 'model': {'default': 'm'},
+                                     'invocation': {'command': sys.executable, 'args_template': ['-c', 'import sys; print(sys.argv[1:])', '{{model_settings}}']}}}
+    config.registry_file.write_text(json.dumps(registry))
+    for key, value in {'AGENT':'claude', 'AGENT_REGISTRY_FILE':str(config.registry_file), 'CONTEXT_PAYLOAD_FILE':str(config.context_file),
+                       'PROMPT_FILE':str(config.prompt_file), 'REPO_ROOT':str(tmp_path), 'GUI_MODE':'0', 'MODEL_EFFORT':'max'}.items():
+        monkeypatch.setenv(key, value)
+    assert main(['run', '--dry-run']) == 0
+    captured = capsys.readouterr()
+    assert '--effort high' in captured.out
+    assert 'requested max, effective high' in captured.err
+    assert main(['run']) == 0
+    assert "'--effort', 'high'" in capsys.readouterr().out

@@ -51,7 +51,7 @@ def test_single_model_entry_controls_routing_and_runner(registry_file, tmp_path)
     prompt.write_text("prompt")
     spec = build_invocation(AgentRunConfig(agent="codex-cli", model=decision.model, effort=decision.effort,
         repo_root=tmp_path, context_file=context, prompt_file=prompt, gui_mode="0", environment={}), registry)
-    assert spec.argv == ("codex", "--model", "example", "-c", "model_reasoning_effort=xhigh", "-")
+    assert spec.argv == ("codex", "--model", "example", "-c", "model_reasoning_effort=high", "-")
 
 
 def test_model_alias_inherits_metadata_without_inheriting_agent_membership(registry_file):

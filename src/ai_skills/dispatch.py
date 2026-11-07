@@ -137,6 +137,8 @@ class WorkerConfig:
         # Environment is inherited by the detached process, never persisted.
         value = asdict(self)
         value['agent_run']['environment'] = None
+        if not value['agent_run'].get('requested_effort'):
+            value['agent_run'].pop('requested_effort', None)  # additive: older readers stay compatible
         return json.loads(json.dumps(value, default=str))
 
     @classmethod

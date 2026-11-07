@@ -24,7 +24,7 @@ def test_registry_command_preserves_exact_arguments(config):
     spec = build_invocation(config, registry)
     assert spec.argv == ('codex', 'exec', '-C', str(config.repo_root),
                          '--dangerously-bypass-approvals-and-sandbox', '--model', 'model with spaces',
-                         '--empty', '', 'C:\\tail\\', '-c', 'model_reasoning_effort=xhigh',
+                         '--empty', '', 'C:\\tail\\', '-c', 'model_reasoning_effort=high',
                          '-')
     assert spec.stdin == 'Context λ\n\nInstructions:\n\nDo "work" & %PATH%'.encode('utf-8')
     assert spec.cwd == config.repo_root
@@ -208,3 +208,29 @@ def test_stream_capture_preserves_baseline_arguments_and_rejects_conflicts(confi
         spec = build_invocation(ineligible, registry)
         assert spec.argv == baseline.argv
         assert b'"result_capture"' not in spec.stdin
+
+
+@pytest.mark.parametrize('agent,effort,role,flag', [
+    ('codex', 'low', 'impl', ('-c', 'model_reasoning_effort=high')),
+    ('codex', 'max', 'plan', ('-c', 'model_reasoning_effort=xhigh')),
+    ('claude', 'maximum', 'impl', ('--effort', 'high')),
+    ('claude', 'xhigh', 'impl', ('--effort', 'high')),
+    ('claude', 'low', 'impl', ('--effort', 'low')),
+    ('claude', 'max', 'plan', ('--effort', 'xhigh')),
+    ('claude', '', 'plan', ('--effort', 'xhigh')),
+    ('claude', '', 'impl', ('--effort', 'high')),
+])
+def test_effort_flags_follow_role_policy(config, agent, effort, role, flag):
+    argv = build_invocation(config.replace(agent=agent, effort=effort, role=role), load_registry()).argv
+    assert any(argv[i:i + 2] == flag for i in range(len(argv) - 1))
+    assert 'max' not in argv and 'maximum' not in argv
+
+
+def test_unknown_effort_fails_before_launch(config):
+    with pytest.raises(ValueError, match='unknown effort'):
+        build_invocation(config.replace(effort='ultra'), load_registry())
+
+
+def test_agy_effort_untouched(config):
+    spec = build_invocation(config.replace(agent='agy', model='claude-opus-5-5-high', effort='max'), load_registry())
+    assert 'max' not in spec.argv and '--effort' not in spec.argv
