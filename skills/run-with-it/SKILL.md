@@ -187,8 +187,14 @@ Explicit `FORCED_MODEL` values bypass automatic band membership but still pass
 compatibility and availability checks. Preserve the entire decision returned by
 `ai-skills route`; pass its agent, model, and effort to the worker unchanged.
 
-The generic route effort becomes Codex `model_reasoning_effort` or Claude Code
-`--effort`; Agy receives no effort flag.
+The route `effort` is role-aware and already normalized: non-planning Codex is
+`high`; planning Codex is `xhigh`; Claude non-planning keeps configured
+`low`/`medium`/`high` and caps `xhigh`/`max`/`maximum` at `high`; Claude
+planning defaults to `xhigh`. Difficulty band never raises effort to `max` or
+`xhigh` for ordinary roles. Only `plan` (the original role, not `routing_level`)
+selects planning effort. Pass the route effort unchanged; the generic value becomes
+Codex `model_reasoning_effort` or Claude Code `--effort`; Agy receives no effort
+flag.
 
 ## Runtime and maintained rules
 

@@ -74,6 +74,7 @@ def read_json_file(path: Path, default: Any | None = None) -> Any:
 
 
 from ai_skills.storage import write_json_atomic
+from ai_skills.effort import PLANNING_ROLES, canonical_harness, resolve_effort
 
 
 from ai_skills.storage import DirectoryLock
@@ -516,6 +517,24 @@ def model_effort_for_level(registry: dict[str, Any], model_id: str, level: str) 
     return str(registry.get("model_catalog", {}).get(model_id, {}).get("reasoning_effort", ""))
 
 
+DIRECT_EFFORT_HARNESSES = ("claude", "codex")
+
+
+def route_effort(registry: dict[str, Any], agent: str, model_id: str, role: str, level: str) -> str:
+    """Effective execution effort for a selected route.
+
+    Configured band effort is a default, not an explicit request, so automatic
+    planning takes the policy default (xhigh) while ordinary roles keep the
+    configured value that the shared policy then caps.
+    """
+    configured = model_effort_for_level(registry, model_id, level)
+    if canonical_harness(agent, registry) not in DIRECT_EFFORT_HARNESSES:
+        return configured
+    resolve_effort(agent, configured, role, registry)
+    requested = "" if role in PLANNING_ROLES else configured
+    return resolve_effort(agent, requested, role, registry).effective
+
+
 def select_pair(
     registry: dict[str, Any],
     ledger: dict[str, Any],
@@ -629,7 +648,7 @@ def select_pair(
             "role": role,
             "complexity_level": base_level,
             "routing_level": level,
-            "effort": model_effort_for_level(registry, selected["model"], level),
+            "effort": route_effort(registry, agent, selected["model"], role, level),
             "selection_reason": reason,
             "target_percent": policy.get(agent, 0),
             "global_target_percent": global_policy.get(agent, policy.get(agent, 0)),

@@ -313,7 +313,7 @@ Each `model_catalog` entry groups a model's settings together:
   "reasoning_effort": "high",
   "agents": ["codex"],
   "work_bands": ["medium-hard", "complex", "holy-fuck"],
-  "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"}
+  "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
 }
 ```
 
@@ -338,7 +338,11 @@ complexity-scoring restrictions and required-pool settings.
 
 Direct Claude and Codex runs apply one effort policy by canonical harness
 (aliases such as `codex-cli` and `claude-code` resolve first) and the run's
-actual role. Task difficulty and model provider never change it.
+actual role. Task difficulty and model provider never change it. `ai-skills route`
+returns this effective effort for the selected role, so route output and the
+executed argv agree. Configured `effort_by_band` values are defaults, not explicit
+requests: automatic planning returns the planning default regardless of them, and
+non-planning routes return the configured value after the cap below.
 
 | Harness | Non-planning role | `plan` role |
 | --- | --- | --- |

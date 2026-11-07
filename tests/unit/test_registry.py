@@ -46,7 +46,7 @@ def registry_file(tmp_path):
 def test_single_model_entry_controls_routing_and_runner(registry_file, tmp_path):
     registry = load_registry(registry_file)
     decision = routing.select_route(routing.RouteRequest(role="impl"), registry, {})
-    assert (decision.agent, decision.model, decision.effort) == ("codex", "example", "xhigh")
+    assert (decision.agent, decision.model, decision.effort) == ("codex", "example", "high")
     assert registry["agents"]["codex"]["model"]["known_models"] == ["example"]
     context = tmp_path / "context.md"
     prompt = tmp_path / "prompt.md"
