@@ -481,6 +481,85 @@ def test_update_cli_reports_installed_commit(official_repository, tmp_path, monk
     assert update.main(['--only', 'bogus']) == 2
 
 
+def test_update_cli_dry_run_previews_plan_without_persistent_changes(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', lambda plan: pytest.fail('dry run installed package'))
+    monkeypatch.setattr(update.tempfile, 'tempdir', str(tmp_path))
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    before_scratch = set(tmp_path.glob('ai-skills-update-*'))
+    args = ['--dry-run', '--assets-dest', str(assets), '--home', str(home), '--only', 'codex']
+
+    assert update.main(args) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert preview['integrations'] == ['codex']
+    assert preview['backups'] == []
+    assert preview['no_op'] is False
+    assert not assets.exists() and not home.exists()
+    assert set(tmp_path.glob('ai-skills-update-*')) == before_scratch
+
+
+def test_update_cli_dry_run_reports_no_op_for_current_revision(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    before = _tree_snapshot(tmp_path / 'assets'), _tree_snapshot(tmp_path / 'home')
+
+    assert update.main(['--dry-run', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is True
+    assert preview['integrations'] == ['codex']
+    assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+
+
+def test_update_cli_dry_run_reports_backup_without_creating_it(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    target = Path(next(item['target'] for item in manifest['registrations'] if item['agent'] == 'codex'))
+    (target / 'SKILL.md').write_text('user edit')
+    before = _tree_snapshot(config.assets_dest), _tree_snapshot(config.home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert preview['integrations'] == ['codex']
+    assert preview['backups'] and preview['backups'][0]['target'] == str(target)
+    assert not Path(preview['backups'][0]['path']).exists()
+    assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+
+
+def test_update_cli_dry_run_cleans_source_when_planning_fails(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(update.tempfile, 'tempdir', str(tmp_path))
+    monkeypatch.setattr(update, 'plan_install', lambda config: (_ for _ in ()).throw(ValueError('plan failed')))
+
+    assert update.main(['--dry-run', '--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 2
+    assert 'plan failed' in capsys.readouterr().err
+    assert not (tmp_path / 'assets').exists() and not (tmp_path / 'home').exists()
+    assert not list(tmp_path.glob('ai-skills-update-*'))
+
+
+def _tree_snapshot(root):
+    root = Path(root)
+    if not root.exists():
+        return None
+    return {str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+            for path in sorted(root.rglob('*'))}
+
+
 def test_update_cli_error_exits_2_without_traceback(tmp_path, monkeypatch, capsys):
     import ai_skills.update as update
     monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', (tmp_path / 'missing').as_uri())
