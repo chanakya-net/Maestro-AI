@@ -1,22 +1,150 @@
+import copy
+import json
+from pathlib import Path
+
+import pytest
+
 from ai_skills.routing import RouteRequest, select_route, routing_level
+from ai_skills.registry import load_registry
+from ai_skills.resources import resource_path
+from ai_skills import routing
+
+SOURCE_REGISTRY = Path(__file__).parents[2] / "assets" / "agent-registry.json"
 
 def test_role_band_bumps():
     assert routing_level("plan", "easy") == "medium-hard"
     assert routing_level("review", "complex") == "holy-fuck"
 
-import copy
-import json
-from pathlib import Path
-import pytest
-from ai_skills.resources import resource_path
-from ai_skills import routing
-from ai_skills.registry import load_registry
+
+@pytest.mark.parametrize("band, model", [
+    ("quite-easy", "gemini-3.8-flash-low"),
+    ("easy", "gemini-3.8-flash-medium"),
+])
+def test_forced_agy_uses_only_designated_simple_worker(band, model):
+    selection = select_route(
+        RouteRequest(role="impl", complexity_level=band, forced_agent="agy"),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert (selection["agent"], selection["model"]) == ("agy", model)
+    assert [candidate["model"] for candidate in selection["evaluated_candidates"]] == [model]
+
+
+def test_review_band_bump_uses_easy_flash_pool():
+    selection = select_route(
+        RouteRequest(role="review", complexity_level="quite-easy", forced_agent="agy"),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert (selection["routing_level"], selection["model"]) == ("easy", "gemini-3.8-flash-medium")
+
+
+def test_plan_band_bump_removes_agy_from_simple_worker_pool():
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            RouteRequest(role="plan", complexity_level="quite-easy", forced_agent="agy"),
+            load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("band", ["medium", "medium-hard", "complex", "holy-fuck"])
+def test_legacy_agy_memberships_do_not_admit_harder_automatic_work(band):
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            RouteRequest(role="impl", complexity_level=band, forced_agent="agy"),
+            load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("model, band", [
+    ("gemini-3.8-flash-low", "quite-easy"),
+    ("gemini-3.8-flash-medium", "easy"),
+])
+def test_flash_worker_pool_follows_catalog_work_band_edits(tmp_path, model, band):
+    (tmp_path / "agent-definitions.json").write_text(
+        (Path(SOURCE_REGISTRY).parent / "agent-definitions.json").read_text())
+    payload = json.loads(SOURCE_REGISTRY.read_text())
+    assert model in routing.automatic_policy_model_ids(load_registry(SOURCE_REGISTRY), band)
+    payload["model_catalog"][model]["work_bands"] = ["medium"]
+    registry_file = tmp_path / "agent-registry.json"
+    registry_file.write_text(json.dumps(payload))
+    assert model not in routing.automatic_policy_model_ids(load_registry(registry_file), band)
+
+
+def test_forced_agy_model_keeps_explicit_band_exception():
+    selection = select_route(
+        RouteRequest(
+            role="impl",
+            complexity_level="medium",
+            forced_agent="agy",
+            forced_model="gemini-3.8-flash-low",
+        ),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert (selection["agent"], selection["model"]) == ("agy", "gemini-3.8-flash-low")
+
+
+def test_excluded_or_unavailable_flash_falls_back_without_expanding_agy_pool():
+    registry = load_registry(SOURCE_REGISTRY)
+    excluded = select_route(
+        RouteRequest(
+            role="impl",
+            complexity_level="quite-easy",
+            exclude_models=frozenset({"gemini-3.8-flash-low"}),
+        ),
+        registry,
+        {},
+    )
+    unavailable = select_route(
+        RouteRequest(
+            role="impl",
+            complexity_level="easy",
+            availability={"models": {"gemini-3.8-flash-medium"}},
+        ),
+        registry,
+        {},
+    )
+    assert excluded.agent != "agy"
+    assert unavailable.agent != "agy"
+    assert excluded.model != "gemini-3.8-flash-low"
+    assert unavailable.model != "gemini-3.8-flash-medium"
+
+
+@pytest.mark.parametrize("restriction", ["unavailable", "excluded"])
+def test_restricted_designated_flash_keeps_forced_agy_no_candidate_error(restriction):
+    request = RouteRequest(role="impl", complexity_level="easy", forced_agent="agy")
+    if restriction == "unavailable":
+        request = RouteRequest(
+            role="impl",
+            complexity_level="easy",
+            forced_agent="agy",
+            availability={"models": {"gemini-3.8-flash-medium"}},
+        )
+    else:
+        request = RouteRequest(
+            role="impl",
+            complexity_level="easy",
+            forced_agent="agy",
+            exclude_models=frozenset({"gemini-3.8-flash-medium"}),
+        )
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            request,
+            load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
 
 GOLDEN = json.loads((Path(__file__).parents[1] / "fixtures" / "routing-golden.json").read_text())
 
 @pytest.mark.parametrize("case", GOLDEN, ids=lambda case: str(case["request"]))
 def test_golden_routing_policy(case):
-    registry=load_registry()
+    registry=load_registry(SOURCE_REGISTRY)
     request=RouteRequest(**{key:frozenset(value) if isinstance(value,list) else value for key,value in case["request"].items()})
     if "exit_code" in case["expected"]:
         with pytest.raises(SystemExit) as exc: select_route(request,registry,{})
@@ -26,7 +154,7 @@ def test_golden_routing_policy(case):
         assert {key:selection[key] for key in case["expected"]} == case["expected"]
 
 def test_distribution_and_sticky_reviewer():
-    registry=load_registry()
+    registry=load_registry(SOURCE_REGISTRY)
     ledger=routing.normalize_ledger({})
     for _ in range(120):
         selection=select_route(RouteRequest(role="impl",complexity_level="medium"),registry,ledger).selection
@@ -42,7 +170,7 @@ def test_distribution_and_sticky_reviewer():
     assert fallback.model != preferred
 
 def test_cumulative_exclusions_and_read_only_decision():
-    registry=load_registry()
+    registry=load_registry(SOURCE_REGISTRY)
     ledger={}; original=copy.deepcopy(ledger)
     decision=select_route(RouteRequest(role="impl",complexity_level="easy",exclude_models=frozenset(["gpt-6-luna","gpt-6.1-terra"])),registry,ledger)
     assert decision.model not in {"gpt-6-luna","gpt-6.1-terra"}
@@ -85,13 +213,13 @@ def test_nonobject_ledger_rejected(payload):
     ("holy-fuck", "claude-fable-5-1", "max"),
 ])
 def test_claude_routes_use_current_model_families(band, model, effort):
-    decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="claude"), load_registry(), {})
+    decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="claude"), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model, decision.effort) == ("claude", model, effort)
 
 
 @pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"])
 def test_requested_claude_models_can_be_forced(model):
-    decision = select_route(RouteRequest(role="impl", forced_agent="claude", forced_model=model), load_registry(), {})
+    decision = select_route(RouteRequest(role="impl", forced_agent="claude", forced_model=model), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model) == ("claude", model)
 
 
@@ -102,7 +230,7 @@ def test_requested_claude_models_can_be_forced(model):
 ])
 def test_retired_claude_models_cannot_be_routed(model):
     with pytest.raises(SystemExit):
-        select_route(RouteRequest(role="impl", forced_model=model), load_registry(), {})
+        select_route(RouteRequest(role="impl", forced_model=model), load_registry(SOURCE_REGISTRY), {})
 
 
 @pytest.mark.parametrize("band, model, effort", [
@@ -114,7 +242,7 @@ def test_retired_claude_models_cannot_be_routed(model):
     ("holy-fuck", "gpt-6-astra", "max"),
 ])
 def test_codex_routes_use_requested_model_families(band, model, effort):
-    decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="codex"), load_registry(), {})
+    decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model, decision.effort) == ("codex", model, effort)
 
 
@@ -123,17 +251,17 @@ def test_codex_routes_use_requested_model_families(band, model, effort):
     ("medium-hard", "gpt-6.1-sol", "high"), ("complex", "gpt-6.1-sol", "xhigh"), ("holy-fuck", "gpt-6.1-sol", "xhigh"),
 ])
 def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, model, effort):
-    decision = select_route(RouteRequest(role="complexity", complexity_level=band, forced_agent="codex"), load_registry(), {})
+    decision = select_route(RouteRequest(role="complexity", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model, decision.effort) == ("codex", model, effort)
 
 
 @pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-luna"])
 def test_requested_codex_models_can_be_forced(model):
-    decision = select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(), {})
+    decision = select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model) == ("codex", model)
 
 
 @pytest.mark.parametrize("model", ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.5"])
 def test_retired_codex_models_cannot_be_routed_on_codex(model):
     with pytest.raises(SystemExit):
-        select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(), {})
+        select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(SOURCE_REGISTRY), {})
