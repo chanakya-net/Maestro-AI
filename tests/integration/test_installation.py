@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import zipfile
 import pytest
@@ -971,6 +972,129 @@ def _target_entries(manifest, target):
     return [i for i in entries if i.get('target') == str(target)]
 
 
+@pytest.mark.parametrize('operation', ['update', 'reinstall'])
+def test_update_backs_up_edited_copy_registration_before_replacement(official_repository, source_tree, tmp_path,
+                                                                    monkeypatch, operation):
+    import ai_skills.update as update
+    from ai_skills.installation import _registration_receipt
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / '.codex/skills/pair-colleague'
+    target.mkdir(parents=True); (target / 'SKILL.md').write_text('user original skill')
+    first = apply_install(plan_install(make_config(source_tree, tmp_path, replace_existing=True)),
+                          package_installer=fake_package_installer)
+    original = _target_entries(first, target)[0]['backup']
+    (target / 'SKILL.md').write_text('user edited managed skill')
+    (target / 'notes').write_text('user notes')
+    preview = {}
+    def apply_checked(plan, **kwargs):
+        preview.update(plan.to_record())
+        entry = _target_entries(preview, target)[0]
+        assert entry['existing_edited'] is True and not Path(entry['backup']).exists()
+        return apply_install(plan, **kwargs)
+    if operation == 'update':
+        _commit_skill(official_repository, 'revision B')
+        monkeypatch.setattr(update, 'apply_install', apply_checked)
+        second = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                   package_installer=fake_package_installer)
+        assert 'revision B' in (target / 'SKILL.md').read_text()
+    else:
+        second = apply_checked(plan_install(make_config(source_tree, tmp_path)), package_installer=fake_package_installer)
+        assert second['prefix'] == first['prefix']
+        assert (target / 'SKILL.md').read_bytes() == (source_tree / 'skills/pair-colleague/SKILL.md').read_bytes()
+    entry = _target_entries(second, target)[0]
+    backup = Path(entry['backup'])
+    assert entry['existing_edited'] is True and entry['existing_owned'] is True
+    assert backup == Path(_target_entries(preview, target)[0]['backup'])
+    assert backup.parent == Path(second['prefix']) / 'registration-backups/codex'
+    assert re.fullmatch(r'pair-colleague\.edited-\d{8}T\d{6}Z\.[0-9a-f]{64}', backup.name)
+    assert (backup / 'SKILL.md').read_text() == 'user edited managed skill'
+    assert (backup / 'notes').read_text() == 'user notes'
+    assert entry['original_backup'] == original
+    assert (Path(original) / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in target.iterdir()} == {'SKILL.md', '.ai-skills-registration.json'}
+    assert _registration_receipt(target)['fingerprint'] == second['fingerprint']
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)))
+    assert (target / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in target.iterdir()} == {'SKILL.md'}
+    assert (backup / 'notes').read_text() == 'user notes'
+
+
+@pytest.mark.parametrize('change', ['append', 'replace'])
+def test_update_backs_up_edited_adapter_path_before_replacement(official_repository, source_tree, tmp_path, change):
+    from ai_skills.installation import _tree_hash
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    agents = ('copilot', 'antigravity')
+    shared = home / '.agents/skills/pair-colleague'
+    shared.mkdir(parents=True); (shared / 'SKILL.md').write_text('user original skill')
+    adapter = _skills_adapter(home)
+    first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home,
+                                                    agents=agents, replace_existing=True)),
+                          package_installer=fake_package_installer, registrar=adapter)
+    original = _target_entries(first, shared)[0]['backup']
+    if change == 'append':
+        skill = shared / 'SKILL.md'; skill.write_text(skill.read_text() + '\nuser edit\n')
+    else:
+        shutil.rmtree(shared); shared.mkdir(); (shared / 'user').write_text('foreign')
+    edited_hash = _tree_hash(shared)
+    edited = {p.name: p.read_bytes() for p in shared.iterdir()}
+    _commit_skill(official_repository, 'revision B')
+    second = run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                        package_installer=fake_package_installer, registrar=adapter)
+    assert 'revision B' in (shared / 'SKILL.md').read_text()
+    entries = _target_entries(second, shared)
+    assert len(entries) == 2 and all(i['existing_edited'] is True for i in entries)
+    assert len({i['backup'] for i in entries}) == 1
+    backup = Path(entries[0]['backup'])
+    assert backup.parent == Path(second['prefix']) / 'registration-backups/copilot'
+    assert re.fullmatch(r'[0-9a-f]{64}\.edited-\d{8}T\d{6}Z\.[0-9a-f]{64}', backup.name)
+    assert _tree_hash(backup) == edited_hash
+    assert {p.name: p.read_bytes() for p in backup.iterdir()} == edited
+    assert {i['original_backup'] for i in entries} == {original}
+    untouched = _target_entries(second, home / '.copilot/skills/pair-colleague')[0]
+    assert 'existing_edited' not in untouched
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+    assert (shared / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in shared.iterdir()} == {'SKILL.md'}
+    assert _tree_hash(backup) == edited_hash
+
+
+def test_edited_copy_rollback_restores_edit_and_uninstall_keeps_original(official_repository, source_tree, tmp_path,
+                                                                       monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / '.codex/skills/pair-colleague'
+    target.mkdir(parents=True); (target / 'SKILL.md').write_text('user original skill')
+    apply_install(plan_install(make_config(source_tree, tmp_path, replace_existing=True)),
+                  package_installer=fake_package_installer)
+    (target / 'SKILL.md').write_text('user edited managed skill')
+    (target / 'notes').write_text('user notes')
+    edited = {p.name: p.read_bytes() for p in target.iterdir()}
+    active = (assets / 'runtime.json').read_bytes()
+    _commit_skill(official_repository, 'revision B')
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == assets / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    update = lambda: run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                package_installer=fake_package_installer)
+    with pytest.raises(OSError, match='activation failed') as failure: update()
+    assert not getattr(failure.value, '__notes__', [])
+    assert {p.name: p.read_bytes() for p in target.iterdir()} == edited
+    assert (assets / 'runtime.json').read_bytes() == active
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    second = update()
+    assert 'revision B' in (target / 'SKILL.md').read_text() and not (target / 'notes').exists()
+    backup = Path(_target_entries(second, target)[0]['backup'])
+    assert {p.name: p.read_bytes() for p in backup.iterdir()} == edited
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)))
+    assert (target / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in target.iterdir()} == {'SKILL.md'}
+    assert {p.name: p.read_bytes() for p in backup.iterdir()} == edited
+
+
 @pytest.mark.parametrize('default_selection', [False, True])
 @pytest.mark.parametrize('agents', [('codex',), ('copilot', 'antigravity')])
 def test_update_restores_original_after_recreating_missing_registration(official_repository, source_tree, tmp_path,
@@ -1199,10 +1323,11 @@ def test_default_update_rejects_unowned_registration_sources(official_repository
     if case in ('copy', 'command'):
         target = Path(first['registrations'][0]['target'] if case == 'copy' else first['registrations'][0]['paths'][0]['target'])
         shutil.rmtree(target); target.mkdir(parents=True); (target / 'user').write_text('foreign')
+        if case == 'command': first['registrations'][0]['paths'][0].pop('installed_sha256')
     elif case == 'owner': first['owner'] = 'foreign'
     elif case == 'identity': first['registrations'][0]['agent'] = 'gemini'
     elif case == 'path': first['registrations'][0]['target'] = str(tmp_path / 'foreign')
-    if case not in ('copy', 'command', 'symlink'): write_json_atomic(active, first)
+    if case not in ('copy', 'symlink'): write_json_atomic(active, first)
     if case == 'symlink':
         other = assets / 'other.json'; active.rename(other); active.symlink_to(other)
     before = active.read_bytes()
@@ -1210,6 +1335,7 @@ def test_default_update_rejects_unowned_registration_sources(official_repository
     with pytest.raises(ValueError):
         run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(), package_installer=lambda p: calls.append(p), registrar=calls.append)
     assert calls == [] and active.read_bytes() == before
+    assert not list((assets / 'runtimes').glob('*/registration-backups'))
     if case in ('copy', 'command'): assert (target / 'user').read_text() == 'foreign'
 
 
