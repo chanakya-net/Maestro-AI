@@ -530,6 +530,7 @@ def route_effort(registry: dict[str, Any], agent: str, model_id: str, role: str,
     configured = model_effort_for_level(registry, model_id, level)
     if canonical_harness(agent, registry) not in DIRECT_EFFORT_HARNESSES:
         return configured
+    resolve_effort(agent, configured, role, registry)
     requested = "" if role in PLANNING_ROLES else configured
     return resolve_effort(agent, requested, role, registry).effective
 

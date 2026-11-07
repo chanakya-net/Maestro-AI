@@ -332,3 +332,23 @@ def test_planning_effort_uses_original_plan_role_not_routing_level():
         RouteRequest(role="plan", complexity_level="quite-easy", forced_agent="codex"),
         load_registry(SOURCE_REGISTRY), {})
     assert (decision.routing_level, decision.effort) == ("medium", "xhigh")
+
+
+@pytest.mark.parametrize("agent, model", [("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.1-sol")])
+@pytest.mark.parametrize("role", ["impl", "plan"])
+@pytest.mark.parametrize("setting", ["model_default", "band_override"])
+def test_direct_routes_reject_unknown_configured_effort(agent, model, role, setting):
+    registry = load_registry(SOURCE_REGISTRY)
+    level = routing.routing_level(role, "medium")
+    if setting == "model_default":
+        registry["model_catalog"][model]["reasoning_effort"] = "bogus"
+        registry["model_routing"]["effort_by_model_and_band"].setdefault(model, {}).pop(level, None)
+    else:
+        registry["model_routing"]["effort_by_model_and_band"].setdefault(model, {})[level] = "bogus"
+
+    with pytest.raises(ValueError, match="unknown effort: bogus"):
+        select_route(
+            RouteRequest(role=role, complexity_level="medium", forced_agent=agent, forced_model=model),
+            registry,
+            {},
+        )
