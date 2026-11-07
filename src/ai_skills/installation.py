@@ -7,7 +7,9 @@ Global Python/Node installations and provider permission settings are untouched.
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import email
 import hashlib
 from importlib import metadata
@@ -20,14 +22,16 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import tomllib
 import uuid
 import zipfile
 
 import psutil
 
+from ai_skills.dependency_constraints import _satisfies
 from ai_skills.resources import RESOURCE_NAMES, SKILL_NAMES
-from ai_skills.storage import DirectoryLock, load_json, write_json_atomic
+from ai_skills.storage import DirectoryLock, load_json, replace_file_atomic, write_json_atomic
 
 OWNER = 'ai-skills-python-runtime/1'
 PROFILES = {'codex': 'codex', 'copilot': 'github-copilot', 'antigravity': 'antigravity', 'agy': 'agy'}
@@ -124,11 +128,21 @@ def _dependency_pins(dependencies):
             match = re.fullmatch(r"sys_platform\s*==\s*'([^']+)'", marker)
             if not match: raise ValueError(f'unsupported dependency marker; install a matching wheel first: {marker}')
             if sys.platform != match.group(1): continue
-        match = re.match(r'([A-Za-z0-9_.-]+)', requirement.strip())
+        match = re.fullmatch(r'([A-Za-z0-9_.-]+)\s*(.*)', requirement.strip())
         if not match: raise ValueError(f'invalid dependency requirement: {requirement}')
         name = match.group(1)
         try: version = metadata.version(name)
-        except metadata.PackageNotFoundError as error: raise ValueError(f'dependency {name} must be installed in the invoking runtime before creating a pinned installation') from error
+        except metadata.PackageNotFoundError as cause:
+            error = ValueError(f'incompatible dependency {requirement}: not installed in the invoking runtime')
+            error.add_note('Re-bootstrap from a fresh official checkout with its dependencies; see README Existing installations.')
+            raise error from cause
+        try:
+            if not _satisfies(version, match.group(2)):
+                raise ValueError(f'incompatible dependency {requirement}: installed version {version}')
+        except ValueError as error:
+            error.add_note(f'Target requirement {requirement}; installed invoking version {version}.')
+            error.add_note('Re-bootstrap from a fresh official checkout with compatible dependencies; see README Existing installations.')
+            raise
         pins.append(name + '==' + version)
     return tuple(sorted(pins))
 
@@ -142,6 +156,9 @@ class InstallConfig:
     python: Path = field(default_factory=lambda: Path(sys.executable))
     dry_run: bool = False
     replace_existing: bool = False
+    source_revision: dict | None = None
+    skip_current_revision: bool = False
+    refresh_registrations: bool = False
 
 
 @dataclass(frozen=True)
@@ -157,12 +174,26 @@ class InstallationPlan:
     dependencies: tuple[str, ...]
     pip_commands: tuple[tuple[str, ...], ...]
     registrations: tuple[dict, ...]
+    source_revision: dict | None = None
+    active_snapshot: bytes | None = None
 
     def to_record(self):
-        return {'source': str(self.source), 'assets_dest': str(self.assets_dest), 'prefix': str(self.prefix),
+        record = {'source': str(self.source), 'assets_dest': str(self.assets_dest), 'prefix': str(self.prefix),
                 'python': str(self.python), 'version': self.version, 'fingerprint': self.fingerprint,
                 'dependencies': list(self.dependencies), 'pip_commands': [list(c) for c in self.pip_commands],
                 'registrations': list(self.registrations)}
+        if self.source_revision: record['source_revision'] = dict(self.source_revision)
+        return record
+
+
+def _check_source_revision(revision):
+    """Validate the optional official-source record before anything is written."""
+    if revision is None: return None
+    if (not isinstance(revision, dict) or not isinstance(revision.get('commit'), str)
+            or not re.fullmatch(r'[0-9a-f]{40}', revision['commit'])
+            or not all(isinstance(revision.get(k), str) and revision[k] for k in ('repository', 'branch'))):
+        raise ValueError('invalid source revision: expected repository, branch and 40-hex commit')
+    return {k: revision[k] for k in ('repository', 'branch', 'commit')}
 
 
 def _detect(home):
@@ -181,28 +212,130 @@ def _external_paths(agent, home):
     return [root / name for root in roots for name in SKILL_NAMES]
 
 
+def _carry_original(entry, prior):
+    """Keep the pre-Maestro uninstall baseline when replacing managed content.
+
+    ``backup`` stays the immediate prior registration for activation rollback;
+    ``original_backup`` (None when nothing preceded Maestro) is what uninstall restores.
+    """
+    if prior is None: return
+    keys = ('original_backup', 'original_sha256') if 'original_backup' in prior else ('backup', 'existing_sha256')
+    entry['original_backup'], entry['original_sha256'] = (prior.get(key) for key in keys)
+
+
+def _backup_stamp():
+    return datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+
+def _transition_backup(prefix, agent, name, digest, stamp=None):
+    """Rollback snapshot of one prior registration state for this candidate.
+
+    Keyed by the prior content digest so reactivating a retained prefix after a
+    different registration was active gets its own snapshot instead of colliding
+    with the one taken on that prefix's first activation.
+    """
+    if stamp: name += '.edited-' + stamp
+    return str(prefix / 'registration-backups' / agent / (name + '.' + digest))
+
+
+def _uninstall_view(entry):
+    if 'original_backup' not in entry: return entry
+    return dict(entry, backup=entry['original_backup'], existing_sha256=entry['original_sha256'])
+
+
+def _owned_backup(backup, destination):
+    """An uninstall backup must live in an owned retained runtime's backup directory."""
+    backup, runtimes = _absolute(backup), destination / 'runtimes'
+    if not backup.is_relative_to(runtimes) or len(backup.relative_to(runtimes).parts) < 2: return False
+    prefix = runtimes / backup.relative_to(runtimes).parts[0]
+    if not backup.is_relative_to(prefix / 'registration-backups'): return False
+    for ancestor in (backup, *backup.parents):
+        if ancestor == runtimes: break
+        if ancestor.is_symlink() and ancestor != backup: return False
+    _owned_receipt(prefix)
+    return True
+
+
+def _manifest_registrations(manifest, destination, home):
+    """Validate the manifest authority before deriving automatic update targets."""
+    if type(manifest.get('schema_version')) is not int or manifest['schema_version'] != 1:
+        raise ValueError('unsupported active runtime manifest schema')
+    def check_runtime(prefix, fingerprint):
+        if not isinstance(prefix, str) or not isinstance(fingerprint, str) or not re.fullmatch(r'[0-9a-f]{64}', fingerprint):
+            raise ValueError('invalid registration runtime reference')
+        path = _absolute(prefix)
+        if str(path) != prefix or path.parent != destination / 'runtimes' or path.is_symlink() or path.parent.is_symlink():
+            raise ValueError('registration runtime prefix escapes owned runtimes')
+        _owned_receipt(path, fingerprint)
+    check_runtime(manifest.get('prefix'), manifest.get('fingerprint'))
+    entries = manifest.get('registrations', [])
+    if not isinstance(entries, list): raise ValueError('invalid manifest registrations')
+    selected, seen = [], set()
+    for entry in entries:
+        if not isinstance(entry, dict): raise ValueError('invalid manifest registration')
+        agent, kind = entry.get('agent'), entry.get('kind')
+        if not isinstance(agent, str) or agent not in AGENTS or kind != ('copy' if agent in ('codex', 'claude') else 'command'):
+            raise ValueError('invalid manifest registration identity')
+        check_runtime(entry.get('runtime_prefix', manifest['prefix']), entry.get('fingerprint', manifest['fingerprint']))
+        if kind == 'copy':
+            skill = entry.get('skill')
+            if not isinstance(skill, str) or skill not in SKILL_NAMES or entry.get('target') != str(home / ('.codex' if agent == 'codex' else '.claude') / 'skills' / skill):
+                raise ValueError('invalid manifest copy target')
+            key = (agent, skill)
+        else:
+            key = (agent, None)
+            paths = entry.get('paths', [])
+            allowed = {str(path) for path in _external_paths(agent, home)}
+            if not isinstance(paths, list) or any(not isinstance(item, dict) or item.get('target') not in allowed for item in paths):
+                raise ValueError('invalid manifest adapter target')
+        if key in seen: raise ValueError('duplicate manifest registration')
+        seen.add(key); selected.append(key)
+    return selected
+
+
+def _active_manifest(destination, home, *, automatic):
+    """Read owned state without fetching source or changing the installation."""
+    active = destination / 'runtime.json'
+    if automatic and (active.is_symlink() or not active.is_file()):
+        raise ValueError('no owned active runtime manifest; install first')
+    snapshot = active.read_bytes() if active.exists() else None
+    previous = json.loads(snapshot) if snapshot is not None else None
+    if snapshot is not None:
+        if not isinstance(previous, dict): raise ValueError(f'expected JSON object: {active}')
+        if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
+    selected = _manifest_registrations(previous, destination, home) if automatic else None
+    return previous, snapshot, selected
+
+
 def plan_install(config: InstallConfig) -> InstallationPlan:
     if sys.version_info < (3, 12): raise ValueError('Python 3.12 or newer is required')
+    revision = _check_source_revision(config.source_revision)
     home = _absolute(config.home or Path.home())
     destination = _safe_assets(config.assets_dest or default_assets_dest(), home)
+    _require_no_transaction(destination)
     source, version, dependencies, payload = _source(config.source)
     pins = _dependency_pins(dependencies)
-    fingerprint = hashlib.sha256(json.dumps({'payload': payload, 'dependencies': pins, 'python': sys.version,
-                                            'platform': sys.platform, 'machine': platform.machine()}, sort_keys=True).encode()).hexdigest()
+    identity = {'payload': payload, 'dependencies': pins, 'python': sys.version,
+                'platform': sys.platform, 'machine': platform.machine()}
+    if revision: identity['source_revision'] = revision
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     prefix = destination / 'runtimes' / (version + '-' + fingerprint[:20])
     for candidate in (prefix, prefix.parent):
         if candidate.is_symlink(): raise ValueError(f'symlink escape in runtime directory: {candidate}')
     python = _python(prefix)
     pip_commands = []
-    if pins: pip_commands.append((str(python), '-m', 'pip', 'install', *pins))
-    pip_commands.append((str(python), '-m', 'pip', 'install', '--no-deps', str(source)))
-    agents = config.agents or _detect(home)
+    if pins: pip_commands.append((str(python), '-I', '-m', 'pip', 'install', *pins))
+    pip_commands.append((str(python), '-I', '-m', 'pip', 'install', '--no-deps', str(source)))
+    automatic = revision is not None and not config.agents
+    previous, snapshot, selected = _active_manifest(destination, home, automatic=automatic)
+    agents = tuple(dict.fromkeys(agent for agent, _ in selected)) if automatic else (config.agents or _detect(home))
     registrations = []
     for agent in dict.fromkeys(agents):
         if agent not in AGENTS: raise ValueError(f'unsupported registration agent: {agent}')
         if agent in ('codex', 'claude'):
             root = home / ('.codex' if agent == 'codex' else '.claude') / 'skills'
             for skill in SKILL_NAMES:
+                if automatic and (agent, skill) not in selected: continue
                 registrations.append({'kind': 'copy', 'agent': agent, 'skill': skill, 'target': str(root / skill)})
         elif agent == 'gemini':
             registrations.append({'kind': 'command', 'agent': agent, 'argv': ['gemini', 'extensions', 'install', '--consent', str(prefix / 'registration/gemini')],
@@ -211,14 +344,14 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
             registrations.append({'kind': 'command', 'agent': agent,
                                   'argv': ['npx', '-y', 'skills', 'add', str(prefix / 'registration/skills'), '-a', PROFILES[agent], '--yes', '--global'],
                                   'undo': ['npx', '-y', 'skills', 'remove', *(s for s in SKILL_NAMES), '-a', PROFILES[agent], '--yes', '--global']})
-    active = destination / 'runtime.json'
-    external_owned = {}
-    if active.exists():
-        previous = _object(active)
-        if previous.get('owner') != OWNER: raise ValueError('active runtime manifest is unowned')
+    external_owned, prior_entries = {}, {}
+    if previous is not None:
         for r in previous.get('registrations', []):
+            if r.get('kind') == 'copy': prior_entries[r['target']] = r
             for p in r.get('paths', []):
+                prior_entries[p['target']] = p
                 if p.get('installed_sha256'): external_owned[p['target']] = p['installed_sha256']
+    stamp = _backup_stamp()
     for registration in registrations:
         if registration['kind'] != 'copy':
             registration['paths'] = []
@@ -228,24 +361,36 @@ def plan_install(config: InstallConfig) -> InstallationPlan:
                 item = {'target': str(target)}
                 if target.exists() or target.is_symlink():
                     digest = _tree_hash(target)
-                    if external_owned.get(str(target)) != digest and not config.replace_existing:
+                    managed = str(target) in external_owned
+                    edited = managed and external_owned[str(target)] != digest
+                    if not config.replace_existing and (not managed or (edited and _contains_symlink(target))):
                         raise ValueError(f'unowned adapter registration already exists: {target}; use --dry-run --replace-existing to review its backup')
-                    item.update(existing_sha256=digest, backup=str(prefix / 'registration-backups' / registration['agent'] / hashlib.sha256(str(target).encode()).hexdigest()))
+                    item.update(existing_sha256=digest, backup=_transition_backup(prefix, registration['agent'], hashlib.sha256(str(target).encode()).hexdigest(), digest, stamp if edited else None))
+                    if edited: item['existing_edited'] = True
+                    if managed: _carry_original(item, prior_entries.get(str(target)))
+                else: _carry_original(item, prior_entries.get(str(target)))  # recreating a missing managed target
                 registration['paths'].append(item)
             continue
         target = Path(registration['target'])
         for ancestor in target.parents:
             if ancestor.is_symlink(): raise ValueError(f'symlink escape in registration path: {ancestor}')
         if target.exists() or target.is_symlink():
-            owned = False
+            owned = edited = False
             try:
                 _registration_receipt(target); owned = True
             except ValueError:
-                if not config.replace_existing:
-                    raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
-            registration.update(backup=str(prefix / 'registration-backups' / registration['agent'] / registration['skill']),
-                                existing_sha256=_tree_hash(target), existing_owned=owned)
-    return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations))
+                try:
+                    _managed_receipt(target); edited = True
+                except ValueError:
+                    if not config.replace_existing:
+                        raise ValueError(f'unowned skill registration already exists: {target}; review --dry-run --replace-existing to back it up explicitly')
+            digest = _tree_hash(target)
+            registration.update(backup=_transition_backup(prefix, registration['agent'], registration['skill'], digest, stamp if edited else None),
+                                existing_sha256=digest, existing_owned=owned or edited)
+            if edited: registration['existing_edited'] = True
+            if owned or edited: _carry_original(registration, prior_entries.get(str(target)))
+        else: _carry_original(registration, prior_entries.get(str(target)))  # recreating a missing managed target
+    return InstallationPlan(config, source, destination, prefix, python, version, fingerprint, payload, pins, tuple(pip_commands), tuple(registrations), revision, snapshot)
 
 
 def _receipt(prefix):
@@ -261,16 +406,94 @@ def _owned_receipt(prefix, fingerprint=None):
     return receipt
 
 
-def _runtime_root(python):
-    code = 'import ai_skills,json;from pathlib import Path;print(json.dumps(str(Path(ai_skills.__file__).parent)))'
-    result = subprocess.run([str(python), '-c', code], capture_output=True, text=True, check=True)
+def _isolated_environment():
+    # Caller PYTHONPATH/PYTHONHOME/PYTHONSTARTUP must not shadow installer modules.
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith('PYTHON')}
+
+
+# Index, trust and network settings pip may inherit. Install destinations
+# (target/prefix/root/user/src), logs and requirement injection never pass.
+PIP_SETTINGS = frozenset({
+    'index-url', 'extra-index-url', 'no-index', 'find-links', 'trusted-host', 'cert', 'client-cert',
+    'proxy', 'timeout', 'retries', 'keyring-provider', 'only-binary', 'no-binary', 'prefer-binary',
+    'pre', 'no-cache-dir', 'disable-pip-version-check', 'no-input', 'progress-bar', 'quiet', 'verbose'})
+_PIP_SECTIONS = {'global': 0, 'install': 1, ':env:': 2}  # pip precedence, lowest first
+
+
+def _pip_environment(python, base, cwd):
+    """Carry allowlisted pip settings as variables; disable every pip config file."""
+    listing = subprocess.run([str(python), '-I', '-m', 'pip', 'config', 'list'], capture_output=True,
+                             text=True, check=True, cwd=cwd, env=base).stdout
+    settings = []
+    for line in listing.splitlines():
+        name, separator, value = line.partition('=')
+        section, _, key = name.rpartition('.')
+        if separator and section in _PIP_SECTIONS and key in PIP_SETTINGS:
+            settings.append((_PIP_SECTIONS[section], key, ast.literal_eval(value)))
+    env = {key: value for key, value in base.items() if not key.upper().startswith('PIP_')}
+    for _, key, value in sorted(settings, key=lambda setting: setting[0]):
+        env['PIP_' + key.upper().replace('-', '_')] = str(value)
+    env['PIP_CONFIG_FILE'] = os.devnull  # pip then loads no global, user, site or env config file
+    return env
+
+
+def _run_child(argv, *, cwd=None, env=None):
+    """Run a child whose progress follows Python's stdout, with or without a descriptor."""
+    stream = getattr(sys, 'stdout', None)
+    try: descriptor = stream.fileno()
+    except (AttributeError, OSError, ValueError): descriptor = None  # io.UnsupportedOperation
+    if descriptor is not None:
+        stream.flush()
+        return subprocess.run(argv, check=True, cwd=cwd, env=env, stdout=descriptor)
+    result = subprocess.run(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, text=True, errors='replace')
+    if stream is not None and result.stdout: stream.write(result.stdout)
+    result.check_returncode()
+    return result
+
+
+def _runtime_root(python, *, verify_dependencies=False):
+    imports = 'import ai_skills.cli,psutil,sys;exec("import win32api") if sys.platform == "win32" else None;' if verify_dependencies else ''
+    code = imports + 'import ai_skills,json;from pathlib import Path;print(json.dumps(str(Path(ai_skills.__file__).parent)))'
+    result = subprocess.run([str(python), '-I', '-c', code], capture_output=True, text=True, check=True,
+                            cwd=Path(python).parents[1], env=_isolated_environment(), timeout=30)
     return Path(json.loads(result.stdout))
 
 
+def _verify_interpreter(python, package_root):
+    """A retained runtime must launch and import its own recorded package."""
+    if not python.is_file(): raise ValueError(f'installed venv interpreter missing: {python}')
+    try: root = _runtime_root(python, verify_dependencies=True)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise ValueError(f'installed venv interpreter unusable: {python}: {error}') from error
+    if root.resolve() != Path(package_root).resolve():
+        raise ValueError(f'installed venv interpreter imports an unexpected package: {root}')
+
+    try:
+        subprocess.run([str(python), '-I', '-m', 'ai_skills', '--help'], capture_output=True,
+                       text=True, check=True, cwd=python.parents[1], env=_isolated_environment(), timeout=30)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f'installed runtime launcher unusable: {python}: {error}') from error
+
+
 def _install_package(plan):
-    subprocess.run([str(plan.config.python), '-m', 'venv', str(plan.prefix)], check=True)
-    for command in plan.pip_commands: subprocess.run(command, check=True)
-    subprocess.run([str(plan.python), '-m', 'pip', 'check'], check=True)
+    # Isolated mode (-I) keeps the invoking checkout off sys.path; the temporary
+    # official checkout stays the explicit pip build source.
+    env, cwd = _isolated_environment(), None
+    _run_child([str(plan.config.python), '-I', '-m', 'venv', str(plan.prefix)], cwd=plan.prefix, env=env)
+    # Updates run pip from the candidate prefix with allowlisted settings so caller
+    # destinations cannot write outside it. An ordinary install keeps the caller's
+    # cwd and pip configuration, so relative constraints and find-links resolve.
+    if plan.source_revision: env, cwd = _pip_environment(plan.python, env, plan.prefix), plan.prefix
+    for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
+    try:
+        result = subprocess.run([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env,
+                                capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as cause:
+        detail = '\n'.join(text.strip() for text in (cause.stdout, cause.stderr) if text and text.strip())
+        error = ValueError(f'candidate dependency check failed for {", ".join(plan.dependencies)}: {detail}')
+        error.add_note('Re-bootstrap with compatible target dependencies from a fresh official checkout; see README Existing installations.')
+        raise error from cause
+    if result.stdout: print(result.stdout, end='')
     return _runtime_root(plan.python)
 
 
@@ -291,11 +514,16 @@ def _verify_payload(receipt, prefix):
             raise ValueError(f'installed runtime payload changed: {path}')
 
 
-def _registration_receipt(path):
+def _managed_receipt(path):
     receipt_path = path / '.ai-skills-registration.json'
     if path.is_symlink() or not receipt_path.is_file(): raise ValueError(f'unowned or symlinked skill registration: {path}')
     receipt = _object(receipt_path)
     if receipt.get('owner') != OWNER or receipt.get('path') != str(path): raise ValueError(f'unowned skill registration: {path}')
+    return receipt
+
+
+def _registration_receipt(path):
+    receipt = _managed_receipt(path)
     files = receipt.get('files', {})
     if set(files) != {'SKILL.md'} or {p.name for p in path.iterdir()} != {'SKILL.md', '.ai-skills-registration.json'}:
         raise ValueError(f'unowned additional content in skill registration: {path}')
@@ -303,6 +531,11 @@ def _registration_receipt(path):
         child = path / name
         if not child.resolve().is_relative_to(path.resolve()) or not child.is_file() or _hash(child) != digest: raise ValueError(f'edited or escaped skill registration: {child}')
     return receipt
+
+
+def _contains_symlink(path):
+    if path.is_symlink(): return True
+    return path.is_dir() and any(_contains_symlink(child) for child in path.iterdir())
 
 
 def _tree_hash(path):
@@ -329,7 +562,7 @@ def _copy_tree(source, destination):
         shutil.copytree(source, destination, symlinks=True)
 
 
-def _register_copy(registration, root, fingerprint):
+def _register_copy(registration, root, fingerprint, transaction):
     target = Path(registration['target'])
     for ancestor in target.parents:
         if ancestor.is_symlink(): raise ValueError(f'symlink escape in registration path: {ancestor}')
@@ -348,24 +581,21 @@ def _register_copy(registration, root, fingerprint):
         raise ValueError(f'skill registration disappeared after planning: {target}')
     payload = (root / 'skills' / registration['skill'] / 'SKILL.md').read_text(encoding='utf-8')
     target.parent.mkdir(parents=True, exist_ok=True)
-    staged = target.with_name('.' + target.name + '.staging.' + uuid.uuid4().hex)
-    staged.mkdir()
-    (staged / 'SKILL.md').write_text(payload, encoding='utf-8')
-    write_json_atomic(staged / '.ai-skills-registration.json', {'owner': OWNER, 'path': str(target), 'fingerprint': fingerprint, 'files': {'SKILL.md': _hash(staged / 'SKILL.md')}})
-    previous = None
+    token = transaction.state['token']
+    staged = target.with_name('.' + target.name + '.staging.' + token)
     try:
-        if exists:
-            previous = target.with_name('.' + target.name + '.previous.' + uuid.uuid4().hex)
-            target.rename(previous)
-        staged.rename(target)
-        if previous:
-            if previous.is_symlink(): previous.unlink()
-            else: shutil.rmtree(previous)
+        staged.mkdir()
+        (staged / 'SKILL.md').write_text(payload, encoding='utf-8')
+        write_json_atomic(staged / '.ai-skills-registration.json', {'owner': OWNER, 'path': str(target), 'fingerprint': fingerprint, 'files': {'SKILL.md': _hash(staged / 'SKILL.md')}})
     except BaseException:
-        if previous and (previous.exists() or previous.is_symlink()) and not target.exists(): previous.rename(target)
+        # Before expect(), this token's directory is scratch; the target is untouched.
+        try:
+            if staged.exists() or staged.is_symlink(): _remove_tree(staged)
+        except OSError: pass  # Journal recovery retries cleanup without masking the failure.
         raise
-    finally:
-        if staged.exists(): shutil.rmtree(staged)
+    transaction.expect(target, _tree_hash(staged))
+    if exists: target.rename(target.with_name('.' + target.name + '.previous.' + token))
+    staged.rename(target)  # The journal owns cleanup and restoration after expect().
 
 
 def _restore_copy(registration, fingerprint):
@@ -380,30 +610,110 @@ def _restore_copy(registration, fingerprint):
     if backup is not None: _copy_tree(backup, target)
 
 
-def _backup_adapter(registration):
-    for item in registration.get('paths', []):
-        if not item.get('backup'): continue
-        target, backup = Path(item['target']), Path(item['backup'])
-        if _tree_hash(target) != item['existing_sha256']: raise ValueError(f'adapter registration changed after planning: {target}')
+def _adapter_state(target):
+    """Digest of an adapter target, or None when absent; never through a symlinked ancestor."""
+    target = Path(target)
+    for ancestor in target.parents:
+        if ancestor.is_symlink(): raise ValueError(f'symlink escape in adapter registration: {ancestor}')
+    return _tree_hash(target) if target.exists() or target.is_symlink() else None
+
+
+def _remove_tree(target):
+    if target.is_symlink() or target.is_file(): target.unlink()
+    else: shutil.rmtree(target)
+
+
+def _restore_backup(item):
+    backup, target = Path(item['backup']), Path(item['target'])
+    if _tree_hash(backup) != item['existing_sha256']: raise ValueError(f'adapter backup changed: {backup}')
+    target.parent.mkdir(parents=True, exist_ok=True); _copy_tree(backup, target)
+
+
+_BASELINE_KEYS = ('existing_sha256', 'backup', 'original_backup', 'original_sha256')
+
+
+class _AdapterActivation:
+    """Expected state of every adapter target during one activation.
+
+    A target shared by several adapters (``~/.agents/skills``) is a single
+    transition from its pre-activation state: the first adapter backs it up and
+    later adapters inherit that baseline, so rollback and uninstall restore it once.
+    """
+
+    def __init__(self, transaction):
+        self.current, self.owners = {}, {}  # target -> digest written here | items sharing it
+        self.transaction = transaction
+
+    def expected(self, item):
+        target = item['target']
+        return self.current[target] if target in self.current else item.get('existing_sha256')
+
+    def check(self, registration):
+        """Refuse a target appearing, vanishing or changing outside this activation."""
+        for item in registration.get('paths', []):
+            if _adapter_state(item['target']) != self.expected(item):
+                raise ValueError(f'adapter registration changed after planning: {item["target"]}')
+
+    def prepare(self, registration):
+        self.check(registration)
+        for item in registration.get('paths', []):
+            owners = self.owners.setdefault(item['target'], [])
+            if owners:
+                for key in _BASELINE_KEYS:
+                    if key in owners[0]: item[key] = owners[0][key]
+                    else: item.pop(key, None)
+            elif item.get('backup'): self._backup(item)
+            owners.append(item)
+
+    @staticmethod
+    def _backup(item):
+        backup = Path(item['backup'])
         if backup.exists() or backup.is_symlink():
             if _tree_hash(backup) != item['existing_sha256']: raise ValueError(f'adapter backup changed: {backup}')
         else:
-            backup.parent.mkdir(parents=True, exist_ok=True); _copy_tree(target, backup)
+            backup.parent.mkdir(parents=True, exist_ok=True); _copy_tree(Path(item['target']), backup)
+
+    def settle(self, registration):
+        """Expect each target as observed after this activation's own undo succeeded."""
+        for item in registration.get('paths', []):
+            self.current[item['target']] = _adapter_state(item['target'])
+        self.transaction.settle(registration)
+
+    def record(self, registration):
+        for item in registration.get('paths', []):
+            self.settle_owners(item['target'], self.owners[item['target']], _adapter_state(item['target']))
+        self.transaction.settle(registration)
+
+    def settle_owners(self, target, owners, digest):
+        self.current[target] = digest
+        for owner in owners:
+            if digest: owner['installed_sha256'] = digest
+            else: owner.pop('installed_sha256', None)
+
+    def share(self, retained):
+        """Give retained owners of a rewritten shared target its new receipt and baseline."""
+        for registration in retained:
+            for item in registration.get('paths', []):
+                owners = self.owners.get(item['target'])
+                if not owners: continue
+                for key in _BASELINE_KEYS:
+                    if key in owners[0]: item[key] = owners[0][key]
+                    else: item.pop(key, None)
+                self.settle_owners(item['target'], [item], self.current.get(item['target']))
 
 
 def _restore_adapter(registration):
     for item in registration.get('paths', []):
         target = Path(item['target'])
         if target.exists() or target.is_symlink():
+            digest = _tree_hash(target)
+            # A target shared with another adapter may already hold its restored baseline.
+            if item.get('backup') and digest == item.get('existing_sha256'): continue
             expected = item.get('installed_sha256') or item.get('existing_sha256')
-            if not expected or _tree_hash(target) != expected:
+            if not expected or digest != expected:
                 raise ValueError(f'uncommitted or edited adapter content preserved; inspect its original backup: {target}')
-            if target.is_symlink(): target.unlink()
-            else: shutil.rmtree(target)
-        if item.get('backup'):
-            backup = Path(item['backup'])
-            if _tree_hash(backup) != item['existing_sha256']: raise ValueError(f'adapter backup changed: {backup}')
-            target.parent.mkdir(parents=True, exist_ok=True); _copy_tree(backup, target)
+            _remove_tree(target)
+        if item.get('backup'): _restore_backup(item)
 
 
 def _registration_payload(prefix, root, version):
@@ -419,17 +729,28 @@ def _registration_payload(prefix, root, version):
     shutil.copytree(skills, gemini / 'skills', dirs_exist_ok=True)
 
 
+# Caller npm settings that would point npx at an invoking project's local bins.
+_NPM_PROJECT_KEYS = frozenset({'NPM_CONFIG_PREFIX', 'NPM_CONFIG_LOCAL_PREFIX'})
+
+
 def _run_registration(argv, *, home=None):
     # argv lists only; never shell interpolation or automatic tool installs.
+    # A fresh empty cwd keeps npx from resolving the invoking checkout's
+    # node_modules/.bin or project .npmrc instead of the expected package.
     from ai_skills.runner import resolve_executable
-    environment = dict(os.environ)
+    environment = {key: value for key, value in os.environ.items() if key.upper() not in _NPM_PROJECT_KEYS}
     if home is not None:
         selected = str(_absolute(home))
         environment.update(HOME=selected, USERPROFILE=selected)
         if os.name == 'nt':
             drive, tail = os.path.splitdrive(selected)
             environment.update(HOMEDRIVE=drive, HOMEPATH=tail)
-    subprocess.run(resolve_executable(tuple(argv), environment), check=True, env=environment)
+    with tempfile.TemporaryDirectory(prefix='ai-skills-adapter-') as cwd:
+        for key in list(environment):
+            if key.upper() in ('NPM_CONFIG_CACHE', 'NPM_CONFIG_LOGS_DIR'): environment.pop(key)
+        environment['npm_config_cache'] = str(Path(cwd) / 'npm-cache')
+        environment['npm_config_logs_dir'] = str(Path(cwd) / 'npm-logs')
+        _run_child(resolve_executable(tuple(argv), environment), cwd=cwd, env=environment)
 
 
 def _clean_interrupted(prefix):
@@ -445,85 +766,462 @@ def _clean_interrupted(prefix):
     shutil.rmtree(prefix)
 
 
-def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=None):
-    if plan.config.dry_run: return plan.to_record()
-    register = registrar or (lambda argv: _run_registration(argv, home=plan.config.home or Path.home()))
-    source, version, dependencies, payload = _source(plan.source)
-    if payload != plan.payload_fingerprint or _dependency_pins(dependencies) != plan.dependencies:
-        raise ValueError('installation source or dependency versions changed after planning')
-    _safe_assets(plan.assets_dest, plan.config.home or Path.home())
-    plan.assets_dest.mkdir(parents=True, exist_ok=True)
-    with DirectoryLock(plan.assets_dest / '.installation', timeout_seconds=.1):
-        if plan.prefix.exists() and not _receipt(plan.prefix).exists(): _clean_interrupted(plan.prefix)
-        if plan.prefix.exists():
-            receipt = _owned_receipt(plan.prefix, plan.fingerprint); _verify_payload(receipt, plan.prefix)
-            root = Path(receipt['package_root'])
-        else:
-            plan.prefix.mkdir(parents=True)
-            marker = {'owner': OWNER, 'prefix': str(plan.prefix), 'host': socket.gethostname(), 'pid': os.getpid(), 'create_time': psutil.Process().create_time(), 'token': uuid.uuid4().hex}
-            write_json_atomic(plan.prefix / '.installing.json', marker)
-            try:
-                root = Path((package_installer or _install_package)(plan))
-                if _source(plan.source)[3] != plan.payload_fingerprint:
-                    raise ValueError('installation source changed while creating the environment')
-                if not plan.python.is_file(): raise ValueError(f'installed venv interpreter missing: {plan.python}')
-                hashes = _validate_payload(root, plan.prefix)
-                _registration_payload(plan.prefix, root, plan.version)
-                receipt = {'owner': OWNER, 'schema_version': 1, 'prefix': str(plan.prefix), 'python': str(plan.python),
-                           'version': plan.version, 'fingerprint': plan.fingerprint, 'dependencies': list(plan.dependencies),
-                           'package_root': str(root), 'payload_hashes': hashes}
-                write_json_atomic(_receipt(plan.prefix), receipt)
-                (plan.prefix / '.installing.json').unlink()
-            except BaseException:
-                # This process created the final prefix and has not activated
-                # it. Only its own failed staging directory may be removed.
-                if plan.prefix.exists(): shutil.rmtree(plan.prefix)
-                raise
-        active_path = plan.assets_dest / 'runtime.json'
-        active = _object(active_path) if active_path.exists() else {}
-        committed_path = plan.prefix / 'runtime.json'
-        committed = _object(committed_path) if committed_path.exists() else {}
-        prior_by_key = {(r['agent'], r.get('target', '')): r for r in committed.get('registrations', [])}
-        selected_keys = {(r['agent'], r.get('target', '')) for r in plan.registrations}
-        registrations = [r for r in active.get('registrations', []) if (r['agent'], r.get('target', '')) not in selected_keys]
-        applied = []
-        try:
-            for registration in plan.registrations:
-                registration['runtime_prefix'] = str(plan.prefix)
-                registration['fingerprint'] = plan.fingerprint
-                key = (registration['agent'], registration.get('target', ''))
-                prior = prior_by_key.get(key)
-                if prior and registration['kind'] == 'copy':
-                    current = _registration_receipt(Path(registration['target']))
-                    if current['fingerprint'] == plan.fingerprint:
-                        registrations.append(prior); continue
-                if registration['kind'] == 'copy': _register_copy(registration, root, plan.fingerprint)
-                else:
-                    _backup_adapter(registration)
-                    applied.append(registration)
-                    if registration['agent'] == 'gemini' and any(p.get('backup') for p in registration.get('paths', [])):
-                        register(registration['undo'])
-                    # Include an adapter being applied so a partly successful
-                    # native command can restore all explicitly backed paths.
-                    register(registration['argv'])
-                    for item in registration.get('paths', []):
-                        target = Path(item['target'])
-                        if target.exists() or target.is_symlink(): item['installed_sha256'] = _tree_hash(target)
-                if registration not in applied: applied.append(registration)
-                registrations.append(registration)
-        except BaseException:
-            for registration in reversed(applied):
-                if registration['kind'] == 'copy': _restore_copy(registration, plan.fingerprint)
-                else: _restore_adapter(registration)
+def _transaction_path(destination):
+    return destination / '.installation-transaction.json'
+
+
+def _require_no_transaction(destination):
+    path = _transaction_path(destination)
+    if path.exists() or path.is_symlink():
+        raise ValueError(f'pending installation recovery: {path}; a mutating retry is required')
+
+
+def _write_bytes_atomic(path, payload):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(payload); stream.flush(); os.fsync(stream.fileno())
+        replace_file_atomic(temporary, path)
+    finally:
+        if temporary is not None: temporary.unlink(missing_ok=True)
+
+
+def _transaction_digest(path, kind):
+    if kind == 'tree': return _adapter_state(path)
+    if path.is_symlink(): raise ValueError(f'symlinked transaction metadata: {path}')
+    return _hash(path) if path.exists() else None
+
+
+class _ActivationTransaction:
+    """Installation-local write-ahead journal. Recovery never executes saved argv.
+
+    Before-images outlive temporary sources and remain with the receipted runtime.
+    Only observed successful adapter output is owned; an unfinished external call
+    cannot be inferred safe merely because its installer process has died.
+    Stop the adapter, verify affected targets against their backups and repair
+    them manually, then remove the journal before retrying an unfinished call.
+    """
+
+    def __init__(self, destination, state):
+        self.destination, self.state = destination, state
+        self.path = _transaction_path(destination)
+        self.committed = False
+
+    @classmethod
+    def prepare(cls, plan):
+        state = {'schema_version': 1, 'owner': OWNER, 'host': socket.gethostname(),
+                 'pid': os.getpid(), 'create_time': psutil.Process().create_time(), 'token': uuid.uuid4().hex,
+                 'home': str(_absolute(plan.config.home or Path.home())), 'destination': str(plan.assets_dest),
+                 'prefix': str(plan.prefix), 'fingerprint': plan.fingerprint,
+                 'receipt_sha256': _hash(_receipt(plan.prefix)), 'phase': 'prepared',
+                 'entries': [], 'external_pending': [], 'released': False}
+        transaction = cls(plan.assets_dest, state)
+        for path in (plan.prefix / 'runtime.json', plan.assets_dest / 'runtime.json'):
+            transaction.snapshot(path, 'file')
+        for registration in plan.registrations:
+            items = [registration] if registration['kind'] == 'copy' else registration.get('paths', [])
+            for item in items:
+                target = Path(item['target'])
+                if _adapter_state(target) != item.get('existing_sha256'):
+                    raise ValueError(f'registration changed after planning: {target}')
+                transaction.snapshot(target, 'tree')
+        try: transaction.save()
+        except BaseException as error:
+            if transaction.path.exists(): transaction.failed(error)
+            else: error._installation_recovery = 'restored'
             raise
+        return transaction
+
+    def backup_root(self):
+        return Path(self.state['prefix']) / 'registration-backups' / ('activation-' + self.state['token'])
+
+    def snapshot(self, path, kind):
+        if any(item['target'] == str(path) for item in self.state['entries']): return
+        digest = _transaction_digest(path, kind)
+        backup = self.backup_root() / str(len(self.state['entries']))
+        _safe_assets(backup.parent, Path(self.state['home']))
+        if digest is not None:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            if kind == 'tree': _copy_tree(path, backup)
+            else: _write_bytes_atomic(backup, path.read_bytes())
+            if _transaction_digest(backup, kind) != digest:
+                raise ValueError(f'transaction before-image changed: {backup}')
+        self.state['entries'].append({'target': str(path), 'kind': kind, 'before': digest,
+                                      'after': digest, 'backup': str(backup)})
+
+    def save(self):
+        write_json_atomic(self.path, self.state)
+
+    def entry(self, target):
+        return next(item for item in self.state['entries'] if item['target'] == str(target))
+
+    def expect(self, target, digest):
+        self.entry(target)['after'] = digest
+        self.state['phase'] = 'activating'
+        self.save()
+
+    def command(self, registration, argv, register):
+        self.state['external_pending'] = [item['target'] for item in registration.get('paths', [])]
+        self.save()  # Intent precedes Gemini undo as well as installation.
+        try:
+            register(argv)
+        except Exception as error:
+            # The call returned, but failed output remains unverified. Keep the
+            # last successful digest; restore only if the target still matches it.
+            self.state['external_pending'] = []
+            try: self.save()
+            except (OSError, ValueError) as failure:
+                error.add_note(f'could not record adapter exit in {self.path}: {failure}')
+            raise
+
+    def settle(self, registration):
+        for item in registration.get('paths', []):
+            self.entry(item['target'])['after'] = _adapter_state(item['target'])
+        self.state['external_pending'] = []
+        self.save()
+
+    @classmethod
+    def load(cls, destination, home):
+        path = _transaction_path(destination)
+        if path.is_symlink(): raise ValueError(f'symlinked recovery journal: {path}')
+        transaction = cls(destination, _object(path))
+        transaction.validate(home)
+        state = transaction.state
+        released = state.get('released') is True and state['phase'] in ('incomplete', 'committed') and not state['external_pending']
+        if not released and not DirectoryLock._proven_dead(state):
+            raise ValueError(f'recovery journal has a live or unknown owner: {path}')
+        return transaction
+
+    def validate(self, home):
+        state = self.state
+        if (type(state.get('schema_version')) is not int or state['schema_version'] != 1
+                or state.get('owner') != OWNER or state.get('home') != str(home)
+                or state.get('destination') != str(self.destination)
+                or not isinstance(state.get('token'), str)
+                or not re.fullmatch(r'[0-9a-f]{32}', str(state.get('token', '')))
+                or state.get('phase') not in ('prepared', 'activating', 'restoring', 'incomplete', 'committed')
+                or state.get('host') != socket.gethostname() or type(state.get('pid')) is not int
+                or state['pid'] <= 0 or type(state.get('create_time')) not in (int, float)
+                or not 0 < state['create_time'] < float('inf')
+                or not re.fullmatch(r'[0-9a-f]{64}', str(state.get('fingerprint', '')))
+                or not re.fullmatch(r'[0-9a-f]{64}', str(state.get('receipt_sha256', '')))):
+            raise ValueError(f'invalid or unknown-owner recovery journal: {self.path}')
+        prefix = _absolute(state.get('prefix', ''))
+        if str(prefix) != state.get('prefix') or prefix.parent != self.destination / 'runtimes':
+            raise ValueError(f'escaped recovery runtime: {prefix}')
+        _safe_assets(prefix, home)
+        _owned_receipt(prefix, state.get('fingerprint'))
+        if _hash(_receipt(prefix)) != state.get('receipt_sha256'):
+            raise ValueError(f'changed recovery runtime receipt: {prefix}')
+        self.validate_entries(home, prefix)
+
+    def validate_entries(self, home, prefix):
+        allowed = {str(home / root / name) for root in ('.codex/skills', '.claude/skills') for name in SKILL_NAMES}
+        allowed.update(str(path) for agent in AGENTS if agent not in ('codex', 'claude') for path in _external_paths(agent, home))
+        files = {str(prefix / 'runtime.json'), str(self.destination / 'runtime.json')}
+        entries, pending = self.state.get('entries'), self.state.get('external_pending')
+        if not isinstance(entries, list) or not isinstance(pending, list):
+            raise ValueError(f'invalid recovery entries: {self.path}')
+        seen = set()
+        for index, item in enumerate(entries):
+            if not isinstance(item, dict) or not {'target', 'kind', 'backup', 'before', 'after'} <= item.keys():
+                raise ValueError('invalid recovery entry')
+            target, kind = item.get('target'), item.get('kind')
+            if not isinstance(target, str) or kind not in ('tree', 'file') or target not in (allowed if kind == 'tree' else files) or target in seen:
+                raise ValueError(f'unowned recovery target: {target}')
+            seen.add(target)
+            if item.get('backup') != str(self.backup_root() / str(index)):
+                raise ValueError(f'escaped recovery backup: {item.get("backup")}')
+            for key in ('before', 'after'):
+                if item.get(key) is not None and not re.fullmatch(r'[0-9a-f]{64}', str(item[key])):
+                    raise ValueError(f'invalid recovery digest: {target}')
+        if not files <= seen or any(not isinstance(target, str) or target not in allowed or target not in seen for target in pending):
+            raise ValueError('invalid unfinished adapter targets')
+
+    def auxiliary(self, item, suffix):
+        target = Path(item['target'])
+        return target.with_name('.' + target.name + '.' + suffix + '.' + self.state['token'])
+
+    def checked_backup(self, item):
+        backup = Path(item['backup'])
+        for ancestor in backup.parents:
+            if ancestor.is_symlink(): raise ValueError(f'symlinked recovery backup: {backup}')
+        if item['before'] is not None and _transaction_digest(backup, item['kind']) != item['before']:
+            raise ValueError(f'recovery backup missing or changed: {backup}')
+        return backup
+
+    def cleanup_entry(self, item):
+        if item['kind'] != 'tree': return
+        for suffix, digest in (('staging', item['after']), ('previous', item['before']),
+                               ('restoring', item['before']), ('displaced', item['after'])):
+            path = self.auxiliary(item, suffix)
+            if not path.exists() and not path.is_symlink(): continue
+            scratch = suffix == 'staging' and item['after'] == item['before']
+            if not scratch and _adapter_state(path) != digest:
+                raise ValueError(f'edited recovery staging content preserved: {path}')
+            _remove_tree(path)
+
+    def restore_entry(self, item):
+        target = Path(item['target'])
+        backup = self.checked_backup(item)
+        actual = _transaction_digest(target, item['kind'])
+        if item['target'] in self.state['external_pending']:
+            raise ValueError(f'unfinished adapter execution; output preserved: {target}; backup: {backup}; '
+                             f'stop the adapter, verify {target} against {backup}, '
+                             f'repair it manually, then remove {self.path} before retrying')
+        if actual == item['before']:
+            self.cleanup_entry(item); return
+        if actual is not None and actual != item['after']:
+            raise ValueError(f'uncommitted or edited content preserved: {target}; backup: {backup}')
+        if item['kind'] == 'file':
+            if item['before'] is None: target.unlink(missing_ok=True)
+            else: _write_bytes_atomic(target, backup.read_bytes())
+        else:
+            self.restore_tree(item, target, backup, actual)
+        if _transaction_digest(target, item['kind']) != item['before']:
+            raise ValueError(f'restoration verification failed: {target}; backup: {backup}')
+        self.cleanup_entry(item)
+
+    def restore_tree(self, item, target, backup, actual):
+        staged, displaced = (self.auxiliary(item, suffix) for suffix in ('restoring', 'displaced'))
+        if item['before'] is not None:
+            if (staged.exists() or staged.is_symlink()) and _adapter_state(staged) != item['before']:
+                _remove_tree(staged)  # An interrupted copy is scratch, unlike displaced content.
+            if not staged.exists() and not staged.is_symlink():
+                target.parent.mkdir(parents=True, exist_ok=True); _copy_tree(backup, staged)
+            if _adapter_state(staged) != item['before']: raise ValueError(f'changed recovery staging: {staged}')
+        if displaced.exists() or displaced.is_symlink():
+            if _adapter_state(displaced) != item['after']: raise ValueError(f'edited displaced target: {displaced}')
+        if actual is not None:
+            if displaced.exists() or displaced.is_symlink(): raise ValueError(f'conflicting recovery target: {target}')
+            target.rename(displaced)
+        if item['before'] is not None: staged.rename(target)
+
+    def restore(self):
+        failures = []
+        self.state['phase'] = 'restoring'
+        try: self.save()
+        except (OSError, ValueError) as error: failures.append(str(error))
+        for item in reversed(self.state['entries']):
+            try: self.restore_entry(item)
+            except (OSError, ValueError) as error: failures.append(str(error))
+        if not failures:
+            try: self.path.unlink()
+            except OSError as error: failures.append(str(error))
+        if failures:
+            self.state.update(phase='incomplete', released=not bool(self.state['external_pending']))
+            try: self.save()
+            except (OSError, ValueError) as error: failures.append(str(error))
+        return failures
+
+    def verify_committed(self):
+        if self.state['external_pending']: raise ValueError('committed journal has an unfinished adapter')
+        for item in self.state['entries']:
+            if _transaction_digest(Path(item['target']), item['kind']) != item['after']:
+                raise ValueError(f'committed installation changed: {item["target"]}; journal: {self.path}')
+
+    def finish(self):
+        self.verify_committed()
+        self.state.update(phase='committed', released=True)
+        self.save()
+        self.committed = True
+        self.cleanup()
+
+    def cleanup(self):
+        for item in self.state['entries']: self.cleanup_entry(item)
+        self.path.unlink()
+
+    def failed(self, error):
+        # A writer may raise after replacement: inspect the durable phase before
+        # deciding to undo. Cleanup failure after commit preserves the new runtime.
+        if self.committed:
+            error._installation_recovery = 'committed; cleanup incomplete'
+            return
+        try: durable = _object(self.path)
+        except (OSError, ValueError) as failure:
+            error._installation_recovery = 'incomplete'
+            error.add_note(f'rollback incomplete: unreadable journal {self.path}: {failure}')
+            return
+        if durable.get('phase') == 'committed':
+            error._installation_recovery = 'committed; cleanup incomplete'
+            return
+        failures = self.restore()
+        error._installation_recovery = 'incomplete' if failures else 'restored'
+        for failure in failures:
+            error.add_note(f'rollback incomplete: {failure}; journal: {self.path}')
+
+
+def _recover_installation_locked(destination, home):
+    path = _transaction_path(destination)
+    if not path.exists() and not path.is_symlink(): return None
+    transaction = None
+    try:
+        transaction = _ActivationTransaction.load(destination, home)
+        if transaction.state['phase'] == 'committed':
+            transaction.verify_committed(); transaction.cleanup(); return 'committed'
+        failures = transaction.restore()
+        if failures: raise ValueError('; '.join(failures))
+        return 'restored'
+    except (OSError, ValueError) as error:
+        committed = transaction is not None and transaction.state['phase'] == 'committed'
+        error._installation_recovery = 'committed; cleanup incomplete' if committed else 'incomplete'
+        error.add_note(f'{"committed cleanup" if committed else "rollback"} incomplete; recovery journal retained: {path}')
+        raise
+
+
+def _recover_installation(assets_dest=None, home=None, *, dry_run=False):
+    home = _absolute(home or Path.home())
+    destination = _safe_assets(assets_dest or default_assets_dest(), home)
+    if dry_run:
+        _require_no_transaction(destination); return None
+    path = _transaction_path(destination)
+    if not path.exists() and not path.is_symlink(): return None
+    with DirectoryLock(destination / '.installation', timeout_seconds=.1):
+        return _recover_installation_locked(destination, home)
+
+
+def _stage_runtime(plan, package_installer):
+    if plan.prefix.exists() and not _receipt(plan.prefix).exists(): _clean_interrupted(plan.prefix)
+    if plan.prefix.exists():
+        receipt = _owned_receipt(plan.prefix, plan.fingerprint); _verify_payload(receipt, plan.prefix)
+        if plan.source_revision and receipt.get('source_revision') != plan.source_revision:
+            raise ValueError('retained runtime source revision mismatch')
+        root = Path(receipt['package_root'])
+        _verify_interpreter(plan.python, root)
+    else:
+        plan.prefix.mkdir(parents=True)
+        marker = {'owner': OWNER, 'prefix': str(plan.prefix), 'host': socket.gethostname(), 'pid': os.getpid(), 'create_time': psutil.Process().create_time(), 'token': uuid.uuid4().hex}
+        write_json_atomic(plan.prefix / '.installing.json', marker)
+        try:
+            root = Path((package_installer or _install_package)(plan))
+            if _source(plan.source)[3] != plan.payload_fingerprint:
+                raise ValueError('installation source changed while creating the environment')
+            if not plan.python.is_file(): raise ValueError(f'installed venv interpreter missing: {plan.python}')
+            _verify_interpreter(plan.python, root)
+            hashes = _validate_payload(root, plan.prefix)
+            _registration_payload(plan.prefix, root, plan.version)
+            receipt = {'owner': OWNER, 'schema_version': 1, 'prefix': str(plan.prefix), 'python': str(plan.python),
+                       'version': plan.version, 'fingerprint': plan.fingerprint, 'dependencies': list(plan.dependencies),
+                       'package_root': str(root), 'payload_hashes': hashes}
+            if plan.source_revision: receipt['source_revision'] = dict(plan.source_revision)
+            write_json_atomic(_receipt(plan.prefix), receipt)
+            (plan.prefix / '.installing.json').unlink()
+        except BaseException:
+            # This process created the final prefix and has not activated
+            # it. Only its own failed staging directory may be removed.
+            if plan.prefix.exists() and not _receipt(plan.prefix).exists(): shutil.rmtree(plan.prefix)
+            raise
+    return root
+
+
+def _activate_runtime(plan, root, register):
+    active_path = plan.assets_dest / 'runtime.json'
+    active = _object(active_path) if active_path.exists() else {}
+    committed_path = plan.prefix / 'runtime.json'
+    committed = _object(committed_path) if committed_path.exists() else {}
+    prior_by_key = {(r['agent'], r.get('target', '')): r for r in committed.get('registrations', [])}
+    selected_keys = {(r['agent'], r.get('target', '')) for r in plan.registrations}
+    retained = [r for r in active.get('registrations', []) if (r['agent'], r.get('target', '')) not in selected_keys]
+    registrations = list(retained)
+    transaction = _ActivationTransaction.prepare(plan)
+    adapters = _AdapterActivation(transaction)
+    try:
+        # Every adapter target must still match planning before any adapter runs.
+        for registration in plan.registrations:
+            if registration['kind'] != 'copy': adapters.check(registration)
+        for registration in plan.registrations:
+            registration['runtime_prefix'] = str(plan.prefix)
+            registration['fingerprint'] = plan.fingerprint
+            key = (registration['agent'], registration.get('target', ''))
+            prior = prior_by_key.get(key)
+            target = Path(registration.get('target', ''))
+            # Fast path only for a live registration; a partly uninstalled one is recreated.
+            if not plan.config.refresh_registrations and prior and registration['kind'] == 'copy' and (target.exists() or target.is_symlink()):
+                try: current = _registration_receipt(target)
+                except ValueError: current = None
+                if current and current['fingerprint'] == plan.fingerprint:
+                    registrations.append(prior); continue
+            if registration['kind'] == 'copy': _register_copy(registration, root, plan.fingerprint, transaction)
+            else:
+                adapters.prepare(registration)
+                if registration['agent'] == 'gemini' and any(p.get('backup') for p in registration.get('paths', [])):
+                    transaction.command(registration, registration['undo'], register); adapters.settle(registration)
+                # Include an adapter being applied so a partly successful
+                # native command can restore all explicitly backed paths.
+                transaction.command(registration, registration['argv'], register)
+                adapters.record(registration)
+            registrations.append(registration)
+        adapters.share(retained)
         manifest = {'schema_version': 1, 'owner': OWNER, 'python': str(plan.python), 'prefix': str(plan.prefix),
                     'version': plan.version, 'fingerprint': plan.fingerprint, 'resources': str(root / 'data'),
                     'skills': str(root / 'skills'), 'owned_paths': [str(plan.prefix), str(plan.assets_dest / 'runtime.json'), *(r['target'] for r in registrations if r['kind'] == 'copy')],
                     'registrations': registrations}
-        write_json_atomic(plan.prefix / 'runtime.json', manifest)
-        write_json_atomic(plan.assets_dest / 'runtime.json', manifest)
-        return manifest
+        if plan.source_revision: manifest['source_revision'] = dict(plan.source_revision)
+        for path in (committed_path, active_path):
+            payload = (json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + '\n').replace('\n', os.linesep).encode()
+            transaction.expect(path, hashlib.sha256(payload).hexdigest())
+            write_json_atomic(path, manifest)
+        transaction.finish()
+    except BaseException as error:
+        transaction.failed(error)
+        raise
+    return manifest
 
+
+def _check_install_source(plan):
+    _, _, dependencies, payload = _source(plan.source)
+    if payload != plan.payload_fingerprint or _dependency_pins(dependencies) != plan.dependencies:
+        raise ValueError('installation source or dependency versions changed after planning')
+
+
+def apply_install(plan: InstallationPlan, *, package_installer=None, registrar=None):
+    home = _absolute(plan.config.home or Path.home())
+    _recover_installation(plan.assets_dest, home, dry_run=plan.config.dry_run)
+    if plan.config.dry_run: return plan.to_record()
+    register = registrar or (lambda argv: _run_registration(argv, home=home))
+    _check_install_source(plan)
+    _safe_assets(plan.assets_dest, home)
+    result = None
+    try:
+        with DirectoryLock(plan.assets_dest / '.installation', timeout_seconds=.1):
+            _recover_installation_locked(plan.assets_dest, home)
+            active_path = plan.assets_dest / 'runtime.json'
+            snapshot = active_path.read_bytes() if active_path.exists() else None
+            if snapshot != plan.active_snapshot or active_path.is_symlink():
+                plan = plan_install(plan.config)
+            if active_path.is_symlink():
+                raise ValueError(f'active runtime manifest is a symlink; refusing to replace it: {active_path}')
+            _check_install_source(plan)
+            if plan.config.skip_current_revision and plan.source_revision and snapshot is not None:
+                active = _object(active_path)
+                revision = active.get('source_revision')
+                if isinstance(revision, dict) and revision.get('commit') == plan.source_revision['commit']:
+                    return active
+            root = _stage_runtime(plan, package_installer)
+            _check_install_source(plan)
+            _revalidate_activation(plan)
+            result = _activate_runtime(plan, root, register)
+        return result
+    except BaseException as error:
+        if result is not None: error._installation_recovery = 'committed; lock release failed'
+        raise
+
+
+def _revalidate_activation(plan):
+    active = plan.assets_dest / 'runtime.json'
+    if active.is_symlink() or (active.read_bytes() if active.exists() else None) != plan.active_snapshot:
+        raise ValueError('active runtime changed during staging')
+    for registration in plan.registrations:
+        items = [registration] if registration['kind'] == 'copy' else registration.get('paths', [])
+        for item in items:
+            if _adapter_state(item['target']) != item.get('existing_sha256'):
+                raise ValueError(f'registration changed after planning: {item["target"]}')
+            baseline = _uninstall_view(item)
+            if not baseline.get('backup') or 'original_backup' not in item: continue
+            backup = Path(baseline['backup'])
+            if not _owned_backup(backup, plan.assets_dest) or _tree_hash(backup) != baseline.get('existing_sha256'):
+                raise ValueError(f'unowned or changed original registration backup: {backup}')
 
 @dataclass(frozen=True)
 class UninstallConfig:
@@ -556,6 +1254,7 @@ class UninstallationPlan:
 def plan_uninstall(config: UninstallConfig) -> UninstallationPlan:
     home = _absolute(config.home or Path.home())
     destination = _safe_assets(config.assets_dest or default_assets_dest(), home)
+    _require_no_transaction(destination)
     manifest_path = destination / 'runtime.json'
     if manifest_path.is_symlink() or not manifest_path.is_file(): raise ValueError(f'no owned active runtime manifest: {manifest_path}')
     manifest = _object(manifest_path)
@@ -581,18 +1280,18 @@ def plan_uninstall(config: UninstallConfig) -> UninstallationPlan:
                 if ancestor.is_symlink(): raise ValueError(f'symlink escape in registration: {ancestor}')
             if target.exists():
                 _registration_receipt(target)
-                if registration.get('backup'):
-                    backup = Path(registration['backup'])
-                    if not backup.is_relative_to(registration_prefix / 'registration-backups') or _tree_hash(backup) != registration.get('existing_sha256'):
+                baseline = _uninstall_view(registration)
+                if baseline.get('backup'):
+                    backup = Path(baseline['backup'])
+                    if not _owned_backup(backup, destination) or _tree_hash(backup) != baseline.get('existing_sha256'):
                         raise ValueError(f'unowned or changed registration backup: {backup}')
+                    restorations.append({'target': str(target), 'backup': baseline['backup']})
                 paths.append(target)
-                if registration.get('backup'):
-                    restorations.append({'target': str(target), 'backup': registration['backup']})
         else:
             # Reconstruct the known adapter rather than execute arbitrary JSON.
             agent = registration['agent']
             allowed = {str(p) for p in _external_paths(agent, home)}
-            for item in registration.get('paths', []):
+            for item in map(_uninstall_view, registration.get('paths', [])):
                 if item['target'] not in allowed: raise ValueError('adapter target is not a standard owned path')
                 target = Path(item['target'])
                 for ancestor in target.parents:
@@ -601,7 +1300,7 @@ def plan_uninstall(config: UninstallConfig) -> UninstallationPlan:
                     raise ValueError(f'edited adapter registration: {target}')
                 if item.get('backup'):
                     backup = Path(item['backup'])
-                    if not backup.is_relative_to(registration_prefix / 'registration-backups') or _tree_hash(backup) != item.get('existing_sha256'):
+                    if not _owned_backup(backup, destination) or _tree_hash(backup) != item.get('existing_sha256'):
                         raise ValueError(f'unowned or changed adapter backup: {backup}')
                     restorations.append({'target': str(target), 'backup': str(backup)})
             if agent == 'gemini': commands.append(('gemini', 'extensions', 'uninstall', 'ai-skill-collections'))
@@ -618,6 +1317,7 @@ def apply_uninstall(plan: UninstallationPlan, *, registrar=None):
     # Re-plan under the mutation lock so changed ownership never authorizes a
     # deletion based on an earlier snapshot.
     with DirectoryLock(plan.assets_dest / '.installation', timeout_seconds=.1):
+        _require_no_transaction(plan.assets_dest)
         current = plan_uninstall(plan.config)
         if current.manifest_sha256 != plan.manifest_sha256 or current.fingerprint != plan.fingerprint or current.paths != plan.paths or current.commands != plan.commands:
             raise ValueError('installation ownership changed after uninstall planning')
@@ -625,12 +1325,12 @@ def apply_uninstall(plan: UninstallationPlan, *, registrar=None):
         manifest = _object(plan.assets_dest / 'runtime.json')
         for registration in manifest.get('registrations', []):
             if registration['kind'] == 'command' and (not plan.config.agents or registration['agent'] in plan.config.agents):
-                _restore_adapter(registration)
+                _restore_adapter(dict(registration, paths=[_uninstall_view(i) for i in registration.get('paths', [])]))
         by_target = {r.get('target'): r for r in manifest.get('registrations', []) if r['kind'] == 'copy'}
         for path in plan.paths:
             if path.is_dir():
                 registration = by_target[str(path)]
-                _restore_copy(registration, registration.get('fingerprint', plan.fingerprint))
+                _restore_copy(_uninstall_view(registration), registration.get('fingerprint', plan.fingerprint))
             else: path.unlink()
         active_path = plan.assets_dest / 'runtime.json'
         if active_path.exists() and plan.config.agents:
@@ -691,6 +1391,7 @@ def main(argv=None):
         options = parser.parse_args(args)
         if options.list:
             print('\n'.join(AGENTS)); return 0
+        _recover_installation(options.assets_dest, options.home, dry_run=options.dry_run)
         common = {'assets_dest': options.assets_dest, 'home': options.home, 'agents': tuple(options.only), 'dry_run': options.dry_run}
         if uninstall:
             plan = plan_uninstall(UninstallConfig(**common))

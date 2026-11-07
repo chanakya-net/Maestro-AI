@@ -75,3 +75,50 @@ def test_implicit_agent_run_refuses_active_legacy_run(tmp_path, monkeypatch):
     monkeypatch.setenv('AI_SKILLS_RUN_ROOT', str(tmp_path))
     with pytest.raises(ValueError, match='legacy|quiescent'):
         cli.runtime_command(['agent', '--agent', 'codex'])
+
+
+@pytest.mark.parametrize('discovery', ['run-root', 'config', 'state', 'environment', 'cwd'])
+def test_launcher_preserves_pin_precedence(tmp_path, monkeypatch, discovery):
+    root = tmp_path / 'project'
+    (root / '.run-with-it').mkdir(parents=True)
+    pinned = tmp_path / 'pinned-python'
+    active = tmp_path / 'active-python'
+    pinned.touch()
+    active.touch()
+    assets = tmp_path / 'assets'
+    assets.mkdir()
+    (assets / 'runtime.json').write_text(json.dumps({'schema_version': 1, 'python': str(active)}))
+    pin = root / '.run-with-it/engine.json'
+    pin.write_text(json.dumps({'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(pinned)}))
+    monkeypatch.setenv('ASSETS_DEST', str(assets))
+    monkeypatch.delenv('AI_SKILLS_RUN_ROOT', raising=False)
+    monkeypatch.chdir(tmp_path)
+    args = ['agent', 'list']
+    if discovery == 'run-root':
+        args += [f'--run-root={root}']
+    elif discovery == 'config':
+        config = tmp_path / 'config.json'
+        config.write_text(json.dumps({'run_root': str(root)}))
+        args += [f'--config={config}']
+    elif discovery == 'state':
+        args += [f'--state-file={root / ".run-with-it/state.json"}']
+    elif discovery == 'environment':
+        monkeypatch.setenv('AI_SKILLS_RUN_ROOT', str(root))
+    else:
+        monkeypatch.chdir(root / '.run-with-it')
+    assert cli.runtime_command(args)[0] == str(pinned)
+    for invalid in ('not json', json.dumps({'schema_version': 1, 'engine': 'other', 'engine_version': 1, 'python': str(pinned)}),
+                    json.dumps({'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(tmp_path / 'missing')})):
+        pin.write_text(invalid)
+        with pytest.raises(ValueError):
+            cli.runtime_command(args)
+
+
+def test_update_runs_locally_regardless_of_pin(tmp_path, monkeypatch):
+    root = tmp_path / 'project'
+    (root / '.run-with-it').mkdir(parents=True)
+    (root / '.run-with-it/engine.json').write_text(json.dumps({'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(tmp_path / 'missing-python')}))
+    monkeypatch.delenv('AI_SKILLS_RUN_ROOT', raising=False)
+    monkeypatch.setenv('ASSETS_DEST', str(tmp_path / 'assets'))
+    monkeypatch.chdir(root)
+    assert cli.runtime_command(['update', '--only', 'codex']) is None

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import zipfile
 import pytest
@@ -26,6 +27,7 @@ def test_missing_pinned_environment_never_falls_back(tmp_path):
 import shutil
 import socket
 import subprocess
+import sysconfig
 import venv
 import psutil
 from ai_skills.installation import OWNER, main
@@ -49,7 +51,13 @@ def fake_package_installer(plan):
     venv.EnvBuilder(with_pip=False).create(plan.prefix)
     root = plan.prefix / 'payload/ai_skills'
     root.mkdir(parents=True)
+    purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': str(plan.prefix), 'platbase': str(plan.prefix)}))
+    (purelib / 'fixture-payload.pth').write_text(str(root.parent) + '\n')
     (root / '__init__.py').write_text('# fixture package ' + plan.version)
+    (root / 'cli.py').write_text('# fixture CLI')
+    (root / '__main__.py').write_text('from pathlib import Path; print("fixture runtime " + str(Path(__file__).parent))')
+    (root.parent / 'psutil.py').write_text('# fixture dependency')
+    if sys.platform == 'win32': (root.parent / 'win32api.py').write_text('# fixture dependency')
     if plan.source.is_dir():
         (root / 'data').mkdir()
         for name in RESOURCE_NAMES: shutil.copy2(plan.source / 'assets' / name, root / 'data' / name)
@@ -358,9 +366,13 @@ def test_external_registration_and_uninstall_use_planned_home(source_tree, tmp_p
     config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets',
                            home=selected_home, agents=('gemini',))
     calls = []
+    real_run = subprocess.run
+    def run(argv, **kwargs):
+        if argv[0] != 'gemini': return real_run(argv, **kwargs)
+        calls.append((argv, kwargs.get('env')))
+        return SimpleNamespace(returncode=0)
     monkeypatch.setattr(runner, 'resolve_executable', lambda argv, env: argv)
-    monkeypatch.setattr(installation.subprocess, 'run',
-                        lambda argv, **kwargs: (calls.append((argv, kwargs.get('env'))) or SimpleNamespace(returncode=0)))
+    monkeypatch.setattr(installation.subprocess, 'run', run)
     apply_install(plan_install(config), package_installer=fake_package_installer)
     assert calls and calls[0][1] is not None
     assert calls[0][1]['HOME'] == str(selected_home)
@@ -369,3 +381,2166 @@ def test_external_registration_and_uninstall_use_planned_home(source_tree, tmp_p
     assert len(calls) == 2
     assert calls[1][1]['HOME'] == str(selected_home)
     assert calls[1][1]['USERPROFILE'] == str(selected_home)
+
+
+# --- update from the official main commit (controlled local fixture) ---------
+
+def _git(repo, *args):
+    return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _bump(repo, old, new, message):
+    project = repo / 'pyproject.toml'
+    project.write_text(project.read_text().replace(old, new))
+    _git(repo, 'commit', '-qam', message)
+
+
+@pytest.fixture
+def official_repository(source_tree, tmp_path):
+    repo = tmp_path / 'official'
+    shutil.copytree(source_tree, repo)
+    _git(repo, 'init', '-q', '-b', 'main')
+    _git(repo, 'config', 'user.name', 'Fixture'); _git(repo, 'config', 'user.email', 'fixture@example.invalid')
+    _git(repo, 'add', '-A'); _git(repo, 'commit', '-qm', 'initial')
+    _git(repo, 'checkout', '-qb', 'feature'); _bump(repo, '0.1.0.dev0', '0.9.0.dev0', 'feature')
+    _git(repo, 'checkout', '-q', 'main'); _bump(repo, '0.1.0.dev0', '0.2.0.dev0', 'main tip')
+    return repo
+
+
+def test_official_source_resolves_exact_main_commit_and_cleans_up(official_repository):
+    from ai_skills.update import official_source
+    before = (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        assert sha == _git(official_repository, 'rev-parse', 'main') != _git(official_repository, 'rev-parse', 'feature')
+        assert len(sha) == 40 and (checkout / 'pyproject.toml').is_file()
+        assert '0.2.0.dev0' in (checkout / 'pyproject.toml').read_text()
+    assert not checkout.exists()
+    assert before == (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+
+
+def test_official_source_reports_clone_failure_and_cleans_up(tmp_path):
+    from ai_skills.update import official_source
+    with pytest.raises(ValueError, match='official source'):
+        with official_source((tmp_path / 'missing').as_uri()): pass
+
+
+def test_source_revision_recorded_in_receipt_and_manifest_when_provided(source_tree, tmp_path):
+    revision = {'repository': 'file:///x', 'branch': 'main', 'commit': 'a' * 40}
+    plan = plan_install(make_config(source_tree, tmp_path, source_revision=revision))
+    assert plan.to_record()['source_revision'] == revision
+    manifest = apply_install(plan, package_installer=fake_package_installer)
+    assert manifest['source_revision'] == revision
+    assert json.loads((plan.prefix / '.ai-skills-runtime.json').read_text())['source_revision'] == revision
+    plain = plan_install(make_config(source_tree, tmp_path / 'other'))
+    assert 'source_revision' not in plain.to_record()
+    assert 'source_revision' not in apply_install(plain, package_installer=fake_package_installer)
+
+
+@pytest.mark.parametrize('bad', ['text', {'repository': 'r', 'branch': 'main', 'commit': 'abc'}, {'commit': 'g' * 40}])
+def test_invalid_source_revision_rejected_before_any_write(source_tree, tmp_path, bad):
+    with pytest.raises(ValueError, match='source revision'): plan_install(make_config(source_tree, tmp_path, source_revision=bad))
+    assert not (tmp_path / 'assets').exists()
+
+
+def test_update_installs_exact_official_main_commit_and_preserves_checkout(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    before = (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+    sha = _git(official_repository, 'rev-parse', 'main')
+    config = UpdateConfig(assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert manifest['version'] == '0.2.0.dev0'
+    assert manifest['source_revision'] == {'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}
+    assert Path(manifest['python']).is_file()
+    assert json.loads((tmp_path / 'assets/runtime.json').read_text()) == manifest
+    receipt = json.loads((Path(manifest['prefix']) / '.ai-skills-runtime.json').read_text())
+    assert receipt['source_revision']['commit'] == sha
+    assert before == (_git(official_repository, 'rev-parse', 'HEAD'), _git(official_repository, 'status', '--porcelain'))
+    assert _git(official_repository, 'branch', '--show-current') == 'main'
+
+
+def test_update_keeps_pinned_run_and_reads_older_manifest(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    project = source_tree / 'pyproject.toml'; project.write_text(project.read_text().replace('0.1.0.dev0', '0.0.9.dev0'))
+    old = plan_install(make_config(source_tree, tmp_path)); old_manifest = apply_install(old, package_installer=fake_package_installer)
+    assert 'source_revision' not in old_manifest
+    run = tmp_path / 'run'; (run / '.run-with-it').mkdir(parents=True)
+    write_json_atomic(run / '.run-with-it/engine.json', {'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(old.python)})
+    config = UpdateConfig(assets_dest=old.assets_dest, home=tmp_path / 'home', agents=('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert resolve_runtime(run, assets_dest=old.assets_dest) == old.python
+    assert resolve_runtime(assets_dest=old.assets_dest) == Path(manifest['python']) != old.python
+    assert old.python.is_file()
+    retained = plan_uninstall(UninstallConfig(assets_dest=old.assets_dest, home=tmp_path / 'home')).retained_runtimes
+    assert old.prefix in retained and Path(manifest['prefix']) in retained
+
+
+def test_update_cli_reports_installed_commit(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    args = ['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']
+    assert update.main(args) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert update.main(['--only', 'bogus']) == 2
+
+
+def test_update_cli_dry_run_previews_plan_without_persistent_changes(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', lambda plan: pytest.fail('dry run installed package'))
+    monkeypatch.setattr(update.tempfile, 'tempdir', str(tmp_path))
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    before_scratch = set(tmp_path.glob('ai-skills-update-*'))
+    args = ['--dry-run', '--assets-dest', str(assets), '--home', str(home), '--only', 'codex']
+
+    assert update.main(args) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert preview['integrations'] == ['codex']
+    assert preview['backups'] == []
+    assert preview['no_op'] is False
+    assert not assets.exists() and not home.exists()
+    assert set(tmp_path.glob('ai-skills-update-*')) == before_scratch
+
+
+def test_update_cli_dry_run_reports_no_op_for_current_revision(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    before = _tree_snapshot(tmp_path / 'assets'), _tree_snapshot(tmp_path / 'home')
+
+    assert update.main(['--dry-run', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is True
+    assert preview['integrations'] == ['codex']
+    assert preview['backups'] == []
+    assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert not list((config.assets_dest / 'runtimes').glob('*/registration-backups'))
+
+
+def test_update_cli_dry_run_reports_backup_without_creating_it(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    target = Path(next(item['target'] for item in manifest['registrations'] if item['agent'] == 'codex'))
+    (target / 'SKILL.md').write_text('user edit')
+    before = _tree_snapshot(config.assets_dest), _tree_snapshot(config.home)
+
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(config.assets_dest), '--home', str(config.home), '--only', 'codex']) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert preview['integrations'] == ['codex']
+    edited = next(item for item in preview['backups'] if item['target'] == str(target))
+    assert not Path(edited['path']).exists()
+    assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+
+
+def test_update_cli_dry_run_reports_adapter_and_copy_backups_matching_apply(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    config = update.UpdateConfig(assets, home, ('codex', 'copilot', 'antigravity'))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+    _commit_skill(official_repository, 'revision B')
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert preview['integrations'] == ['codex', 'copilot', 'antigravity']
+    assert preview['backups'] and not any(Path(item['path']).exists() for item in preview['backups'])
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    manifest = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    seen, expected = set(), []
+    for reg in manifest['registrations']:
+        items = [reg] if reg['kind'] == 'copy' else reg.get('paths', [])
+        for item in items:
+            if item['target'] not in seen and item.get('backup'):
+                seen.add(item['target'])
+                expected.append({'integration': reg['agent'], 'target': item['target'], 'path': item['backup']})
+    assert preview['backups'] == expected
+    assert all(Path(item['path']).is_dir() for item in preview['backups'])
+
+
+def test_update_cli_dry_run_detects_deleted_copy_target_and_apply_repairs(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    manifest = update.run_update(update.UpdateConfig(assets, home, ('codex',)),
+                                 repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    target = Path(manifest['registrations'][0]['target'])
+    shutil.rmtree(target)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert str(target) not in [item['target'] for item in preview['backups']]
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer)
+    assert (target / 'SKILL.md').is_file()
+    assert update.main(['--dry-run', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    after = json.loads(capsys.readouterr().out)
+    assert after['no_op'] is True and after['backups'] == []
+
+
+@pytest.mark.parametrize('change', ['edit', 'remove'])
+def test_update_cli_dry_run_detects_edited_or_removed_adapter_target_and_apply_repairs(official_repository, tmp_path,
+                                                                                       monkeypatch, capsys, change):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    update.run_update(update.UpdateConfig(assets, home, ('copilot',)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    target = home / '.agents/skills/pair-colleague'
+    if change == 'edit':
+        (target / 'SKILL.md').write_text('user edit')
+    else:
+        shutil.rmtree(target)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    by_target = {item['target']: item['path'] for item in preview['backups']}
+    if change == 'edit':
+        assert '.edited-<UTC-timestamp>.' in Path(by_target[str(target)]).name and not Path(by_target[str(target)]).exists()
+        assert [i['time_dependent'] for i in preview['backups'] if i['target'] == str(target)] == [True]
+    else:
+        assert str(target) not in by_target and by_target
+    manifest = update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    assert (target / 'SKILL.md').is_file() and (target / 'SKILL.md').read_text() != 'user edit'
+    if change == 'edit':
+        actual = Path(_target_entries(manifest, target)[0]['backup'])
+        assert (actual / 'SKILL.md').read_text() == 'user edit'
+
+
+def test_update_cli_dry_run_unchanged_adapter_reports_reexecution_semantics(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    update.run_update(update.UpdateConfig(assets, home, ('gemini',)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    assert preview['no_op'] is False
+    assert len(preview['backups']) == 1 and preview['backups'][0]['target'] == str(extension)
+    assert not Path(preview['backups'][0]['path']).exists()
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    manifest = update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    assert manifest['registrations'][0]['paths'][0]['backup'] == preview['backups'][0]['path']
+    assert Path(preview['backups'][0]['path']).is_dir()
+
+
+def test_update_cli_dry_run_cleans_source_when_planning_fails(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(update.tempfile, 'tempdir', str(tmp_path))
+    monkeypatch.setattr(update, 'plan_install', lambda config: (_ for _ in ()).throw(ValueError('plan failed')))
+
+    assert update.main(['--dry-run', '--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 2
+    assert 'plan failed' in capsys.readouterr().err
+    assert not (tmp_path / 'assets').exists() and not (tmp_path / 'home').exists()
+    assert not list(tmp_path.glob('ai-skills-update-*'))
+
+
+def _tree_snapshot(root):
+    root = Path(root)
+    if not root.exists():
+        return None
+    return {str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+            for path in sorted(root.rglob('*'))}
+
+
+def test_update_cli_error_exits_2_without_traceback(tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', (tmp_path / 'missing').as_uri())
+    assert update.main(['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 2
+    assert 'ai-skills update:' in capsys.readouterr().err
+
+
+def test_official_source_ignores_caller_git_dir(official_repository, monkeypatch):
+    from ai_skills.update import official_source
+    expected = _git(official_repository, 'rev-parse', 'main')
+    monkeypatch.setenv('GIT_DIR', str(Path(__file__).parents[2] / '.git'))
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        assert sha == expected
+
+
+def test_official_source_cannot_redirect_official_url(official_repository, monkeypatch):
+    import ai_skills.update as update
+    monkeypatch.setenv('GIT_CONFIG_COUNT', '1')
+    monkeypatch.setenv('GIT_CONFIG_KEY_0', f'url.{official_repository.as_uri()}.insteadOf')
+    monkeypatch.setenv('GIT_CONFIG_VALUE_0', update.OFFICIAL_REPOSITORY)
+    # A deliberately invalid official URL must not be rewritten to the fixture.
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', 'https://127.0.0.1:1/no-repo')
+    monkeypatch.setenv('GIT_CONFIG_VALUE_0', update.OFFICIAL_REPOSITORY)
+    with pytest.raises(ValueError):
+        with update.official_source(timeout=5): pass
+
+
+def test_update_installs_new_revision_when_only_packaged_readme_changes(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    (official_repository / 'README.md').write_text('new metadata')
+    _git(official_repository, 'add', 'README.md'); _git(official_repository, 'commit', '-qm', 'readme')
+    second = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert first['prefix'] != second['prefix']
+    assert json.loads((Path(second['prefix']) / '.ai-skills-runtime.json').read_text())['source_revision'] == second['source_revision']
+    assert Path(first['python']).is_file()
+
+
+def test_update_rejects_retained_runtime_with_missing_interpreter(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    Path(first['python']).unlink()
+    with pytest.raises(ValueError, match='interpreter missing'):
+        run_update(UpdateConfig(config.assets_dest, config.home, config.agents, force=True), repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+
+
+def test_update_restores_registrations_when_activation_write_fails(official_repository, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    target = config.home / '.codex/skills/pair-colleague/.ai-skills-registration.json'
+    prior = target.read_bytes()
+    (official_repository / 'README.md').write_text('revision')
+    _git(official_repository, 'add', 'README.md'); _git(official_repository, 'commit', '-qm', 'next')
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == config.assets_dest / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'):
+        run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert target.read_bytes() == prior
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+    assert Path(first['python']).is_file()
+
+
+def test_update_cli_stdout_stays_json_with_subprocess_output(official_repository, tmp_path, monkeypatch, capfd):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    def noisy(plan):
+        subprocess.run([sys.executable, '-c', "print('installer progress')"], check=True, stdout=sys.stdout)
+        return fake_package_installer(plan)
+    monkeypatch.setattr(installation, '_install_package', noisy)
+    assert update.main(['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'codex']) == 0
+    captured = capfd.readouterr()
+    assert json.loads(captured.out)['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert 'installer progress' in captured.err
+
+
+def _offline_command(plan):
+    script = ("import shutil,sys,sysconfig;from pathlib import Path;s=Path(sys.argv[1]);"
+              "r=Path(sysconfig.get_path('purelib'))/'ai_skills';shutil.copytree(s/'src/ai_skills',r);"
+              "shutil.copytree(s/'assets',r/'data');shutil.copytree(s/'skills',r/'skills');"
+              "shutil.copytree(Path(sys.argv[2]),r.parent/'psutil');"
+              "(r.parent/'win32api.py').write_text('# fixture Windows dependency');print('offline install progress')")
+    return (str(plan.python), '-I', '-c', script, str(plan.source), str(Path(psutil.__file__).parent))
+
+
+def offline_package_installer(plan):
+    """Run the real installer boundary with an offline stand-in for pip install."""
+    import dataclasses
+    import ai_skills.installation as installation
+    assert all(command[1:3] == ('-I', '-m') for command in plan.pip_commands)
+    return installation._install_package(dataclasses.replace(plan, pip_commands=(_offline_command(plan),)))
+
+
+def _shadow(directory, marker):
+    """A caller checkout whose venv/pip/ai_skills modules record any import."""
+    write = f"from pathlib import Path; Path({str(marker)!r}).write_text(__name__); raise SystemExit(74)\n"
+    for module in ('venv.py', 'pip/__init__.py', 'pip/__main__.py', 'ai_skills/__init__.py'):
+        target = directory / module; target.parent.mkdir(parents=True, exist_ok=True); target.write_text(write)
+
+
+def test_update_ignores_caller_python_module_shadowing(official_repository, tmp_path, monkeypatch):
+    from ai_skills.update import UpdateConfig, run_update
+    caller, path_entry = tmp_path / 'caller', tmp_path / 'pythonpath'
+    _shadow(caller, tmp_path / 'cwd-marker'); _shadow(path_entry, tmp_path / 'path-marker')
+    monkeypatch.chdir(caller); monkeypatch.setenv('PYTHONPATH', str(path_entry))
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=offline_package_installer)
+    assert (Path(manifest['prefix']) / 'pyvenv.cfg').is_file() and Path(manifest['python']).is_file()
+    assert Path(manifest['resources']).is_relative_to(manifest['prefix'])
+    assert not (tmp_path / 'cwd-marker').exists() and not (tmp_path / 'path-marker').exists()
+    assert sorted(p.name for p in caller.iterdir()) == ['ai_skills', 'pip', 'venv.py']
+
+
+def test_update_rejects_retained_runtime_with_unusable_interpreter(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    first = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    first_sha = first['source_revision']['commit']
+    broken = Path(first['python']); broken.unlink(); broken.write_text('not an interpreter'); broken.chmod(0o644)
+    (official_repository / 'README.md').write_text('second')
+    _git(official_repository, 'add', 'README.md'); _git(official_repository, 'commit', '-qm', 'second')
+    second = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    registration = config.home / '.codex/skills/pair-colleague/.ai-skills-registration.json'
+    registered = registration.read_bytes()
+    _git(official_repository, 'reset', '-q', '--hard', first_sha)
+    with pytest.raises(ValueError, match='interpreter'):
+        run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+    assert registration.read_bytes() == registered
+    assert Path(first['prefix']).is_dir() and Path(second['python']).is_file()
+
+
+def test_update_preserves_original_uninstall_restoration(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    original = tmp_path / 'home/.codex/skills/pair-colleague'
+    original.mkdir(parents=True); (original / 'SKILL.md').write_text('user original skill')
+    first = plan_install(make_config(source_tree, tmp_path, replace_existing=True))
+    apply_install(first, package_installer=fake_package_installer)
+    config = UpdateConfig(first.assets_dest, tmp_path / 'home', ('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert manifest['prefix'] != str(first.prefix)
+    plan = plan_uninstall(UninstallConfig(assets_dest=first.assets_dest, home=tmp_path / 'home'))
+    assert first.prefix in plan.retained_runtimes
+    apply_uninstall(plan)
+    assert sorted(p.name for p in original.iterdir()) == ['SKILL.md']
+    assert (original / 'SKILL.md').read_text() == 'user original skill'
+    others = [tmp_path / 'home/.codex/skills' / name for name in SKILL_NAMES if name != 'pair-colleague']
+    assert others and not any(path.exists() for path in others)
+    assert not (first.assets_dest / 'runtime.json').exists() and first.python.is_file()
+
+
+def test_installation_subprocesses_support_redirected_python_stdout(source_tree, tmp_path):
+    import contextlib
+    import io
+    from ai_skills.installation import _run_registration
+    plan = plan_install(make_config(source_tree, tmp_path)); plan.prefix.mkdir(parents=True)
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        root = offline_package_installer(plan)
+        _run_registration([sys.executable, '-c', "print('registration progress')"], home=tmp_path / 'home')
+    assert Path(root).is_relative_to(plan.prefix) and (Path(root) / 'skills').is_dir()
+    assert 'offline install progress' in buffer.getvalue() and 'registration progress' in buffer.getvalue()
+
+
+def _fixture_wheel(directory):
+    """A minimal offline wheel so real pip runs without any network access."""
+    directory.mkdir(parents=True, exist_ok=True)
+    wheel = directory / 'auditproof-1.0-py3-none-any.whl'
+    info = 'auditproof-1.0.dist-info/'
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        archive.writestr('auditproof.py', 'VALUE = 1\n')
+        archive.writestr(info + 'METADATA', 'Metadata-Version: 2.1\nName: auditproof\nVersion: 1.0\n')
+        archive.writestr(info + 'WHEEL', 'Wheel-Version: 1.0\nGenerator: fixture\nRoot-Is-Purelib: true\nTag: py3-none-any\n')
+        archive.writestr(info + 'RECORD', f'auditproof.py,,\n{info}METADATA,,\n{info}WHEEL,,\n{info}RECORD,,\n')
+    return wheel
+
+
+def _scratch_checkout(path):
+    path.mkdir(parents=True); _git(path, 'init', '-q', '-b', 'main')
+    (path / 'tracked.txt').write_text('tracked'); _git(path, 'add', '-A')
+    _git(path, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'scratch')
+    return path
+
+
+@pytest.mark.parametrize('redirect', ['env-target', 'config-target', 'config-prefix', 'config-root'])
+def test_update_ignores_pip_install_destination_overrides(official_repository, tmp_path, monkeypatch, redirect):
+    import dataclasses
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    wheels, checkout = _fixture_wheel(tmp_path / 'wheels').parent, _scratch_checkout(tmp_path / 'checkout')
+    kind, option = redirect.split('-')
+    # Index settings from the caller's pip configuration must still apply: the
+    # wheel is only found through the configured find-links with no index.
+    lines = ['[global]', 'no-index = true', f'find-links = {wheels}', 'disable-pip-version-check = true', '[install]']
+    if kind == 'config': lines.append(f'{option} = {checkout}')
+    else: monkeypatch.setenv('PIP_TARGET', str(checkout))
+    (tmp_path / 'pip.conf').write_text('\n'.join(lines) + '\n')
+    monkeypatch.setenv('PIP_CONFIG_FILE', str(tmp_path / 'pip.conf'))
+    def real_pip_installer(plan):
+        pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
+        return installation._install_package(dataclasses.replace(plan, pip_commands=(pip, _offline_command(plan))))
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=real_pip_installer)
+    purelib = Path(subprocess.run([manifest['python'], '-I', '-c', 'import auditproof;print(auditproof.__file__)'],
+                                  check=True, capture_output=True, text=True).stdout.strip())
+    assert purelib.is_relative_to(manifest['prefix'])
+    assert _git(checkout, 'status', '--porcelain', '--ignored') == ''
+    assert sorted(p.name for p in checkout.iterdir()) == ['.git', 'tracked.txt']
+
+
+def _deterministic_gemini(extension):
+    """Install writes content naming the registered payload; uninstall removes it."""
+    def adapter(argv):
+        if 'uninstall' in argv:
+            if extension.exists(): shutil.rmtree(extension)
+            return
+        extension.mkdir(parents=True); (extension / 'gemini-extension.json').write_text(json.dumps({'source': argv[-1]}))
+    return adapter
+
+
+def _commit_readme(repo, text):
+    (repo / 'README.md').write_text(text)
+    _git(repo, 'add', 'README.md'); _git(repo, 'commit', '-qm', text)
+    return _git(repo, 'rev-parse', 'main')
+
+
+def test_update_reactivates_retained_revision_with_adapter(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    extension = tmp_path / 'home/.gemini/extensions/ai-skill-collections'
+    extension.mkdir(parents=True); (extension / 'gemini-extension.json').write_text('legacy extension')
+    adapter, repository = _deterministic_gemini(extension), official_repository.as_uri()
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home',
+                                        agents=('gemini',), replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    config = UpdateConfig(legacy.assets_dest, tmp_path / 'home', ('gemini',))
+    update = lambda: run_update(config, repository=repository, package_installer=fake_package_installer, registrar=adapter)
+    sha_a = _git(official_repository, 'rev-parse', 'main'); first = update()
+    _commit_readme(official_repository, 'revision B'); second = update()
+    assert first['prefix'] != second['prefix']
+    _git(official_repository, 'reset', '-q', '--hard', sha_a)
+    active, installed = (legacy.assets_dest / 'runtime.json').read_bytes(), (extension / 'gemini-extension.json').read_bytes()
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == legacy.assets_dest / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'): update()
+    assert (legacy.assets_dest / 'runtime.json').read_bytes() == active
+    assert (extension / 'gemini-extension.json').read_bytes() == installed
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    again = update()
+    assert again['prefix'] == first['prefix'] and again['source_revision']['commit'] == sha_a
+    assert json.loads((extension / 'gemini-extension.json').read_text())['source'].startswith(first['prefix'])
+    assert subprocess.run([second['python'], '-c', 'pass']).returncode == 0
+    assert update()['prefix'] == first['prefix']
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=tmp_path / 'home')), registrar=adapter)
+    assert (extension / 'gemini-extension.json').read_text() == 'legacy extension'
+    assert Path(second['python']).is_file() and Path(first['python']).is_file()
+
+
+@pytest.mark.parametrize('paths', ['absolute', 'relative'])
+def test_ordinary_install_honors_pip_constraints(source_tree, tmp_path, monkeypatch, paths):
+    import dataclasses
+    import ai_skills.installation as installation
+    wheels = _fixture_wheel(tmp_path / 'wheels').parent
+    (tmp_path / 'constraints.txt').write_text('auditproof==2.0\n')
+    # Relative pip settings resolve against the caller's cwd, as pip itself does.
+    caller = tmp_path if paths == 'relative' else tmp_path / 'elsewhere'
+    caller.mkdir(exist_ok=True); monkeypatch.chdir(caller)
+    locate = (lambda path: os.path.relpath(path, caller)) if paths == 'relative' else str
+    monkeypatch.setenv('PIP_NO_INDEX', '1'); monkeypatch.setenv('PIP_FIND_LINKS', locate(wheels))
+    monkeypatch.setenv('PIP_DISABLE_PIP_VERSION_CHECK', '1')
+    monkeypatch.setenv('PIP_CONSTRAINT', locate(tmp_path / 'constraints.txt'))
+    def real_pip_installer(plan):
+        pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
+        return installation._install_package(dataclasses.replace(plan, pip_commands=(pip, _offline_command(plan))))
+    plan = plan_install(make_config(source_tree, tmp_path))
+    with pytest.raises(subprocess.CalledProcessError):
+        apply_install(plan, package_installer=real_pip_installer)
+    assert not plan.prefix.exists() and not (plan.assets_dest / 'runtime.json').exists()
+    (tmp_path / 'constraints.txt').write_text('auditproof==1.0\n')
+    manifest = apply_install(plan_install(make_config(source_tree, tmp_path)), package_installer=real_pip_installer)
+    assert subprocess.run([manifest['python'], '-I', '-c', 'import auditproof'], check=False).returncode == 0
+
+
+def test_update_restores_partially_uninstalled_copy_registrations(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    both = UpdateConfig(tmp_path / 'assets', home, ('codex', 'claude'))
+    first = run_update(both, repository=repository, package_installer=fake_package_installer)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=both.assets_dest, home=home, agents=('codex',))))
+    assert not any((home / '.codex/skills' / name).exists() for name in SKILL_NAMES)
+    def must_not_install_again(_): raise AssertionError('retained revision must reuse its runtime')
+    again = run_update(UpdateConfig(both.assets_dest, home, ('codex',), force=True), repository=repository,
+                       package_installer=must_not_install_again)
+    assert again['prefix'] == first['prefix'] and again['python'] == first['python']
+    assert again['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    assert json.loads((both.assets_dest / 'runtime.json').read_text()) == again
+    for agent in ('codex', 'claude'):
+        for name in SKILL_NAMES:
+            target = home / f'.{agent}/skills' / name
+            receipt = json.loads((target / '.ai-skills-registration.json').read_text())
+            assert receipt['fingerprint'] == first['fingerprint'] and (target / 'SKILL.md').is_file()
+    assert {(r['agent'], r['target']) for r in again['registrations']} == {
+        (r['agent'], r['target']) for r in first['registrations']}
+    assert subprocess.run([again['python'], '-c', 'pass']).returncode == 0
+
+
+_FAKE_NPX = '''#!{python}
+"""npx stand-in: a project-local bin wins, like npm exec; otherwise the registry package."""
+import os, shutil, sys
+from pathlib import Path
+args = sys.argv[1:]
+if args[:1] == ['-y']: args = args[1:]
+start = Path(os.environ.get('npm_config_prefix') or os.getcwd())
+for directory in (start, *start.parents):
+    local = directory / 'node_modules/.bin' / args[0]
+    if local.is_file(): os.execv(sys.executable, [sys.executable, str(local), *args[1:]])
+if args[1] == 'add':
+    root = Path(os.environ['HOME']) / '.agents/skills'
+    for skill in (Path(args[2]) / 'skills').iterdir():
+        shutil.copytree(skill, root / skill.name, dirs_exist_ok=True)
+'''
+
+
+def test_update_adapter_ignores_caller_local_skills_binary(official_repository, tmp_path, monkeypatch):
+    import ai_skills.runner as runner
+    from ai_skills.update import UpdateConfig, run_update
+    checkout, marker = _scratch_checkout(tmp_path / 'checkout'), tmp_path / 'checkout/checkout-marker'
+    local = checkout / 'node_modules/.bin/skills'; local.parent.mkdir(parents=True)
+    local.write_text(f'from pathlib import Path\nPath({str(marker)!r}).write_text("local skills ran")\n')
+    bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
+    npx = bin_dir / 'npx.py'; npx.write_text(_FAKE_NPX.format(python=sys.executable))
+    # Windows does not execute Python shebangs from PATH. Substitute only the
+    # executable boundary; keep registration's real child cwd/env isolation.
+    resolve = runner.resolve_executable
+    def resolve_fixture(argv, environment):
+        if argv[0] == 'npx': return (sys.executable, str(npx), *argv[1:])
+        return resolve(argv, environment)
+    monkeypatch.setattr(runner, 'resolve_executable', resolve_fixture)
+    monkeypatch.setenv('npm_config_prefix', str(checkout)); monkeypatch.chdir(checkout)
+    before = _git(checkout, 'status', '--porcelain', '--ignored')
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('copilot',))
+    manifest = run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert not marker.exists()
+    assert _git(checkout, 'status', '--porcelain', '--ignored') == before
+    assert manifest['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    for name in SKILL_NAMES: assert (tmp_path / 'home/.agents/skills' / name / 'SKILL.md').is_file()
+    monkeypatch.delenv('npm_config_prefix')
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=config.assets_dest, home=tmp_path / 'home')))
+    assert not marker.exists()
+
+
+def test_update_rolls_back_other_registrations_after_adapter_failure(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    config = UpdateConfig(tmp_path / 'assets', home, ('codex', 'gemini'))
+    run_update(config, repository=repository, package_installer=fake_package_installer, registrar=adapter)
+    snapshot = lambda: {p: p.read_bytes() for p in (home / '.codex/skills').rglob('*') if p.is_file()}
+    active, receipts = (config.assets_dest / 'runtime.json').read_bytes(), snapshot()
+    _commit_readme(official_repository, 'revision B')
+    def fail_after_write(argv):
+        adapter(argv)
+        if 'install' in argv: raise subprocess.CalledProcessError(1, argv)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        run_update(config, repository=repository, package_installer=fake_package_installer, registrar=fail_after_write)
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active
+    assert snapshot() == receipts
+    # The unverified adapter output and its backup stay for recovery, named on the original error.
+    notes = getattr(failure.value, '__notes__', [])
+    assert any('preserved' in note and str(extension) in note for note in notes)
+    assert (extension / 'gemini-extension.json').is_file()
+
+
+def _skills_adapter(home):
+    """npx skills stand-in: add copies into ~/.agents/skills plus the profile root; remove deletes both."""
+    profiles = {'github-copilot': '.copilot/skills', 'antigravity': '.gemini/antigravity/skills', 'agy': '.agy/skills'}
+    def adapter(argv):
+        roots = [home / '.agents/skills', home / profiles[argv[argv.index('-a') + 1]]]
+        if 'remove' in argv:
+            for root in roots:
+                for name in SKILL_NAMES: shutil.rmtree(root / name, ignore_errors=True)
+            return
+        for skill in (Path(argv[4]) / 'skills').iterdir():
+            for root in roots: shutil.copytree(skill, root / skill.name, dirs_exist_ok=True)
+    return adapter
+
+
+def _commit_skill(repo, text):
+    skill = repo / 'skills/pair-colleague/SKILL.md'
+    skill.write_text(skill.read_text() + '\n' + text + '\n')
+    _git(repo, 'commit', '-qam', text)
+
+
+def test_update_refreshes_shared_adapter_paths(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, agents = tmp_path / 'home', ('copilot', 'antigravity')
+    shared = home / '.agents/skills/pair-colleague'
+    shared.mkdir(parents=True); (shared / 'SKILL.md').write_text('user original skill')
+    adapter = _skills_adapter(home)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home,
+                                        agents=agents, replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    config = UpdateConfig(legacy.assets_dest, home, agents)
+    update = lambda: run_update(config, repository=official_repository.as_uri(),
+                                package_installer=fake_package_installer, registrar=adapter)
+    update()
+    _commit_skill(official_repository, 'revision B'); second = update()
+    assert 'revision B' in (shared / 'SKILL.md').read_text()
+    items = [p for r in second['registrations'] for p in r['paths'] if p['target'] == str(shared)]
+    assert len(items) == 2 and items[0]['installed_sha256'] == items[1]['installed_sha256']
+    assert items[0]['backup'] == items[1]['backup'] and items[0]['original_backup'] == items[1]['original_backup']
+    active, installed = (legacy.assets_dest / 'runtime.json').read_bytes(), (shared / 'SKILL.md').read_bytes()
+    _commit_skill(official_repository, 'revision C')
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == legacy.assets_dest / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    with pytest.raises(OSError, match='activation failed'): update()
+    assert (legacy.assets_dest / 'runtime.json').read_bytes() == active
+    assert (shared / 'SKILL.md').read_bytes() == installed
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=home)), registrar=adapter)
+    assert (shared / 'SKILL.md').read_text() == 'user original skill'
+    assert not any((home / '.agents/skills' / name).exists() for name in SKILL_NAMES if name != 'pair-colleague')
+
+
+@pytest.mark.parametrize('change', ['file', 'symlink-ancestor'])
+def test_update_rejects_adapter_target_created_during_staging(official_repository, tmp_path, change):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    run_update(UpdateConfig(tmp_path / 'assets', home, ('codex',)), repository=repository,
+               package_installer=fake_package_installer)
+    active = (tmp_path / 'assets/runtime.json').read_bytes()
+    _commit_readme(official_repository, 'revision B')
+    elsewhere = tmp_path / 'elsewhere/pair-colleague/SKILL.md'
+    user = home / '.agents/skills/pair-colleague/SKILL.md'
+    def concurrent_writer(plan):
+        # Another writer appears after planning but before adapter registration.
+        if change == 'file': user.parent.mkdir(parents=True)
+        else:
+            elsewhere.parent.mkdir(parents=True); user.parents[2].mkdir(parents=True)
+            user.parents[1].symlink_to(elsewhere.parents[1], target_is_directory=True)
+        user.write_text('user skill written during staging')
+        return fake_package_installer(plan)
+    calls = []
+    with pytest.raises(ValueError, match='changed after planning|symlink escape'):
+        run_update(UpdateConfig(tmp_path / 'assets', home, ('copilot',)), repository=repository,
+                   package_installer=concurrent_writer, registrar=calls.append)
+    assert calls == [] and user.read_text() == 'user skill written during staging'
+    assert (tmp_path / 'assets/runtime.json').read_bytes() == active
+
+
+def test_update_keeps_shared_receipts_after_single_adapter_update(official_repository, source_tree, tmp_path):
+    from ai_skills.installation import _tree_hash
+    from ai_skills.update import UpdateConfig, run_update
+    home, agents = tmp_path / 'home', ('copilot', 'antigravity')
+    shared = home / '.agents/skills/pair-colleague'
+    shared.mkdir(parents=True); (shared / 'SKILL.md').write_text('user original skill')
+    adapter = _skills_adapter(home)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home,
+                                        agents=agents, replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    update = lambda selected: run_update(UpdateConfig(legacy.assets_dest, home, selected), repository=official_repository.as_uri(),
+                                         package_installer=fake_package_installer, registrar=adapter)
+    first = update(agents)
+    retained = next(r for r in first['registrations'] if r['agent'] == 'antigravity')
+    specific = [p for p in retained['paths'] if '.gemini/antigravity' in p['target']]
+    _commit_skill(official_repository, 'revision B'); second = update(('copilot',))
+    assert 'revision B' in (shared / 'SKILL.md').read_text()
+    items = [p for r in second['registrations'] for p in r['paths'] if p['target'] == str(shared)]
+    assert len(items) == 2 and {p['installed_sha256'] for p in items} == {_tree_hash(shared)}
+    assert items[0]['original_backup'] == items[1]['original_backup']
+    kept = next(r for r in second['registrations'] if r['agent'] == 'antigravity')
+    assert [p for p in kept['paths'] if '.gemini/antigravity' in p['target']] == specific
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=home)), registrar=adapter)
+    assert (shared / 'SKILL.md').read_text() == 'user original skill'
+
+
+def _target_entries(manifest, target):
+    entries = [i for r in manifest['registrations'] for i in r.get('paths', [r])]
+    return [i for i in entries if i.get('target') == str(target)]
+
+
+@pytest.mark.parametrize('operation', ['update', 'reinstall'])
+def test_update_backs_up_edited_copy_registration_before_replacement(official_repository, source_tree, tmp_path,
+                                                                    monkeypatch, operation):
+    import ai_skills.update as update
+    from ai_skills.installation import _registration_receipt
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / '.codex/skills/pair-colleague'
+    target.mkdir(parents=True); (target / 'SKILL.md').write_text('user original skill')
+    first = apply_install(plan_install(make_config(source_tree, tmp_path, replace_existing=True)),
+                          package_installer=fake_package_installer)
+    original = _target_entries(first, target)[0]['backup']
+    (target / 'SKILL.md').write_text('user edited managed skill')
+    (target / 'notes').write_text('user notes')
+    preview = {}
+    def apply_checked(plan, **kwargs):
+        preview.update(plan.to_record())
+        entry = _target_entries(preview, target)[0]
+        assert entry['existing_edited'] is True and not Path(entry['backup']).exists()
+        return apply_install(plan, **kwargs)
+    if operation == 'update':
+        _commit_skill(official_repository, 'revision B')
+        monkeypatch.setattr(update, 'apply_install', apply_checked)
+        second = update.run_update(update.UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                   package_installer=fake_package_installer)
+        assert 'revision B' in (target / 'SKILL.md').read_text()
+    else:
+        second = apply_checked(plan_install(make_config(source_tree, tmp_path)), package_installer=fake_package_installer)
+        assert second['prefix'] == first['prefix']
+        assert (target / 'SKILL.md').read_bytes() == (source_tree / 'skills/pair-colleague/SKILL.md').read_bytes()
+    entry = _target_entries(second, target)[0]
+    backup = Path(entry['backup'])
+    assert entry['existing_edited'] is True and entry['existing_owned'] is True
+    assert backup == Path(_target_entries(preview, target)[0]['backup'])
+    assert backup.parent == Path(second['prefix']) / 'registration-backups/codex'
+    assert re.fullmatch(r'pair-colleague\.edited-\d{8}T\d{6}Z\.[0-9a-f]{64}', backup.name)
+    assert (backup / 'SKILL.md').read_text() == 'user edited managed skill'
+    assert (backup / 'notes').read_text() == 'user notes'
+    assert entry['original_backup'] == original
+    assert (Path(original) / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in target.iterdir()} == {'SKILL.md', '.ai-skills-registration.json'}
+    assert _registration_receipt(target)['fingerprint'] == second['fingerprint']
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)))
+    assert (target / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in target.iterdir()} == {'SKILL.md'}
+    assert (backup / 'notes').read_text() == 'user notes'
+
+
+@pytest.mark.parametrize('change', ['append', 'replace'])
+def test_update_backs_up_edited_adapter_path_before_replacement(official_repository, source_tree, tmp_path, change):
+    from ai_skills.installation import _tree_hash
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    agents = ('copilot', 'antigravity')
+    shared = home / '.agents/skills/pair-colleague'
+    shared.mkdir(parents=True); (shared / 'SKILL.md').write_text('user original skill')
+    adapter = _skills_adapter(home)
+    first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home,
+                                                    agents=agents, replace_existing=True)),
+                          package_installer=fake_package_installer, registrar=adapter)
+    original = _target_entries(first, shared)[0]['backup']
+    if change == 'append':
+        skill = shared / 'SKILL.md'; skill.write_text(skill.read_text() + '\nuser edit\n')
+    else:
+        shutil.rmtree(shared); shared.mkdir(); (shared / 'user').write_text('foreign')
+    edited_hash = _tree_hash(shared)
+    edited = {p.name: p.read_bytes() for p in shared.iterdir()}
+    _commit_skill(official_repository, 'revision B')
+    second = run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                        package_installer=fake_package_installer, registrar=adapter)
+    assert 'revision B' in (shared / 'SKILL.md').read_text()
+    entries = _target_entries(second, shared)
+    assert len(entries) == 2 and all(i['existing_edited'] is True for i in entries)
+    assert len({i['backup'] for i in entries}) == 1
+    backup = Path(entries[0]['backup'])
+    assert backup.parent == Path(second['prefix']) / 'registration-backups/copilot'
+    assert re.fullmatch(r'[0-9a-f]{64}\.edited-\d{8}T\d{6}Z\.[0-9a-f]{64}', backup.name)
+    assert _tree_hash(backup) == edited_hash
+    assert {p.name: p.read_bytes() for p in backup.iterdir()} == edited
+    assert {i['original_backup'] for i in entries} == {original}
+    untouched = _target_entries(second, home / '.copilot/skills/pair-colleague')[0]
+    assert 'existing_edited' not in untouched
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+    assert (shared / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in shared.iterdir()} == {'SKILL.md'}
+    assert _tree_hash(backup) == edited_hash
+
+
+@pytest.mark.parametrize('link_kind', ['directory', 'file'])
+def test_update_rejects_edited_adapter_symlinks(official_repository, source_tree, tmp_path, link_kind):
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    shared = home / '.agents/skills/pair-colleague'
+    adapter = _skills_adapter(home)
+    apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home,
+                                            agents=('copilot', 'antigravity'))),
+                  package_installer=fake_package_installer, registrar=adapter)
+    outside = tmp_path / 'outside/SKILL.md'
+    outside.parent.mkdir(); outside.write_text('precious user skill')
+    if link_kind == 'directory':
+        shutil.rmtree(shared)
+        shared.symlink_to(outside.parent, target_is_directory=True)
+    else:
+        (shared / 'SKILL.md').unlink()
+        (shared / 'SKILL.md').symlink_to(outside)
+    active = (assets / 'runtime.json').read_bytes()
+    _commit_skill(official_repository, 'revision B')
+    with pytest.raises(ValueError, match='--replace-existing'):
+        run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                   package_installer=fake_package_installer, registrar=adapter)
+    assert outside.read_text() == 'precious user skill'
+    assert (assets / 'runtime.json').read_bytes() == active
+    assert not list((assets / 'runtimes').glob('*/registration-backups/*/*.edited-*'))
+
+
+def test_edited_copy_rollback_restores_edit_and_uninstall_keeps_original(official_repository, source_tree, tmp_path,
+                                                                       monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / '.codex/skills/pair-colleague'
+    target.mkdir(parents=True); (target / 'SKILL.md').write_text('user original skill')
+    apply_install(plan_install(make_config(source_tree, tmp_path, replace_existing=True)),
+                  package_installer=fake_package_installer)
+    (target / 'SKILL.md').write_text('user edited managed skill')
+    (target / 'notes').write_text('user notes')
+    edited = {p.name: p.read_bytes() for p in target.iterdir()}
+    active = (assets / 'runtime.json').read_bytes()
+    _commit_skill(official_repository, 'revision B')
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == assets / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    update = lambda: run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                                package_installer=fake_package_installer)
+    with pytest.raises(OSError, match='activation failed') as failure: update()
+    assert not getattr(failure.value, '__notes__', [])
+    assert {p.name: p.read_bytes() for p in target.iterdir()} == edited
+    assert (assets / 'runtime.json').read_bytes() == active
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    second = update()
+    assert 'revision B' in (target / 'SKILL.md').read_text() and not (target / 'notes').exists()
+    backup = Path(_target_entries(second, target)[0]['backup'])
+    assert {p.name: p.read_bytes() for p in backup.iterdir()} == edited
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)))
+    assert (target / 'SKILL.md').read_text() == 'user original skill'
+    assert {p.name for p in target.iterdir()} == {'SKILL.md'}
+    assert {p.name: p.read_bytes() for p in backup.iterdir()} == edited
+
+
+@pytest.mark.parametrize('default_selection', [False, True])
+@pytest.mark.parametrize('agents', [('codex',), ('copilot', 'antigravity')])
+def test_update_restores_original_after_recreating_missing_registration(official_repository, source_tree, tmp_path,
+                                                                         monkeypatch, agents, default_selection):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / ('.codex/skills' if agents == ('codex',) else '.agents/skills') / 'pair-colleague'
+    target.mkdir(parents=True); (target / 'SKILL.md').write_text('user original skill')
+    adapter = None if agents == ('codex',) else _skills_adapter(home)
+    kwargs = dict(package_installer=fake_package_installer, registrar=adapter)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=agents, replace_existing=True))
+    apply_install(legacy, **kwargs)
+    update = lambda selected: run_update(UpdateConfig(assets, home, selected), repository=official_repository.as_uri(), **kwargs)
+    first = update(agents)
+    baseline = {(i['original_backup'], i['original_sha256']) for i in _target_entries(first, target)}
+    assert len(baseline) == 1 and None not in next(iter(baseline))
+    shutil.rmtree(target)
+    _commit_skill(official_repository, 'revision B')
+    active = (assets / 'runtime.json').read_bytes()
+    write = installation.write_json_atomic
+    def fail_active(path, value):
+        if path == assets / 'runtime.json': raise OSError('activation failed')
+        return write(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_active)
+    selected = () if default_selection else agents[:1]
+    with pytest.raises(OSError, match='activation failed'): update(selected)
+    assert not target.exists() and (assets / 'runtime.json').read_bytes() == active
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    second = update(selected)
+    assert 'revision B' in (target / 'SKILL.md').read_text()
+    entries = _target_entries(second, target)
+    assert len(entries) == len(agents)
+    assert {(i['original_backup'], i['original_sha256']) for i in entries} == baseline
+    assert not any(i.get('backup') or i.get('existing_sha256') for i in entries)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+    assert sorted(p.name for p in target.iterdir()) == ['SKILL.md']
+    assert (target / 'SKILL.md').read_text() == 'user original skill'
+    assert not (assets / 'runtime.json').exists()
+
+
+def test_update_restores_gemini_when_replacement_fails_before_write(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    home, repository = tmp_path / 'home', official_repository.as_uri()
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    extension.mkdir(parents=True); (extension / 'gemini-extension.json').write_text('legacy extension')
+    adapter = _deterministic_gemini(extension)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home,
+                                        agents=('gemini',), replace_existing=True))
+    apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    update = lambda registrar: run_update(UpdateConfig(legacy.assets_dest, home, ('gemini',)), repository=repository,
+                                          package_installer=fake_package_installer, registrar=registrar)
+    update(adapter)
+    active, installed = (legacy.assets_dest / 'runtime.json').read_bytes(), (extension / 'gemini-extension.json').read_bytes()
+    _commit_readme(official_repository, 'revision B')
+    def fail_before_write(argv):
+        if 'install' in argv: raise subprocess.CalledProcessError(1, argv)
+        adapter(argv)
+    with pytest.raises(subprocess.CalledProcessError) as failure: update(fail_before_write)
+    assert not getattr(failure.value, '__notes__', [])
+    assert (legacy.assets_dest / 'runtime.json').read_bytes() == active
+    assert (extension / 'gemini-extension.json').read_bytes() == installed
+    retry = update(adapter)
+    assert json.loads((extension / 'gemini-extension.json').read_text())['source'].startswith(retry['prefix'])
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=legacy.assets_dest, home=home)), registrar=adapter)
+    assert (extension / 'gemini-extension.json').read_text() == 'legacy extension'
+
+
+def test_update_cli_reports_incomplete_rollback(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    extension = tmp_path / 'home/.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    monkeypatch.setattr(installation, '_run_registration', lambda argv, *, home=None: adapter(argv))
+    args = ['--assets-dest', str(tmp_path / 'assets'), '--home', str(tmp_path / 'home'), '--only', 'gemini']
+    assert update.main(args) == 0; capsys.readouterr()
+    _commit_readme(official_repository, 'revision B')
+    def fail_after_write(argv, *, home=None):
+        adapter(argv)
+        if 'install' in argv: raise subprocess.CalledProcessError(1, argv)
+    monkeypatch.setattr(installation, '_run_registration', fail_after_write)
+    assert update.main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'returned non-zero exit status 1' in captured.err
+    assert 'rollback incomplete' in captured.err and str(extension) in captured.err
+    assert str(tmp_path / 'assets/runtimes') in captured.err and 'registration-backups' in captured.err
+
+
+def test_update_rejects_retained_runtime_with_missing_dependency(official_repository, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update
+    def installer(plan):
+        root = fake_package_installer(plan)
+        shutil.copytree(plan.source / 'src/ai_skills', root, dirs_exist_ok=True)
+        purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': str(plan.prefix), 'platbase': str(plan.prefix)}))
+        (root.parent / 'psutil.py').unlink()
+        shutil.copytree(Path(psutil.__file__).parent, purelib / 'psutil')
+        (purelib / 'psutil-7.0.dist-info').mkdir()
+        return root
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update = lambda: run_update(config, repository=official_repository.as_uri(), package_installer=installer)
+    sha = _git(official_repository, 'rev-parse', 'main'); first = update()
+    _commit_readme(official_repository, 'next revision'); update()
+    active = (config.assets_dest / 'runtime.json').read_bytes()
+    target = config.home / '.codex/skills/pair-colleague/SKILL.md'; contents = target.read_bytes()
+    purelib = Path(sysconfig.get_path('purelib', 'venv', vars={'base': first['prefix'], 'platbase': first['prefix']}))
+    shutil.rmtree(purelib / 'psutil')
+    _git(official_repository, 'reset', '-q', '--hard', sha)
+    with pytest.raises(ValueError, match='interpreter unusable'): update()
+    assert (config.assets_dest / 'runtime.json').read_bytes() == active and target.read_bytes() == contents
+
+
+def test_update_keeps_npm_cache_outside_checkout(official_repository, tmp_path, monkeypatch):
+    from ai_skills.update import UpdateConfig, run_update
+    if not shutil.which('npx'): pytest.skip('npx unavailable')
+    checkout = tmp_path / 'checkout'; checkout.mkdir()
+    _git(checkout, 'init', '-q'); (checkout / 'tracked').write_text('content')
+    _git(checkout, 'add', 'tracked')
+    before = _git(checkout, 'status', '--porcelain', '--ignored')
+    monkeypatch.chdir(checkout)
+    monkeypatch.setenv('npm_config_cache', str(checkout / '.npm'))
+    monkeypatch.setenv('npm_config_offline', 'true')
+    with pytest.raises(subprocess.CalledProcessError):
+        run_update(UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('copilot',)),
+                   repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    assert _git(checkout, 'status', '--porcelain', '--ignored') == before
+    assert not (checkout / '.npm').exists()
+
+
+def test_update_revalidates_uninstall_baseline_under_lock(official_repository, source_tree, tmp_path):
+    from ai_skills.update import UpdateConfig, run_update, official_source
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    target = home / '.agents/skills/pair-colleague'; target.mkdir(parents=True)
+    (target / 'SKILL.md').write_text('original X')
+    adapter = _skills_adapter(home)
+    config = InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('copilot',), replace_existing=True)
+    apply_install(plan_install(config), package_installer=fake_package_installer, registrar=adapter)
+    run_update(UpdateConfig(assets, home, ('copilot',)), repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+    _commit_readme(official_repository, 'revision B')
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        stale = plan_install(InstallConfig(source=checkout, assets_dest=assets, home=home, agents=('copilot',), source_revision={'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}))
+        apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+        (target / 'SKILL.md').write_text('original Y')
+        apply_install(plan_install(config), package_installer=fake_package_installer, registrar=adapter)
+        run_update(UpdateConfig(assets, home, ('copilot',)), repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+        apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
+    apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home)), registrar=adapter)
+    assert (target / 'SKILL.md').read_text() == 'original Y'
+
+
+def test_default_update_refreshes_only_manifest_copy_registrations(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home,
+                                                     agents=('codex', 'claude'))), package_installer=fake_package_installer)
+    removed = next(r for r in first['registrations'] if r['agent'] == 'codex' and r['skill'] != 'pair-colleague')
+    first['registrations'].remove(removed)
+    write_json_atomic(assets / 'runtime.json', first)
+    untouched = Path(removed['target']) / 'SKILL.md'; before = untouched.read_bytes()
+    other = home / '.gemini/extensions/ai-skill-collections/user'; other.parent.mkdir(parents=True); other.write_text('user')
+    _commit_skill(official_repository, 'new copy payload')
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    updated = run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    key = lambda r: (r['agent'], r['kind'], r.get('skill'))
+    assert {key(r) for r in updated['registrations']} == {key(r) for r in first['registrations']}
+    assert 'new copy payload' in (home / '.codex/skills/pair-colleague/SKILL.md').read_text()
+    assert untouched.read_bytes() == before and other.read_text() == 'user'
+
+
+@pytest.mark.parametrize('agents', [('gemini',), ('copilot', 'antigravity'), ('agy',)])
+def test_default_update_refreshes_only_manifest_command_registrations(official_repository, source_tree, tmp_path, monkeypatch, agents):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    adapter = _deterministic_gemini(home / '.gemini/extensions/ai-skill-collections') if agents == ('gemini',) else _skills_adapter(home)
+    legacy = plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=agents))
+    first = apply_install(legacy, package_installer=fake_package_installer, registrar=adapter)
+    for entry in first['registrations']:
+        entry['argv'] = ['untrusted']; entry['undo'] = ['untrusted']
+    write_json_atomic(assets / 'runtime.json', first)
+    _commit_skill(official_repository, 'new command payload')
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    calls = []
+    def registrar(argv):
+        calls.append(argv); adapter(argv)
+    updated = run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(),
+                         package_installer=fake_package_installer, registrar=registrar)
+    assert [r['agent'] for r in updated['registrations']] == list(agents)
+    installs = [c for c in calls if 'install' in c or 'add' in c]
+    assert len(installs) == len(agents) and all(str(updated['prefix']) in ' '.join(c) for c in installs)
+    assert all(c != ['untrusted'] for c in calls)
+    assert all(r['argv'] != ['untrusted'] and r['undo'] != ['untrusted'] for r in updated['registrations'])
+    if agents != ('gemini',): assert 'new command payload' in (home / '.agents/skills/pair-colleague/SKILL.md').read_text()
+
+
+@pytest.mark.parametrize('state', ['missing', 'empty', 'legacy'])
+def test_default_update_without_registrations_never_detects_agents(official_repository, source_tree, tmp_path, monkeypatch, state):
+    import ai_skills.installation as installation
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    if state != 'missing':
+        first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('codex',))), package_installer=fake_package_installer)
+        apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home, agents=('codex',))))
+        if state == 'legacy':
+            first = json.loads((assets / 'runtime.json').read_text()); first.pop('registrations'); write_json_atomic(assets / 'runtime.json', first)
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    kwargs = dict(repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=lambda argv: pytest.fail('unexpected registrar'))
+    if state == 'missing':
+        with pytest.raises(ValueError, match='install first'): run_update(UpdateConfig(assets, home), **kwargs)
+    else:
+        updated = run_update(UpdateConfig(assets, home), **kwargs)
+        assert updated['registrations'] == [] and not (home / '.claude').exists()
+
+
+@pytest.mark.parametrize('case', ['copy', 'command', 'owner', 'identity', 'path', 'symlink'])
+def test_default_update_rejects_unowned_registration_sources(official_repository, source_tree, tmp_path, case):
+    from ai_skills.update import UpdateConfig, run_update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    agents = ('copilot',) if case == 'command' else ('codex',)
+    adapter = _skills_adapter(home) if case == 'command' else None
+    first = apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=agents)), package_installer=fake_package_installer, registrar=adapter)
+    active = assets / 'runtime.json'
+    if case in ('copy', 'command'):
+        target = Path(first['registrations'][0]['target'] if case == 'copy' else first['registrations'][0]['paths'][0]['target'])
+        shutil.rmtree(target); target.mkdir(parents=True); (target / 'user').write_text('foreign')
+        if case == 'command': first['registrations'][0]['paths'][0].pop('installed_sha256')
+    elif case == 'owner': first['owner'] = 'foreign'
+    elif case == 'identity': first['registrations'][0]['agent'] = 'gemini'
+    elif case == 'path': first['registrations'][0]['target'] = str(tmp_path / 'foreign')
+    if case not in ('copy', 'symlink'): write_json_atomic(active, first)
+    if case == 'symlink':
+        other = assets / 'other.json'; active.rename(other); active.symlink_to(other)
+    before = active.read_bytes()
+    calls = []
+    with pytest.raises(ValueError):
+        run_update(UpdateConfig(assets, home), repository=official_repository.as_uri(), package_installer=lambda p: calls.append(p), registrar=calls.append)
+    assert calls == [] and active.read_bytes() == before
+    assert not list((assets / 'runtimes').glob('*/registration-backups'))
+    if case in ('copy', 'command'): assert (target / 'user').read_text() == 'foreign'
+
+
+def test_default_update_reselects_registrations_after_manifest_change(official_repository, source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    from ai_skills.update import official_source
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('codex', 'claude'))), package_installer=fake_package_installer)
+    monkeypatch.setattr(installation, '_detect', lambda home: pytest.fail('unexpected detection'))
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        revision = {'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}
+        stale = plan_install(InstallConfig(source=checkout, assets_dest=assets, home=home, source_revision=revision))
+        apply_uninstall(plan_uninstall(UninstallConfig(assets_dest=assets, home=home, agents=('claude',))))
+        updated = apply_install(stale, package_installer=fake_package_installer)
+    assert {r['agent'] for r in updated['registrations']} == {'codex'}
+    assert not (home / '.claude/skills/pair-colleague').exists()
+
+
+def test_default_update_rechecks_manifest_symlink_under_lock(official_repository, source_tree, tmp_path):
+    from ai_skills.update import official_source
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    apply_install(plan_install(InstallConfig(source=source_tree, assets_dest=assets, home=home, agents=('codex',))), package_installer=fake_package_installer)
+    with official_source(official_repository.as_uri()) as (checkout, sha):
+        revision = {'repository': official_repository.as_uri(), 'branch': 'main', 'commit': sha}
+        stale = plan_install(InstallConfig(source=checkout, assets_dest=assets, home=home, source_revision=revision))
+        active = assets / 'runtime.json'; other = assets / 'other.json'
+        active.rename(other); active.symlink_to(other)
+        with pytest.raises(ValueError, match='owned active runtime manifest'):
+            apply_install(stale, package_installer=lambda plan: pytest.fail('unexpected installer'))
+
+
+@pytest.mark.parametrize('before_planning', [True, False])
+def test_explicit_install_rejects_manifest_symlink_before_staging(source_tree, tmp_path, before_planning):
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('new runtime candidate')
+    active, other = first.assets_dest / 'runtime.json', first.assets_dest / 'other.json'
+    if not before_planning: candidate = plan_install(config)
+    active.rename(other); active.symlink_to(other)
+    if before_planning: candidate = plan_install(config)
+    prefixes = set((first.assets_dest / 'runtimes').iterdir())
+    with pytest.raises(ValueError, match='active runtime manifest is a symlink') as failure:
+        apply_install(candidate, package_installer=lambda plan: pytest.fail('unexpected installer'))
+    assert str(active) in str(failure.value)
+    assert set((first.assets_dest / 'runtimes').iterdir()) == prefixes
+    assert active.is_symlink()
+
+
+@pytest.mark.parametrize('kind', ['adapter', 'copy'])
+def test_update_cli_dry_run_edited_backup_is_pattern_matching_later_apply(official_repository, tmp_path, monkeypatch, capsys, kind):
+    import fnmatch
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    adapter = _skills_adapter(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    agent, target = ('copilot', home / '.agents/skills/pair-colleague') if kind == 'adapter' else ('codex', None)
+    update.run_update(update.UpdateConfig(assets, home, (agent,)), repository=official_repository.as_uri(),
+                      package_installer=fake_package_installer, registrar=adapter)
+    if target is None:
+        target = next(Path(r['target']) for r in json.loads(next(assets.rglob('runtime.json')).read_text())['registrations']
+                      if r.get('kind') == 'copy' and r['skill'] == 'pair-colleague')
+    (target / 'SKILL.md').write_text('user edit')
+    monkeypatch.setattr(installation, '_backup_stamp', lambda: '20200101T000000Z')
+    assert update.main(['--dry-run', '--force', '--assets-dest', str(assets), '--home', str(home)]) == 0
+    entry = next(i for i in json.loads(capsys.readouterr().out)['backups'] if i['target'] == str(target))
+    assert entry['time_dependent'] is True and '20200101T000000Z' not in entry['path']
+    monkeypatch.setattr(installation, '_backup_stamp', lambda: '20300202T020202Z')
+    manifest = update.run_update(update.UpdateConfig(assets, home, force=True), repository=official_repository.as_uri(),
+                                 package_installer=fake_package_installer, registrar=adapter)
+    actual = _target_entries(manifest, target)[0]['backup']
+    assert fnmatch.fnmatch(actual, entry['path'].replace('<UTC-timestamp>', '*'))
+    assert '20300202T020202Z' in actual
+    assert (Path(actual) / 'SKILL.md').read_text() == 'user edit'
+
+
+def test_update_matching_revision_skips_all_changes_and_force_refreshes(official_repository, tmp_path, monkeypatch, capsys):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    repository = official_repository.as_uri()
+    config = update.UpdateConfig(assets, home, ('codex',))
+    manifest = update.run_update(config, repository=repository, package_installer=fake_package_installer)
+    run = tmp_path / 'run'; (run / '.run-with-it').mkdir(parents=True)
+    write_json_atomic(run / '.run-with-it/engine.json', {'schema_version': 1, 'engine': 'python',
+                                                       'engine_version': 1, 'python': manifest['python']})
+    target = Path(manifest['registrations'][0]['target'])
+    (target / 'SKILL.md').write_text('user edit')
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+    assert update.run_update(config, repository=repository, package_installer=fake_package_installer) == manifest
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', repository)
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    args = ['--assets-dest', str(assets), '--home', str(home), '--only', 'codex', '--force']
+    assert update.main(['--dry-run', *args]) == 0
+    assert json.loads(capsys.readouterr().out)['no_op'] is False
+    assert update.main(args) == 0
+    refreshed = json.loads(capsys.readouterr().out)
+    assert (target / 'SKILL.md').read_text() != 'user edit'
+    backup = Path(next(r['backup'] for r in refreshed['registrations'] if r['target'] == str(target)))
+    assert (backup / 'SKILL.md').read_text() == 'user edit'
+    assert resolve_runtime(run, assets_dest=assets) == Path(manifest['python'])
+    assert Path(manifest['python']).is_file()
+
+
+@pytest.mark.parametrize('missing', [True, False])
+def test_update_unknown_or_different_revision_is_not_skipped(official_repository, tmp_path, missing):
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    repository = official_repository.as_uri()
+    first = run_update(config, repository=repository, package_installer=fake_package_installer)
+    if missing:
+        active = config.assets_dest / 'runtime.json'
+        legacy = json.loads(active.read_text()); legacy.pop('source_revision')
+        write_json_atomic(active, legacy)
+    else:
+        _commit_skill(official_repository, 'different revision')
+    result = run_update(config, repository=repository, package_installer=fake_package_installer)
+    assert result['source_revision']['commit'] == _git(official_repository, 'rev-parse', 'main')
+    if not missing: assert result['source_revision'] != first['source_revision']
+
+
+@pytest.mark.parametrize('boundary', ['copy-before', 'copy-after', 'candidate-before', 'candidate-after', 'active-before', 'active-after'])
+@pytest.mark.parametrize('candidate', ['new', 'retained', 'same'])
+def test_update_transaction_restores_prior_installation(source_tree, tmp_path, monkeypatch, boundary, candidate):
+    import dataclasses
+    import ai_skills.installation as installation
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    original_skill = (source_tree / 'skills/pair-colleague/SKILL.md').read_bytes()
+    if candidate != 'same':
+        (source_tree / 'skills/pair-colleague/SKILL.md').write_text('candidate payload')
+    second = plan_install(dataclasses.replace(config, refresh_registrations=True))
+    if candidate == 'retained':
+        apply_install(second, package_installer=fake_package_installer)
+        (source_tree / 'skills/pair-colleague/SKILL.md').write_bytes(original_skill)
+        apply_install(plan_install(config), package_installer=fake_package_installer)
+        (source_tree / 'skills/pair-colleague/SKILL.md').write_text('candidate payload')
+    active = first.assets_dest / 'runtime.json'
+    # Noncanonical bytes must survive restoration exactly, including retained metadata.
+    active.write_text(json.dumps(json.loads(active.read_text()), separators=(',', ':')) + '\n\n')
+    second = plan_install(dataclasses.replace(config, refresh_registrations=True))
+    paths = [active, second.prefix / 'runtime.json']
+    before = {p: p.read_bytes() if p.exists() else None for p in paths}
+    registrations = _tree_snapshot(tmp_path / 'home')
+    real_write, real_rename = installation.write_json_atomic, Path.rename
+    fired = False
+    def fail_write(path, value):
+        nonlocal fired
+        wanted = active if boundary.startswith('active') else second.prefix / 'runtime.json'
+        if Path(path) == wanted and not fired and not boundary.startswith('copy'):
+            fired = True
+            if boundary.endswith('after'): real_write(path, value)
+            raise OSError('injected publication failure')
+        return real_write(path, value)
+    def fail_rename(path, target):
+        nonlocal fired
+        if '.staging.' in path.name and not fired and boundary.startswith('copy'):
+            fired = True
+            if boundary.endswith('after'): real_rename(path, target)
+            raise OSError('injected copy failure')
+        return real_rename(path, target)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail_write)
+    monkeypatch.setattr(Path, 'rename', fail_rename)
+    with pytest.raises(OSError, match='injected') as failure:
+        apply_install(second, package_installer=fake_package_installer)
+    assert fired
+    assert {p: p.read_bytes() if p.exists() else None for p in paths} == before
+    assert _tree_snapshot(tmp_path / 'home') == registrations
+    assert not getattr(failure.value, '__notes__', [])
+    assert first.python.is_file() and second.python.is_file()
+    assert not (first.assets_dest / '.installation-transaction.json').exists()
+
+
+@pytest.mark.parametrize('boundary', ['receipt-before', 'receipt-after', 'expect-before'])
+def test_update_transaction_restores_after_staging_write_failure(source_tree, tmp_path, monkeypatch, boundary):
+    import ai_skills.installation as installation
+    config = make_config(source_tree, tmp_path)
+    first = plan_install(config)
+    apply_install(first, package_installer=fake_package_installer)
+    active = first.assets_dest / 'runtime.json'
+    before = active.read_bytes(), _tree_snapshot(config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('staging failure candidate')
+    candidate = plan_install(config)
+    injected = OSError('injected staging failure')
+    real_write, real_expect = installation.write_json_atomic, installation._ActivationTransaction.expect
+    def write(path, value):
+        if '.staging.' in Path(path).parent.name and boundary != 'expect-before':
+            if boundary == 'receipt-after': real_write(path, value)
+            raise injected
+        real_write(path, value)
+    def expect(self, target, digest):
+        if Path(target).parent == config.home / '.codex/skills': raise injected
+        real_expect(self, target, digest)
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    if boundary == 'expect-before': monkeypatch.setattr(installation._ActivationTransaction, 'expect', expect)
+    with pytest.raises(OSError, match='injected staging failure') as failure:
+        apply_install(candidate, package_installer=fake_package_installer)
+    assert failure.value is injected
+    assert getattr(failure.value, '_installation_recovery') == 'restored'
+    assert not getattr(failure.value, '__notes__', [])
+    assert not (first.assets_dest / '.installation-transaction.json').exists()
+    assert (active.read_bytes(), _tree_snapshot(config.home)) == before
+    assert not list((config.home / '.codex/skills').glob('.*'))
+
+
+@pytest.mark.parametrize('fault', ['interpreter', 'cli-import', 'module-entry'])
+def test_update_transaction_launcher_failure_preserves_prior_runtime(source_tree, tmp_path, fault):
+    import tempfile
+    import ai_skills.installation as installation
+    first = plan_install(make_config(source_tree, tmp_path))
+    manifest = apply_install(first, package_installer=fake_package_installer)
+    record = {'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': manifest['python']}
+    run, pair = tmp_path / 'run', tmp_path / 'pair'
+    (run / '.run-with-it').mkdir(parents=True); pair.mkdir()
+    write_json_atomic(run / '.run-with-it/engine.json', record)
+    write_json_atomic(pair / 'config.json', {'engine_runtime': record})
+    before = _tree_snapshot(tmp_path / 'home')
+    active = (first.assets_dest / 'runtime.json').read_bytes()
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('second runtime')
+    second = plan_install(make_config(source_tree, tmp_path))
+    def broken(plan):
+        root = fake_package_installer(plan)
+        if fault == 'interpreter':
+            plan.python.unlink(); plan.python.write_bytes(b'invalid executable'); plan.python.chmod(0o755)
+        elif fault == 'cli-import': (root / 'cli.py').write_text('raise RuntimeError("broken CLI import")')
+        else: (root / '__main__.py').write_text('raise SystemExit(8)')
+        return root
+    with pytest.raises(ValueError, match='unusable'):
+        apply_install(second, package_installer=broken)
+    assert _tree_snapshot(tmp_path / 'home') == before
+    assert (first.assets_dest / 'runtime.json').read_bytes() == active
+    assert resolve_runtime(assets_dest=first.assets_dest) == first.python
+    for directory in (run, pair):
+        assert resolve_runtime(directory, assets_dest=first.assets_dest) == first.python
+        subprocess.run([str(first.python), '-I', '-m', 'ai_skills', '--help'], check=True, capture_output=True)
+    env = {k: v for k, v in installation._isolated_environment().items()
+           if k not in ('AI_SKILLS_RUN_ROOT', 'RUN_ROOT', 'ASSET_ROOT', 'RUN_WITH_IT_REPO_ROOT')}
+    env['ASSETS_DEST'] = str(first.assets_dest)
+    # Keep the ordinary launcher probe outside orchestration ancestry even when
+    # a caller chooses a temporary directory inside an existing run.
+    with tempfile.TemporaryDirectory(prefix='ai-skills-launcher-probe-') as cwd:
+        result = subprocess.run([sys.executable, '-I', '-m', 'ai_skills', 'fixture-probe'], cwd=cwd,
+                                env=env, capture_output=True, text=True, check=True)
+    assert str(first.prefix) in result.stdout
+
+
+def test_update_transaction_verified_adapter_is_restored(source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    home = tmp_path / 'home'
+    extension = home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=home, agents=('codex', 'gemini'))
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    before = _tree_snapshot(home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('second runtime')
+    second = plan_install(config)
+    real = installation.write_json_atomic
+    def fail(path, value):
+        if Path(path) == second.assets_dest / 'runtime.json': raise OSError('activation failed')
+        real(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', fail)
+    with pytest.raises(OSError, match='activation failed') as failure:
+        apply_install(second, package_installer=fake_package_installer, registrar=adapter)
+    assert not getattr(failure.value, '__notes__', [])
+    assert _tree_snapshot(home) == before
+
+
+def _transaction_child(source, tmp_path, checkpoint, *, pause=False):
+    """Faults are installed inside the interpreter, including on Windows spawn."""
+    script = r'''
+import os, runpy, sys
+from pathlib import Path
+import ai_skills.installation as i
+helpers = runpy.run_path(sys.argv[1])
+source, base, checkpoint = Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+real_write, real_rename = i.write_json_atomic, Path.rename
+ready = base / ('ready-' + checkpoint)
+def stop():
+    ready.write_text(checkpoint)
+    print('checkpoint:' + checkpoint, flush=True)
+    if sys.argv[5] == 'pause': sys.stdin.readline()
+    else: os._exit(77)
+def write(path, value):
+    if checkpoint == 'restoring-gap' and Path(path) == base / 'assets/runtime.json':
+        raise OSError('force restoration')
+    real_write(path, value)
+    journal = Path(path).name == '.installation-transaction.json'
+    if journal and ((checkpoint == 'prepared' and value['phase'] == 'prepared') or
+                    (checkpoint == 'committed' and value['phase'] == 'committed')): stop()
+    if not journal and Path(path).name == 'runtime.json':
+        if checkpoint == ('active' if Path(path).parent == base / 'assets' else 'candidate'): stop()
+def rename(path, target):
+    result = real_rename(path, target)
+    if ((checkpoint == 'copy-gap' and '.previous.' in Path(target).name) or
+        (checkpoint == 'copy-swapped' and '.staging.' in path.name) or
+        (checkpoint == 'restoring-gap' and '.displaced.' in Path(target).name)): stop()
+    return result
+adapter = helpers['_deterministic_gemini'](base / 'home/.gemini/extensions/ai-skill-collections')
+def register(argv):
+    adapter(argv)
+    if checkpoint == 'adapter-running' and 'install' in argv: stop()
+real_settle = i._ActivationTransaction.settle
+def settle(self, registration):
+    real_settle(self, registration)
+    if checkpoint == 'adapter-verified' and any(p.get('installed_sha256') for p in registration['paths']): stop()
+i.write_json_atomic, Path.rename, i._ActivationTransaction.settle = write, rename, settle
+config = i.InstallConfig(source=source, assets_dest=base/'assets', home=base/'home', agents=('codex', 'gemini'))
+plan = i.plan_install(config)
+def installer(plan):
+    if checkpoint == 'staging': stop()
+    return helpers['fake_package_installer'](plan)
+i.apply_install(plan, package_installer=installer, registrar=register)
+'''
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('RUN_WITH_IT_', 'AI_SKILLS_'))}
+    return subprocess.Popen([sys.executable, '-I', '-c', script, str(Path(__file__).resolve()), str(source),
+                             str(tmp_path), checkpoint, 'pause' if pause else 'crash'], cwd=tmp_path,
+                            env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+
+def _crash_activation(source_tree, tmp_path, checkpoint):
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex', 'gemini'))
+    adapter = _deterministic_gemini(config.home / '.gemini/extensions/ai-skill-collections')
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    before = {'active': (config.assets_dest / 'runtime.json').read_bytes(), 'home': _tree_snapshot(config.home)}
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('interrupted candidate')
+    candidate = plan_install(config)
+    child = _transaction_child(source_tree, tmp_path, checkpoint)
+    try:
+        out, err = child.communicate(timeout=30)
+        assert child.returncode == 77, (out, err)
+        assert (tmp_path / ('ready-' + checkpoint)).read_text() == checkpoint
+    finally:
+        if child.poll() is None: child.kill(); child.communicate(timeout=10)
+    return config, first, candidate, before
+
+
+@pytest.mark.parametrize('checkpoint', ['prepared', 'copy-gap', 'copy-swapped', 'adapter-verified', 'candidate', 'active', 'restoring-gap', 'committed', 'adapter-running'])
+def test_update_transaction_recovers_interrupted_activation(source_tree, tmp_path, monkeypatch, checkpoint):
+    from contextlib import contextmanager
+    import ai_skills.update as update
+    config, first, candidate, before = _crash_activation(source_tree, tmp_path, checkpoint)
+    journal = config.assets_dest / '.installation-transaction.json'
+    assert journal.is_file()
+    shutil.rmtree(source_tree)  # Recovery cannot depend on the vanished checkout.
+    @contextmanager
+    def unavailable(*args, **kwargs):
+        raise ValueError('source acquisition unavailable')
+        yield
+    monkeypatch.setattr(update, 'official_source', unavailable)
+    options = update.UpdateConfig(config.assets_dest, config.home)
+    if checkpoint == 'adapter-running':
+        with pytest.raises(ValueError, match='unfinished adapter') as failure: update.run_update(options)
+        assert journal.is_file()
+        target = config.home / '.gemini/extensions/ai-skill-collections'
+        entry = next(item for item in json.loads(journal.read_text())['entries'] if item['target'] == str(target))
+        assert f'verify {target} against {entry["backup"]}' in str(failure.value)
+        assert f'repair it manually, then remove {journal} before retrying' in str(failure.value)
+        assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+        return
+    for _ in range(2):
+        with pytest.raises(ValueError, match='source acquisition unavailable'): update.run_update(options)
+        assert not journal.exists()
+    if checkpoint == 'committed':
+        assert resolve_runtime(assets_dest=config.assets_dest) == candidate.python
+        assert (candidate.prefix / 'runtime.json').is_file()
+    else:
+        assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+        assert _tree_snapshot(config.home) == before['home']
+        assert not (candidate.prefix / 'runtime.json').exists()
+    assert first.python.is_file() and candidate.python.is_file()
+    assert list((candidate.prefix / 'registration-backups').glob('activation-*'))
+
+
+@pytest.mark.parametrize('displaced', [False, True])
+def test_update_transaction_recovers_partial_restoration_copy(source_tree, tmp_path, displaced):
+    import ai_skills.installation as installation
+    config, _, _, before = _crash_activation(source_tree, tmp_path, 'active')
+    journal = config.assets_dest / '.installation-transaction.json'
+    token = json.loads(journal.read_text())['token']
+    target = config.home / '.codex/skills/pair-colleague'
+    staged = target.with_name(f'.{target.name}.restoring.{token}')
+    staged.mkdir()
+    (staged / 'SKILL.md').write_text('partial restoration')
+    if displaced: target.rename(target.with_name(f'.{target.name}.displaced.{token}'))
+    assert installation._recover_installation(config.assets_dest, config.home) == 'restored'
+    assert not journal.exists()
+    assert _tree_snapshot(config.home) == before['home']
+    assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+
+
+@pytest.mark.parametrize('fault', ['manifest-restore', 'copy-restore', 'missing-backup', 'damaged-backup', 'target-edit'])
+def test_update_transaction_preserves_incomplete_recovery(source_tree, tmp_path, monkeypatch, fault):
+    import ai_skills.installation as installation
+    config, first, candidate, before = _crash_activation(source_tree, tmp_path, 'active')
+    journal = config.assets_dest / '.installation-transaction.json'
+    state = json.loads(journal.read_text())
+    protected = config.home / '.codex/skills/pair-colleague'
+    item = next(item for item in state['entries'] if item['target'] == str(protected))
+    backup = Path(item['backup']); old_backup = _tree_snapshot(backup)
+    real_replace, real_rename = installation.replace_file_atomic, Path.rename
+    def replace(path, target):
+        if Path(target) == config.assets_dest / 'runtime.json': raise OSError('restore denied')
+        real_replace(path, target)
+    def rename(path, target):
+        if '.restoring.' in path.name and Path(target) == protected: raise OSError('restore denied')
+        return real_rename(path, target)
+    if fault == 'manifest-restore': monkeypatch.setattr(installation, 'replace_file_atomic', replace)
+    elif fault == 'copy-restore': monkeypatch.setattr(Path, 'rename', rename)
+    elif fault == 'missing-backup': shutil.rmtree(backup)
+    elif fault == 'damaged-backup': (backup / 'SKILL.md').write_text('damaged backup')
+    else: (protected / 'SKILL.md').write_text('user content after crash')
+    with pytest.raises((OSError, ValueError)) as failure:
+        installation._recover_installation(config.assets_dest, config.home)
+    assert getattr(failure.value, '_installation_recovery') == 'incomplete'
+    assert journal.is_file() and str(journal) in '\n'.join(failure.value.__notes__)
+    assert first.python.is_file() and candidate.python.is_file()
+    safe = config.home / '.codex/skills/break-req/.ai-skills-registration.json'
+    assert safe.read_bytes() == before['home'][str(safe.relative_to(config.home))]
+    with pytest.raises(ValueError, match='pending installation recovery'): plan_install(config)
+    with pytest.raises(ValueError, match='pending installation recovery'):
+        plan_uninstall(UninstallConfig(config.assets_dest, config.home))
+    if fault == 'target-edit':
+        assert (protected / 'SKILL.md').read_text() == 'user content after crash'
+        return
+    monkeypatch.undo()
+    if fault in ('missing-backup', 'damaged-backup'):
+        if backup.exists(): shutil.rmtree(backup)
+        backup.mkdir()
+        for name, data in old_backup.items():
+            path = backup / name
+            if data is None: path.mkdir(parents=True, exist_ok=True)
+            else: path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(data)
+    assert installation._recover_installation(config.assets_dest, config.home) == 'restored'
+    assert installation._recover_installation(config.assets_dest, config.home) is None
+    assert _tree_snapshot(config.home) == before['home']
+    assert (config.assets_dest / 'runtime.json').read_bytes() == before['active']
+
+
+@pytest.mark.parametrize('fault', ['malformed', 'schema', 'missing-field', 'numeric-token', 'foreign-target', 'foreign-backup', 'unknown-owner', 'live-owner', 'symlink-journal', 'symlink-backups'])
+def test_update_transaction_rejects_unsafe_recovery_metadata(source_tree, tmp_path, fault):
+    import ai_skills.installation as installation
+    config, _, candidate, _ = _crash_activation(source_tree, tmp_path, 'copy-swapped')
+    journal = config.assets_dest / '.installation-transaction.json'
+    state = json.loads(journal.read_text())
+    original = journal.read_bytes()
+    if fault == 'malformed': journal.write_text('{bad')
+    elif fault == 'schema': state['schema_version'] = 5
+    elif fault == 'missing-field': del state['entries'][0]['before']
+    elif fault == 'numeric-token': state['token'] = int('1' * 32)
+    elif fault == 'foreign-target': state['entries'][0]['target'] = str(tmp_path / 'unowned')
+    elif fault == 'foreign-backup': state['entries'][0]['backup'] = str(tmp_path / 'unowned')
+    elif fault == 'unknown-owner': state['host'] = 'unverifiable-host'
+    elif fault == 'live-owner': state.update(pid=os.getpid(), create_time=psutil.Process().create_time())
+    elif fault == 'symlink-journal':
+        saved = tmp_path / 'journal-preserved'; journal.rename(saved)
+        try: journal.symlink_to(saved)
+        except OSError: pytest.skip('OS denies symlink creation for this user')
+    elif fault == 'symlink-backups':
+        root = candidate.prefix / 'registration-backups'; saved = candidate.prefix / 'saved-backups'
+        root.rename(saved)
+        try: root.symlink_to(saved, target_is_directory=True)
+        except OSError: pytest.skip('OS denies symlink creation for this user')
+    if fault not in ('malformed', 'symlink-journal', 'symlink-backups'): write_json_atomic(journal, state)
+    before = _tree_snapshot(config.home)
+    with pytest.raises((OSError, ValueError)):
+        installation._recover_installation(config.assets_dest, config.home)
+    assert journal.exists() and _tree_snapshot(config.home) == before
+    if fault == 'symlink-journal': assert (tmp_path / 'journal-preserved').read_bytes() == original
+
+
+@pytest.mark.parametrize('matching', [True, False])
+def test_update_transaction_serializes_concurrent_updates(source_tree, tmp_path, matching):
+    import dataclasses
+    import queue
+    import threading
+    import ai_skills.installation as installation
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex', 'gemini'))
+    adapter = _deterministic_gemini(config.home / '.gemini/extensions/ai-skill-collections')
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('first contender')
+    other_source = source_tree
+    if not matching:
+        other_source = tmp_path / 'other-source'; shutil.copytree(source_tree, other_source)
+        (other_source / 'skills/pair-colleague/SKILL.md').write_text('second contender')
+    stale = plan_install(dataclasses.replace(config, source=other_source))
+    child = _transaction_child(source_tree, tmp_path, 'staging', pause=True)
+    messages = queue.Queue()
+    threading.Thread(target=lambda: messages.put(child.stdout.readline()), daemon=True).start()
+    try:
+        assert messages.get(timeout=20).strip() == 'checkpoint:staging'
+        before = _tree_snapshot(config.assets_dest), _tree_snapshot(config.home)
+        with pytest.raises(TimeoutError, match='owner busy or unknown'):
+            apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
+        assert (_tree_snapshot(config.assets_dest), _tree_snapshot(config.home)) == before
+        out, err = child.communicate(input='continue\n', timeout=30)
+        assert child.returncode == 0, (out, err)
+        winner = json.loads((config.assets_dest / 'runtime.json').read_text())
+        assert first.fingerprint != winner['fingerprint']
+        result = apply_install(stale, package_installer=fake_package_installer, registrar=adapter)
+        assert (result['fingerprint'] == winner['fingerprint']) == matching
+        assert installation._registration_receipt(config.home / '.codex/skills/pair-colleague')['fingerprint'] == result['fingerprint']
+        assert not (config.assets_dest / '.installation-transaction.json').exists()
+        assert first.python.is_file() and Path(winner['python']).is_file()
+        apply_uninstall(plan_uninstall(UninstallConfig(config.assets_dest, config.home)), registrar=adapter)
+        assert not (config.home / '.codex/skills/pair-colleague').exists()
+        assert not (config.home / '.gemini/extensions/ai-skill-collections').exists()
+    finally:
+        if child.poll() is None: child.kill(); child.communicate(timeout=10)
+
+
+@pytest.mark.parametrize('owner', ['live', 'unknown'])
+def test_update_transaction_refuses_busy_or_unknown_lock(source_tree, tmp_path, owner):
+    plan = plan_install(make_config(source_tree, tmp_path))
+    lock = plan.assets_dest / '.installation.lock'; lock.mkdir(parents=True)
+    write_json_atomic(lock / 'owner.json', {'host': socket.gethostname() if owner == 'live' else 'unknown',
+                      'pid': os.getpid(), 'create_time': psutil.Process().create_time(), 'token': 'existing'})
+    before = _tree_snapshot(plan.assets_dest)
+    with pytest.raises(TimeoutError, match='owner busy or unknown'):
+        apply_install(plan, package_installer=fake_package_installer)
+    assert _tree_snapshot(plan.assets_dest) == before
+
+
+@pytest.mark.parametrize('outcome', ['restored', 'incomplete', 'interrupted', 'committed-cleanup', 'committed-lock'])
+def test_update_transaction_cli_reports_recovery_outcome(official_repository, tmp_path, monkeypatch, capsys, outcome):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    args = ['--assets-dest', str(assets), '--home', str(home), '--only', 'codex']
+    assert update.main(args) == 0
+    first = json.loads(capsys.readouterr().out)
+    before = (assets / 'runtime.json').read_bytes(), _tree_snapshot(home)
+    _commit_skill(official_repository, 'new candidate CLI failure')
+    real_write, real_bytes, real_exit = installation.write_json_atomic, installation._write_bytes_atomic, installation.DirectoryLock.__exit__
+    fired = False
+    def write(path, value):
+        nonlocal fired
+        real_write(path, value)
+        if Path(path) == assets / 'runtime.json' and not fired:
+            fired = True
+            if outcome == 'interrupted': raise KeyboardInterrupt()
+            raise OSError('original activation failure')
+    def restore(path, payload):
+        if Path(path) == assets / 'runtime.json': raise OSError('manifest restore denied')
+        real_bytes(path, payload)
+    def cleanup(self): raise OSError('committed cleanup denied')
+    def release(self, *args):
+        real_exit(self, *args)
+        if args[0] is None: raise OSError('committed lock release denied')
+    if outcome == 'committed-cleanup': monkeypatch.setattr(installation._ActivationTransaction, 'cleanup', cleanup)
+    elif outcome == 'committed-lock': monkeypatch.setattr(installation.DirectoryLock, '__exit__', release)
+    else: monkeypatch.setattr(installation, 'write_json_atomic', write)
+    if outcome == 'incomplete': monkeypatch.setattr(installation, '_write_bytes_atomic', restore)
+    assert update.main(args) == (130 if outcome == 'interrupted' else 2)
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    if outcome == 'interrupted': assert 'ai-skills update: interrupted' in captured.err
+    if outcome.startswith('committed'):
+        assert 'committed' in captured.err and 'restored' not in captured.err
+        assert json.loads((assets / 'runtime.json').read_text())['fingerprint'] != first['fingerprint']
+    else:
+        assert ('prior installation restored' if outcome != 'incomplete' else 'recovery incomplete') in captured.err
+        assert _tree_snapshot(home) == before[1]
+        if outcome != 'incomplete': assert (assets / 'runtime.json').read_bytes() == before[0]
+        else: assert 'original activation failure' in captured.err and str(assets / '.installation-transaction.json') in captured.err
+    assert Path(first['python']).is_file()
+
+
+@pytest.mark.parametrize('force', [False, True])
+def test_update_transaction_recovery_precedes_skip_force_and_preview(official_repository, source_tree, tmp_path, monkeypatch, capsys, force):
+    import ai_skills.installation as installation
+    import ai_skills.update as update
+    home, assets = tmp_path / 'home', tmp_path / 'assets'
+    adapter = _deterministic_gemini(home / '.gemini/extensions/ai-skill-collections')
+    config = update.UpdateConfig(assets, home, ('codex', 'gemini'))
+    first = update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer, registrar=adapter)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('prepared interrupted refresh')
+    child = _transaction_child(source_tree, tmp_path, 'prepared')
+    out, err = child.communicate(timeout=30)
+    assert child.returncode == 77, (out, err)
+    before = _tree_snapshot(assets), _tree_snapshot(home)
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', official_repository.as_uri())
+    monkeypatch.setattr(installation, '_install_package', fake_package_installer)
+    monkeypatch.setattr(installation, '_run_registration', lambda argv, *, home=None: adapter(argv))
+    args = ['--assets-dest', str(assets), '--home', str(home)]
+    assert update.main([*args, '--dry-run']) == 2
+    assert 'mutating retry' in capsys.readouterr().err
+    assert (_tree_snapshot(assets), _tree_snapshot(home)) == before
+    copied, real = [], installation._register_copy
+    def copy(*args, **kwargs): copied.append(args[0]['target']); return real(*args, **kwargs)
+    monkeypatch.setattr(installation, '_register_copy', copy)
+    assert update.main([*args, *(['--force'] if force else [])]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['source_revision'] == first['source_revision']
+    assert bool(copied) == force
+    assert not (assets / '.installation-transaction.json').exists()
+
+
+def test_update_transaction_cli_reports_recovery_before_source_failure(source_tree, tmp_path, monkeypatch, capsys):
+    from contextlib import contextmanager
+    import ai_skills.update as update
+    config, _, _, before = _crash_activation(source_tree, tmp_path, 'active')
+    @contextmanager
+    def unavailable(*args, **kwargs):
+        raise OSError('source acquisition unavailable')
+        yield
+    monkeypatch.setattr(update, 'official_source', unavailable)
+    assert update.main(['--assets-dest', str(config.assets_dest), '--home', str(config.home)]) == 2
+    captured = capsys.readouterr()
+    assert not captured.out and 'source acquisition unavailable' in captured.err
+    assert 'prior installation restored' in captured.err
+    assert _tree_snapshot(config.home) == before['home']
+
+
+@pytest.mark.parametrize('seam', ['receipt', 'rollback-cleanup', 'committed-cleanup', 'committed-unlinked'])
+def test_update_transaction_retains_terminal_evidence(source_tree, tmp_path, monkeypatch, seam):
+    import ai_skills.installation as installation
+    first = plan_install(make_config(source_tree, tmp_path))
+    apply_install(first, package_installer=fake_package_installer)
+    before = (first.assets_dest / 'runtime.json').read_bytes()
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('terminal failure candidate')
+    candidate = plan_install(make_config(source_tree, tmp_path))
+    journal = candidate.assets_dest / '.installation-transaction.json'
+    real_write, real_unlink, real_cleanup = installation.write_json_atomic, Path.unlink, installation._ActivationTransaction.cleanup
+    denied = False
+    def write(path, value):
+        real_write(path, value)
+        if Path(path) == (installation._receipt(candidate.prefix) if seam == 'receipt' else candidate.assets_dest / 'runtime.json'):
+            raise OSError('original failure')
+    def unlink(path, *args, **kwargs):
+        nonlocal denied
+        if path == journal and not denied:
+            denied = True; raise OSError('journal cleanup denied')
+        return real_unlink(path, *args, **kwargs)
+    def cleanup(self):
+        if seam == 'committed-unlinked': real_cleanup(self)
+        raise OSError('committed cleanup failure')
+    with monkeypatch.context() as patch:
+        if seam.startswith('committed'): patch.setattr(installation._ActivationTransaction, 'cleanup', cleanup)
+        else: patch.setattr(installation, 'write_json_atomic', write)
+        if seam == 'rollback-cleanup': patch.setattr(Path, 'unlink', unlink)
+        with pytest.raises(OSError) as failure: apply_install(candidate, package_installer=fake_package_installer)
+        if seam.startswith('committed'): assert failure.value._installation_recovery.startswith('committed')
+    assert installation._owned_receipt(candidate.prefix)['fingerprint'] == candidate.fingerprint
+    if seam != 'receipt':
+        installation._recover_installation(candidate.assets_dest, candidate.config.home)
+    assert not journal.exists()
+    if seam.startswith('committed'): assert resolve_runtime(assets_dest=first.assets_dest) == candidate.python
+    else: assert (first.assets_dest / 'runtime.json').read_bytes() == before
+    assert first.python.is_file() and candidate.python.is_file()
+
+
+@pytest.mark.parametrize('phase,after', [('prepared', False), ('prepared', True), ('committed', False), ('committed', True)])
+def test_update_transaction_journal_write_failure(source_tree, tmp_path, monkeypatch, phase, after):
+    import ai_skills.installation as installation
+    first = plan_install(make_config(source_tree, tmp_path))
+    apply_install(first, package_installer=fake_package_installer)
+    before = (first.assets_dest / 'runtime.json').read_bytes(), _tree_snapshot(first.config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('journal write fault')
+    candidate = plan_install(make_config(source_tree, tmp_path))
+    journal = candidate.assets_dest / '.installation-transaction.json'
+    real = installation.write_json_atomic
+    def write(path, value):
+        if Path(path) == journal and value['phase'] == phase:
+            if after: real(path, value)
+            raise OSError('journal replacement failed')
+        real(path, value)
+    with monkeypatch.context() as patch:
+        patch.setattr(installation, 'write_json_atomic', write)
+        with pytest.raises(OSError, match='journal replacement failed'):
+            apply_install(candidate, package_installer=fake_package_installer)
+    if phase == 'prepared': assert not journal.exists()
+    installation._recover_installation(candidate.assets_dest, candidate.config.home)
+    if phase == 'committed' and after:
+        assert resolve_runtime(assets_dest=first.assets_dest) == candidate.python
+    else:
+        assert ((first.assets_dest / 'runtime.json').read_bytes(), _tree_snapshot(first.config.home)) == before
+    assert candidate.python.is_file() and first.python.is_file()
+
+
+def test_update_transaction_verifies_native_manifest_newlines(source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    plan = plan_install(make_config(source_tree, tmp_path))
+    real = installation.write_json_atomic
+    def write(path, value):
+        if Path(path).name == 'runtime.json':
+            text = json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + '\n'
+            Path(path).write_bytes(text.replace('\n', '\r\n').encode())
+        else: real(path, value)
+    monkeypatch.setattr(installation.os, 'linesep', '\r\n')
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    result = apply_install(plan, package_installer=fake_package_installer)
+    assert result['fingerprint'] == plan.fingerprint
+    assert b'\r\n' in (plan.assets_dest / 'runtime.json').read_bytes()
+    assert not (plan.assets_dest / '.installation-transaction.json').exists()
+
+
+def test_update_transaction_preserves_adapter_error_when_journal_save_fails(source_tree, tmp_path, monkeypatch):
+    import ai_skills.installation as installation
+    config = InstallConfig(source=source_tree, assets_dest=tmp_path / 'assets', home=tmp_path / 'home', agents=('codex', 'gemini'))
+    extension = config.home / '.gemini/extensions/ai-skill-collections'
+    adapter = _deterministic_gemini(extension)
+    first = plan_install(config); apply_install(first, package_installer=fake_package_installer, registrar=adapter)
+    before = _tree_snapshot(config.home)
+    (source_tree / 'skills/pair-colleague/SKILL.md').write_text('adapter error candidate')
+    candidate = plan_install(config)
+    failed, denied, real = False, False, installation.write_json_atomic
+    def fail(argv):
+        nonlocal failed
+        if 'install' in argv:
+            failed = True
+            raise subprocess.CalledProcessError(19, argv)
+        adapter(argv)
+    def write(path, value):
+        nonlocal denied
+        if failed and not denied and Path(path).name == '.installation-transaction.json':
+            denied = True; raise OSError('journal storage failed')
+        real(path, value)
+    monkeypatch.setattr(installation, 'write_json_atomic', write)
+    with pytest.raises(subprocess.CalledProcessError) as failure:
+        apply_install(candidate, package_installer=fake_package_installer, registrar=fail)
+    assert failure.value.returncode == 19 and denied
+    assert _tree_snapshot(config.home) == before
+    assert not (config.assets_dest / '.installation-transaction.json').exists()
+
+
+def test_update_reports_bootstrap_guidance_before_fetching_source(tmp_path, monkeypatch, capsys):
+    import ai_skills.update as update
+    monkeypatch.setattr(update, 'official_source', lambda *a, **k: pytest.fail('source fetched before preflight'))
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    with pytest.raises(ValueError, match='install first') as caught:
+        update.run_update(update.UpdateConfig(assets, home))
+    assert 'ai-skills install --source' in ' '.join(caught.value.__notes__)
+    assert '--only' in ' '.join(caught.value.__notes__)
+    assert update.main(['--assets-dest', str(assets), '--home', str(home)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == '' and 'install --source' in captured.err
+    assert not assets.exists() and not home.exists()
+
+
+@pytest.mark.parametrize('case', ['corrupt', 'null', 'owner', 'symlink', 'receipt', 'registration'])
+@pytest.mark.parametrize('explicit', [False, True])
+def test_update_reports_repair_guidance_for_invalid_manifest_before_fetch(source_tree, tmp_path, monkeypatch, case, explicit):
+    import ai_skills.update as update
+    plan = plan_install(make_config(source_tree, tmp_path))
+    manifest = apply_install(plan, package_installer=fake_package_installer)
+    active = plan.assets_dest / 'runtime.json'
+    if case == 'corrupt': active.write_text('{bad')
+    elif case == 'null': active.write_text('null')
+    elif case == 'owner':
+        manifest['owner'] = 'foreign'; write_json_atomic(active, manifest)
+    elif case == 'symlink':
+        other = plan.assets_dest / 'other.json'; active.rename(other); active.symlink_to(other)
+    elif case == 'receipt': (plan.prefix / '.ai-skills-runtime.json').unlink()
+    else:
+        manifest['registrations'][0]['agent'] = 'unknown'; write_json_atomic(active, manifest)
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    monkeypatch.setattr(update, 'official_source', lambda *a, **k: pytest.fail('source fetched before validation'))
+    config = update.UpdateConfig(plan.assets_dest, tmp_path / 'home', ('codex',) if explicit else ())
+    if explicit and case in ('receipt', 'registration'):
+        update._preflight(config)  # preserve explicit registration repair semantics
+    else:
+        with pytest.raises(ValueError) as caught: update.run_update(config)
+        assert 'Back up' in ' '.join(caught.value.__notes__)
+        assert 'reinstall' in ' '.join(caught.value.__notes__)
+    assert {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()} == before
+
+
+def _hanging_git(tmp_path, child_file):
+    shim = tmp_path / 'hanging-git'
+    shim.write_text(f'#!{sys.executable}\nimport subprocess,sys,time\nfrom pathlib import Path\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"])\nPath({str(child_file)!r}).write_text(str(p.pid))\ntime.sleep(60)\n')
+    shim.chmod(0o755)
+    return shim
+
+
+def _assert_git_processes_stopped(*pids):
+    import time
+    for pid in pids:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE: break
+            except psutil.NoSuchProcess: break
+            time.sleep(.02)
+        else: pytest.fail(f'git process {pid} survived cleanup')
+
+
+@pytest.mark.parametrize('failure', ['missing', 'branch', 'no-git', 'network', 'hang'])
+def test_update_source_failures_are_bounded_and_clean_scratch(official_repository, tmp_path, monkeypatch, failure):
+    import tempfile
+    import time
+    import ai_skills.update as update
+    config = update.UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = config.assets_dest / 'runtime.json'
+    before = active.read_bytes()
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    repository = official_repository.as_uri()
+    child_file = tmp_path / 'child-pid'
+    if failure == 'missing': repository = (tmp_path / 'missing').as_uri()
+    elif failure == 'branch': _git(official_repository, 'branch', '-m', 'main', 'other')
+    elif failure == 'no-git': monkeypatch.setattr(update.shutil, 'which', lambda _: None)
+    elif failure == 'network':
+        def offline(*a, **k): raise OSError('network unavailable')
+        monkeypatch.setattr(update.subprocess, 'Popen', offline)
+    else:
+        if os.name == 'nt': pytest.skip('POSIX executable shim')
+        shim = _hanging_git(tmp_path, child_file)
+        monkeypatch.setattr(update.shutil, 'which', lambda _: str(shim))
+    started = time.monotonic()
+    with pytest.raises(ValueError, match='official source') as caught:
+        with update.official_source(repository, timeout=.5): pytest.fail('unexpected source')
+    assert time.monotonic() - started < 10
+    notes = ' '.join(caught.value.__notes__)
+    assert repository in notes and 'network' in notes and 'retry' in notes
+    assert active.read_bytes() == before
+    assert not list(tmp_path.glob('ai-skills-update-*'))
+    if failure == 'hang':
+        assert 'timed out' in str(caught.value)
+        _assert_git_processes_stopped(int(child_file.read_text()))
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX executable shim and process groups')
+@pytest.mark.parametrize('failure,cleanup_error', [
+    pytest.param(KeyboardInterrupt(), None, id='keyboard-interrupt'),
+    pytest.param(SystemExit(), None, id='system-exit'),
+    pytest.param(RuntimeError('wait failed'), None, id='wait-error'),
+    pytest.param(KeyboardInterrupt(), OSError('cleanup failed'), id='cleanup-oserror'),
+    pytest.param(KeyboardInterrupt(), subprocess.TimeoutExpired('git', 5), id='cleanup-timeout'),
+])
+def test_update_source_cancellation_stops_git_tree_and_cleans_scratch(tmp_path, monkeypatch, failure, cleanup_error):
+    import signal
+    import tempfile
+    import time
+    import ai_skills.update as update
+    child_file = tmp_path / 'child-pid'
+    shim = _hanging_git(tmp_path, child_file)
+    monkeypatch.setattr(update.shutil, 'which', lambda _: str(shim))
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    communicate, stop_git = subprocess.Popen.communicate, update._stop_git
+    processes = []
+    def interrupt(process, *args, **kwargs):
+        if processes: return communicate(process, *args, **kwargs)
+        processes.append(process)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if child_file.exists() and child_file.read_text().strip(): break
+            time.sleep(.01)
+        assert child_file.exists() and child_file.read_text().strip(), 'git shim did not start its child'
+        raise failure
+    def stop(process):
+        stop_git(process)
+        if cleanup_error is not None: raise cleanup_error
+    monkeypatch.setattr(subprocess.Popen, 'communicate', interrupt)
+    monkeypatch.setattr(update, '_stop_git', stop)
+    try:
+        with pytest.raises(type(failure)) as caught:
+            with update.official_source(): pytest.fail('unexpected source')
+        assert caught.value is failure
+        assert not list(tmp_path.glob('ai-skills-update-*'))
+        _assert_git_processes_stopped(processes[0].pid, int(child_file.read_text()))
+    finally:
+        if processes:
+            try: os.killpg(processes[0].pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            processes[0].wait(timeout=5)
+
+
+@pytest.mark.parametrize('requirement', ['psutil>=999', 'maestro-missing-dep>=1'])
+def test_update_rejects_incompatible_target_dependencies_before_staging(official_repository, tmp_path, monkeypatch, requirement):
+    import tempfile
+    from ai_skills.update import UpdateConfig, run_update
+    config = UpdateConfig(tmp_path / 'assets', tmp_path / 'home', ('codex',))
+    run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    active = config.assets_dest / 'runtime.json'
+    before = {p: p.read_bytes() for root in (config.assets_dest, config.home) for p in root.rglob('*') if p.is_file()}
+    prefixes = set((config.assets_dest / 'runtimes').iterdir())
+    project = official_repository / 'pyproject.toml'
+    project.write_text(project.read_text().replace('psutil>=7', requirement))
+    _git(official_repository, 'commit', '-qam', 'incompatible dependency')
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    with pytest.raises(ValueError, match=re.escape(requirement)) as caught:
+        run_update(config, repository=official_repository.as_uri(), package_installer=lambda _: pytest.fail('staged incompatible runtime'))
+    assert 'installed' in str(caught.value)
+    assert 'fresh official checkout' in ' '.join(caught.value.__notes__)
+    assert set((config.assets_dest / 'runtimes').iterdir()) == prefixes
+    assert {p: p.read_bytes() for root in (config.assets_dest, config.home) for p in root.rglob('*') if p.is_file()} == before
+    assert active.is_file() and not list(tmp_path.glob('ai-skills-update-*'))
+
+
+@pytest.mark.parametrize('version,specifier,expected', [
+    ('7.2.2', '>=7', True), ('7.2.2', '>=999', False), ('7.2', '==7.2.0', True),
+    ('7.2', '!=7.2', False), ('7.2', '<=7.2', True), ('7.2', '<7.2', False),
+    ('7.2', '>7.1', True), ('7.2', '>7.2', False), ('7.2', '==7.*', True),
+    ('7.2', '!=7.*', False), ('7.2', '==8.*', False), ('7.2', '~=7.1', True),
+    ('8', '~=7.1', False), ('7.3', '~=7.2.1', False), ('7.2.9', '~=7.2.1', True),
+    ('7.2', '>=7, <8, !=7.1', True), ('7.2', '(>=7, <8)', True),
+])
+def test_dependency_specifier_compatibility(version, specifier, expected):
+    from ai_skills.installation import _satisfies
+    assert _satisfies(version, specifier) is expected
+
+
+@pytest.mark.parametrize('specifier', ['===7', '>=7.*', '~=7', '==7+local', '>=7; bad', '[extra]>=7', '>=7,', '>=7 || <9'])
+def test_dependency_specifier_rejects_unsupported_syntax(specifier):
+    from ai_skills.installation import _satisfies
+    with pytest.raises(ValueError, match='unsupported dependency specifier'):
+        _satisfies('7.2', specifier)
+
+
+def test_candidate_pip_check_failure_reports_dependency_conflict_and_removes_candidate(source_tree, tmp_path, monkeypatch):
+    import dataclasses
+    import ai_skills.installation as installation
+    wheel = _fixture_wheel(tmp_path / 'wheels')
+    with zipfile.ZipFile(wheel) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    metadata_path = 'auditproof-1.0.dist-info/METADATA'
+    contents[metadata_path] += b'Requires-Dist: psutil>=999\n'
+    with zipfile.ZipFile(wheel, 'w') as archive:
+        for name, payload in contents.items(): archive.writestr(name, payload)
+    monkeypatch.setenv('PIP_NO_INDEX', '1')
+    monkeypatch.setenv('PIP_FIND_LINKS', str(wheel.parent))
+    monkeypatch.setenv('PIP_DISABLE_PIP_VERSION_CHECK', '1')
+    plan = plan_install(make_config(source_tree, tmp_path))
+    def installer(plan):
+        pip = (str(plan.python), '-I', '-m', 'pip', 'install', '--no-deps', 'auditproof')
+        return installation._install_package(dataclasses.replace(plan, pip_commands=(pip,)))
+    with pytest.raises(ValueError, match='dependenc') as caught:
+        apply_install(plan, package_installer=installer)
+    assert 'auditproof' in str(caught.value) and 'psutil' in str(caught.value)
+    assert not plan.prefix.exists() and not (plan.assets_dest / 'runtime.json').exists()
+    assert not (tmp_path / 'home').exists()
+
+
+@pytest.mark.parametrize('failure', ['preflight', 'fetch', 'dependency', 'stage'])
+def test_update_cli_reports_unchanged_installation_for_prefetch_failures(official_repository, tmp_path, monkeypatch, capsys, failure):
+    import ai_skills.update as update
+    assets, home = tmp_path / 'assets', tmp_path / 'home'
+    config = update.UpdateConfig(assets, home, ('codex',))
+    if failure != 'preflight':
+        update.run_update(config, repository=official_repository.as_uri(), package_installer=fake_package_installer)
+    before = {p: p.read_bytes() for root in (assets, home) for p in root.rglob('*') if p.is_file()}
+    repository = (tmp_path / 'missing').as_uri() if failure == 'fetch' else official_repository.as_uri()
+    monkeypatch.setattr(update, 'OFFICIAL_REPOSITORY', repository)
+    if failure == 'dependency':
+        project = official_repository / 'pyproject.toml'
+        project.write_text(project.read_text().replace('psutil>=7', 'psutil>=999'))
+        _git(official_repository, 'commit', '-qam', 'incompatible')
+    if failure == 'stage':
+        _commit_skill(official_repository, 'next candidate')
+        def fail(plan): raise RuntimeError('candidate staging failed')
+        monkeypatch.setattr(update, 'apply_install', lambda plan, **kwargs: apply_install(plan, package_installer=fail))
+    capsys.readouterr()
+    assert update.main(['--assets-dest', str(assets), '--home', str(home)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ai-skills update: active installation unchanged' in captured.err
+    assert 'Traceback' not in captured.err
+    after = {p: p.read_bytes() for root in (assets, home) for p in root.rglob('*') if p.is_file()}
+    assert after == before

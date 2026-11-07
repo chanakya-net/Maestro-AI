@@ -86,7 +86,7 @@ python -m ai_skills doctor --json
 python -m ai_skills agent list --detected-only
 ```
 
-Here and below, `python` means the environment's interpreter. Activate the environment or use its full path from step 2. The installed `ai-skills` command provides the same operations as `python -m ai_skills`.
+Here and below, `python` means the environment's interpreter. Activate the environment or use its full path from step 2. The installed `maestro` and `ai-skills` commands provide the same operations as `python -m ai_skills`. Activate this retained bootstrap environment, or use `.venv/bin/maestro` or `.venv/bin/ai-skills` on macOS/Linux, and `.venv\Scripts\maestro.exe` or `.venv\Scripts\ai-skills.exe` on Windows. Operational commands use a run pin first, then the active managed runtime. No arguments, help, version, doctor, install, and uninstall run locally; doctor reports the invoking environment.
 
 `doctor` checks the interpreter and maintained resources. The agent list shows detected tools; use each provider's own sign-in process to establish account access.
 
@@ -101,7 +101,31 @@ The skills prepare the files and runtime configuration for you. The command refe
 
 Installation packages the maintained prompts, registry, and all seven skills into an immutable runtime under `~/.ai-skill-collections/assets/runtimes/`. It publishes `runtime.json` only after verification. Use `--assets-dest PATH` to select another destination and `--only codex` (or another listed profile) to limit registrations. `install --list` lists profiles. A built wheel can replace `.` in `--source`.
 
+**Existing installations:** To obtain `maestro` for the first time, start from a fresh official checkout containing this command (or use an appropriate wheel). Use the original separately owned bootstrap virtual environment, or create a new one with step 2 if it is absent. Do not install into a directory under `assets/runtimes/`. From the checkout, refresh the bootstrap package even if its version is unchanged:
+
+```text
+# macOS / Linux
+.venv/bin/python -m pip install --upgrade --force-reinstall .
+.venv/bin/python -m ai_skills install --source . --dry-run
+.venv/bin/python -m ai_skills install --source .
+
+# Windows
+.venv\Scripts\python.exe -m pip install --upgrade --force-reinstall .
+.venv\Scripts\python.exe -m ai_skills install --source . --dry-run
+.venv\Scripts\python.exe -m ai_skills install --source .
+```
+
+Retain your chosen `--assets-dest` and `--only` options on both install commands. A managed runtime installation does not rewrite scripts in an older bootstrap environment or add directories to PATH. Activate the refreshed environment or use the full command paths above. The module form remains available for installation and recovery.
+
 Existing unowned skill directories are protected. Inspect the dry-run output, then use `--replace-existing` to migrate an older installation explicitly; the installer preserves backups and records ownership. Registration uses local packaged content rather than fetching a changing branch.
+
+Updates skip an already recorded source commit without changing the installation. Use `python -m ai_skills update --force` to refresh managed registrations at the same commit, with the usual ownership checks and backups. Existing immutable runtimes are verified and reused, preserving pinned runs. Missing legacy commit metadata is treated as unknown and triggers an update. `--dry-run --force` previews the refresh.
+
+Preview an official update before applying it with `python -m ai_skills update --dry-run`. The JSON output includes the resolved main commit, selected integrations, any planned registration backup paths (backups of user-edited registrations include a timestamp chosen when the update applies, so preview shows `.edited-<UTC-timestamp>.` with `time_dependent: true` instead of an exact path), and whether the active runtime already matches. Preview downloads source into temporary storage, removes it afterward, and does not install a runtime or change registrations. Pass `--only <integration>` to preview an explicit selection; repeat the option to select multiple integrations.
+
+**Update prerequisites and recovery:** Automatic updates require an owned active `runtime.json`; if the error says **install first**, use `ai-skills install --source <checkout-or-wheel>` from a separate bootstrap environment (see **Existing installations** above), or bootstrap a selected integration with `ai-skills update --only <integration>`. Updates also require Git on PATH, network access to github.com, and dependencies in the invoking runtime that satisfy the target requirements. Dependencies are pinned into the isolated candidate; updates never silently resolve new versions. Compatibility checks accept numeric release versions with `==`, `!=`, `>=`, `<=`, `>`, `<`, `~=`, comma-separated constraints and equality wildcards. Unsupported version or requirement syntax fails safely.
+
+For an **unowned or invalid manifest**, back it up, inspect ownership, remove only the invalid manifest when appropriate, then reinstall; preserve existing runtime directories and registration backups. For **official source failed/timed out**, check Git, network access, and repository availability, then retry. Fetches are bounded and temporary checkouts are removed on success or failure. For an **incompatible dependency** or candidate **dependency check failed**, refresh the separately owned bootstrap environment from a fresh official checkout using **Existing installations**, then retry. Do not modify an immutable runtime under `assets/runtimes/`. These failures leave the active installation unchanged. If an earlier activation has **pending installation recovery**, a normal update attempts recovery first; preview cannot repair it. For **recovery incomplete**, inspect the reported journal and paths, restore access or missing originals, and retry before updating again. Recovery errors retain their recovery status instead of reporting an unchanged installation.
 
 ```text
 python -m ai_skills uninstall --dry-run

@@ -17,6 +17,7 @@ dev = ["pytest>=8.3", "build>=1.2", "hatchling>=1.27"]
 
 [project.scripts]
 ai-skills = "ai_skills.cli:main"
+maestro = "ai_skills.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
