@@ -2345,6 +2345,25 @@ def test_update_reports_repair_guidance_for_invalid_manifest_before_fetch(source
     assert {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()} == before
 
 
+def _hanging_git(tmp_path, child_file):
+    shim = tmp_path / 'hanging-git'
+    shim.write_text(f'#!{sys.executable}\nimport subprocess,sys,time\nfrom pathlib import Path\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"])\nPath({str(child_file)!r}).write_text(str(p.pid))\ntime.sleep(60)\n')
+    shim.chmod(0o755)
+    return shim
+
+
+def _assert_git_processes_stopped(*pids):
+    import time
+    for pid in pids:
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            try:
+                if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE: break
+            except psutil.NoSuchProcess: break
+            time.sleep(.02)
+        else: pytest.fail(f'git process {pid} survived cleanup')
+
+
 @pytest.mark.parametrize('failure', ['missing', 'branch', 'no-git', 'network', 'hang'])
 def test_update_source_failures_are_bounded_and_clean_scratch(official_repository, tmp_path, monkeypatch, failure):
     import tempfile
@@ -2365,9 +2384,7 @@ def test_update_source_failures_are_bounded_and_clean_scratch(official_repositor
         monkeypatch.setattr(update.subprocess, 'Popen', offline)
     else:
         if os.name == 'nt': pytest.skip('POSIX executable shim')
-        shim = tmp_path / 'hanging-git'
-        shim.write_text(f'#!{sys.executable}\nimport subprocess,sys,time\nfrom pathlib import Path\np=subprocess.Popen([sys.executable,"-c","import time;time.sleep(60)"])\nPath({str(child_file)!r}).write_text(str(p.pid))\ntime.sleep(60)\n')
-        shim.chmod(0o755)
+        shim = _hanging_git(tmp_path, child_file)
         monkeypatch.setattr(update.shutil, 'which', lambda _: str(shim))
     started = time.monotonic()
     with pytest.raises(ValueError, match='official source') as caught:
@@ -2379,11 +2396,53 @@ def test_update_source_failures_are_bounded_and_clean_scratch(official_repositor
     assert not list(tmp_path.glob('ai-skills-update-*'))
     if failure == 'hang':
         assert 'timed out' in str(caught.value)
-        pid = int(child_file.read_text())
-        deadline = time.monotonic() + 3
-        while psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE and time.monotonic() < deadline:
-            time.sleep(.02)
-        assert not psutil.pid_exists(pid) or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+        _assert_git_processes_stopped(int(child_file.read_text()))
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='POSIX executable shim and process groups')
+@pytest.mark.parametrize('failure,cleanup_error', [
+    pytest.param(KeyboardInterrupt(), None, id='keyboard-interrupt'),
+    pytest.param(SystemExit(), None, id='system-exit'),
+    pytest.param(RuntimeError('wait failed'), None, id='wait-error'),
+    pytest.param(KeyboardInterrupt(), OSError('cleanup failed'), id='cleanup-oserror'),
+    pytest.param(KeyboardInterrupt(), subprocess.TimeoutExpired('git', 5), id='cleanup-timeout'),
+])
+def test_update_source_cancellation_stops_git_tree_and_cleans_scratch(tmp_path, monkeypatch, failure, cleanup_error):
+    import signal
+    import tempfile
+    import time
+    import ai_skills.update as update
+    child_file = tmp_path / 'child-pid'
+    shim = _hanging_git(tmp_path, child_file)
+    monkeypatch.setattr(update.shutil, 'which', lambda _: str(shim))
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
+    communicate, stop_git = subprocess.Popen.communicate, update._stop_git
+    processes = []
+    def interrupt(process, *args, **kwargs):
+        if processes: return communicate(process, *args, **kwargs)
+        processes.append(process)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if child_file.exists() and child_file.read_text().strip(): break
+            time.sleep(.01)
+        assert child_file.exists() and child_file.read_text().strip(), 'git shim did not start its child'
+        raise failure
+    def stop(process):
+        stop_git(process)
+        if cleanup_error is not None: raise cleanup_error
+    monkeypatch.setattr(subprocess.Popen, 'communicate', interrupt)
+    monkeypatch.setattr(update, '_stop_git', stop)
+    try:
+        with pytest.raises(type(failure)) as caught:
+            with update.official_source(): pytest.fail('unexpected source')
+        assert caught.value is failure
+        assert not list(tmp_path.glob('ai-skills-update-*'))
+        _assert_git_processes_stopped(processes[0].pid, int(child_file.read_text()))
+    finally:
+        if processes:
+            try: os.killpg(processes[0].pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            processes[0].wait(timeout=5)
 
 
 @pytest.mark.parametrize('requirement', ['psutil>=999', 'maestro-missing-dep>=1'])

@@ -9,7 +9,7 @@ install detection; preserving the previous selection is a separate concern.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager, redirect_stdout
+from contextlib import contextmanager, redirect_stdout, suppress
 from dataclasses import dataclass
 import json
 import re
@@ -69,8 +69,10 @@ def _git(*args, cwd=None, timeout=CLONE_TIMEOUT_SECONDS):
         options = {'start_new_session': True} if os.name == 'posix' else {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP}
         with subprocess.Popen([git, *args], cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, **options) as process:
             try: stdout, stderr = process.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                _stop_git(process)
+            except BaseException:
+                # Detached transports need explicit cleanup on cancellation too.
+                with suppress(OSError, subprocess.TimeoutExpired, psutil.Error):
+                    _stop_git(process)
                 raise
     except subprocess.TimeoutExpired as error:
         raise ValueError(f'official source git timed out after {timeout}s') from error
