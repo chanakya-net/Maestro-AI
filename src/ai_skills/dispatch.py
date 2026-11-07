@@ -32,7 +32,7 @@ from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
 from ai_skills.provider_capture import CODEX, ProviderError, extract_response
 from ai_skills.runner import (
-    AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable,
+    AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable, effective_config,
     capture_candidate, capture_source, load_registry, run_agent, supports_final_response_capture,
 )
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
@@ -477,6 +477,8 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
         'repo_root', 'context_file', 'prompt_file', 'registry_file', 'issue_dir', 'result_file',
         'done_file', 'log_file', 'events_log', 'status_file', 'process_state_file',
         'stream_directory', 'record_directory') if getattr(run, name) is not None})
+    # Admission records the effective effort; the explicit request stays as provenance.
+    run = effective_config(run, registry)
     pre_head = config.pre_spawn_head
     if not pre_head and git.repo_available(str(run.repo_root)):
         try:

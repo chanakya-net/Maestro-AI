@@ -636,3 +636,17 @@ time.sleep(60)
     decision = decide_recovery(evidence, policy)
     assert (decision.action, decision.reason) == ('spawn_recovery', 'artifact-recovery-required')
     assert decision.details['max_recovery_attempts'] == policy.max_attempts
+
+
+def test_normalized_effort_metadata_keeps_role_outcome_and_provider_evidence(tmp_path):
+    from test_dispatch import effort_worker
+    config = effort_worker(tmp_path, agent='claude', role='impl', effort='maximum')
+    dispatch_worker(config)
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_text())
+    record = json.loads(Path(str(config.state_file) + '.config.json').read_text())
+    events = config.agent_run.events_log.read_text()
+    assert record['agent_run']['effort'] == 'high' and record['agent_run']['requested_effort'] == 'maximum'
+    assert (outcome['role'], outcome['issue']) == ('impl', '7')
+    assert outcome['expected_artifacts'] == {'result': str(config.agent_run.result_file)}
+    assert outcome['status'] == 'failed' and outcome['reason'] == 'invalid-result-artifact'
+    assert 'effort=high' in events and 'requested_effort=maximum' in events

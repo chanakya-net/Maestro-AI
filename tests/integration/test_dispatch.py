@@ -2389,3 +2389,87 @@ def test_captured_modifier_blocked_on_stream_adapter_preserves_next_action_and_c
     root = str(config.agent_run.repo_root)
     assert current_head(root) == start
     assert git_output(root, 'status', '--porcelain') == 'M feature.txt'
+
+
+def effort_worker(tmp_path, *, agent='claude', role='impl', effort='', detach=False):
+    """Fake provider records its own admitted record and argv before finishing."""
+    observed = tmp_path/'observed.json'
+    source = f'''import json,os,sys
+from pathlib import Path
+state=Path(os.environ['RUN_WITH_IT_STATE_FILE'])
+record=json.loads(Path(str(state)+'.config.json').read_text())
+Path({str(observed)!r}).write_text(json.dumps({{'argv':sys.argv[1:],'effort':record['agent_run']['effort'],
+    'requested':record['agent_run'].get('requested_effort','')}}))
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{{}}')
+'''
+    config = worker_config(tmp_path, source, detach=detach)
+    script = tmp_path/'provider.py'
+    registry = tmp_path/'registry.json'
+    registry.write_text(json.dumps({'agents': {agent: {'model': {'default': 'm'}, 'permission_modes': {'default': ''},
+        'invocation': {'command': sys.executable, 'args_template': [str(script), '{{model_settings}}']}}}}))
+    run = config.agent_run.replace(agent=agent, role=role, effort=effort, registry_file=registry, issue_dir=tmp_path)
+    return replace(config, agent_run=run)
+
+
+def effort_setting(agent, argv):
+    if agent == 'codex':
+        return next(item.split('=', 1)[1] for item in argv if item.startswith('model_reasoning_effort='))
+    return argv[argv.index('--effort') + 1]
+
+
+@pytest.mark.parametrize(('agent', 'role', 'effort', 'effective', 'requested'), [
+    ('claude', 'impl', '', 'high', ''),
+    ('claude', 'impl', 'low', 'low', ''),
+    ('claude', 'impl', 'medium', 'medium', ''),
+    ('claude', 'impl', 'xhigh', 'high', 'xhigh'),
+    ('claude', 'impl', 'maximum', 'high', 'maximum'),
+    ('claude', 'plan', '', 'xhigh', ''),
+    ('claude', 'plan', 'high', 'high', ''),
+    ('claude', 'plan', 'max', 'xhigh', 'max'),
+    ('codex', 'impl', 'low', 'high', 'low'),
+    ('codex', 'impl', 'xhigh', 'high', 'xhigh'),
+    ('codex', 'plan', '', 'xhigh', ''),
+    ('codex', 'plan', 'medium', 'xhigh', 'medium'),
+])
+def test_admission_persists_effective_effort_matching_provider_argv(tmp_path, agent, role, effort, effective, requested):
+    config = effort_worker(tmp_path, agent=agent, role=role, effort=effort)
+    dispatch_worker(config)
+    observed = json.loads((tmp_path/'observed.json').read_text())
+    saved = json.loads(Path(str(config.state_file)+'.config.json').read_text())['agent_run']
+    assert (saved['effort'], saved.get('requested_effort', '')) == (effective, requested)
+    assert (observed['effort'], observed['requested']) == (effective, requested)
+    assert effort_setting(agent, observed['argv']) == effective
+
+
+def test_unknown_effort_is_rejected_before_admission_state_or_provider(tmp_path):
+    config = effort_worker(tmp_path, effort='extreme')
+    with pytest.raises(ValueError, match='unknown effort'):
+        dispatch_worker(config)
+    assert not config.state_file.exists()
+    assert not Path(str(config.state_file)+'.config.json').exists()
+    assert not (tmp_path/'observed.json').exists()
+
+
+def test_requested_effort_survives_record_round_trip_and_old_records_load(tmp_path):
+    config = effort_worker(tmp_path, effort='high')
+    adjusted = replace(config, agent_run=config.agent_run.replace(effort='high', requested_effort='xhigh'))
+    record = json.loads(json.dumps(adjusted.to_record()))
+    assert WorkerConfig.from_record(record).agent_run.requested_effort == 'xhigh'
+    del record['agent_run']['requested_effort']
+    assert WorkerConfig.from_record(record).agent_run.requested_effort == ''
+
+
+def test_detached_reattachment_preserves_admitted_effort_record(tmp_path):
+    from ai_skills.dispatch import adopt_worker
+    config = effort_worker(tmp_path, agent='claude', role='impl', effort='maximum', detach=True)
+    dispatch_worker(config)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and json.loads(config.state_file.read_text())['state'] == 'running':
+        time.sleep(.03)
+    record_path = Path(str(config.state_file)+'.config.json')
+    before = record_path.read_bytes()
+    observed = json.loads((tmp_path/'observed.json').read_text())
+    assert (observed['effort'], observed['requested']) == ('high', 'maximum')
+    assert json.loads(before)['agent_run']['effort'] == 'high'
+    adopt_worker(config.state_file)
+    assert record_path.read_bytes() == before
