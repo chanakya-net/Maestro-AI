@@ -243,6 +243,12 @@ def test_pair_skill_defaults_match_the_native_configuration():
     assert 'never guess' in text and 'one question at a time' in text
     assert '| `4` |' in text
     assert 'AGENT_1_CMD' not in text
+    assert config.purpose == 'general'
+    assert '--purpose` (default `general`)' in text
+    for document in (text, (ROOT/'README.md').read_text(encoding='utf-8')):
+        assert '--purpose plan' in document
+        assert 'explicit lower Claude planning requests remain lower' in document
+        assert 'task wording' in document and 'inherited' in document
 
 
 def test_pair_templates_share_exact_sections_and_status_vocabulary():

@@ -37,6 +37,7 @@ round_no=int(re.search(r'round (\\d+)', payload, re.I).group(1))
 model=sys.argv[1]
 root=pathlib.Path(os.environ['REPO_ROOT'])
 (root / (model + '-argv.json')).write_text(json.dumps(sys.argv[1:]))
+(root / (model + '-role.txt')).write_text(os.environ.get('RUN_WITH_IT_ROLE', ''))
 count=root / (model + '-r' + str(round_no) + '.count')
 n=int(count.read_text()) + 1 if count.exists() else 1
 count.write_text(str(n))
@@ -141,6 +142,38 @@ def _direct_args(harness1, effort1, effort2='maximum'):
             '--agent-2-harness', 'claude-alias', '--agent-2-model', 'two', '--agent-2-effort', effort2]
 
 
+@pytest.mark.parametrize('purpose', [None, 'general', 'plan'])
+def test_pair_start_purpose_validation_and_persistence(pair_fixture, capsys, purpose):
+    start, _, _ = pair_fixture
+    run = start(*(['--purpose', purpose] if purpose else []))
+    config_file = run / 'config.json'
+    config = json.loads(config_file.read_text())
+    assert config['purpose'] == (purpose or 'general')
+    # Old configurations remain readable without adding fields to saved bytes.
+    config.pop('purpose')
+    config_file.write_text(json.dumps(config))
+    frozen = config_file.read_bytes()
+    assert invoke(capsys, 'status', '--run-dir', str(run))[0] == 0
+    assert config_file.read_bytes() == frozen
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    assert config_file.read_bytes() == frozen
+    assert (run / 'rounds/round-01/agent-1-attempt-01-spec.json').read_text().count('"purpose": "general"') == 1
+
+
+def test_invalid_purpose_fails_before_task_read_or_run_creation(pair_fixture, capsys):
+    from ai_skills.pair import PairConfig, PairError, PairRun
+    _, root, _ = pair_fixture
+    run_root = root / 'custom-runs'
+    options = PairConfig(task_source=str(root / 'missing.md'), run_root=run_root, purpose='planning')
+    with pytest.raises(PairError, match='purpose'):
+        PairRun(options).start()
+    code, _, error = invoke(capsys, 'start', str(root / 'missing.md'),
+                            '--purpose', 'planning', '--run-root', str(run_root))
+    assert code == 2 and 'purpose' in error
+    assert not run_root.exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
 @pytest.mark.parametrize(('slot', 'harness', 'requested', 'effective', 'flag'), [
     ('1', 'codex-alias', value, 'high', '-c model_reasoning_effort=high')
     for value in ('low', 'medium', 'high', 'xhigh', 'max', 'maximum')
@@ -150,14 +183,17 @@ def _direct_args(harness1, effort1, effort2='maximum'):
                             ('xhigh', 'high'), ('max', 'high'), ('maximum', 'high'))
 ])
 def test_pair_resolves_direct_harness_effort_before_freezing_inputs(
-        pair_fixture, capsys, slot, harness, requested, effective, flag):
+        pair_fixture, capsys, slot, harness, requested, effective, flag, purpose):
+    if purpose == 'plan':
+        effective = 'xhigh' if slot == '1' or requested in ('max', 'maximum') else requested
+        flag = ('-c model_reasoning_effort=' if slot == '1' else '--effort ') + effective
     start, root, registry_file = pair_fixture
     _use_direct_harness_registry(registry_file)
     args =['--agent-1-harness', 'codex-alias', '--agent-1-model', 'one', '--agent-1-effort', 'xhigh',
             '--agent-2-harness', 'claude-alias', '--agent-2-model', 'two', '--agent-2-effort', 'maximum']
     args[args.index('--agent-' + slot + '-harness') + 1] = harness
     args[args.index('--agent-' + slot + '-effort') + 1] = requested
-    code, values, error = invoke(capsys, 'start', str(root / 'task.md'), *args)
+    code, values, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *args)
     assert code == 0, error
     run = Path(values['RUN_DIR'])
     config = json.loads((run / 'config.json').read_text())
@@ -174,67 +210,114 @@ def test_pair_resolves_direct_harness_effort_before_freezing_inputs(
     other_model = 'one' if slot == '1' else 'two'
     argv = json.loads((root / f'{other_model}-argv.json').read_text())
     assert flag.split() == argv[1:3]
+    assert (root / f'{other_model}-role.txt').read_text() == ('plan' if purpose == 'plan' else 'agent')
+    for colleague in ('1', '2'):
+        prefix = run / f'rounds/round-01/agent-{colleague}-attempt-01'
+        spec = json.loads(Path(str(prefix) + '-spec.json').read_text())
+        record = json.loads(Path(str(prefix) + '-run.json').read_text())
+        assert spec['purpose'] == record['purpose'] == purpose
+        assert spec['agent'] == config['agents'][colleague]
+        assert spec['agent']['effort'] not in ('max', 'maximum')
 
 
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
 @pytest.mark.parametrize(('harness', 'requested', 'effective'), [
     ('fake', 'maximum', 'max'), ('fake', 'xhigh', 'xhigh'),
     ('agy', 'maximum', 'max'), ('agy', 'xhigh', 'xhigh'),
 ])
 def test_non_target_harness_effort_keeps_semantics_without_provenance(
-        pair_fixture, capsys, harness, requested, effective):
+        pair_fixture, capsys, harness, requested, effective, purpose):
     start, root, registry_file = pair_fixture
     registry = json.loads(registry_file.read_text())
     registry['agents']['agy'] = {**registry['agents']['fake']}
+    model = 'claude-opus-5-5-low' if harness == 'agy' else 'one'
+    registry['agents'][harness]['model'] = {**registry['agents'][harness]['model'], 'known_models': [model, 'two']}
     registry_file.write_text(json.dumps(registry))
-    run = start('--agent-1-harness', harness, '--agent-1-model', 'one', '--agent-1-effort', requested)
+    run = start('--purpose', purpose, '--agent-1-harness', harness, '--agent-1-model', model, '--agent-1-effort', requested)
     agent = json.loads((run / 'config.json').read_text())['agents']['1']
     assert agent['harness'] == harness
     assert agent['effort'] == effective
     assert agent.get('requested_effort', '') == ''
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    assert json.loads((root / f'{model}-argv.json').read_text())[0] == model
 
 
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
 @pytest.mark.parametrize('harness', ['codex-alias', 'claude-alias'])
-def test_unknown_effort_token_fails_before_launch(pair_fixture, capsys, harness):
+def test_unknown_effort_token_fails_before_launch(pair_fixture, capsys, harness, purpose):
     _, root, registry_file = pair_fixture
     _use_direct_harness_registry(registry_file)
-    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), *_direct_args(harness, 'ultra'))
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *_direct_args(harness, 'ultra'))
     assert code == 2 and 'unknown effort' in error
     assert not (root / '.pair-colleague').exists()
 
 
-def test_adjusted_effort_still_requires_read_only_profile(pair_fixture, capsys):
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_adjusted_effort_still_requires_read_only_profile(pair_fixture, capsys, purpose):
     _, root, registry_file = pair_fixture
     _use_direct_harness_registry(registry_file)
     data = json.loads(registry_file.read_text())
     del data['agents']['codex']['permission_modes']['read_only']
     registry_file.write_text(json.dumps(data))
-    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), *_direct_args('codex-alias', 'xhigh'))
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *_direct_args('codex-alias', 'xhigh'))
     assert code == 2 and 'read-only' in error
     assert not (root / '.pair-colleague').exists()
 
 
-def test_missing_effort_still_fails_before_launch(pair_fixture, monkeypatch, capsys):
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_missing_effort_still_fails_before_launch(pair_fixture, monkeypatch, capsys, purpose):
     _, root, registry_file = pair_fixture
     _use_direct_harness_registry(registry_file)
     monkeypatch.delenv('AGENT_1_EFFORT')
     args = [a for a in _direct_args('codex-alias', 'xhigh') if a not in ('--agent-1-effort', 'xhigh')]
-    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), *args)
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *args)
     assert code == 2 and 'effort' in error
     assert not (root / '.pair-colleague').exists()
 
 
-def test_adjusted_effort_run_writes_dossier_and_finalizes(pair_fixture, capsys):
+@pytest.mark.parametrize('purpose', [None, 'general', 'plan'])
+def test_pair_purpose_is_independent_of_task_and_environment(pair_fixture, monkeypatch, capsys, purpose):
+    start, root, registry_file = pair_fixture
+    _use_direct_harness_registry(registry_file)
+    (root / 'task.md').write_text('Produce a detailed plan. Explicit planning task, highest difficulty.')
+    for key, value in {'RUN_WITH_IT_ROLE': 'agent' if purpose == 'plan' else 'plan',
+                       'MODEL_EFFORT': 'maximum', 'RUN_WITH_IT_PLAN_ENABLED': '1',
+                       'TASK_COMPLEXITY': 'holy-fuck', 'PAIR_COLLEAGUE_PURPOSE': 'plan'}.items():
+        monkeypatch.setenv(key, value)
+    # Reverse colleagues and use canonical IDs to ensure neither slot nor provider drives policy.
+    args = _direct_args('claude', 'maximum', 'low')
+    args[args.index('--agent-2-harness') + 1] = 'codex'
+    run = start(*args, *(['--purpose', purpose] if purpose else []))
+    expected = 'xhigh' if purpose == 'plan' else 'high'
+    config = json.loads((run / 'config.json').read_text())
+    assert config['purpose'] == (purpose or 'general')
+    assert all(a['effort'] == expected for a in config['agents'].values())
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    for model, flag in [('one', '--effort ' + expected), ('two', '-c model_reasoning_effort=' + expected)]:
+        assert json.loads((root / f'{model}-argv.json').read_text())[1:3] == flag.split()
+        assert (root / f'{model}-role.txt').read_text() == ('plan' if purpose == 'plan' else 'agent')
+
+
+@pytest.mark.parametrize(('purpose', 'codex_request', 'codex_effective', 'claude_request', 'claude_effective'), [
+    ('general', 'xhigh', 'high', 'maximum', 'high'),
+    ('plan', 'high', 'xhigh', 'maximum', 'xhigh'),
+    ('plan', 'high', 'xhigh', 'low', 'low'),
+])
+def test_adjusted_effort_run_writes_dossier_and_finalizes(
+        pair_fixture, capsys, purpose, codex_request, codex_effective, claude_request, claude_effective):
     from ai_skills import pair_documents as d
     _, root, registry_file = pair_fixture
     _use_direct_harness_registry(registry_file)
     code, values, error = invoke(capsys, 'start', str(root / 'task.md'),
-                                 *_direct_args('codex-alias', 'xhigh'), '--min-rounds', '2', '--max-rounds', '3')
+                                 '--purpose', purpose, *_direct_args('codex-alias', codex_request, claude_request),
+                                 '--min-rounds', '2', '--max-rounds', '3')
     assert code == 0, error
     run = Path(values['RUN_DIR'])
-    assert values['AGENT_1_EFFORT'] == 'requested xhigh, effective high'
+    assert values['AGENT_1_EFFORT'] == f'requested {codex_request}, effective {codex_effective}'
     config = json.loads((run / 'config.json').read_text())
-    assert config['agents']['1']['effort'] == 'high'
-    assert config['agents']['1']['requested_effort'] == 'xhigh'
+    assert config['agents']['1']['effort'] == codex_effective
+    assert config['agents']['1']['requested_effort'] == codex_request
+    assert config['agents']['2']['effort'] == claude_effective
     assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
     assert invoke(capsys, 'record-decision', '--run-dir', str(run),
                   '--decision-file', str(decision_file(root, 'CONTINUE')))[0] == 0
@@ -255,7 +338,53 @@ def test_adjusted_effort_run_writes_dossier_and_finalizes(pair_fixture, capsys):
         for s in d.DOSSIER_SECTIONS))
     code, _, error = invoke(capsys, 'finalize', '--run-dir', str(run), '--final-file', str(final))
     assert code == 0, error
-    assert '- Agent 1: Agent 1, codex, one, high, requested effort xhigh' in final.read_text()
+    assert f'- Agent 1: Agent 1, codex, one, {codex_effective}, requested effort {codex_request}' in final.read_text()
+    assert f'- Agent 2: Agent 2, claude, two, {claude_effective}' in final.read_text()
+    assert (run / 'final-solution.md').read_bytes() == final.read_bytes()
+
+
+@pytest.mark.parametrize(('purpose', 'claude_request', 'claude_effective'), [
+    ('general', 'maximum', 'high'), ('plan', 'maximum', 'xhigh'), ('plan', 'medium', 'medium'),
+])
+def test_pair_saved_purpose_and_effort_survive_retry_and_next_round(
+        pair_fixture, monkeypatch, capsys, purpose, claude_request, claude_effective):
+    start, root, registry_file = pair_fixture
+    _use_direct_harness_registry(registry_file)
+    monkeypatch.setenv('FAKE_MODE', 'fail-once')
+    run = start('--purpose', purpose, *_direct_args('codex-alias', 'maximum', claude_request))
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 1
+    paths = [run / 'config.json', run / 'agent-prompt-template.md']
+    paths += list((run / 'rounds/round-01').glob('*-spec.json'))
+    paths += list((run / 'rounds/round-01').glob('*-run.json'))
+    paths += list((run / 'rounds/round-01').glob('*-prompt.md'))
+    paths += list((run / 'rounds/round-01').glob('*-output.md'))
+    frozen = {p: p.read_bytes() for p in paths}
+    for key, value in {'RUN_WITH_IT_ROLE': 'agent' if purpose == 'plan' else 'plan',
+                       'MODEL_EFFORT': 'low', 'AGENT_1_HARNESS': 'missing',
+                       'AGENT_2_EFFORT': 'low', 'PAIR_COLLEAGUE_PURPOSE': 'general'}.items():
+        monkeypatch.setenv(key, value)
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    assert all(p.read_bytes() == contents for p, contents in frozen.items())
+    assert (root / 'one-r1.count').read_text() == '1'
+    assert (root / 'two-r1.count').read_text() == '2'
+    assert invoke(capsys, 'record-decision', '--run-dir', str(run),
+                  '--decision-file', str(decision_file(root, 'CONTINUE')))[0] == 0
+    monkeypatch.delenv('FAKE_MODE')
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    assert all(p.read_bytes() == contents for p, contents in frozen.items())
+    config = json.loads((run / 'config.json').read_text())
+    for spec_file in (run / 'rounds').glob('*/*-spec.json'):
+        spec = json.loads(spec_file.read_text())
+        manifest = json.loads(spec_file.with_name(spec_file.name.replace('-spec.json', '-run.json')).read_text())
+        assert spec['purpose'] == manifest['purpose'] == purpose
+        assert spec['agent'] in config['agents'].values()
+    codex_effective = 'xhigh' if purpose == 'plan' else 'high'
+    for model, effective, flag in [('one', codex_effective, '-c model_reasoning_effort='),
+                                   ('two', claude_effective, '--effort ')]:
+        assert (root / f'{model}-r2.count').read_text() == '1'
+        assert json.loads((root / f'{model}-argv.json').read_text())[1:3] == (flag + effective).split()
+        assert (root / f'{model}-role.txt').read_text() == ('plan' if purpose == 'plan' else 'agent')
+        assert f'configured effort level is **{effective}**' in (root / f'{model}-context.txt').read_text()
 
 
 def test_retry_only_failed_colleague_and_block_after_cap(pair_fixture, monkeypatch, capsys):
