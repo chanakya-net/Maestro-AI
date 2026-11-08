@@ -63,7 +63,7 @@ def _codex_effort(value):
             continue
         while isinstance(key, dict) and len(key) == 1:
             name, key = next(iter(key.items()))
-            if name == 'model_reasoning_effort':
+            if name == 'model_reasoning_effort' and not isinstance(key, dict):
                 return True
         return False
     return False

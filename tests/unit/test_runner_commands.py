@@ -347,3 +347,14 @@ def test_raw_effort_overrides_rejected(config, agent, extra, role):
 def test_unrelated_options_preserved(config, agent, extra):
     argv = build_invocation(config.replace(agent=agent, extra_args=extra), load_registry()).argv
     assert all(arg in argv for arg in extra)
+
+
+@pytest.mark.parametrize('override', [
+    'mcp_servers.model_reasoning_effort.command="node"',
+    'mcp_servers."model_reasoning_effort".args=["server.js"]',
+])
+def test_codex_mcp_server_named_like_effort_preserves_arguments(config, override):
+    argv = build_invocation(config.replace(extra_args=('-c', override)), load_registry()).argv
+    assert argv == ('codex', 'exec', '-C', str(config.repo_root),
+                    '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6.1-sol',
+                    '-c', override, '-c', 'model_reasoning_effort=high', '-')
