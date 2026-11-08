@@ -321,3 +321,29 @@ def test_structured_ordinary_roles_remain_capped_for_difficult_prompts(config, a
     argv = build_invocation(config.replace(agent=agent, role=role, effort='maximum', prompt_file=prompt), load_registry()).argv
     assert ('model_reasoning_effort=high' in argv if agent.startswith('codex') else
             argv[argv.index('--effort') + 1] == 'high')
+
+
+@pytest.mark.parametrize('agent,extra', [
+    ('claude', ('--effort', 'max')), ('claude-code', ('--effort=high',)),
+    ('claude', ('--settings', '{"effortLevel":"high"}')),
+    ('claude', ('--settings={"env":{"CLAUDE_CODE_EFFORT_LEVEL":"max"}}',)),
+    ('codex', ('-c', 'model_reasoning_effort="xhigh"')),
+    ('codex-cli', ('--config="model_reasoning_effort"="xhigh"',)),
+    ('codex', ("-cprofiles.'p'.\"model_reasoning_effort\"='high'",)),
+    ('codex', ('-c=model_reasoning_effort=ultra',)),
+])
+@pytest.mark.parametrize('role', ['impl', 'plan'])
+def test_raw_effort_overrides_rejected(config, agent, extra, role):
+    with pytest.raises(ValueError, match='cannot override'):
+        build_invocation(config.replace(agent=agent, role=role, extra_args=extra), load_registry())
+
+
+@pytest.mark.parametrize('agent,extra', [
+    ('claude', ('--settings', '{"env":{"OTHER":"yes"},"model":"x"}')),
+    ('claude', ('--settings', '/tmp/settings.json')),
+    ('codex', ('-c', 'sandbox_mode="read-only"')),
+    ('agy', ('--effort=max',)),
+])
+def test_unrelated_options_preserved(config, agent, extra):
+    argv = build_invocation(config.replace(agent=agent, extra_args=extra), load_registry()).argv
+    assert all(arg in argv for arg in extra)

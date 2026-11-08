@@ -387,6 +387,14 @@ explicit non-planning role takes precedence over the inherited role. Other
 inherited worker roles retain their existing artifact behavior. Structured API
 and dispatcher configurations can still explicitly set the `plan` role.
 
+Set effort through `--effort` or `MODEL_EFFORT` for standalone runs, the
+dispatcher effort option or config, and pair `--agent-N-effort` options. The
+role-aware policy normalizes the requested effort before invocation. Raw Claude
+`--effort` and inline `--settings` containing `effortLevel` or
+`env.CLAUDE_CODE_EFFORT_LEVEL`, and Codex `-c`/`--config` overrides of
+`model_reasoning_effort`, are rejected as duplicates, even when values match.
+Other extra arguments and settings file paths are passed unchanged.
+
 To add a model, add one entry with its supported agents and desired bands. To
 change effort, edit that entry's `effort_by_band`. To change usage percentages,
 edit `model_routing.usage_distribution`:

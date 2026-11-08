@@ -252,3 +252,36 @@ def test_cli_preserves_inherited_nonplanning_worker_role_and_artifact(tmp_path, 
     assert main(['run']) == 0
     assert captured[0].role == role
     assert Path(captured[0].result_file) == result_file
+
+
+@pytest.mark.parametrize('agent,extra', [
+    ('claude', ('--effort=max',)),
+    ('claude', ('--settings', '{"env":{"CLAUDE_CODE_EFFORT_LEVEL":"max"}}')),
+    ('codex', ('--config', '"model_reasoning_effort"="xhigh"')),
+])
+def test_raw_effort_fails_before_provider(tmp_path, agent, extra):
+    marker = tmp_path / 'started'
+    config = fixture_config(tmp_path, f'from pathlib import Path; Path({str(marker)!r}).touch()')
+    registry = json.loads(config.registry_file.read_text())
+    registry['agents'][agent] = registry['agents']['fake']
+    config.registry_file.write_text(json.dumps(registry))
+    with pytest.raises(ValueError, match='cannot override'):
+        run_agent(config.replace(agent=agent, extra_args=extra))
+    assert not marker.exists()
+    assert not config.done_file.exists()
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_cli_raw_effort_rejected_before_provider(tmp_path, monkeypatch, dry_run):
+    marker = tmp_path / 'started'
+    config = fixture_config(tmp_path, f'from pathlib import Path; Path({str(marker)!r}).touch()')
+    registry = json.loads(config.registry_file.read_text())
+    registry['agents']['claude'] = registry['agents']['fake']
+    config.registry_file.write_text(json.dumps(registry))
+    for key, value in {'AGENT': 'claude', 'AGENT_REGISTRY_FILE': str(config.registry_file),
+                       'CONTEXT_PAYLOAD_FILE': str(config.context_file), 'PROMPT_FILE': str(config.prompt_file),
+                       'REPO_ROOT': str(tmp_path), 'GUI_MODE': '0', 'AGENT_EXTRA_ARGS': '--effort=max'}.items():
+        monkeypatch.setenv(key, value)
+    assert main(['run'] + (['--dry-run'] if dry_run else [])) == 1
+    assert not marker.exists()
+    assert not config.done_file.exists()

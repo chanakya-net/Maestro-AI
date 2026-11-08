@@ -528,3 +528,22 @@ def test_explicit_pair_assets_override_still_validates_complete_resources(pair_f
     code, _, error = invoke(capsys, 'start', str(root / 'task.md'))
     assert code == 2 and 'missing agent-registry.json' in error
     assert not (root / '.pair-colleague').exists()
+
+
+def test_pair_attempt_invalid_effort_does_not_restart_provider(pair_fixture, capsys, monkeypatch):
+    from ai_skills.pair import _attempt
+    start, root, registry_file = pair_fixture
+    _use_direct_harness_registry(registry_file)
+    run = start(*_direct_args('codex-alias', 'high'))
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    prefix = run / 'rounds/round-01/agent-2-attempt-01'
+    spec_path = Path(str(prefix) + '-spec.json')
+    spec = json.loads(spec_path.read_text())
+    spec['agent']['effort'] = 'ultra'
+    spec_path.write_text(json.dumps(spec))
+    marker = root / 'two-argv.json'
+    marker.unlink()
+    monkeypatch.setattr('ai_skills.pair.signal.signal', lambda *args: None)
+    assert _attempt(spec_path) == 2
+    assert 'unknown effort' in json.loads(Path(spec['record']).read_text())['error']
+    assert not marker.exists()
