@@ -2462,15 +2462,21 @@ def test_requested_effort_survives_record_round_trip_and_old_records_load(tmp_pa
 @pytest.mark.parametrize(('override', 'effective', 'requested'), [
     ('low', 'low', ''),
     ('xhigh', 'high', 'xhigh'),
+    (None, 'high', 'maximum'),
 ])
-def test_saved_config_effort_override_replaces_old_provenance(tmp_path, monkeypatch, override, effective, requested):
+@pytest.mark.parametrize('flat', [False, True])
+def test_saved_config_effort_override_replaces_old_provenance(tmp_path, monkeypatch, override, effective, requested, flat):
     config = effort_worker(tmp_path, agent='claude', role='impl', effort='high')
     saved = replace(config, agent_run=config.agent_run.replace(requested_effort='maximum'))
     config_path = tmp_path/'saved-config.json'
-    config_path.write_text(json.dumps(saved.to_record()))
+    saved_record = saved.to_record()
+    if flat:
+        saved_record = {**saved_record['agent_run'], **{k: v for k, v in saved_record.items() if k != 'agent_run'}}
+    config_path.write_text(json.dumps(saved_record))
     monkeypatch.setenv('RUN_WITH_IT_DISPATCHER_MANAGED', '0')
 
-    assert dispatch_main(['--config', str(config_path), '--effort', override]) in (0, 1)
+    args = ['--config', str(config_path)] + (['--effort', override] if override else [])
+    assert dispatch_main(args) in (0, 1)
 
     record = json.loads(Path(str(config.state_file)+'.config.json').read_text())['agent_run']
     provider = json.loads((tmp_path/'observed.json').read_text())
