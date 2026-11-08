@@ -386,3 +386,109 @@ def test_pair_unverified_admission_without_live_worker_is_unknown(pair_fixture, 
             assert supervisor.inspect(owned.identity).state == 'alive'
     finally:
         if owned: owned.close(grace_seconds=0)
+
+
+def test_legacy_effort_retry_keeps_frozen_history_and_records_new_attempt(pair_fixture, monkeypatch, capsys):
+    start, root, registry = pair_fixture
+    _use_direct_harness_registry(registry)
+    monkeypatch.setenv('FAKE_MODE', 'fail-once')
+    run = start(*_direct_args('codex-alias', 'high', 'high'))
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 1
+    directory = run / 'rounds/round-01'
+    # Model a frozen pre-policy prompt from the failed historical attempt.
+    from ai_skills.pair_documents import sha256_file
+    old_prompt = directory / 'agent-2-prompt.md'
+    old_prompt.write_text(old_prompt.read_text().replace('**high**', '**maximum**'))
+    state_path = run / 'state.json'
+    state = json.loads(state_path.read_text())
+    state['rounds']['1']['agents']['2']['prompt_sha256'] = sha256_file(old_prompt)
+    write_json_atomic(state_path, state)
+    frozen = {p: p.read_bytes() for p in [directory / 'agent-1-output.md', old_prompt, directory / 'agent-2-attempt-01-run.json']}
+    config_path = run / 'config.json'
+    config = json.loads(config_path.read_text())
+    config.pop('purpose')
+    for agent in config['agents'].values():
+        agent['effort'] = 'maximum'
+        agent.pop('requested_effort', None)
+    write_json_atomic(config_path, config)
+    config_bytes = config_path.read_bytes()
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    assert config_path.read_bytes() == config_bytes
+    assert all(p.read_bytes() == data for p, data in frozen.items())
+    assert (root / 'one-r1.count').read_text() == '1'
+    assert (root / 'two-r1.count').read_text() == '2'
+    spec = json.loads((directory / 'agent-2-attempt-02-spec.json').read_text())
+    record = json.loads((directory / 'agent-2-attempt-02-run.json').read_text())
+    assert spec['agent']['effort'] == record['agent']['effort'] == 'high'
+    assert spec['agent']['requested_effort'] == record['agent']['requested_effort'] == 'maximum'
+    assert 'configured effort level is **high**' in Path(spec['prompt']).read_text()
+    assert record['prompt_sha256'] == sha256_file(spec['prompt'])
+    pair = PairRun(PairConfig(run_dir=run)); pair.load()
+    assert record in pair.changed_attempts()
+    assert json.loads((root / 'two-argv.json').read_text())[1:3] == ['--effort', 'high']
+
+
+@pytest.mark.parametrize(('schema', 'effort'), [(1, 'xhigh'), (2, 'max'), (3, 'maximum')])
+def test_old_config_new_attempt_uses_general_policy_without_rewriting_config(pair_fixture, capsys, schema, effort):
+    start, root, registry = pair_fixture
+    _use_direct_harness_registry(registry)
+    run = start(*_direct_args('codex-alias', 'high', 'high'))
+    config_path = run / 'config.json'
+    config = json.loads(config_path.read_text())
+    config['schema_version'] = schema
+    state_path = run / 'state.json'
+    state = json.loads(state_path.read_text())
+    state['schema_version'] = schema
+    write_json_atomic(state_path, state)
+    config.pop('purpose')
+    for agent in config['agents'].values():
+        agent['effort'] = effort
+        agent.pop('requested_effort', None)
+    write_json_atomic(config_path, config)
+    original = config_path.read_bytes()
+    assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+    assert config_path.read_bytes() == original
+    for slot, model in [('1', 'one'), ('2', 'two')]:
+        directory = run / 'rounds/round-01'
+        spec = json.loads((directory / f'agent-{slot}-attempt-01-spec.json').read_text())
+        record = json.loads((directory / f'agent-{slot}-attempt-01-run.json').read_text())
+        assert spec['purpose'] == record['purpose'] == 'general'
+        assert spec['agent']['effort'] == record['agent']['effort'] == 'high'
+        assert spec['agent']['requested_effort'] == record['agent']['requested_effort'] == effort
+        assert 'configured effort level is **high**' in Path(spec['prompt']).read_text()
+        assert (root / f'{model}-r1.count').read_text() == '1'
+
+
+def test_live_legacy_metadata_is_adopted_without_policy_relaunch(pair_fixture, monkeypatch, capsys):
+    start, root, registry = pair_fixture
+    _use_direct_harness_registry(registry)
+    monkeypatch.setenv('FAKE_MODE', 'gated')
+    run = start(*_direct_args('codex-alias', 'xhigh', 'max'))
+    process = background(run)
+    try:
+        await_started(root, process)
+        process.kill(); process.wait(timeout=5)
+        config_path = run / 'config.json'
+        config = json.loads(config_path.read_text())
+        config.pop('purpose')
+        for agent in config['agents'].values():
+            agent.pop('requested_effort', None)
+            agent['effort'] = 'xhigh'
+        write_json_atomic(config_path, config)
+        manifests = list((run / 'rounds/round-01').glob('*-attempt-01-run.json'))
+        for path in manifests:
+            record = json.loads(path.read_text())
+            for key in ('purpose', 'agent', 'prompt', 'prompt_sha256'):
+                record.pop(key, None)
+            write_json_atomic(path, record)
+        frozen = {p: p.read_bytes() for p in manifests}
+        assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 4
+        assert all(p.read_bytes() == data for p, data in frozen.items())
+        (root / 'providers.release').touch()
+        await_owned_attempts_completed(run)
+        assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
+        assert all((root / f'{model}-r1.count').read_text() == '1' for model in ('one', 'two'))
+    finally:
+        (root / 'providers.release').touch()
+        if process.poll() is None: process.kill(); process.wait()
+        invoke(capsys, 'reap', '--run-dir', str(run), '--force')

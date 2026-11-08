@@ -417,6 +417,8 @@ class PairRun:
                 raise PairError('attempt manifest identity mismatch; refusing recovery', 4)
             if record.get('snapshot_sha256') != self.current['snapshot_sha256'] or record.get('workspace_root') != self.state.get('workspace_root'):
                 raise PairError('attempt manifest does not match frozen snapshot or workspace')
+            if record.get('prompt_sha256'):
+                _verify(record.get('prompt', ''), record['prompt_sha256'])
             status = self.probe(record)
             if status == 'unknown': raise PairError('attempt ownership unknown or from another host; refusing another launch', 4)
             overdue = time.time() > record.get('deadline_epoch', float('inf')) + _grace((self.options.environment or os.environ).get('PAIR_COLLEAGUE_TERMINATION_GRACE_SECONDS', '60'))
@@ -430,17 +432,40 @@ class PairRun:
             self.collect(slot, record)
         return live
 
-    def render_prompt(self, slot):
+    def attempt_agent(self, slot, purpose):
+        from ai_skills.effort import resolve_effort
+        from ai_skills.runner import load_registry
+        agent = dict(self.config['agents'][slot])
+        requested = agent.get('requested_effort') or agent['effort']
+        registry = load_registry(self.config.get('registry_file') or None)
+        try:
+            resolution = resolve_effort(agent['harness'], requested, _purpose_role(purpose), registry)
+        except ValueError as error:
+            raise PairError(f'agent {slot} {error}') from error
+        agent['effort'] = resolution.effective
+        agent.pop('requested_effort', None)
+        if resolution.requested:
+            agent['requested_effort'] = resolution.requested
+        elif agent['harness'] not in ('codex', 'claude') and requested == 'maximum':
+            agent['effort'] = 'max'
+        return agent
+
+    def render_prompt(self, slot, agent):
         output = self.round_dir / f'agent-{slot}-prompt.md'
         if output.exists():
             _verify(output, self.current['agents'][slot].get('prompt_sha256'))
-            return output
-        a = self.config['agents'][slot]
+            # Keep the original prompt frozen even when an upgraded policy
+            # changes the configuration for a subsequent retry.
+            if agent['effort'] == self.config['agents'][slot]['effort']:
+                return output
+            output = Path(str(self.prefix(slot)) + '-prompt.md')
+        a = agent
         other = self.config['agents']['2' if slot == '1' else '1']
         template = self.path / 'agent-prompt-template.md'
         _verify(template, self.state['assets']['prompt_template_sha256'])
         documents.render_template(str(template), str(output), [f'AGENT_NAME={a["name"]}', f'OTHER_AGENT_NAME={other["name"]}', f'ROUND_NUMBER={self.state["round"]}', f'MIN_ROUNDS={self.state["min_rounds"]}', f'MAX_ROUNDS={self.state["max_rounds"]}', f'EFFORT_LEVEL={a["effort"]}'])
-        self.current['agents'][slot]['prompt_sha256'] = documents.sha256_file(output)
+        if output.name == f'agent-{slot}-prompt.md':
+            self.current['agents'][slot]['prompt_sha256'] = documents.sha256_file(output)
         return output
 
     def run_round(self):
@@ -467,16 +492,18 @@ class PairRun:
             a.update(attempts=a['attempts'] + 1, status='running')
             prefix = self.prefix(slot)
             attempt_id = f'round-{self.state["round"]}-agent-{slot}-attempt-{a["attempts"]}'
-            prompt = self.render_prompt(slot)
+            agent = self.attempt_agent(slot, purpose)
+            prompt = self.render_prompt(slot, agent)
             record = {'schema_version': 1, 'engine_version': ENGINE_VERSION, 'state': 'allocated',
                       'host': socket.gethostname(), 'run_id': self.state['run_id'], 'attempt_id': attempt_id,
-                      'round': self.state['round'], 'slot': slot, 'attempt': a['attempts'], 'purpose': purpose,
+                      'round': self.state['round'], 'slot': slot, 'attempt': a['attempts'], 'purpose': purpose, 'agent': agent,
+                      'prompt': str(prompt), 'prompt_sha256': documents.sha256_file(prompt),
                       'snapshot_sha256': self.current['snapshot_sha256'], 'workspace_root': str(workspace),
                       'deadline_epoch': time.time() + self.state['timeout_seconds'], 'exit_code': None,
                       'timed_out': False, 'interrupted': False, 'provider_state': str(prefix) + '-provider.json'}
             manifest = self.attempt_record(slot)
             write_json_atomic(manifest, record)
-            spec = {'record': str(manifest), 'purpose': purpose, 'agent': self.config['agents'][slot], 'context': str(self.round_dir / 'snapshot.md'),
+            spec = {'record': str(manifest), 'purpose': purpose, 'agent': agent, 'context': str(self.round_dir / 'snapshot.md'),
                     'prompt': str(prompt), 'registry_file': self.config.get('registry_file', ''),
                     'record_directory': str(self.path / 'processes')}
             spec_file = Path(str(prefix) + '-spec.json')
@@ -540,6 +567,20 @@ class PairRun:
         self.save()
         return PairResult(0, self.values('continue' if action == 'CONTINUE' else None))
 
+    def changed_attempts(self):
+        attempts = []
+        for path in sorted((self.path / 'rounds').glob('round-*/*-attempt-*-run.json')):
+            record = _object(path)
+            agent = record.get('agent')
+            slot = str(record.get('slot', ''))
+            configured = self.config['agents'].get(slot)
+            if not isinstance(agent, dict) or not isinstance(configured, dict):
+                continue
+            fields = ('effort', 'requested_effort')
+            if any(agent.get(key, '') != configured.get(key, '') for key in fields):
+                attempts.append(record)
+        return attempts
+
     def finalize(self):
         source = self.options.final_file
         if not source or not Path(source).is_file(): raise PairError('--final-file is required and must exist')
@@ -553,7 +594,7 @@ class PairRun:
         _verify(self.path / 'task.md', self.state['assets'].get('task_sha256'))
         expected = {key: str(self.state[key]) for _, key in documents.DOSSIER_RUN_LABELS}
         expected['run_dir'] = str(self.path)
-        errors = documents.validate_dossier(source, expected, self.config)
+        errors = documents.validate_dossier(source, expected, self.config, self.changed_attempts())
         if errors: raise PairError('final dossier contract: ' + '; '.join(errors))
         for number, r in self.state['rounds'].items():
             d = Path(documents.round_dir(str(self.path), int(number)))

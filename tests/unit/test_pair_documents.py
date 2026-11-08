@@ -79,3 +79,19 @@ def test_freeze_snapshot_idempotent_and_rejects_changed_inputs(tmp_path):
     assert d.freeze_snapshot(tmp_path, 1) == first
     (tmp_path / 'task.md').write_text('Changed problem.')
     with pytest.raises(d.HelperError, match='different content'): d.freeze_snapshot(tmp_path, 1)
+
+
+def test_historical_dossier_identity_keeps_legacy_effort_without_provenance():
+    agent = {'name': 'Agent 1', 'harness': 'codex', 'model': 'model-1', 'effort': 'xhigh'}
+    assert d.agent_identity_errors('- Agent 1: Agent 1, codex, model-1, xhigh', '1', agent) == []
+    assert d.agent_identity_errors('- Agent 1: Agent 1, codex, model-1, high', '1', agent)
+
+
+def test_dossier_reports_changed_attempt_without_relabeling_historical_identity():
+    record = '- Agent 1: Agent 1, codex, model-1, xhigh\n'
+    attempt = {'round': 2, 'slot': '1', 'attempt': 1,
+               'agent': {'effort': 'high', 'requested_effort': 'xhigh'}}
+    assert d.attempt_provenance_errors(record, [attempt])
+    record += '- Round 2 Agent 1 attempt 1: high, requested effort xhigh\n'
+    assert d.attempt_provenance_errors(record, [attempt]) == []
+    assert d.attempt_provenance_errors(record.replace('attempt 1: high', 'attempt 1: xhigh'), [attempt])
