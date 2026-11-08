@@ -107,7 +107,7 @@
         "command": "agy",
         "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "--input-format", "stream-json", "--output-format", "stream-json"],
         "prompt_transport": "agy-stream-json",
-        "required_cli_flags": ["--input-format", "--output-format"],
+        "required_cli_flags": ["--model", "--input-format", "--output-format"],
         "protocol_documentation": "https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin"
       },
       "liveness": {"streaming_output": false, "wrapper_heartbeat_required": true},
@@ -115,7 +115,7 @@
         "default": "--dangerously-skip-permissions",
         "available": ["--dangerously-skip-permissions"]
       },
-      "model": {"default": "gemini-3.5-flash-high", "flag_template": ""},
+      "model": {"default": "gemini-3.8-flash-high", "flag_template": "--model {{model}}"},
       "capability_band": "advanced",
       "fallback_order": ["agy", "claude"]
     }

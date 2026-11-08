@@ -78,7 +78,21 @@ ai-skills agent list --detected-only
 ai-skills agent models <agent>
 ```
 
-Effort must be one of `low|medium|high|xhigh|max|maximum` (`maximum` is normalized to `max`).
+Effort must be one of `low|medium|high|xhigh|max|maximum`; unknown tokens fail
+before launch. `--purpose` (default `general`) accepts only `general` or `plan`.
+New general runs apply the shared non-planning policy to direct Codex and Claude harnesses:
+Codex always uses `high`; Claude keeps `low`/`medium`/`high` and caps
+`xhigh`/`max`/`maximum` at `high`. Adjusted requests remain in run provenance,
+and startup reports requested and effective values. Other harnesses and AGY
+model suffixes retain their configured effort semantics.
+
+Opt into planning with `--purpose plan`: Codex uses `xhigh` for every recognized
+request; Claude preserves explicit `low`/`medium`/`high`/`xhigh` and maps
+`max`/`maximum` to `xhigh`. Thus explicit lower Claude planning requests remain lower.
+Both colleagues use the saved purpose across rounds, retries, and resume;
+task wording, difficulty, and inherited planning variables never change purpose.
+Pair inputs still require explicit effort for both colleagues. Direct Claude/Codex
+arguments never emit `max` or `maximum`.
 
 Both colleagues run in the harness's registered **read-only** profile, because they must not
 modify the repository they are discussing. A harness whose registry entry declares no read-only
@@ -95,6 +109,12 @@ The two colleagues may share a harness or model when the user explicitly chooses
 
 ```text
 ai-skills pair start task.md  --agent-1-harness codex --agent-1-model gpt-6.1-terra --agent-1-effort high  --agent-2-harness claude --agent-2-model claude-sonnet-5-5 --agent-2-effort high
+```
+
+Planning example (Codex uses `xhigh`; Claude remains `medium`):
+
+```text
+ai-skills pair start task.md --purpose plan --agent-1-harness codex --agent-1-model gpt-6.1-terra --agent-1-effort high --agent-2-harness claude --agent-2-model claude-sonnet-5-5 --agent-2-effort medium
 ```
 
 For stdin input pass `-` as the task source through the calling tool's stdin support; all explicit colleague selections remain required.
@@ -219,8 +239,8 @@ Required structure (every heading exactly once, no placeholder text):
 
 ```markdown
 - Coordinator: current invoking agent
-- Agent 1: <name, harness, model, effort>
-- Agent 2: <name, harness, model, effort>
+- Agent 1: <name, harness, model, effective effort[, requested effort <value>]>
+- Agent 2: <name, harness, model, effective effort[, requested effort <value>]>
 - Completed rounds: <n>
 - Minimum rounds: <n>
 - Maximum rounds: <n>
@@ -229,6 +249,8 @@ Required structure (every heading exactly once, no placeholder text):
 ```
 
 Read `COMPLETED_ROUNDS`, `MIN_ROUNDS`, `MAX_ROUNDS`, `COMPLETION_REASON`, and `RUN_DIR` from `status` rather than recalling them.
+
+Each `Agent` line uses the saved effective effort. Append `, requested effort <value>` only when startup reported an adjusted effort (`AGENT_<n>_EFFORT` = `requested <value>, effective <value>`); the requested value is the one the user supplied, and the effective value is the one in the saved config. Example: `- Agent 1: Agent 1, codex, gpt-x, high, requested effort xhigh`.
 
 ```text
 ai-skills pair finalize --run-dir <run-dir> --final-file /path/to/final-solution-draft.md

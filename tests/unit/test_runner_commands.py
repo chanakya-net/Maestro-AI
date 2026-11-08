@@ -24,7 +24,7 @@ def test_registry_command_preserves_exact_arguments(config):
     spec = build_invocation(config, registry)
     assert spec.argv == ('codex', 'exec', '-C', str(config.repo_root),
                          '--dangerously-bypass-approvals-and-sandbox', '--model', 'model with spaces',
-                         '--empty', '', 'C:\\tail\\', '-c', 'model_reasoning_effort=xhigh',
+                         '--empty', '', 'C:\\tail\\', '-c', 'model_reasoning_effort=high',
                          '-')
     assert spec.stdin == 'Context λ\n\nInstructions:\n\nDo "work" & %PATH%'.encode('utf-8')
     assert spec.cwd == config.repo_root
@@ -67,6 +67,47 @@ def test_codex_default_invocation_uses_sol_6_1(config):
     spec = build_invocation(config, load_registry())
     model_flag = spec.argv.index('--model')
     assert spec.argv[model_flag + 1] == 'gpt-6.1-sol'
+
+
+@pytest.mark.parametrize('model', [
+    *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
+    'gpt-oss-120b-medium',
+])
+def test_agy_invocation_forwards_selected_model_unchanged(config, model):
+    spec = build_invocation(config.replace(agent='agy', model=model), load_registry())
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', model)
+    assert spec.argv[-4:] == ('--input-format', 'stream-json', '--output-format', 'stream-json')
+
+
+def test_agy_default_invocation_pins_flash_high_once(config):
+    spec = build_invocation(config.replace(agent='agy', model=''), load_registry())
+    assert spec.argv.count('--model') == 1
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-high')
+
+
+def test_agy_explicit_model_overrides_flash_high_default_once(config):
+    spec = build_invocation(config.replace(agent='agy', model='gemini-3.8-flash-low'), load_registry())
+    assert spec.argv.count('--model') == 1
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-low')
+
+
+@pytest.mark.parametrize('extra_args', [('--model', 'other-model'), ('--model=other-model',), ('-m', 'other-model')])
+def test_agy_rejects_extra_model_selection_options(config, extra_args):
+    with pytest.raises(ValueError, match='AGY.*--model'):
+        build_invocation(config.replace(agent='agy', model='gemini-3.8-flash-high', extra_args=extra_args), load_registry())
+
+
+def test_agy_preserves_unrelated_extra_args(config):
+    spec = build_invocation(config.replace(agent='agy', extra_args=('--verbose', '--label=test')), load_registry())
+    assert '--verbose' in spec.argv
+    assert '--label=test' in spec.argv
+    assert spec.argv.count('--model') == 1
 
 
 def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
@@ -200,3 +241,120 @@ def test_stream_capture_preserves_baseline_arguments_and_rejects_conflicts(confi
         spec = build_invocation(ineligible, registry)
         assert spec.argv == baseline.argv
         assert b'"result_capture"' not in spec.stdin
+
+
+@pytest.mark.parametrize('agent,effort,role,flag', [
+    ('codex', 'low', 'impl', ('-c', 'model_reasoning_effort=high')),
+    ('codex', 'max', 'plan', ('-c', 'model_reasoning_effort=xhigh')),
+    ('claude', 'maximum', 'impl', ('--effort', 'high')),
+    ('claude', 'xhigh', 'impl', ('--effort', 'high')),
+    ('claude', 'low', 'impl', ('--effort', 'low')),
+    ('claude', 'max', 'plan', ('--effort', 'xhigh')),
+    ('claude', '', 'plan', ('--effort', 'xhigh')),
+    ('claude', '', 'impl', ('--effort', 'high')),
+])
+def test_effort_flags_follow_role_policy(config, agent, effort, role, flag):
+    argv = build_invocation(config.replace(agent=agent, effort=effort, role=role), load_registry()).argv
+    assert any(argv[i:i + 2] == flag for i in range(len(argv) - 1))
+    assert 'max' not in argv and 'maximum' not in argv
+
+
+def test_unknown_effort_fails_before_launch(config):
+    with pytest.raises(ValueError, match='unknown effort'):
+        build_invocation(config.replace(effort='ultra'), load_registry())
+
+
+def test_agy_effort_untouched(config):
+    spec = build_invocation(config.replace(agent='agy', model='claude-opus-5-5-high', effort='max'), load_registry())
+    assert 'max' not in spec.argv and '--effort' not in spec.argv
+
+
+@pytest.mark.parametrize('default', ['low', 'medium', 'high', 'xhigh', 'max', 'maximum'])
+@pytest.mark.parametrize('role', ['plan', 'impl'])
+@pytest.mark.parametrize('agent', ['claude', 'claude-code'])
+@pytest.mark.parametrize('explicit', ['', 'low'])
+def test_custom_default_is_not_an_explicit_request(config, default, role, agent, explicit):
+    from ai_skills.runner import effective_config
+    registry = copy.deepcopy(load_registry())
+    registry['model_catalog']['custom'] = {'reasoning_effort': default}
+    run = config.replace(agent=agent, model='custom', role=role, effort=explicit)
+    effective = effective_config(run, registry)
+    expected = explicit or ('xhigh' if role == 'plan' else
+                            default if default in ('low', 'medium', 'high') else 'high')
+    assert effective.effort == expected
+    assert effective.requested_effort == ''
+    assert effective_config(effective, registry) == effective
+    argv = build_invocation(run, registry).argv
+    assert ('--effort', expected) == argv[argv.index('--effort'):argv.index('--effort') + 2]
+
+
+def test_codex_default_planning_does_not_invent_request(config):
+    from ai_skills.runner import effective_config
+    effective = effective_config(config.replace(agent='codex-cli', role='plan', effort=''), load_registry())
+    assert (effective.effort, effective.requested_effort) == ('xhigh', '')
+    assert effective_config(effective, load_registry()) == effective
+
+
+def test_original_positional_config_order_and_optional_provenance(tmp_path):
+    context, prompt = tmp_path / 'context', tmp_path / 'prompt'
+    run = AgentRunConfig('claude', 'm', 'high', context, prompt, tmp_path, 'safe', '1', True,
+                         requested_effort='maximum')
+    assert (run.context_file, run.prompt_file, run.repo_root, run.permission_mode, run.gui_mode, run.unattended) == (
+        context, prompt, tmp_path, 'safe', '1', True)
+    assert run.requested_effort == 'maximum'
+    assert AgentRunConfig(**{'agent': 'claude'}).requested_effort == ''
+
+
+def test_explicit_adjustment_survives_repeated_preparation(config):
+    from ai_skills.runner import effective_config
+    registry = load_registry()
+    effective = effective_config(config.replace(agent='claude', role='plan', effort='maximum'), registry)
+    assert (effective.effort, effective.requested_effort) == ('xhigh', 'maximum')
+    assert effective_config(effective, registry) == effective
+
+
+@pytest.mark.parametrize('agent', ['codex', 'codex-cli', 'claude', 'claude-code'])
+@pytest.mark.parametrize('role', ['review', 'complexity'])
+def test_structured_ordinary_roles_remain_capped_for_difficult_prompts(config, agent, role, tmp_path):
+    prompt = tmp_path / 'difficult-plan.md'
+    prompt.write_text('Plan a holy-fuck complexity task')
+    argv = build_invocation(config.replace(agent=agent, role=role, effort='maximum', prompt_file=prompt), load_registry()).argv
+    assert ('model_reasoning_effort=high' in argv if agent.startswith('codex') else
+            argv[argv.index('--effort') + 1] == 'high')
+
+
+@pytest.mark.parametrize('agent,extra', [
+    ('claude', ('--effort', 'max')), ('claude-code', ('--effort=high',)),
+    ('claude', ('--settings', '{"effortLevel":"high"}')),
+    ('claude', ('--settings={"env":{"CLAUDE_CODE_EFFORT_LEVEL":"max"}}',)),
+    ('codex', ('-c', 'model_reasoning_effort="xhigh"')),
+    ('codex-cli', ('--config="model_reasoning_effort"="xhigh"',)),
+    ('codex', ("-cprofiles.'p'.\"model_reasoning_effort\"='high'",)),
+    ('codex', ('-c=model_reasoning_effort=ultra',)),
+])
+@pytest.mark.parametrize('role', ['impl', 'plan'])
+def test_raw_effort_overrides_rejected(config, agent, extra, role):
+    with pytest.raises(ValueError, match='cannot override'):
+        build_invocation(config.replace(agent=agent, role=role, extra_args=extra), load_registry())
+
+
+@pytest.mark.parametrize('agent,extra', [
+    ('claude', ('--settings', '{"env":{"OTHER":"yes"},"model":"x"}')),
+    ('claude', ('--settings', '/tmp/settings.json')),
+    ('codex', ('-c', 'sandbox_mode="read-only"')),
+    ('agy', ('--effort=max',)),
+])
+def test_unrelated_options_preserved(config, agent, extra):
+    argv = build_invocation(config.replace(agent=agent, extra_args=extra), load_registry()).argv
+    assert all(arg in argv for arg in extra)
+
+
+@pytest.mark.parametrize('override', [
+    'mcp_servers.model_reasoning_effort.command="node"',
+    'mcp_servers."model_reasoning_effort".args=["server.js"]',
+])
+def test_codex_mcp_server_named_like_effort_preserves_arguments(config, override):
+    argv = build_invocation(config.replace(extra_args=('-c', override)), load_registry()).argv
+    assert argv == ('codex', 'exec', '-C', str(config.repo_root),
+                    '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6.1-sol',
+                    '-c', override, '-c', 'model_reasoning_effort=high', '-')

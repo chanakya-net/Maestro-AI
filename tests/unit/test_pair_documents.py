@@ -53,12 +53,19 @@ def test_snapshot_constraints_and_bounded_history(tmp_path):
 def test_dossier_requires_exact_provenance_identity_and_every_section(tmp_path):
     expected = {'completed_rounds': '3', 'min_rounds': '3', 'max_rounds': '8', 'completion_reason': 'coordinator-accepted', 'run_dir': str(tmp_path)}
     agents = {s: {'name': 'Agent ' + s, 'harness': 'fake', 'model': 'model-' + s, 'effort': 'high'} for s in ('1', '2')}
+    agents['1']['requested_effort'] = 'maximum'
     record = '\n'.join('- ' + label + ': ' + expected[key] for label, key in d.DOSSIER_RUN_LABELS)
     record += '\n- Coordinator: current agent\n'
-    for slot, agent in agents.items(): record += '- Agent ' + slot + ': ' + ', '.join(agent.values()) + '\n'
+    for slot, agent in agents.items():
+        values = [agent[key] for key in ('name', 'harness', 'model', 'effort')]
+        if agent.get('requested_effort'):
+            values.append('requested effort ' + agent['requested_effort'])
+        record += '- Agent ' + slot + ': ' + ', '.join(values) + '\n'
     text = '# Final Solution Decision\n\n' + '\n\n'.join('## ' + s + '\n\n' + (record if s == 'Discussion record' else 'Concrete evidence and conclusions.') for s in d.DOSSIER_SECTIONS)
     p = tmp_path / 'final.md'; p.write_text(text)
     assert d.validate_dossier(p, expected, {'agents': agents}) == []
+    p.write_text(text.replace(', requested effort maximum', ''))
+    assert any("Agent 1" in error for error in d.validate_dossier(p, expected, {'agents': agents}))
     for changed in (text.replace('- Completed rounds: 3', '- Completed rounds: 2'), text.replace('model-1', 'invented'), text.replace('## Risks and mitigations', '## Wrong heading'), text + '\n## Discussion record\nDuplicate', text.replace('Concrete evidence', '<unfilled placeholder>\n\nConcrete evidence')):
         p.write_text(changed)
         assert d.validate_dossier(p, expected, {'agents': agents})
@@ -72,3 +79,19 @@ def test_freeze_snapshot_idempotent_and_rejects_changed_inputs(tmp_path):
     assert d.freeze_snapshot(tmp_path, 1) == first
     (tmp_path / 'task.md').write_text('Changed problem.')
     with pytest.raises(d.HelperError, match='different content'): d.freeze_snapshot(tmp_path, 1)
+
+
+def test_historical_dossier_identity_keeps_legacy_effort_without_provenance():
+    agent = {'name': 'Agent 1', 'harness': 'codex', 'model': 'model-1', 'effort': 'xhigh'}
+    assert d.agent_identity_errors('- Agent 1: Agent 1, codex, model-1, xhigh', '1', agent) == []
+    assert d.agent_identity_errors('- Agent 1: Agent 1, codex, model-1, high', '1', agent)
+
+
+def test_dossier_reports_changed_attempt_without_relabeling_historical_identity():
+    record = '- Agent 1: Agent 1, codex, model-1, xhigh\n'
+    attempt = {'round': 2, 'slot': '1', 'attempt': 1,
+               'agent': {'effort': 'high', 'requested_effort': 'xhigh'}}
+    assert d.attempt_provenance_errors(record, [attempt])
+    record += '- Round 2 Agent 1 attempt 1: high, requested effort xhigh\n'
+    assert d.attempt_provenance_errors(record, [attempt]) == []
+    assert d.attempt_provenance_errors(record.replace('attempt 1: high', 'attempt 1: xhigh'), [attempt])

@@ -25,6 +25,7 @@ import tempfile
 import time
 import uuid
 
+from ai_skills.effort import raw_effort_overrides, resolve_effort
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.provider_capture import (
@@ -71,6 +72,7 @@ class AgentRunConfig:
     verification_context: dict | None = None
     final_response_file: Path | None = None
     result_capture_context: dict | None = None
+    requested_effort: str = ''
 
     def replace(self, **values):
         return replace(self, **values)
@@ -194,8 +196,31 @@ def capture_candidate(config, registry, spec):
     return None
 
 
+def effective_config(config: AgentRunConfig, registry: dict) -> AgentRunConfig:
+    """Apply the shared effort policy once, keeping an adjusted explicit request."""
+    name, agent = _agent(registry, config.agent)
+    model = config.model or agent.get('model', {}).get('default', '')
+    configured = registry.get('model_catalog', {}).get(model, {}).get('reasoning_effort', '')
+    if config.effort:
+        resolution = resolve_effort(name, config.effort, config.role)
+        requested = config.requested_effort or resolution.requested
+    else:
+        resolution = resolve_effort(name, configured, config.role)
+        if name == 'claude' and config.role == 'plan':
+            resolution = resolve_effort(name, '', config.role)
+        requested = config.requested_effort
+    return config.replace(effort=resolution.effective, requested_effort=requested)
+
+
 def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     name, agent = _agent(registry, config.agent)
+    config = effective_config(config, registry)
+    if name == 'agy':
+        _reject_agy_model_overrides(config.extra_args)
+    conflicts = raw_effort_overrides(name, config.extra_args)
+    if conflicts:
+        setting = '--effort' if name == 'claude' else 'model_reasoning_effort'
+        raise ValueError(f'{name} extra arguments cannot override maintained {setting}; set effort through the run configuration')
     source = capture_source(config, name)
     if not source:
         config = config.replace(final_response_file=None, result_capture_context=None)
@@ -219,7 +244,7 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     if mode and not (config.unattended or gui):
         raise ValueError('unattended permission mode requires --unattended or UNATTENDED=1')
     model = config.model or agent.get('model', {}).get('default', '')
-    effort = config.effort or registry.get('model_catalog', {}).get(model, {}).get('reasoning_effort', '')
+    effort = config.effort
     model_flag = _template_tokens(agent.get('model', {}).get('flag_template', ''), {'model':model}) if model else ()
     settings = ()
     if effort:
@@ -255,6 +280,11 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     elif source:
         _stream_capture_args(argv, transport, source)
     return ProcessSpec(tuple(argv), root, env, unset_env=('AGENT','MODEL') if config.scrub_ambient_aliases else (), stdin=input_bytes)
+
+
+def _reject_agy_model_overrides(extra_args):
+    if any(arg.partition('=')[0] in ('--model', '-m') for arg in extra_args):
+        raise ValueError('AGY extra arguments cannot override the maintained --model selection')
 
 
 def _add_capture_flag(argv, transport, path):
@@ -453,11 +483,19 @@ def _check_cli_capabilities(argv, spec, invocation):
         try:
             help_result = subprocess.run((*argv, '--help'), cwd=spec.cwd, env=spec.env,
                                          stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
-            help_text = (help_result.stdout + help_result.stderr).decode('utf-8', errors='replace')
+            help_output = help_result.stdout + help_result.stderr
         except (subprocess.TimeoutExpired, OSError) as error:
             raise _CLIUnsupported(f'Cannot verify provider stdin capabilities; upgrade the CLI: {error}') from error
-        if help_result.returncode or any(flag not in help_text for flag in required):
-            raise _CLIUnsupported('Upgrade AGY CLI: this runner requires --input-format stream-json and --output-format stream-json; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
+        missing = [flag for flag in required if not _help_option(help_output, flag.encode())]
+        if help_result.returncode or missing:
+            details = {
+                '--model': 'exact model selection',
+                '--input-format': 'stream-json input',
+                '--output-format': 'stream-json output',
+            }
+            capabilities = ', '.join(f'{flag} ({details.get(flag, "required capability")})' for flag in missing)
+            reason = f'required capabilities are missing: {capabilities}' if missing else 'capabilities could not be verified'
+            raise _CLIUnsupported('Upgrade AGY CLI: ' + reason + '; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
 
 
 def classify_unavailable(text):
@@ -485,6 +523,7 @@ def _stream_unavailability(source, tail):
 def run_agent(config: AgentRunConfig) -> AgentRunResult:
     registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
+    config = effective_config(config, registry)
     source = capture_source(config, name)
     stream_capture = source in STREAM_SOURCES
     invocation = agent.get('invocation', {})
@@ -494,6 +533,10 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         raise ValueError('heartbeat_seconds must be nonnegative and finite')
     bus = EventBus(status_file=config.status_file, events_log=config.events_log, log_file=config.log_file)
     fields = {'issue':config.issue, 'role':config.role, 'agent':name, 'model':model}
+    if name in ('codex', 'claude') and config.effort:
+        fields['effort'] = config.effort
+        if config.requested_effort:
+            fields['requested_effort'] = config.requested_effort
     if config.done_file and not config.dispatcher_managed:
         Path(config.done_file).parent.mkdir(parents=True, exist_ok=True)
         Path(config.done_file).unlink(missing_ok=True)
@@ -630,7 +673,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     action = argv.pop(0) if argv and argv[0] in ('run', 'list', 'models') else 'run'
     parser = argparse.ArgumentParser(prog='ai-skills agent')
-    for name in ('agent', 'model', 'effort', 'context-file', 'prompt-file', 'permission-mode', 'repo-root', 'registry-file', 'gui-mode', 'process-state-file'):
+    for name in ('agent', 'model', 'effort', 'context-file', 'prompt-file', 'permission-mode', 'repo-root', 'registry-file', 'gui-mode', 'process-state-file', 'role'):
         parser.add_argument('--' + name)
     parser.add_argument('--context-payload-file', dest='context_file')
     parser.add_argument('--unattended', action='store_true', default=None)
@@ -656,6 +699,10 @@ def main(argv=None):
         value = env.get('RUN_WITH_IT_' + key.upper())
         if value:
             values[key] = value
+    if args.role is not None:
+        values['role'] = args.role
+    elif values.get('role') == 'plan':
+        values['role'] = 'agent'
     if args.process_state_file:
         values['process_state_file'] = args.process_state_file
     values['environment'] = env
@@ -692,6 +739,9 @@ def main(argv=None):
             return 0
         spec = build_invocation(config, registry)
         if args.dry_run:
+            applied = effective_config(config, registry)
+            if applied.requested_effort:
+                print(f'effort: requested {applied.requested_effort}, effective {applied.effort}', file=sys.stderr)
             print(shlex.join(spec.argv))
             return 0
         return run_agent(config).return_code

@@ -313,7 +313,7 @@ Each `model_catalog` entry groups a model's settings together:
   "reasoning_effort": "high",
   "agents": ["codex"],
   "work_bands": ["medium-hard", "complex", "holy-fuck"],
-  "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"}
+  "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
 }
 ```
 
@@ -333,8 +333,67 @@ complexity-scoring restrictions and required-pool settings.
 | `complexity_bands` | Optional exact bands for the worker that **scores** task complexity, separate from the workers doing the task. Otherwise scoring uses the existing weight/minimum-band rules. |
 | `min_band` | Minimum scoring band when `complexity_bands` is absent; it does not override explicit `work_bands`. |
 | `exclude_from_complexity` | Prevents normal selection as the complexity-scoring worker. |
+| `explicit_only` | Documents a selectable model that is excluded from automatic work and scoring pools. |
 | `required_bands` | Adds the model to complexity-scoring candidate pools at these bands, subject to existing restrictions; selection is still balanced. |
 | `alias_of` | Reuses another model's metadata for a different CLI ID. Declare its own `agents`, `work_bands`, and `required_bands`; these memberships are not inherited. |
+
+Direct Claude and Codex runs apply one effort policy by canonical harness
+(aliases such as `codex-cli` and `claude-code` resolve first) and the run's
+actual role. Task difficulty and model provider never change it. `ai-skills route`
+returns this effective effort for the selected role, so route output and the
+executed argv agree. Configured `effort_by_band` values are defaults, not explicit
+requests: automatic planning returns the planning default regardless of them, and
+non-planning routes return the configured value after the cap below.
+
+| Harness | Non-planning role | `plan` role |
+| --- | --- | --- |
+| Codex | Every recognized effort becomes `high` | Every recognized effort becomes `xhigh` |
+| Claude | `low`/`medium`/`high` kept; `xhigh`, `max`, `maximum` become `high`; unset becomes `high` | `low`/`medium`/`high`/`xhigh` kept; `max`, `maximum` become `xhigh`; unset becomes `xhigh` |
+
+Accepted legacy tokens are `low`, `medium`, `high`, `xhigh`, `max`, and
+`maximum`; any other value fails before launch. Neither `max` nor `maximum` is
+sent to Claude or Codex. When normalization changes an explicit request, the
+effective value is used in argv and dry-run output, and the original is kept as
+`requested_effort`. AGY and other harnesses are unchanged.
+
+Pair-colleague starts with `--purpose general` by default; only `general` and
+`plan` are accepted. General runs use the same non-planning policy after
+resolving harness aliases. Their saved configuration, colleague prompts, and
+provider arguments use effective effort; adjusted explicit requests remain in
+`requested_effort` and appear in the startup report and final dossier record.
+
+Opt into planning for both colleagues with `--purpose plan`. Codex uses `xhigh`
+for every recognized request. Claude keeps explicit `low`/`medium`/`high`/`xhigh`
+and maps `max`/`maximum` to `xhigh`; explicit lower Claude planning requests remain lower.
+Purpose is recorded once in `config.json` and reused for rounds, retries, and
+resume. Neither task wording nor inherited planning variables change it.
+Pair runs still require explicit harness, model, and effort for both colleagues:
+
+```sh
+ai-skills pair start task.md --purpose plan --agent-1-harness codex --agent-1-model gpt-6.1-terra --agent-1-effort high --agent-2-harness claude --agent-2-model claude-sonnet-5-5 --agent-2-effort medium
+```
+
+This uses Codex `xhigh` and Claude `medium`.
+
+Standalone planning requires an explicit role, for example:
+
+```sh
+ai-skills agent run --agent codex --role plan --context-file context.md --unattended --dry-run
+```
+
+This previews Codex effort `xhigh`; omitting `--role plan` uses `high` even
+if `RUN_WITH_IT_ROLE=plan` is inherited or the prompt asks for a plan. An
+explicit non-planning role takes precedence over the inherited role. Other
+inherited worker roles retain their existing artifact behavior. Structured API
+and dispatcher configurations can still explicitly set the `plan` role.
+
+Set effort through `--effort` or `MODEL_EFFORT` for standalone runs, the
+dispatcher effort option or config, and pair `--agent-N-effort` options. The
+role-aware policy normalizes the requested effort before invocation. Raw Claude
+`--effort` and inline `--settings` containing `effortLevel` or
+`env.CLAUDE_CODE_EFFORT_LEVEL`, and Codex `-c`/`--config` overrides of
+`model_reasoning_effort`, are rejected as duplicates, even when values match.
+Other extra arguments and settings file paths are passed unchanged.
 
 To add a model, add one entry with its supported agents and desired bands. To
 change effort, edit that entry's `effort_by_band`. To change usage percentages,
@@ -350,11 +409,36 @@ edit `model_routing.usage_distribution`:
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
 
-The `non_complexity_band_policy` provider entries additionally admit Google models
-at the two simple work bands. Google models still execute through AGY only.
-Review moves the task up one band; planning moves it up two, capped at the highest.
-Explicit agent/model overrides retain their existing compatibility and
-availability checks and can select models outside automatic band lists.
+The maintained AGY selectable inventory contains 13 exact IDs, all registered
+for AGY only:
+
+| Family | Explicit model IDs |
+| --- | --- |
+| Gemini 4 Argon | `gemini-4-argon-low`, `gemini-4-argon-medium`, `gemini-4-argon-high` |
+| Gemini 3.8 Flash | `gemini-3.8-flash-low`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-high` |
+| Claude Opus 5.5 through AGY | `claude-opus-5-5-low`, `claude-opus-5-5-medium`, `claude-opus-5-5-high` |
+| Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
+| GPT-OSS | `gpt-oss-120b-medium` |
+
+Only Flash Low (`gemini-3.8-flash-low`) enters automatic non-scoring work at
+effective `quite-easy`, and only Flash Medium (`gemini-3.8-flash-medium`)
+enters it at `easy`. Flash Medium is also the only AGY complexity-scoring
+model, eligible at all six scoring bands. The other 11 models are explicit-only
+and excluded from automatic work and scoring. A direct AGY run without an
+explicit model pins `gemini-3.8-flash-high`; this direct-run default does not
+add that model to automatic routing, which keeps the Flash Low/Medium choices
+above. AGY has no automatic worker at
+medium or harder non-scoring bands. Review raises the effective band by one
+and planning by two, capped at the highest. Existing global, role, and band
+usage targets remain unchanged. Explicit agent/model overrides retain
+compatibility and availability checks, preserve the exact selected ID and its
+suffix, and continue to count usage against AGY; pair read-only eligibility
+checks also remain in force.
+
+The inventory records models observed in the AGY CLI on November 7, 2026.
+Actual access depends on the user's account, quota, and provider availability.
+Registry membership and model listing document selectable IDs; they do not
+verify that inference is available or succeeds for a particular account.
 
 `selection_strategy: "usage-share-debt"` describes the existing deterministic
 algorithm. The router ranks eligible agent/model pairs by global and role usage
@@ -448,7 +532,7 @@ Provider selection follows explicit configuration, environment overrides, then r
 <details>
 <summary><strong>Provider prompt transport and AGY compatibility</strong></summary>
 
-Maintained providers receive full prompts through stdin, avoiding operating-system command-line length limits. CLI text input and output use UTF-8 on every platform. AGY requires a current CLI supporting `--input-format` and `--output-format`; the runtime checks these flags before launching a paid attempt and reports an upgrade instruction for older builds. Its [documented streaming protocol](https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin) is decoded back into the normal response text while retaining raw output for recovery. Custom registries retain argv input by default; set `invocation.prompt_transport` to `stdin` for a provider that supports plain stdin.
+Maintained providers receive full prompts through stdin, avoiding operating-system command-line length limits. CLI text input and output use UTF-8 on every platform. AGY receives the selected model ID unchanged through `--model`, including partner-model IDs and their effort suffixes. AGY requires a current CLI advertising `--model`, `--input-format`, and `--output-format`; the runtime checks all three before launching inference and reports the missing capability with upgrade guidance. Additional AGY arguments cannot contain `--model`, `--model=...`, or `-m` because they could override the maintained model selection. Its [documented streaming protocol](https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin) is decoded back into the normal response text while retaining raw output for recovery. Custom registries retain argv input by default; set `invocation.prompt_transport` to `stdin` for a provider that supports plain stdin.
 
 </details>
 

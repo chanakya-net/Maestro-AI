@@ -21,7 +21,7 @@
       "agents": ["claude"],
       "work_bands": ["medium-hard", "complex", "holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "max"}
+      "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
     },
     "claude-fable-5-1": {
       "provider": "anthropic",
@@ -32,7 +32,7 @@
       "agents": ["claude"],
       "work_bands": ["holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"holy-fuck": "max"}
+      "effort_by_band": {"holy-fuck": "high"}
     },
     "claude-sonnet-5-5": {
       "provider": "anthropic",
@@ -53,7 +53,7 @@
       "agents": ["codex"],
       "work_bands": ["holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"holy-fuck": "max"}
+      "effort_by_band": {"holy-fuck": "high"}
     },
     "gpt-6-luna": {
       "provider": "openai",
@@ -87,7 +87,7 @@
       "agents": ["codex"],
       "work_bands": ["medium-hard", "complex", "holy-fuck"],
       "required_bands": ["holy-fuck"],
-      "effort_by_band": {"medium-hard": "high", "complex": "xhigh", "holy-fuck": "xhigh"},
+      "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"},
       "complexity_bands": ["medium-hard", "complex", "holy-fuck"]
     },
     "gpt-5.4-mini": {
@@ -133,39 +133,108 @@
       "context_window": 1000000,
       "agents": []
     },
-    "gemini-3.5-flash-medium": {
+    "gemini-3.8-flash-low": {
+      "provider": "google",
+      "ability": "fast",
+      "complexity_weight": 3,
+      "exclude_from_complexity": true,
+      "agents": ["agy"],
+      "work_bands": ["quite-easy"]
+    },
+    "gemini-3.8-flash-medium": {
       "provider": "google",
       "ability": "balanced",
-      "complexity_weight": 6,
-      "context_window": 1048576,
-      "agents": ["agy"]
+      "complexity_weight": 4,
+      "agents": ["agy"],
+      "work_bands": ["easy"],
+      "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
     },
-    "gemini-3.5-flash-high": {
+    "gemini-4-argon-low": {
       "provider": "google",
-      "ability": "advanced",
-      "complexity_weight": 8,
-      "context_window": 1048576,
+      "ability": "fast",
+      "complexity_weight": 4,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     },
-    "gemini-3.1-pro-low": {
+    "gemini-4-argon-medium": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 5,
-      "context_window": 1000000,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     },
-    "gemini-3.1-pro-high": {
+    "gemini-4-argon-high": {
       "provider": "google",
       "ability": "frontier",
-      "complexity_weight": 6,
-      "context_window": 1000000,
+      "complexity_weight": 7,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     },
-    "gpt-0ss-120b-medium": {
+    "gemini-3.8-flash-high": {
+      "provider": "google",
+      "ability": "advanced",
+      "complexity_weight": 6,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-opus-5-5-low": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-opus-5-5-medium": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 9,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-opus-5-5-high": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 10,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-sonnet-5-5-low": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "complexity_weight": 6,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-sonnet-5-5-medium": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "complexity_weight": 7,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-sonnet-5-5-high": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gpt-oss-120b-medium": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 7,
-      "context_window": 400000,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     }
   },
@@ -179,14 +248,6 @@
       {"score_min": 28, "score_max": 32, "weight_min": 7, "weight_max": 9, "label": "complex"},
       {"score_min": 33, "score_max": 40, "weight_min": 9, "weight_max": 10, "label": "holy-fuck"}
     ],
-    "non_complexity_band_policy": {
-      "quite-easy": {
-        "providers": ["google"]
-      },
-      "easy": {
-        "providers": ["google"]
-      }
-    },
     "usage_distribution": {
       "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
       "role_target_percent": {

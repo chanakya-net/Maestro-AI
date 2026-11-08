@@ -12,12 +12,12 @@ from ai_skills.resources import resource_path
 from ai_skills.runner import AgentRunConfig, build_invocation, load_registry, run_agent
 
 
-def configuration(tmp_path, agent='codex', *, response="print('done')"):
+def configuration(tmp_path, agent='codex', *, response="print('done')", help_text='--model\n--input-format\n--output-format'):
     script = tmp_path/'provider.py'
-    script.write_text('''import json, pathlib, sys
+    script.write_text(f'''import json, pathlib, sys
 sys.stdout.reconfigure(encoding='utf-8')
 if '--help' in sys.argv:
- print('--input-format --output-format'); raise SystemExit(0)
+ print({help_text!r}); raise SystemExit(0)
 data = sys.stdin.buffer.read()
 pathlib.Path('received.bin').write_bytes(data)
 pathlib.Path('argv.json').write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
@@ -90,7 +90,12 @@ def test_agy_authoritative_result_restores_multiline_status_and_markdown(tmp_pat
     narrative = '# Result λ\n\n```json\n{"decision":"ship"}\n```\nSTATUS|type=artifact-written|path=result.md\n'
     events = [{'event':'step_update','step_update':{'text_delta':'untrusted partial'}}, {'event':'result','result':{'status':'SUCCESS','response':narrative}}]
     config = configuration(tmp_path, 'agy', response=f"for event in {events!r}: print(json.dumps(event, ensure_ascii=False))")
+    config = config.replace(model='claude-sonnet-5-5-high')
     assert run_agent(config).return_code == 0
+    argv = json.loads((tmp_path/'argv.json').read_text(encoding='utf-8'))
+    model_flag = argv.index('--model')
+    assert argv[model_flag:model_flag + 2] == ['--model', 'claude-sonnet-5-5-high']
+    assert argv[-4:] == ['--input-format', 'stream-json', '--output-format', 'stream-json']
     output = capsys.readouterr().out
     assert output == narrative
     assert 'type=artifact-written|path=result.md' in config.events_log.read_text()
@@ -105,6 +110,71 @@ def test_old_agy_reports_actionable_infrastructure_unavailability_without_provid
     assert result.return_code != 0
     assert result.unavailable_reason == 'cli-unsupported'
     assert 'upgrade' in config.log_file.read_text().lower()
+    assert not (tmp_path/'received.bin').exists()
+
+
+@pytest.mark.parametrize('missing_flag', ['--model', '--input-format', '--output-format'])
+def test_agy_missing_required_flag_fails_before_inference(tmp_path, missing_flag):
+    help_text = '\n'.join(flag for flag in ('--model', '--input-format', '--output-format') if flag != missing_flag)
+    config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')", help_text=help_text)
+
+    result = run_agent(config)
+
+    assert result.return_code != 0
+    assert result.unavailable_reason == 'cli-unsupported'
+    assert missing_flag in config.log_file.read_text().lower()
+    assert 'upgrade' in config.log_file.read_text().lower()
+    assert not (tmp_path/'received.bin').exists()
+
+
+MISLEADING_HELP = {
+    '--model': ('  --input-format <FORMAT>   stream-json input\n'
+                '  --output-format <FORMAT>  stream-json output\n'
+                '  --model-name <NAME>       model name, not --model\n'),
+    '--input-format': ('  --model <NAME>            exact model\n'
+                       '  --output-format <FORMAT>  stream-json output\n'
+                       '  --input-formatting <FMT>  like --input-format but different\n'),
+    '--output-format': ('  --model <NAME>            exact model\n'
+                        '  --input-format <FORMAT>   stream-json input, emits via --output-format\n'
+                        '  --output-formatting <FMT> like --output-format but different\n'),
+}
+
+
+@pytest.mark.parametrize('missing_flag', ['--model', '--input-format', '--output-format'])
+def test_agy_longer_option_or_description_text_does_not_satisfy_missing_flag(tmp_path, missing_flag):
+    config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')",
+                           help_text=MISLEADING_HELP[missing_flag])
+
+    result = run_agent(config)
+
+    assert result.return_code != 0
+    assert result.unavailable_reason == 'cli-unsupported'
+    assert missing_flag in config.log_file.read_text().lower()
+    assert not (tmp_path/'received.bin').exists()
+
+
+@pytest.mark.parametrize('help_text', [
+    '  -m, --model=<NAME>  exact model\n  --input-format <FORMAT>  stream-json\n  --output-format <FORMAT>  stream-json\n',
+])
+def test_agy_advertised_option_syntax_satisfies_required_flags(tmp_path, help_text):
+    config = configuration(tmp_path, 'agy', help_text=help_text)
+
+    result = run_agent(config)
+
+    assert result.unavailable_reason != 'cli-unsupported'
+    assert (tmp_path/'argv.json').exists()
+
+
+@pytest.mark.parametrize('extra_args', [('--model', 'other-model'), ('--model=other-model',)])
+def test_agy_conflicting_extra_model_fails_before_inference(tmp_path, extra_args):
+    from dataclasses import replace
+
+    config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')")
+    config = replace(config, extra_args=extra_args)
+
+    with pytest.raises(ValueError, match='AGY.*--model'):
+        run_agent(config)
+
     assert not (tmp_path/'received.bin').exists()
 
 

@@ -1,10 +1,13 @@
 """Registry edits must reach both model selection and CLI invocation."""
 import json
+from pathlib import Path
 
 import pytest
 
 from ai_skills import routing
 from ai_skills.runner import AgentRunConfig, build_invocation, load_registry
+
+SOURCE_REGISTRY = Path(__file__).parents[2] / "assets" / "agent-registry.json"
 
 
 @pytest.fixture
@@ -43,7 +46,7 @@ def registry_file(tmp_path):
 def test_single_model_entry_controls_routing_and_runner(registry_file, tmp_path):
     registry = load_registry(registry_file)
     decision = routing.select_route(routing.RouteRequest(role="impl"), registry, {})
-    assert (decision.agent, decision.model, decision.effort) == ("codex", "example", "xhigh")
+    assert (decision.agent, decision.model, decision.effort) == ("codex", "example", "high")
     assert registry["agents"]["codex"]["model"]["known_models"] == ["example"]
     context = tmp_path / "context.md"
     prompt = tmp_path / "prompt.md"
@@ -51,7 +54,7 @@ def test_single_model_entry_controls_routing_and_runner(registry_file, tmp_path)
     prompt.write_text("prompt")
     spec = build_invocation(AgentRunConfig(agent="codex-cli", model=decision.model, effort=decision.effort,
         repo_root=tmp_path, context_file=context, prompt_file=prompt, gui_mode="0", environment={}), registry)
-    assert spec.argv == ("codex", "--model", "example", "-c", "model_reasoning_effort=xhigh", "-")
+    assert spec.argv == ("codex", "--model", "example", "-c", "model_reasoning_effort=high", "-")
 
 
 def test_model_alias_inherits_metadata_without_inheriting_agent_membership(registry_file):
@@ -141,3 +144,97 @@ def test_malformed_nested_configuration_reports_a_validation_error(registry_file
     registry_file.write_text(json.dumps(payload))
     with pytest.raises(ValueError):
         load_registry(registry_file)
+
+
+def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_explicit():
+    catalog = json.loads(SOURCE_REGISTRY.read_text())["model_catalog"]
+    assert {
+        model: {
+            "agents": catalog[model]["agents"],
+            "work_bands": catalog[model]["work_bands"],
+            "complexity_weight": catalog[model]["complexity_weight"],
+            "exclude_from_complexity": catalog[model].get("exclude_from_complexity"),
+        }
+        for model in ("gemini-3.8-flash-low", "gemini-3.8-flash-medium")
+    } == {
+        "gemini-3.8-flash-low": {
+            "agents": ["agy"], "work_bands": ["quite-easy"],
+            "complexity_weight": 3, "exclude_from_complexity": True,
+        },
+        "gemini-3.8-flash-medium": {
+            "agents": ["agy"], "work_bands": ["easy"],
+            "complexity_weight": 4, "exclude_from_complexity": None,
+        },
+    }
+    assert catalog["gemini-3.8-flash-medium"]["complexity_bands"] == [
+        "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
+    ]
+
+
+def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
+    source = json.loads(SOURCE_REGISTRY.read_text())
+    agy_models = sorted(
+        model for model, entry in source["model_catalog"].items()
+        if "agy" in entry.get("agents", [])
+    )
+    expected_agy_models = [
+        *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
+        *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
+        *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
+        *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
+        "gpt-oss-120b-medium",
+    ]
+    assert agy_models == sorted(expected_agy_models)
+    assert not set(agy_models) & {
+        "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
+        "gemini-3.5-flash-medium", "gpt-0ss-120b-medium",
+    }
+    catalog = source["model_catalog"]
+    explicit_only = set(expected_agy_models) - {"gemini-3.8-flash-low", "gemini-3.8-flash-medium"}
+    for model in explicit_only:
+        assert catalog[model]["agents"] == ["agy"]
+        assert catalog[model]["explicit_only"] is True
+        assert catalog[model]["exclude_from_complexity"] is True
+        assert "work_bands" not in catalog[model]
+        assert "context_window" not in catalog[model]
+    assert "gemini-3.8-flash-high" in explicit_only
+    definitions = json.loads(SOURCE_REGISTRY.with_name("agent-definitions.json").read_text())
+    expanded = load_registry(SOURCE_REGISTRY)
+    direct_baseline = {
+        "claude": ("claude-haiku-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"),
+        "codex": ("gpt-6-astra", "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"),
+    }
+    for agent, expected_default in (("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.1-sol")):
+        expected_models = list(direct_baseline[agent])
+        assert expanded["agents"][agent]["model"]["known_models"] == expected_models
+        assert [model for model, entry in source["model_catalog"].items()
+                if agent in entry.get("agents", [])] == expected_models
+        assert definitions["agents"][agent]["model"]["default"] == expected_default
+    assert source["model_routing"]["usage_distribution"] == {
+        "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
+        "role_target_percent": {
+            "complexity": {"agy": 50, "codex": 25, "claude": 25},
+            "impl": {"codex": 65, "claude": 30, "agy": 5},
+            "review": {"claude": 60, "codex": 35, "agy": 5},
+            "modify": {"codex": 65, "claude": 30, "agy": 5},
+            "artifact-recovery": {"codex": 60, "claude": 40, "agy": 0},
+            "merge-recovery": {"codex": 60, "claude": 40, "agy": 0},
+            "plan": {"claude": 70, "codex": 30, "agy": 0},
+        },
+        "non_complexity_band_target_percent": {
+            "default": {"codex": 70, "claude": 30, "agy": 0},
+            "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
+            "easy": {"codex": 55, "claude": 40, "agy": 5},
+            "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
+        },
+        "role_band_target_percent": {
+            "complexity": {
+                "default": {"agy": 50, "codex": 25, "claude": 25},
+                "quite-easy": {"codex": 40, "claude": 35, "agy": 25},
+            }
+        },
+        "role_agent_preference": {
+            "default": ["codex", "claude", "agy"],
+            "complexity": ["claude", "codex", "agy"],
+        },
+    }
