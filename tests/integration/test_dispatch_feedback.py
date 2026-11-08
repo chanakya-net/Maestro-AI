@@ -1,11 +1,14 @@
 """Regression coverage for verified PR feedback at dispatch boundaries."""
 from dataclasses import replace
+import errno
 import json
 import os
+import pathlib
 from pathlib import Path
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 import psutil
@@ -13,7 +16,7 @@ import pytest
 
 from ai_skills import dispatch
 from ai_skills.dispatch import WorkerConfig, WatchConfig, dispatch_worker, watch_run
-from ai_skills.storage import write_json_atomic
+from ai_skills.storage import load_json, write_json_atomic
 from test_dispatch import worker_config
 
 
@@ -200,10 +203,26 @@ print('provider activity', flush=True)
 while not Path('release-provider').exists(): time.sleep(.01)
 Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
 ''', quiet_seconds=.08, stall_seconds=.2, hard_limit_seconds=5)
+    # Model a Windows sharing denial during an atomic state replacement. This
+    # must use the bounded storage reader instead of bypassing its retry policy.
+    original_io_open = pathlib.io.open
+    reader_thread = threading.current_thread()
+    denied = [True]
+
+    def deny_state_once(file, *args, **kwargs):
+        if (threading.current_thread() is reader_thread
+                and Path(file) == config.state_file and denied[0]):
+            denied[0] = False
+            raise PermissionError(errno.EACCES, 'injected transient sharing denial')
+        return original_io_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.io, 'open', deny_state_once)
+    monkeypatch.setattr(sys, 'platform', 'win32')
+
     def wait_for_state(expected, event=None, minimum_heartbeats=0):
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline:
-            state = json.loads(config.state_file.read_text()) if config.state_file.exists() else {}
+            state = load_json(config.state_file, missing={})
             text = config.agent_run.events_log.read_text() if config.agent_run.events_log.exists() else ''
             events = ''.join(line for line in text.splitlines(keepends=True) if line.endswith('\n'))
             if (state.get('state') == expected
@@ -237,6 +256,7 @@ Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}')
             (tmp_path / 'emit-output').touch()
             (tmp_path / 'release-provider').touch()
         assert future.result(timeout=7).state == 'completed'
+    assert not denied[0]
     events = config.agent_run.events_log.read_text()
     assert events.count('type=worker-quiet|') == 1
     assert events.count('type=worker-stalled|') == 1
