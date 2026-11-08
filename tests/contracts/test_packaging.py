@@ -104,3 +104,104 @@ assert 'run-7' in payload
 '''
     env=dict(os.environ,PYTHONPATH=str(target))
     run(sys.executable,'-c',script,cwd=work,env=env)
+
+
+def test_installed_catalog_defaults_usage_and_effort_contract(distributions, tmp_path):
+    wheel = next(distributions.glob("*.whl"))
+    target = tmp_path / "installed-contract"
+    run(sys.executable, "-m", "pip", "install", "--no-deps", "--target", target,
+        wheel, cwd=tmp_path)
+    work = tmp_path / "installed-contract-work"
+    work.mkdir()
+    source_registry = ROOT / "assets" / "agent-registry.json"
+    script = r'''import json
+from pathlib import Path
+from ai_skills.effort import resolve_effort
+from ai_skills.registry import load_registry
+from ai_skills.resources import resource_path
+from ai_skills.runner import AgentRunConfig, build_invocation
+from ai_skills.routing import RouteRequest, select_route
+
+source = json.loads(Path(__import__('os').environ['SOURCE_REGISTRY']).read_text())
+bundled = json.loads(resource_path('agent-registry.json').read_text())
+registry = load_registry()
+definitions = json.loads(resource_path('agent-definitions.json').read_text())
+expected = {
+    *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
+    'gpt-oss-120b-medium',
+}
+catalog = bundled['model_catalog']
+assert {name for name, model in catalog.items() if 'agy' in model.get('agents', [])} == expected
+assert catalog['gemini-3.8-flash-low']['work_bands'] == ['quite-easy']
+assert catalog['gemini-3.8-flash-medium']['work_bands'] == ['easy']
+assert catalog['gemini-3.8-flash-medium']['complexity_bands'] == [
+    'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
+assert sum(model.get('explicit_only') is True for model in catalog.values()) == 11
+assert definitions['agents']['agy']['model']['default'] == 'gemini-3.8-flash-high'
+assert definitions['agents']['agy']['model']['flag_template'] == '--model {{model}}'
+for band, model in (('quite-easy', 'gemini-3.8-flash-low'),
+                    ('easy', 'gemini-3.8-flash-medium')):
+    route = select_route(RouteRequest('impl', band, frozenset({'agy'}), forced_agent='agy'),
+                         registry, {})
+    assert (route.agent, route.model) == ('agy', model)
+for band in ('quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck'):
+    route = select_route(RouteRequest('complexity', band, frozenset({'agy'}), forced_agent='agy'),
+                         registry, {})
+    assert (route.agent, route.model) == ('agy', 'gemini-3.8-flash-medium')
+assert bundled['model_routing']['usage_distribution'] == source['model_routing']['usage_distribution']
+assert registry['agents']['claude']['model']['known_models'] == [
+    'claude-haiku-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5']
+assert registry['agents']['codex']['model']['known_models'] == [
+    'gpt-6-astra', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol']
+for token in ('low', 'medium', 'high', 'xhigh', 'max', 'maximum'):
+    assert resolve_effort('codex', token, 'impl', registry).effective == 'high'
+    assert resolve_effort('codex', token, 'plan', registry).effective == 'xhigh'
+assert resolve_effort('claude', 'maximum', 'impl', registry).effective == 'high'
+assert resolve_effort('claude', 'maximum', 'impl', registry).requested == 'maximum'
+assert resolve_effort('claude', 'medium', 'plan', registry).effective == 'medium'
+assert resolve_effort('claude', 'maximum', 'plan', registry).effective == 'xhigh'
+assert resolve_effort('agy', 'maximum', 'plan', registry).effective == 'maximum'
+for agent in ('codex', 'claude'):
+    assert registry['agents'][agent]['permission_modes']['read_only']
+Path('context.md').write_text('task')
+Path('prompt.md').write_text('instructions')
+for selected, expected_model in (('', 'gemini-3.8-flash-high'),
+                                 ('gemini-4-argon-high', 'gemini-4-argon-high')):
+    config = AgentRunConfig(agent='agy', model=selected, repo_root=Path.cwd(),
+        context_file=Path('context.md'), prompt_file=Path('prompt.md'),
+        environment={}, unattended=True, gui_mode='0')
+    argv = build_invocation(config, registry).argv
+    model_flag = argv.index('--model')
+    assert argv[model_flag + 1] == expected_model
+    assert argv[-4:] == ('--input-format', 'stream-json', '--output-format', 'stream-json')
+'''
+    env = dict(os.environ, PYTHONPATH=str(target), SOURCE_REGISTRY=str(source_registry))
+    env.pop("AI_SKILLS_RUN_ROOT", None)
+    run(sys.executable, "-c", script, cwd=work, env=env)
+
+
+def test_installed_cli_exposes_explicit_planning_and_role_aware_effort(distributions, tmp_path):
+    wheel = next(distributions.glob("*.whl"))
+    target = tmp_path / "installed-cli"
+    run(sys.executable, "-m", "pip", "install", "--no-deps", "--target", target,
+        wheel, cwd=tmp_path)
+    work = tmp_path / "installed-cli-work"
+    work.mkdir()
+    context = work / "context.md"
+    prompt = work / "prompt.md"
+    context.write_text("Plan a task", encoding="utf-8")
+    prompt.write_text("Do work", encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(target), PATH="", REPO_ROOT=str(work),
+               ASSETS_DEST=str(work / "absent-assets"))
+    env.pop("AI_SKILLS_RUN_ROOT", None)
+    for role, expected in ((None, "high"), ("plan", "xhigh"), ("review", "high")):
+        args = ["agent", "run", "--agent", "codex-cli", "--effort", "maximum",
+                "--context-file", context, "--prompt-file", prompt,
+                "--unattended", "--dry-run"]
+        if role:
+            args += ["--role", role]
+        result = run(sys.executable, "-m", "ai_skills", *args, cwd=work, env=env)
+        assert f"model_reasoning_effort={expected}" in result.stdout

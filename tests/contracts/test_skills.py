@@ -251,6 +251,27 @@ def test_pair_skill_defaults_match_the_native_configuration():
         assert 'task wording' in document and 'inherited' in document
 
 
+def test_model_and_effort_guidance_matches_the_approved_contract():
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    run_skill = skill('run-with-it')
+    pair_skill = skill('pair-colleague')
+    coordinator = (ROOT / 'assets' / 'sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    assert 'requested_effort' in readme and 'requested_effort' in run_skill
+    assert 'requested_effort' in coordinator
+    assert 'requested effort' in pair_skill and 'effective effort' in pair_skill
+    assert 'effective value returned by the shared policy' in run_skill
+    assert 'gemini-3.8-flash-high' in readme
+    assert '13 exact IDs' in readme
+    assert 'Only Flash Low' in readme and 'only Flash Medium' in readme
+    assert 'pair read-only eligibility' in readme
+    assert 'Only `plan` (the original role, not `routing_level`)' in run_skill
+    assert '`--role plan`' in readme
+    assert '`--purpose plan`' in pair_skill
+    assert 'task wording, difficulty, and inherited planning variables never change purpose' in pair_skill
+    assert 'max`/`maximum` to `xhigh`' in pair_skill
+    assert 'arguments never emit `max` or `maximum`' in pair_skill
+    assert 'Dispatch normalizes it before admission' in coordinator
+    assert 'the admitted record\'s `effort` is the effective value' in coordinator
 def test_pair_templates_share_exact_sections_and_status_vocabulary():
     decisions=fences(skill('pair-colleague'),'markdown')
     assert any(re.findall(r'^# (.+)$',body,re.M)==pair_documents.DECISION_SECTIONS for body in decisions)

@@ -195,6 +195,9 @@ planning defaults to `xhigh`. Difficulty band never raises effort to `max` or
 selects planning effort. Pass the route effort unchanged; the generic value becomes
 Codex `model_reasoning_effort` or Claude Code `--effort`; Agy receives no effort
 flag.
+When dispatch adjusts a requested value, retain it only as `requested_effort`
+provenance. The admitted `effort`, instructions, and provider arguments use the
+effective value returned by the shared policy.
 
 ## Runtime and maintained rules
 
