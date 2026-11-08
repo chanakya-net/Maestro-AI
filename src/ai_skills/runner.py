@@ -479,10 +479,10 @@ def _check_cli_capabilities(argv, spec, invocation):
         try:
             help_result = subprocess.run((*argv, '--help'), cwd=spec.cwd, env=spec.env,
                                          stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
-            help_text = (help_result.stdout + help_result.stderr).decode('utf-8', errors='replace')
+            help_output = help_result.stdout + help_result.stderr
         except (subprocess.TimeoutExpired, OSError) as error:
             raise _CLIUnsupported(f'Cannot verify provider stdin capabilities; upgrade the CLI: {error}') from error
-        missing = [flag for flag in required if flag not in help_text]
+        missing = [flag for flag in required if not _help_option(help_output, flag.encode())]
         if help_result.returncode or missing:
             details = {
                 '--model': 'exact model selection',

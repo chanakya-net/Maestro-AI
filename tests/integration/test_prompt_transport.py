@@ -12,7 +12,7 @@ from ai_skills.resources import resource_path
 from ai_skills.runner import AgentRunConfig, build_invocation, load_registry, run_agent
 
 
-def configuration(tmp_path, agent='codex', *, response="print('done')", help_text='--model --input-format --output-format'):
+def configuration(tmp_path, agent='codex', *, response="print('done')", help_text='--model\n--input-format\n--output-format'):
     script = tmp_path/'provider.py'
     script.write_text(f'''import json, pathlib, sys
 sys.stdout.reconfigure(encoding='utf-8')
@@ -115,7 +115,7 @@ def test_old_agy_reports_actionable_infrastructure_unavailability_without_provid
 
 @pytest.mark.parametrize('missing_flag', ['--model', '--input-format', '--output-format'])
 def test_agy_missing_required_flag_fails_before_inference(tmp_path, missing_flag):
-    help_text = ' '.join(flag for flag in ('--model', '--input-format', '--output-format') if flag != missing_flag)
+    help_text = '\n'.join(flag for flag in ('--model', '--input-format', '--output-format') if flag != missing_flag)
     config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')", help_text=help_text)
 
     result = run_agent(config)
@@ -125,6 +125,44 @@ def test_agy_missing_required_flag_fails_before_inference(tmp_path, missing_flag
     assert missing_flag in config.log_file.read_text().lower()
     assert 'upgrade' in config.log_file.read_text().lower()
     assert not (tmp_path/'received.bin').exists()
+
+
+MISLEADING_HELP = {
+    '--model': ('  --input-format <FORMAT>   stream-json input\n'
+                '  --output-format <FORMAT>  stream-json output\n'
+                '  --model-name <NAME>       model name, not --model\n'),
+    '--input-format': ('  --model <NAME>            exact model\n'
+                       '  --output-format <FORMAT>  stream-json output\n'
+                       '  --input-formatting <FMT>  like --input-format but different\n'),
+    '--output-format': ('  --model <NAME>            exact model\n'
+                        '  --input-format <FORMAT>   stream-json input, emits via --output-format\n'
+                        '  --output-formatting <FMT> like --output-format but different\n'),
+}
+
+
+@pytest.mark.parametrize('missing_flag', ['--model', '--input-format', '--output-format'])
+def test_agy_longer_option_or_description_text_does_not_satisfy_missing_flag(tmp_path, missing_flag):
+    config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')",
+                           help_text=MISLEADING_HELP[missing_flag])
+
+    result = run_agent(config)
+
+    assert result.return_code != 0
+    assert result.unavailable_reason == 'cli-unsupported'
+    assert missing_flag in config.log_file.read_text().lower()
+    assert not (tmp_path/'received.bin').exists()
+
+
+@pytest.mark.parametrize('help_text', [
+    '  -m, --model=<NAME>  exact model\n  --input-format <FORMAT>  stream-json\n  --output-format <FORMAT>  stream-json\n',
+])
+def test_agy_advertised_option_syntax_satisfies_required_flags(tmp_path, help_text):
+    config = configuration(tmp_path, 'agy', help_text=help_text)
+
+    result = run_agent(config)
+
+    assert result.unavailable_reason != 'cli-unsupported'
+    assert (tmp_path/'argv.json').exists()
 
 
 @pytest.mark.parametrize('extra_args', [('--model', 'other-model'), ('--model=other-model',)])
