@@ -25,7 +25,7 @@ import tempfile
 import time
 import uuid
 
-from ai_skills.effort import resolve_effort
+from ai_skills.effort import raw_effort_overrides, resolve_effort
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.provider_capture import (
@@ -217,6 +217,10 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     config = effective_config(config, registry)
     if name == 'agy':
         _reject_agy_model_overrides(config.extra_args)
+    conflicts = raw_effort_overrides(name, config.extra_args)
+    if conflicts:
+        setting = '--effort' if name == 'claude' else 'model_reasoning_effort'
+        raise ValueError(f'{name} extra arguments cannot override maintained {setting}; set effort through the run configuration')
     source = capture_source(config, name)
     if not source:
         config = config.replace(final_response_file=None, result_capture_context=None)

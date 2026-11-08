@@ -2559,3 +2559,28 @@ def test_detached_reattachment_preserves_admitted_effort_record(tmp_path):
     assert json.loads(before)['agent_run']['effort'] == 'high'
     adopt_worker(config.state_file)
     assert record_path.read_bytes() == before
+
+
+@pytest.mark.parametrize('agent,extra', [
+    ('claude', ('--effort', 'max')),
+    ('codex', ('-c', '"model_reasoning_effort"="xhigh"')),
+])
+def test_raw_effort_config_rejected_before_admission(tmp_path, agent, extra):
+    config = effort_worker(tmp_path, agent=agent)
+    config = replace(config, agent_run=config.agent_run.replace(extra_args=extra))
+    with pytest.raises(ValueError, match='cannot override'):
+        dispatch_worker(config)
+    assert not config.state_file.exists()
+    assert not Path(str(config.state_file) + '.config.json').exists()
+    assert not (tmp_path / 'observed.json').exists()
+
+
+@pytest.mark.parametrize('validate', [False, True])
+def test_saved_raw_effort_config_rejected_before_provider(tmp_path, validate):
+    config = effort_worker(tmp_path)
+    config = replace(config, agent_run=config.agent_run.replace(extra_args=('--effort=max',)))
+    path = tmp_path / 'saved.json'
+    path.write_text(json.dumps(config.to_record()))
+    assert dispatch_main(['--config', str(path)] + (['--validate-only'] if validate else [])) == 2
+    assert not (tmp_path / 'observed.json').exists()
+    assert not config.state_file.exists()
