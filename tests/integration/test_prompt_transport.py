@@ -12,12 +12,12 @@ from ai_skills.resources import resource_path
 from ai_skills.runner import AgentRunConfig, build_invocation, load_registry, run_agent
 
 
-def configuration(tmp_path, agent='codex', *, response="print('done')"):
+def configuration(tmp_path, agent='codex', *, response="print('done')", help_text='--model --input-format --output-format'):
     script = tmp_path/'provider.py'
-    script.write_text('''import json, pathlib, sys
+    script.write_text(f'''import json, pathlib, sys
 sys.stdout.reconfigure(encoding='utf-8')
 if '--help' in sys.argv:
- print('--input-format --output-format'); raise SystemExit(0)
+ print({help_text!r}); raise SystemExit(0)
 data = sys.stdin.buffer.read()
 pathlib.Path('received.bin').write_bytes(data)
 pathlib.Path('argv.json').write_text(json.dumps(sys.argv[1:]), encoding='utf-8')
@@ -110,6 +110,33 @@ def test_old_agy_reports_actionable_infrastructure_unavailability_without_provid
     assert result.return_code != 0
     assert result.unavailable_reason == 'cli-unsupported'
     assert 'upgrade' in config.log_file.read_text().lower()
+    assert not (tmp_path/'received.bin').exists()
+
+
+@pytest.mark.parametrize('missing_flag', ['--model', '--input-format', '--output-format'])
+def test_agy_missing_required_flag_fails_before_inference(tmp_path, missing_flag):
+    help_text = ' '.join(flag for flag in ('--model', '--input-format', '--output-format') if flag != missing_flag)
+    config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')", help_text=help_text)
+
+    result = run_agent(config)
+
+    assert result.return_code != 0
+    assert result.unavailable_reason == 'cli-unsupported'
+    assert missing_flag in config.log_file.read_text().lower()
+    assert 'upgrade' in config.log_file.read_text().lower()
+    assert not (tmp_path/'received.bin').exists()
+
+
+@pytest.mark.parametrize('extra_args', [('--model', 'other-model'), ('--model=other-model',)])
+def test_agy_conflicting_extra_model_fails_before_inference(tmp_path, extra_args):
+    from dataclasses import replace
+
+    config = configuration(tmp_path, 'agy', response="raise AssertionError('inference must not start')")
+    config = replace(config, extra_args=extra_args)
+
+    with pytest.raises(ValueError, match='AGY.*--model'):
+        run_agent(config)
+
     assert not (tmp_path/'received.bin').exists()
 
 

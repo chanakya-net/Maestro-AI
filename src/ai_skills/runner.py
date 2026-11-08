@@ -215,6 +215,8 @@ def effective_config(config: AgentRunConfig, registry: dict) -> AgentRunConfig:
 def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     name, agent = _agent(registry, config.agent)
     config = effective_config(config, registry)
+    if name == 'agy':
+        _reject_agy_model_overrides(config.extra_args)
     source = capture_source(config, name)
     if not source:
         config = config.replace(final_response_file=None, result_capture_context=None)
@@ -274,6 +276,11 @@ def build_invocation(config: AgentRunConfig, registry: dict) -> ProcessSpec:
     elif source:
         _stream_capture_args(argv, transport, source)
     return ProcessSpec(tuple(argv), root, env, unset_env=('AGENT','MODEL') if config.scrub_ambient_aliases else (), stdin=input_bytes)
+
+
+def _reject_agy_model_overrides(extra_args):
+    if any(arg.partition('=')[0] in ('--model', '-m') for arg in extra_args):
+        raise ValueError('AGY extra arguments cannot override the maintained --model selection')
 
 
 def _add_capture_flag(argv, transport, path):
@@ -475,8 +482,16 @@ def _check_cli_capabilities(argv, spec, invocation):
             help_text = (help_result.stdout + help_result.stderr).decode('utf-8', errors='replace')
         except (subprocess.TimeoutExpired, OSError) as error:
             raise _CLIUnsupported(f'Cannot verify provider stdin capabilities; upgrade the CLI: {error}') from error
-        if help_result.returncode or any(flag not in help_text for flag in required):
-            raise _CLIUnsupported('Upgrade AGY CLI: this runner requires --input-format stream-json and --output-format stream-json; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
+        missing = [flag for flag in required if flag not in help_text]
+        if help_result.returncode or missing:
+            details = {
+                '--model': 'exact model selection',
+                '--input-format': 'stream-json input',
+                '--output-format': 'stream-json output',
+            }
+            capabilities = ', '.join(f'{flag} ({details.get(flag, "required capability")})' for flag in missing)
+            reason = f'required capabilities are missing: {capabilities}' if missing else 'capabilities could not be verified'
+            raise _CLIUnsupported('Upgrade AGY CLI: ' + reason + '; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
 
 
 def classify_unavailable(text):

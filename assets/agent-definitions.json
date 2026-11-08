@@ -107,7 +107,7 @@
         "command": "agy",
         "args_template": ["{{permission_mode}}", "{{model_flag}}", "{{extra_args}}", "--input-format", "stream-json", "--output-format", "stream-json"],
         "prompt_transport": "agy-stream-json",
-        "required_cli_flags": ["--input-format", "--output-format"],
+        "required_cli_flags": ["--model", "--input-format", "--output-format"],
         "protocol_documentation": "https://antigravity.google/docs/cli/headless/#stream-prompts-from-stdin"
       },
       "liveness": {"streaming_output": false, "wrapper_heartbeat_required": true},
