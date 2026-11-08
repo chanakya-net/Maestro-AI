@@ -133,22 +133,6 @@
       "context_window": 1000000,
       "agents": []
     },
-    "gemini-3.5-flash-medium": {
-      "provider": "google",
-      "ability": "balanced",
-      "complexity_weight": 6,
-      "context_window": 1048576,
-      "exclude_from_complexity": true,
-      "agents": ["agy"]
-    },
-    "gemini-3.5-flash-high": {
-      "provider": "google",
-      "ability": "advanced",
-      "complexity_weight": 8,
-      "context_window": 1048576,
-      "exclude_from_complexity": true,
-      "agents": ["agy"]
-    },
     "gemini-3.8-flash-low": {
       "provider": "google",
       "ability": "fast",
@@ -165,28 +149,92 @@
       "work_bands": ["easy"],
       "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
     },
-    "gemini-3.1-pro-low": {
+    "gemini-4-argon-low": {
+      "provider": "google",
+      "ability": "fast",
+      "complexity_weight": 4,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-argon-medium": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 5,
-      "context_window": 1000000,
       "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     },
-    "gemini-3.1-pro-high": {
+    "gemini-4-argon-high": {
       "provider": "google",
       "ability": "frontier",
-      "complexity_weight": 6,
-      "context_window": 1000000,
+      "complexity_weight": 7,
       "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     },
-    "gpt-0ss-120b-medium": {
+    "gemini-3.8-flash-high": {
+      "provider": "google",
+      "ability": "advanced",
+      "complexity_weight": 6,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-opus-5-5-low": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-opus-5-5-medium": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 9,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-opus-5-5-high": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 10,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-sonnet-5-5-low": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "complexity_weight": 6,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-sonnet-5-5-medium": {
+      "provider": "anthropic",
+      "ability": "advanced",
+      "complexity_weight": 7,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "claude-sonnet-5-5-high": {
+      "provider": "anthropic",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gpt-oss-120b-medium": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 7,
-      "context_window": 400000,
       "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"]
     }
   },
