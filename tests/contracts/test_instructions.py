@@ -46,10 +46,10 @@ def test_native_cli_examples_are_documented():
 
 
 def test_model_effort_guidance_keeps_explicit_planning_and_provenance():
-    readme = (ROOT/'README.md').read_text()
-    run_skill = (ROOT/'skills/run-with-it/SKILL.md').read_text()
-    pair_skill = (ROOT/'skills/pair-colleague/SKILL.md').read_text()
-    coordinator = (ROOT/'assets/sub-coordinator-prompt.md').read_text()
+    readme = (ROOT/'README.md').read_text(encoding='utf-8')
+    run_skill = (ROOT/'skills/run-with-it/SKILL.md').read_text(encoding='utf-8')
+    pair_skill = (ROOT/'skills/pair-colleague/SKILL.md').read_text(encoding='utf-8')
+    coordinator = (ROOT/'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
     assert '`--role plan`' in readme and 'omitting `--role plan` uses `high`' in readme
     assert '`--purpose plan`' in pair_skill and 'default `general`' in pair_skill
     assert 'requested_effort' in readme and 'requested_effort' in run_skill
