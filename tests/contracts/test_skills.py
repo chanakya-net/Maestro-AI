@@ -272,6 +272,7 @@ def test_model_and_effort_guidance_matches_the_approved_contract():
     assert 'arguments never emit `max` or `maximum`' in pair_skill
     assert 'Dispatch normalizes it before admission' in coordinator
     assert 'the admitted record\'s `effort` is the effective value' in coordinator
+
 def test_pair_templates_share_exact_sections_and_status_vocabulary():
     decisions=fences(skill('pair-colleague'),'markdown')
     assert any(re.findall(r'^# (.+)$',body,re.M)==pair_documents.DECISION_SECTIONS for body in decisions)

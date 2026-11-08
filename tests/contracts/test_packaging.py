@@ -205,3 +205,34 @@ def test_installed_cli_exposes_explicit_planning_and_role_aware_effort(distribut
             args += ["--role", role]
         result = run(sys.executable, "-m", "ai_skills", *args, cwd=work, env=env)
         assert f"model_reasoning_effort={expected}" in result.stdout
+
+
+def test_installed_pair_purpose_defaults_and_rejects_unknown_values(distributions, tmp_path):
+    target = tmp_path / "installed-pair"
+    run(sys.executable, "-m", "pip", "install", "--no-deps", "--target", target,
+        next(distributions.glob("*.whl")), cwd=tmp_path)
+    work = tmp_path / "installed-pair-work"
+    work.mkdir()
+    task = work / "task.md"
+    task.write_text("Plan a task", encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(target), PATH="", REPO_ROOT=str(work),
+               ASSETS_DEST=str(work / "absent-assets"))
+    env.pop("AI_SKILLS_RUN_ROOT", None)
+    lineup = ["--agent-1-harness", "codex", "--agent-1-model", "gpt-6.1-sol", "--agent-1-effort", "high",
+              "--agent-2-harness", "claude", "--agent-2-model", "claude-sonnet-5-5", "--agent-2-effort", "medium"]
+    for purpose, expected, effort in ((None, "general", "high"), ("plan", "plan", "xhigh")):
+        runs = work / f"runs-{expected}"
+        args = ["pair", "start", task, "--run-root", runs, *lineup]
+        if purpose:
+            args += ["--purpose", purpose]
+        run(sys.executable, "-m", "ai_skills", *args, cwd=work, env=env)
+        (config_file,) = runs.glob("*/config.json")
+        config = json.loads(config_file.read_text(encoding="utf-8"))
+        assert config["purpose"] == expected
+        assert config["agents"]["1"]["effort"] == effort
+    rejected_runs = work / "runs-rejected"
+    rejected = subprocess.run([sys.executable, "-m", "ai_skills", "pair", "start", str(task),
+                               "--purpose", "planning", "--run-root", str(rejected_runs), *lineup],
+                              cwd=work, env=env, text=True, capture_output=True, timeout=120)
+    assert rejected.returncode == 2 and "invalid choice: 'planning'" in rejected.stderr
+    assert not rejected_runs.exists()
