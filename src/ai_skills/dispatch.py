@@ -91,6 +91,9 @@ class WorkerConfig:
                 value = env.get(aliases.get(key, 'RUN_WITH_IT_' + key.upper()))
             if value is not None:
                 agent_values[key] = value
+                if key == 'effort':
+                    # A new request replaces provenance from a saved config.
+                    agent_values['requested_effort'] = ''
         # Worker selectors are independent of coordinator selectors. Prefer
         # explicit worker FORCED settings to deprecated AGENT/MODEL aliases.
         for key in ('agent','model'):
@@ -1357,6 +1360,8 @@ def main(argv=None):
             if 'agent_run' in record:
                 config=WorkerConfig.from_record(record)
                 run_updates={field.name:values[field.name] for field in fields(AgentRunConfig) if values.get(field.name) is not None}
+                if 'effort' in run_updates:
+                    run_updates['requested_effort'] = ''
                 worker_updates={field.name:values[field.name] for field in fields(WorkerConfig) if field.name!='agent_run' and values.get(field.name) is not None}
                 config=replace(config,agent_run=replace(config.agent_run,**run_updates),**worker_updates)
             else:
