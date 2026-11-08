@@ -10,6 +10,7 @@ from ai_skills.resources import resource_path
 from ai_skills import routing
 
 SOURCE_REGISTRY = Path(__file__).parents[2] / "assets" / "agent-registry.json"
+BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck")
 
 def test_role_band_bumps():
     assert routing_level("plan", "easy") == "medium-hard"
@@ -136,6 +137,58 @@ def test_restricted_designated_flash_keeps_forced_agy_no_candidate_error(restric
         select_route(
             request,
             load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("band", BANDS)
+def test_agy_complexity_scoring_uses_only_flash_medium_at_every_band(band):
+    selection = select_route(
+        RouteRequest(role="complexity", complexity_level=band, forced_agent="agy"),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert (selection["agent"], selection["model"]) == ("agy", "gemini-3.8-flash-medium")
+    assert [candidate["model"] for candidate in selection["evaluated_candidates"]] == [
+        "gemini-3.8-flash-medium"
+    ]
+
+
+@pytest.mark.parametrize("band", BANDS)
+def test_scoring_candidate_expansion_does_not_reintroduce_other_agy_models(band):
+    registry = load_registry(SOURCE_REGISTRY)
+    candidates = routing.candidate_model_ids(registry, "complexity", band, None, None)
+    agy_models = set(registry["agents"]["agy"]["model"]["known_models"])
+    agy_candidates = [model for model in candidates if model in agy_models]
+    assert agy_candidates == ["gemini-3.8-flash-medium"]
+
+
+@pytest.mark.parametrize("restriction", ["excluded", "unavailable"])
+def test_scoring_medium_restriction_falls_back_or_errors_without_other_agy(restriction):
+    registry = load_registry(SOURCE_REGISTRY)
+    request = RouteRequest(
+        role="complexity",
+        complexity_level="medium",
+        detected_agents=frozenset({"agy", "codex", "claude"}),
+        **({"exclude_models": frozenset({"gemini-3.8-flash-medium"})} if restriction == "excluded" else {
+            "availability": {"models": {"gemini-3.8-flash-medium"}}
+        }),
+    )
+    selection = select_route(request, registry, {}).selection
+    assert selection["agent"] != "agy"
+    assert selection["model"] != "gemini-3.8-flash-medium"
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            RouteRequest(
+                role="complexity",
+                complexity_level="medium",
+                forced_agent="agy",
+                **({"exclude_models": frozenset({"gemini-3.8-flash-medium"})} if restriction == "excluded" else {
+                    "availability": {"models": {"gemini-3.8-flash-medium"}}
+                }),
+            ),
+            registry,
             {},
         )
     assert exc.value.code == 2
@@ -268,7 +321,6 @@ def test_retired_codex_models_cannot_be_routed_on_codex(model):
 
 
 DIRECT_HARNESSES = ("claude", "codex")
-BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck")
 NON_PLANNING_ROLES = ("impl", "review", "modify", "complexity", "artifact-recovery", "merge-recovery")
 DIRECT_MODELS = [
     (agent, model)

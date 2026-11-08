@@ -390,11 +390,13 @@ Automatic non-scoring work uses AGY Flash Low (`gemini-3.8-flash-low`) at the
 effective `quite-easy` band and Flash Medium (`gemini-3.8-flash-medium`) at
 `easy`. These are the only AGY worker models admitted automatically at those
 bands; AGY has no automatic worker at medium or harder bands. Review raises the
-effective band by one and planning by two, capped at the highest. Both Flash
-worker entries are excluded from complexity scoring, whose existing model
-policy remains unchanged. Existing usage targets and older direct model
-memberships remain unchanged. Explicit agent/model overrides retain compatibility
-and availability checks and may select a model outside automatic band lists.
+effective band by one and planning by two, capped at the highest. Complexity
+scoring has a separate policy: Flash Medium is the only AGY scoring model,
+eligible at all six scoring bands. Flash Low and every other AGY-enabled model
+are excluded from automatic scoring. Existing global, role, and band usage
+targets and older direct model memberships remain unchanged. Explicit
+agent/model overrides retain compatibility and availability checks and may
+select a model outside automatic band lists.
 
 `selection_strategy: "usage-share-debt"` describes the existing deterministic
 algorithm. The router ranks eligible agent/model pairs by global and role usage
