@@ -330,8 +330,23 @@ def agent_identity_errors(record: str, slot: str, agent: dict[str, str]) -> list
     return []
 
 
+def attempt_provenance_errors(record: str, attempts: list[dict]) -> list[str]:
+    """Require explicit evidence when an attempt differs from run configuration."""
+    errors = []
+    for attempt in attempts:
+        label = f"Round {attempt['round']} Agent {attempt['slot']} attempt {attempt['attempt']}"
+        agent = attempt['agent']
+        expected = agent['effort']
+        if agent.get('requested_effort'):
+            expected += f", requested effort {agent['requested_effort']}"
+        if metadata_values(record, label) != [expected]:
+            errors.append(f"Discussion record must carry '{label}: {expected}' exactly once")
+    return errors
+
+
 def validate_dossier(
-    path: str, expected: dict[str, str], config: dict[str, Any] | None = None
+    path: str, expected: dict[str, str], config: dict[str, Any] | None = None,
+    attempts: list[dict] | None = None,
 ) -> list[str]:
     text = read_text(path)
     if not text.strip():
@@ -365,6 +380,8 @@ def validate_dossier(
 
     if len(metadata_values(record, "Coordinator")) != 1:
         errors.append("Discussion record must carry exactly one 'Coordinator' line")
+
+    errors += attempt_provenance_errors(record, attempts or [])
 
     agents = (config or {}).get("agents", {}) if isinstance(config, dict) else {}
     for slot in ("1", "2"):
