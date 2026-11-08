@@ -355,10 +355,24 @@ sent to Claude or Codex. When normalization changes an explicit request, the
 effective value is used in argv and dry-run output, and the original is kept as
 `requested_effort`. AGY and other harnesses are unchanged.
 
-New ordinary pair-colleague runs use the same non-planning policy after
+Pair-colleague starts with `--purpose general` by default; only `general` and
+`plan` are accepted. General runs use the same non-planning policy after
 resolving harness aliases. Their saved configuration, colleague prompts, and
 provider arguments use effective effort; adjusted explicit requests remain in
 `requested_effort` and appear in the startup report and final dossier record.
+
+Opt into planning for both colleagues with `--purpose plan`. Codex uses `xhigh`
+for every recognized request. Claude keeps explicit `low`/`medium`/`high`/`xhigh`
+and maps `max`/`maximum` to `xhigh`; explicit lower Claude planning requests remain lower.
+Purpose is recorded once in `config.json` and reused for rounds, retries, and
+resume. Neither task wording nor inherited planning variables change it.
+Pair runs still require explicit harness, model, and effort for both colleagues:
+
+```sh
+ai-skills pair start task.md --purpose plan --agent-1-harness codex --agent-1-model gpt-6.1-terra --agent-1-effort high --agent-2-harness claude --agent-2-model claude-sonnet-5-5 --agent-2-effort medium
+```
+
+This uses Codex `xhigh` and Claude `medium`.
 
 Standalone planning requires an explicit role, for example:
 

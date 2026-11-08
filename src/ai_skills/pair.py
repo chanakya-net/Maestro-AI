@@ -56,6 +56,7 @@ class PairConfig:
     force: bool = False
     allow_unverified_safe: bool = False
     environment: dict | None = None
+    purpose: str = 'general'
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,12 @@ def _positive(value, label):
     if isinstance(value, bool) or not str(value).isdigit() or int(value) <= 0:
         raise PairError(f'{label} must be a positive integer')
     return int(value)
+
+
+def _purpose_role(purpose):
+    if purpose not in ('general', 'plan'):
+        raise PairError('purpose must be general or plan')
+    return 'plan' if purpose == 'plan' else 'agent'
 
 
 def _grace(value):
@@ -135,6 +142,7 @@ class PairRun:
 
     def start(self):
         options = self.options
+        role = _purpose_role(options.purpose)
         task = sys.stdin.read() if options.task_source == '-' else Path(options.task_source).read_text(encoding='utf-8')
         if not task.strip():
             raise PairError('the task is empty; provide the problem to work on')
@@ -183,7 +191,7 @@ class PairRun:
         for slot, a in agents.items():
             raw_effort = a['effort']
             try:
-                resolution = resolve_effort(a['harness'], raw_effort, 'general', registry)
+                resolution = resolve_effort(a['harness'], raw_effort, role, registry)
             except ValueError as error:
                 raise PairError(f'agent {slot} {error}') from error
             a['effort'] = resolution.effective
@@ -210,7 +218,7 @@ class PairRun:
         frozen_prompt = self.path / 'agent-prompt-template.md'
         shutil.copyfile(prompt, frozen_prompt)
         assets = {'prompt_template_sha256': documents.sha256_file(frozen_prompt), 'task_sha256': documents.sha256_file(self.path / 'task.md')}
-        self.config = {'schema_version': 3, 'engine_version': ENGINE_VERSION, 'created_at': created,
+        self.config = {'schema_version': 3, 'engine_version': ENGINE_VERSION, 'created_at': created, 'purpose': options.purpose,
                        'coordinator': 'current invoking agent', 'workspace_root': str(workspace), 'agents': agents,
                        'engine_runtime': {'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': os.path.abspath(sys.executable)},
                        'min_rounds': minimum, 'max_rounds': maximum, 'timeout_seconds': timeout,
@@ -440,6 +448,8 @@ class PairRun:
         if phase == 'awaiting-coordinator': return PairResult(0, self.values())
         if phase == 'blocked': raise PairError('this run is blocked by unrecoverable agent failures', 3)
         if phase != 'awaiting-agents': raise PairError(f'cannot run a round in phase {phase}')
+        purpose = self.config.get('purpose', 'general')
+        _purpose_role(purpose)
         workspace = self.bind_workspace()
         _verify(self.path / 'task.md', self.state['assets'].get('task_sha256'))
         _verify(self.round_dir / 'snapshot.md', self.current['snapshot_sha256'])
@@ -460,13 +470,13 @@ class PairRun:
             prompt = self.render_prompt(slot)
             record = {'schema_version': 1, 'engine_version': ENGINE_VERSION, 'state': 'allocated',
                       'host': socket.gethostname(), 'run_id': self.state['run_id'], 'attempt_id': attempt_id,
-                      'round': self.state['round'], 'slot': slot, 'attempt': a['attempts'],
+                      'round': self.state['round'], 'slot': slot, 'attempt': a['attempts'], 'purpose': purpose,
                       'snapshot_sha256': self.current['snapshot_sha256'], 'workspace_root': str(workspace),
                       'deadline_epoch': time.time() + self.state['timeout_seconds'], 'exit_code': None,
                       'timed_out': False, 'interrupted': False, 'provider_state': str(prefix) + '-provider.json'}
             manifest = self.attempt_record(slot)
             write_json_atomic(manifest, record)
-            spec = {'record': str(manifest), 'agent': self.config['agents'][slot], 'context': str(self.round_dir / 'snapshot.md'),
+            spec = {'record': str(manifest), 'purpose': purpose, 'agent': self.config['agents'][slot], 'context': str(self.round_dir / 'snapshot.md'),
                     'prompt': str(prompt), 'registry_file': self.config.get('registry_file', ''),
                     'record_directory': str(self.path / 'processes')}
             spec_file = Path(str(prefix) + '-spec.json')
@@ -622,6 +632,7 @@ def _attempt(spec_path):
     signal.signal(signal.SIGINT, interrupted)
     try:
         config = AgentRunConfig(agent=a['harness'], model=a['model'], effort=a['effort'],
+                                role=_purpose_role(spec.get('purpose', 'general')),
                                 requested_effort=a.get('requested_effort', ''),
                                 context_file=Path(spec['context']), prompt_file=Path(spec['prompt']),
                                 repo_root=Path(record['workspace_root']), unattended=True, gui_mode='0', permission_mode='safe' if a.get('safety_profile') != 'unverified' else '',
@@ -645,6 +656,7 @@ def parser():
         s = sub.add_parser(command)
         if command == 'start':
             s.add_argument('task_source')
+            s.add_argument('--purpose', choices=('general', 'plan'), default='general')
             for slot in ('1', '2'):
                 for key in ('name', 'harness', 'model', 'effort'):
                     s.add_argument(f'--agent-{slot}-{key}', default=None)

@@ -16,7 +16,7 @@ import psutil
 
 from ai_skills.pair import PairConfig, PairRun
 from ai_skills.storage import write_json_atomic
-from test_pair import pair_fixture, invoke, decision_file
+from test_pair import pair_fixture, invoke, decision_file, _use_direct_harness_registry, _direct_args
 
 
 def background(run):
@@ -59,21 +59,39 @@ def await_owned_attempts_completed(run):
     pytest.fail('owned pair attempts did not complete: ' + repr(observed))
 
 
-def test_interrupted_coordinator_collects_live_attempts_without_duplicate_paid_work(pair_fixture, monkeypatch, capsys):
-    start, root, _ = pair_fixture
+@pytest.mark.parametrize('planning', [False, True])
+def test_interrupted_coordinator_collects_live_attempts_without_duplicate_paid_work(pair_fixture, monkeypatch, capsys, planning):
+    start, root, registry_file = pair_fixture
     monkeypatch.setenv('FAKE_MODE', 'gated')
-    run = start()
+    if planning:
+        _use_direct_harness_registry(registry_file)
+    run = start(*(['--purpose', 'plan', *_direct_args('codex-alias', 'maximum', 'low')] if planning else []))
     process = background(run)
     try:
         await_started(root, process)
+        paths = [run / 'config.json', run / 'rounds/round-01/snapshot.md']
+        paths += list((run / 'rounds/round-01').glob('*-spec.json'))
+        paths += list((run / 'rounds/round-01').glob('*-prompt.md'))
+        frozen = {p: p.read_bytes() for p in paths}
         assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 4
         process.kill(); process.wait(timeout=5)
+        monkeypatch.setenv('RUN_WITH_IT_ROLE', 'agent')
+        monkeypatch.setenv('AGENT_1_EFFORT', 'low')
+        monkeypatch.setenv('AGENT_2_EFFORT', 'maximum')
         assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 4
         (root / 'providers.release').touch()
         await_owned_attempts_completed(run)
         assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
         assert (root / 'one-r1.count').read_text() == '1'
         assert (root / 'two-r1.count').read_text() == '1'
+        assert all(p.read_bytes() == contents for p, contents in frozen.items())
+        for slot, model in [('1', 'one'), ('2', 'two')]:
+            spec = json.loads((run / f'rounds/round-01/agent-{slot}-attempt-01-spec.json').read_text())
+            assert spec['purpose'] == ('plan' if planning else 'general')
+            if planning:
+                assert (root / f'{model}-role.txt').read_text() == 'plan'
+                expected = ['-c', 'model_reasoning_effort=xhigh'] if slot == '1' else ['--effort', 'low']
+                assert json.loads((root / f'{model}-argv.json').read_text())[1:3] == expected
     finally:
         (root / 'providers.release').touch()
         if process.poll() is None: process.kill(); process.wait()
