@@ -115,7 +115,7 @@
         "default": "--dangerously-skip-permissions",
         "available": ["--dangerously-skip-permissions"]
       },
-      "model": {"default": "gemini-3.5-flash-high", "flag_template": "--model {{model}}"},
+      "model": {"default": "gemini-3.8-flash-high", "flag_template": "--model {{model}}"},
       "capability_band": "advanced",
       "fallback_order": ["agy", "claude"]
     }

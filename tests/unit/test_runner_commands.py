@@ -83,6 +83,20 @@ def test_agy_invocation_forwards_selected_model_unchanged(config, model):
     assert spec.argv[-4:] == ('--input-format', 'stream-json', '--output-format', 'stream-json')
 
 
+def test_agy_default_invocation_pins_flash_high_once(config):
+    spec = build_invocation(config.replace(agent='agy', model=''), load_registry())
+    assert spec.argv.count('--model') == 1
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-high')
+
+
+def test_agy_explicit_model_overrides_flash_high_default_once(config):
+    spec = build_invocation(config.replace(agent='agy', model='gemini-3.8-flash-low'), load_registry())
+    assert spec.argv.count('--model') == 1
+    model_flag = spec.argv.index('--model')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-low')
+
+
 def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
     registry = load_registry()
     registry['agents']['github-copilot'].pop('routing_disabled')
