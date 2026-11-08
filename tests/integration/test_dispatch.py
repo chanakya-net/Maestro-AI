@@ -2526,11 +2526,13 @@ def test_worker_cli_effort_sources_match_admitted_record_and_provider(tmp_path, 
             monkeypatch.setenv(key, value)
     else:
         monkeypatch.setenv('MODEL_EFFORT', 'maximum')
+        monkeypatch.delenv('RUN_WITH_IT_ISSUE_DIR', raising=False)
         args = ['--agent', 'claude-alias', '--model', 'm', '--effort', effort, '--role', role,
                 '--state-file', str(config.state_file), '--repo-root', str(tmp_path),
                 '--context-file', str(config.agent_run.context_file), '--prompt-file', str(config.agent_run.prompt_file),
                 '--registry-file', str(config.agent_run.registry_file), '--result-file', str(config.agent_run.result_file),
-                '--log-file', str(config.agent_run.log_file), '--done-file', str(config.agent_run.done_file)]
+                '--log-file', str(config.agent_run.log_file), '--done-file', str(config.agent_run.done_file),
+                '--issue-dir', str(tmp_path)]
 
     assert dispatch_main(args) in (0, 1)
     if source == 'flat-config':

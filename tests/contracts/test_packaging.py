@@ -215,7 +215,17 @@ def test_installed_pair_purpose_defaults_and_rejects_unknown_values(distribution
     work.mkdir()
     task = work / "task.md"
     task.write_text("Plan a task", encoding="utf-8")
-    env = dict(os.environ, PYTHONPATH=str(target), PATH="", REPO_ROOT=str(work),
+    harness_bin = work / "harness-bin"
+    harness_bin.mkdir()
+    extension = ".cmd" if os.name == "nt" else ""
+    for harness in ("codex", "claude"):
+        executable = harness_bin / f"{harness}{extension}"
+        executable.write_text("@exit /b 0\n" if os.name == "nt" else "#!/bin/sh\nexit 0\n",
+                              encoding="utf-8")
+        if os.name != "nt":
+            executable.chmod(0o755)
+    env = dict(os.environ, PYTHONPATH=str(target), PATH=str(harness_bin), REPO_ROOT=str(work),
+               RUN_AGENT_BOOTSTRAP_PATH="0",
                ASSETS_DEST=str(work / "absent-assets"))
     env.pop("AI_SKILLS_RUN_ROOT", None)
     lineup = ["--agent-1-harness", "codex", "--agent-1-model", "gpt-6.1-sol", "--agent-1-effort", "high",
