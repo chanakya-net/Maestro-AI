@@ -146,14 +146,14 @@ def test_malformed_nested_configuration_reports_a_validation_error(registry_file
         load_registry(registry_file)
 
 
-def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_excluded():
+def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_explicit():
     catalog = json.loads(SOURCE_REGISTRY.read_text())["model_catalog"]
     assert {
         model: {
             "agents": catalog[model]["agents"],
             "work_bands": catalog[model]["work_bands"],
             "complexity_weight": catalog[model]["complexity_weight"],
-            "exclude_from_complexity": catalog[model]["exclude_from_complexity"],
+            "exclude_from_complexity": catalog[model].get("exclude_from_complexity"),
         }
         for model in ("gemini-3.8-flash-low", "gemini-3.8-flash-medium")
     } == {
@@ -163,9 +163,12 @@ def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_excluded():
         },
         "gemini-3.8-flash-medium": {
             "agents": ["agy"], "work_bands": ["easy"],
-            "complexity_weight": 4, "exclude_from_complexity": True,
+            "complexity_weight": 4, "exclude_from_complexity": None,
         },
     }
+    assert catalog["gemini-3.8-flash-medium"]["complexity_bands"] == [
+        "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
+    ]
 
 
 def test_agy_direct_membership_and_usage_targets_remain_intact():

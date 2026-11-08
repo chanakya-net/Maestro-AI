@@ -63,7 +63,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.1-pro-low",
+      "model": "gemini-3.8-flash-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
@@ -115,7 +115,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.1-pro-low",
+      "model": "gemini-3.8-flash-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -167,7 +167,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.1-pro-low",
+      "model": "gemini-3.8-flash-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
@@ -219,7 +219,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.1-pro-low",
+      "model": "gemini-3.8-flash-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -271,7 +271,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.1-pro-low",
+      "model": "gemini-3.8-flash-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
@@ -2461,7 +2461,9 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": ["github-copilot"],
+        "agents": [
+          "github-copilot"
+        ],
         "models": [],
         "agent_models": []
       }
@@ -2482,7 +2484,9 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": ["github-copilot"],
+        "agents": [
+          "github-copilot"
+        ],
         "models": [],
         "agent_models": []
       }

@@ -138,6 +138,7 @@
       "ability": "balanced",
       "complexity_weight": 6,
       "context_window": 1048576,
+      "exclude_from_complexity": true,
       "agents": ["agy"]
     },
     "gemini-3.5-flash-high": {
@@ -145,6 +146,7 @@
       "ability": "advanced",
       "complexity_weight": 8,
       "context_window": 1048576,
+      "exclude_from_complexity": true,
       "agents": ["agy"]
     },
     "gemini-3.8-flash-low": {
@@ -159,15 +161,16 @@
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 4,
-      "exclude_from_complexity": true,
       "agents": ["agy"],
-      "work_bands": ["easy"]
+      "work_bands": ["easy"],
+      "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
     },
     "gemini-3.1-pro-low": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 5,
       "context_window": 1000000,
+      "exclude_from_complexity": true,
       "agents": ["agy"]
     },
     "gemini-3.1-pro-high": {
@@ -175,6 +178,7 @@
       "ability": "frontier",
       "complexity_weight": 6,
       "context_window": 1000000,
+      "exclude_from_complexity": true,
       "agents": ["agy"]
     },
     "gpt-0ss-120b-medium": {
@@ -182,6 +186,7 @@
       "ability": "advanced",
       "complexity_weight": 7,
       "context_window": 400000,
+      "exclude_from_complexity": true,
       "agents": ["agy"]
     }
   },
