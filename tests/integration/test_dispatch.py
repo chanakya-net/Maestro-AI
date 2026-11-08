@@ -2060,7 +2060,7 @@ def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', he
     codex_args = "capture = Path(args[-2])\nassert args[-3:] == ['--output-last-message', str(capture), '-']"
     build = build.replace(codex_args, invocation)
     flags = {'claude': '    --output-format=stream-json)\n--output-format (choices: "text", "json", "stream-json")',
-             'agy': '--input-format\n--output-format', 'opencode': '--format [choices: "default", "json"]'}[agent]
+             'agy': '--model\n--input-format\n--output-format', 'opencode': '--format [choices: "default", "json"]'}[agent]
     probe = f"""
 if '--version' in sys.argv:
     print({version!r})

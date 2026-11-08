@@ -97,6 +97,19 @@ def test_agy_explicit_model_overrides_flash_high_default_once(config):
     assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-low')
 
 
+@pytest.mark.parametrize('extra_args', [('--model', 'other-model'), ('--model=other-model',), ('-m', 'other-model')])
+def test_agy_rejects_extra_model_selection_options(config, extra_args):
+    with pytest.raises(ValueError, match='AGY.*--model'):
+        build_invocation(config.replace(agent='agy', model='gemini-3.8-flash-high', extra_args=extra_args), load_registry())
+
+
+def test_agy_preserves_unrelated_extra_args(config):
+    spec = build_invocation(config.replace(agent='agy', extra_args=('--verbose', '--label=test')), load_registry())
+    assert '--verbose' in spec.argv
+    assert '--label=test' in spec.argv
+    assert spec.argv.count('--model') == 1
+
+
 def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
     registry = load_registry()
     registry['agents']['github-copilot'].pop('routing_disabled')
