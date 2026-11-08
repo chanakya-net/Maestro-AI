@@ -171,17 +171,45 @@ def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_e
     ]
 
 
-def test_agy_direct_membership_and_usage_targets_remain_intact():
+def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     source = json.loads(SOURCE_REGISTRY.read_text())
     agy_models = sorted(
         model for model, entry in source["model_catalog"].items()
         if "agy" in entry.get("agents", [])
     )
-    assert agy_models == sorted([
+    expected_agy_models = [
+        *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
+        *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
+        *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
+        *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
+        "gpt-oss-120b-medium",
+    ]
+    assert agy_models == sorted(expected_agy_models)
+    assert not set(agy_models) & {
         "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
-        "gemini-3.5-flash-medium", "gemini-3.8-flash-low", "gemini-3.8-flash-medium",
-        "gpt-0ss-120b-medium",
-    ])
+        "gemini-3.5-flash-medium", "gpt-0ss-120b-medium",
+    }
+    catalog = source["model_catalog"]
+    explicit_only = set(expected_agy_models) - {"gemini-3.8-flash-low", "gemini-3.8-flash-medium"}
+    for model in explicit_only:
+        assert catalog[model]["agents"] == ["agy"]
+        assert catalog[model]["explicit_only"] is True
+        assert catalog[model]["exclude_from_complexity"] is True
+        assert "work_bands" not in catalog[model]
+        assert "context_window" not in catalog[model]
+    assert "gemini-3.8-flash-high" in explicit_only
+    definitions = json.loads(SOURCE_REGISTRY.with_name("agent-definitions.json").read_text())
+    expanded = load_registry(SOURCE_REGISTRY)
+    direct_baseline = {
+        "claude": ("claude-haiku-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"),
+        "codex": ("gpt-6-astra", "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"),
+    }
+    for agent, expected_default in (("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.1-sol")):
+        expected_models = list(direct_baseline[agent])
+        assert expanded["agents"][agent]["model"]["known_models"] == expected_models
+        assert [model for model, entry in source["model_catalog"].items()
+                if agent in entry.get("agents", [])] == expected_models
+        assert definitions["agents"][agent]["model"]["default"] == expected_default
     assert source["model_routing"]["usage_distribution"] == {
         "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
         "role_target_percent": {

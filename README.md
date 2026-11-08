@@ -333,6 +333,7 @@ complexity-scoring restrictions and required-pool settings.
 | `complexity_bands` | Optional exact bands for the worker that **scores** task complexity, separate from the workers doing the task. Otherwise scoring uses the existing weight/minimum-band rules. |
 | `min_band` | Minimum scoring band when `complexity_bands` is absent; it does not override explicit `work_bands`. |
 | `exclude_from_complexity` | Prevents normal selection as the complexity-scoring worker. |
+| `explicit_only` | Documents a selectable model that is excluded from automatic work and scoring pools. |
 | `required_bands` | Adds the model to complexity-scoring candidate pools at these bands, subject to existing restrictions; selection is still balanced. |
 | `alias_of` | Reuses another model's metadata for a different CLI ID. Declare its own `agents`, `work_bands`, and `required_bands`; these memberships are not inherited. |
 
@@ -400,17 +401,33 @@ edit `model_routing.usage_distribution`:
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
 
-Automatic non-scoring work uses AGY Flash Low (`gemini-3.8-flash-low`) at the
-effective `quite-easy` band and Flash Medium (`gemini-3.8-flash-medium`) at
-`easy`. These are the only AGY worker models admitted automatically at those
-bands; AGY has no automatic worker at medium or harder bands. Review raises the
-effective band by one and planning by two, capped at the highest. Complexity
-scoring has a separate policy: Flash Medium is the only AGY scoring model,
-eligible at all six scoring bands. Flash Low and every other AGY-enabled model
-are excluded from automatic scoring. Existing global, role, and band usage
-targets and older direct model memberships remain unchanged. Explicit
-agent/model overrides retain compatibility and availability checks and may
-select a model outside automatic band lists.
+The maintained AGY selectable inventory contains 13 exact IDs, all registered
+for AGY only:
+
+| Family | Explicit model IDs |
+| --- | --- |
+| Gemini 4 Argon | `gemini-4-argon-low`, `gemini-4-argon-medium`, `gemini-4-argon-high` |
+| Gemini 3.8 Flash | `gemini-3.8-flash-low`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-high` |
+| Claude Opus 5.5 through AGY | `claude-opus-5-5-low`, `claude-opus-5-5-medium`, `claude-opus-5-5-high` |
+| Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
+| GPT-OSS | `gpt-oss-120b-medium` |
+
+Only Flash Low (`gemini-3.8-flash-low`) enters automatic non-scoring work at
+effective `quite-easy`, and only Flash Medium (`gemini-3.8-flash-medium`)
+enters it at `easy`. Flash Medium is also the only AGY complexity-scoring
+model, eligible at all six scoring bands. The other 11 models are explicit-only
+and excluded from automatic work and scoring. AGY has no automatic worker at
+medium or harder non-scoring bands. Review raises the effective band by one
+and planning by two, capped at the highest. Existing global, role, and band
+usage targets remain unchanged. Explicit agent/model overrides retain
+compatibility and availability checks, preserve the exact selected ID and its
+suffix, and continue to count usage against AGY; pair read-only eligibility
+checks also remain in force.
+
+The inventory records models observed in the AGY CLI on November 7, 2026.
+Actual access depends on the user's account, quota, and provider availability.
+Registry membership and model listing document selectable IDs; they do not
+verify that inference is available or succeeds for a particular account.
 
 `selection_strategy: "usage-share-debt"` describes the existing deterministic
 algorithm. The router ranks eligible agent/model pairs by global and role usage

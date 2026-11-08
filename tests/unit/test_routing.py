@@ -90,6 +90,41 @@ def test_forced_agy_model_keeps_explicit_band_exception():
     assert (selection["agent"], selection["model"]) == ("agy", "gemini-3.8-flash-low")
 
 
+AGY_EXPLICIT_MODELS = (
+    *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
+    *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
+    *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
+    *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
+    "gpt-oss-120b-medium",
+)
+
+
+@pytest.mark.parametrize("model", AGY_EXPLICIT_MODELS)
+def test_every_agy_model_can_be_explicitly_routed_at_an_ineligible_band(model):
+    selection = select_route(
+        RouteRequest(
+            role="impl", complexity_level="medium", forced_agent="agy", forced_model=model,
+        ),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert (selection["agent"], selection["model"]) == ("agy", model)
+
+
+@pytest.mark.parametrize("model", [
+    "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
+    "gemini-3.5-flash-medium", "gpt-0ss-120b-medium",
+])
+def test_retired_agy_models_fail_instead_of_aliasing(model):
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            RouteRequest(role="impl", complexity_level="medium", forced_agent="agy", forced_model=model),
+            load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
+
+
 def test_excluded_or_unavailable_flash_falls_back_without_expanding_agy_pool():
     registry = load_registry(SOURCE_REGISTRY)
     excluded = select_route(

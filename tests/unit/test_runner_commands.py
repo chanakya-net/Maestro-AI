@@ -69,7 +69,13 @@ def test_codex_default_invocation_uses_sol_6_1(config):
     assert spec.argv[model_flag + 1] == 'gpt-6.1-sol'
 
 
-@pytest.mark.parametrize('model', ['gemini-4-argon-high', 'claude-opus-5-5-medium'])
+@pytest.mark.parametrize('model', [
+    *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
+    'gpt-oss-120b-medium',
+])
 def test_agy_invocation_forwards_selected_model_unchanged(config, model):
     spec = build_invocation(config.replace(agent='agy', model=model), load_registry())
     model_flag = spec.argv.index('--model')
