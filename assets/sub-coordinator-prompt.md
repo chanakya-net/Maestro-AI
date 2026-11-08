@@ -112,6 +112,8 @@ Before any worktree bootstrap, routing, worker spawn, merge attempt, or report w
 
 Write one JSON configuration per role/cycle/attempt using file tools; use absolute paths, JSON strings for model names, and arrays for exact extra argv. `agent`/`model` below are examples: replace them with the persisted route decision and preserve `effort` and `selection_reason` in Sub-Coordinator state. Worker selectors never inherit `SUB_COORD_AGENT` or `SUB_COORD_MODEL`.
 
+Effort in the configuration is the requested route effort. Dispatch normalizes it before admission to the effective effort that is persisted and passed to the provider; the admitted record's `effort` is the effective value. An explicit request that dispatch adjusted is retained as optional `requested_effort` provenance (absent when unchanged). Record the effective `effort` in Sub-Coordinator state, and report `requested_effort` only as provenance, never as the value to run.
+
 For ordinary managed implementation on any supported enabled route, include `result_capture` when you can establish the complete list of applicable approved checks. Populate `required_checks` from the issue requirements, grounded plan when present, and governing repository instructions. Include all approved command and manual checks in the task context and use their exact text in the config. Supply an empty `review_comment_ids` list for implementation. If check applicability or completeness is unresolved, omit `result_capture` and use file publication. The dispatcher selects the adapter and falls back to file publication when an otherwise compatible executable lacks capture.
 
 ```json

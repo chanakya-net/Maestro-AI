@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from ai_skills.dispatch import WorkerConfig, dispatch_worker, inspect_worker
+from ai_skills.dispatch import WorkerConfig, dispatch_worker, inspect_worker, main as dispatch_main
 from ai_skills.runner import AgentRunConfig
 from dataclasses import replace
 
@@ -2389,3 +2389,173 @@ def test_captured_modifier_blocked_on_stream_adapter_preserves_next_action_and_c
     root = str(config.agent_run.repo_root)
     assert current_head(root) == start
     assert git_output(root, 'status', '--porcelain') == 'M feature.txt'
+
+
+def effort_worker(tmp_path, *, agent='claude', role='impl', effort='', detach=False):
+    """Fake provider records its own admitted record and argv before finishing."""
+    observed = tmp_path/'observed.json'
+    source = f'''import json,os,sys
+from pathlib import Path
+state=Path(os.environ['RUN_WITH_IT_STATE_FILE'])
+record=json.loads(Path(str(state)+'.config.json').read_text())
+Path({str(observed)!r}).write_text(json.dumps({{'argv':sys.argv[1:],'effort':record['agent_run']['effort'],
+    'requested':record['agent_run'].get('requested_effort','')}}))
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{{}}')
+'''
+    config = worker_config(tmp_path, source, detach=detach)
+    script = tmp_path/'provider.py'
+    registry = tmp_path/'registry.json'
+    registry.write_text(json.dumps({'agents': {agent: {'model': {'default': 'm'}, 'permission_modes': {'default': ''},
+        'invocation': {'command': sys.executable, 'args_template': [str(script), '{{model_settings}}']}}}}))
+    run = config.agent_run.replace(agent=agent, role=role, effort=effort, registry_file=registry, issue_dir=tmp_path)
+    return replace(config, agent_run=run)
+
+
+def effort_setting(agent, argv):
+    if agent == 'codex':
+        return next(item.split('=', 1)[1] for item in argv if item.startswith('model_reasoning_effort='))
+    return argv[argv.index('--effort') + 1]
+
+
+@pytest.mark.parametrize(('agent', 'role', 'effort', 'effective', 'requested'), [
+    ('claude', 'impl', '', 'high', ''),
+    ('claude', 'impl', 'low', 'low', ''),
+    ('claude', 'impl', 'medium', 'medium', ''),
+    ('claude', 'impl', 'xhigh', 'high', 'xhigh'),
+    ('claude', 'impl', 'maximum', 'high', 'maximum'),
+    ('claude', 'plan', '', 'xhigh', ''),
+    ('claude', 'plan', 'high', 'high', ''),
+    ('claude', 'plan', 'max', 'xhigh', 'max'),
+    ('codex', 'impl', 'low', 'high', 'low'),
+    ('codex', 'impl', 'xhigh', 'high', 'xhigh'),
+    ('codex', 'plan', '', 'xhigh', ''),
+    ('codex', 'plan', 'medium', 'xhigh', 'medium'),
+])
+def test_admission_persists_effective_effort_matching_provider_argv(tmp_path, agent, role, effort, effective, requested):
+    config = effort_worker(tmp_path, agent=agent, role=role, effort=effort)
+    dispatch_worker(config)
+    observed = json.loads((tmp_path/'observed.json').read_text())
+    saved = json.loads(Path(str(config.state_file)+'.config.json').read_text())['agent_run']
+    assert (saved['effort'], saved.get('requested_effort', '')) == (effective, requested)
+    assert (observed['effort'], observed['requested']) == (effective, requested)
+    assert effort_setting(agent, observed['argv']) == effective
+
+
+def test_unknown_effort_is_rejected_before_admission_state_or_provider(tmp_path):
+    config = effort_worker(tmp_path, effort='extreme')
+    with pytest.raises(ValueError, match='unknown effort'):
+        dispatch_worker(config)
+    assert not config.state_file.exists()
+    assert not Path(str(config.state_file)+'.config.json').exists()
+    assert not (tmp_path/'observed.json').exists()
+
+
+def test_requested_effort_survives_record_round_trip_and_old_records_load(tmp_path):
+    config = effort_worker(tmp_path, effort='high')
+    adjusted = replace(config, agent_run=config.agent_run.replace(effort='high', requested_effort='xhigh'))
+    record = json.loads(json.dumps(adjusted.to_record()))
+    assert WorkerConfig.from_record(record).agent_run.requested_effort == 'xhigh'
+    del record['agent_run']['requested_effort']
+    assert WorkerConfig.from_record(record).agent_run.requested_effort == ''
+
+
+@pytest.mark.parametrize(('override', 'effective', 'requested'), [
+    ('low', 'low', ''),
+    ('xhigh', 'high', 'xhigh'),
+    (None, 'high', 'maximum'),
+])
+@pytest.mark.parametrize('flat', [False, True])
+def test_saved_config_effort_override_replaces_old_provenance(tmp_path, monkeypatch, override, effective, requested, flat):
+    config = effort_worker(tmp_path, agent='claude', role='impl', effort='high')
+    saved = replace(config, agent_run=config.agent_run.replace(requested_effort='maximum'))
+    config_path = tmp_path/'saved-config.json'
+    saved_record = saved.to_record()
+    if flat:
+        saved_record = {**saved_record['agent_run'], **{k: v for k, v in saved_record.items() if k != 'agent_run'}}
+    config_path.write_text(json.dumps(saved_record))
+    monkeypatch.setenv('RUN_WITH_IT_DISPATCHER_MANAGED', '0')
+
+    args = ['--config', str(config_path)] + (['--effort', override] if override else [])
+    assert dispatch_main(args) in (0, 1)
+
+    record = json.loads(Path(str(config.state_file)+'.config.json').read_text())['agent_run']
+    provider = json.loads((tmp_path/'observed.json').read_text())
+    assert (record['effort'], record.get('requested_effort', '')) == (effective, requested)
+    assert (provider['effort'], provider['requested']) == (effective, requested)
+    assert effort_setting('claude', provider['argv']) == effective
+
+
+@pytest.mark.parametrize(('source', 'role', 'effort', 'expected', 'requested'), [
+    ('flat-config', 'impl', 'xhigh', 'high', 'xhigh'),
+    ('structured-config', 'plan', 'maximum', 'xhigh', 'maximum'),
+    ('environment', 'impl', 'medium', 'medium', ''),
+    ('cli', 'plan', 'low', 'low', ''),
+])
+def test_worker_cli_effort_sources_match_admitted_record_and_provider(tmp_path, monkeypatch,
+                                                                      source, role, effort, expected, requested):
+    config = effort_worker(tmp_path, agent='claude', role=role, effort='')
+    record = config.to_record()
+    record['agent_run']['agent'] = 'claude-alias'
+    registry = json.loads(config.agent_run.registry_file.read_text())
+    registry['aliases'] = {'claude-alias': 'claude'}
+    config.agent_run.registry_file.write_text(json.dumps(registry))
+    record['agent_run']['registry_file'] = str(config.agent_run.registry_file)
+    config_path = tmp_path/'source-config.json'
+    args = []
+    monkeypatch.setenv('RUN_WITH_IT_DISPATCHER_MANAGED', '0')
+    if source == 'flat-config':
+        flat = {**record['agent_run'], **{key: value for key, value in record.items() if key != 'agent_run'}}
+        flat['effort'] = effort
+        flat['detach'] = True
+        config_path.write_text(json.dumps(flat))
+        args = ['--config', str(config_path)]
+    elif source == 'structured-config':
+        record['agent_run']['role'] = role
+        record['agent_run']['effort'] = effort
+        config_path.write_text(json.dumps(record))
+        args = ['--config', str(config_path)]
+    elif source == 'environment':
+        for key, value in {
+            'AGENT': 'claude-alias', 'MODEL': 'm', 'MODEL_EFFORT': effort,
+            'RUN_WITH_IT_ROLE': role, 'RUN_WITH_IT_ISSUE': '7', 'RUN_WITH_IT_ISSUE_DIR': str(tmp_path),
+            'REPO_ROOT': str(tmp_path), 'CONTEXT_PAYLOAD_FILE': str(config.agent_run.context_file),
+            'PROMPT_FILE': str(config.agent_run.prompt_file), 'AGENT_REGISTRY_FILE': str(config.agent_run.registry_file),
+            'RUN_WITH_IT_STATE_FILE': str(config.state_file), 'RUN_WITH_IT_RESULT_FILE': str(config.agent_run.result_file),
+            'RUN_WITH_IT_LOG_FILE': str(config.agent_run.log_file), 'RUN_WITH_IT_DONE_FILE': str(config.agent_run.done_file),
+        }.items():
+            monkeypatch.setenv(key, value)
+    else:
+        monkeypatch.setenv('MODEL_EFFORT', 'maximum')
+        args = ['--agent', 'claude-alias', '--model', 'm', '--effort', effort, '--role', role,
+                '--state-file', str(config.state_file), '--repo-root', str(tmp_path),
+                '--context-file', str(config.agent_run.context_file), '--prompt-file', str(config.agent_run.prompt_file),
+                '--registry-file', str(config.agent_run.registry_file), '--result-file', str(config.agent_run.result_file),
+                '--log-file', str(config.agent_run.log_file), '--done-file', str(config.agent_run.done_file)]
+
+    assert dispatch_main(args) in (0, 1)
+    if source == 'flat-config':
+        deadline = time.monotonic() + 5
+        observed_path = tmp_path/'observed.json'
+        while time.monotonic() < deadline and not observed_path.exists():
+            time.sleep(.02)
+    saved = json.loads(Path(str(config.state_file)+'.config.json').read_text())['agent_run']
+    provider = json.loads((tmp_path/'observed.json').read_text())
+    assert (saved['effort'], saved.get('requested_effort', '')) == (expected, requested)
+    assert (provider['effort'], provider['requested']) == (expected, requested)
+    assert effort_setting('claude', provider['argv']) == expected
+
+
+def test_detached_reattachment_preserves_admitted_effort_record(tmp_path):
+    from ai_skills.dispatch import adopt_worker
+    config = effort_worker(tmp_path, agent='claude', role='impl', effort='maximum', detach=True)
+    dispatch_worker(config)
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and json.loads(config.state_file.read_text())['state'] == 'running':
+        time.sleep(.03)
+    record_path = Path(str(config.state_file)+'.config.json')
+    before = record_path.read_bytes()
+    observed = json.loads((tmp_path/'observed.json').read_text())
+    assert (observed['effort'], observed['requested']) == ('high', 'maximum')
+    assert json.loads(before)['agent_run']['effort'] == 'high'
+    adopt_worker(config.state_file)
+    assert record_path.read_bytes() == before

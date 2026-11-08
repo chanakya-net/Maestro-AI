@@ -32,7 +32,7 @@ from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
 from ai_skills.provider_capture import CODEX, ProviderError, extract_response
 from ai_skills.runner import (
-    AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable,
+    AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable, effective_config,
     capture_candidate, capture_source, load_registry, run_agent, supports_final_response_capture,
 )
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
@@ -91,6 +91,8 @@ class WorkerConfig:
                 value = env.get(aliases.get(key, 'RUN_WITH_IT_' + key.upper()))
             if value is not None:
                 agent_values[key] = value
+        if nested and cli.get('effort') is not None:
+            agent_values['requested_effort'] = ''
         # Worker selectors are independent of coordinator selectors. Prefer
         # explicit worker FORCED settings to deprecated AGENT/MODEL aliases.
         for key in ('agent','model'):
@@ -477,6 +479,8 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
         'repo_root', 'context_file', 'prompt_file', 'registry_file', 'issue_dir', 'result_file',
         'done_file', 'log_file', 'events_log', 'status_file', 'process_state_file',
         'stream_directory', 'record_directory') if getattr(run, name) is not None})
+    # Admission records the effective effort; the explicit request stays as provenance.
+    run = effective_config(run, registry)
     pre_head = config.pre_spawn_head
     if not pre_head and git.repo_available(str(run.repo_root)):
         try:
@@ -1355,9 +1359,13 @@ def main(argv=None):
             if 'agent_run' in record:
                 config=WorkerConfig.from_record(record)
                 run_updates={field.name:values[field.name] for field in fields(AgentRunConfig) if values.get(field.name) is not None}
+                if 'effort' in run_updates:
+                    run_updates['requested_effort'] = ''
                 worker_updates={field.name:values[field.name] for field in fields(WorkerConfig) if field.name!='agent_run' and values.get(field.name) is not None}
                 config=replace(config,agent_run=replace(config.agent_run,**run_updates),**worker_updates)
             else:
+                if values.get('effort') is not None:
+                    record.pop('requested_effort', None)
                 record.update({key:value for key,value in values.items() if value is not None and key!='config'})
                 config=WorkerConfig.from_sources(record,os.environ)
         else:
