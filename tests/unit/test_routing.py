@@ -298,14 +298,14 @@ def test_nonobject_ledger_rejected(payload):
     ("medium", "claude-sonnet-5-5", "medium"),
     ("medium-hard", "claude-opus-5-5", "high"),
     ("complex", "claude-opus-5-5", "high"),
-    ("holy-fuck", "claude-fable-5-1", "high"),
+    ("holy-fuck", "claude-fable-5-2", "high"),
 ])
 def test_claude_routes_use_current_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="claude"), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model, decision.effort) == ("claude", model, effort)
 
 
-@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5"])
+@pytest.mark.parametrize("model", ["claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5", "claude-haiku-5-5"])
 def test_requested_claude_models_can_be_forced(model):
     decision = select_route(RouteRequest(role="impl", forced_agent="claude", forced_model=model), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model) == ("claude", model)

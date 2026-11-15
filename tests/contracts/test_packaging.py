@@ -153,7 +153,7 @@ for band in ('quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuc
     assert (route.agent, route.model) == ('agy', 'gemini-3.8-flash-medium')
 assert bundled['model_routing']['usage_distribution'] == source['model_routing']['usage_distribution']
 assert registry['agents']['claude']['model']['known_models'] == [
-    'claude-haiku-5-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-sonnet-5-5']
+    'claude-haiku-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5']
 assert registry['agents']['codex']['model']['known_models'] == [
     'gpt-6-astra', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol']
 for token in ('low', 'medium', 'high', 'xhigh', 'max', 'maximum'):
