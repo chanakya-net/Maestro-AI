@@ -201,7 +201,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     definitions = json.loads(SOURCE_REGISTRY.with_name("agent-definitions.json").read_text())
     expanded = load_registry(SOURCE_REGISTRY)
     direct_baseline = {
-        "claude": ("claude-haiku-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5"),
+        "claude": ("claude-haiku-5-5", "claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5"),
         "codex": ("gpt-6-astra", "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"),
     }
     for agent, expected_default in (("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.1-sol")):

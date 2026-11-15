@@ -2289,7 +2289,14 @@ result_path.write_text(json.dumps({'issue': '7', 'role': 'impl', 'status': 'succ
 
 
 def test_quiet_stream_capture_waits_for_the_original_provider(tmp_path, monkeypatch):
-    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', 'time.sleep(.25)\n' + CLAUDE_CAPTURE)
+    # Stay silent until the dispatcher reports the stall, so slow runners
+    # cannot let the provider finish before silence is observed.
+    wait_for_stall = (f"events = Path({str(tmp_path / 'events')!r})\n"
+                      "deadline = time.monotonic() + 5\n"
+                      "while time.monotonic() < deadline and not (events.exists() and\n"
+                      "        'type=worker-stalled|' in events.read_text(encoding='utf-8')):\n"
+                      "    time.sleep(.01)\n")
+    config = stream_capture_worker(tmp_path, monkeypatch, 'claude', wait_for_stall + CLAUDE_CAPTURE)
     config = replace(config, quiet_seconds=.02, stall_seconds=.05, hard_limit_seconds=10)
     assert dispatch_worker(config).state == 'completed'
     assert 'type=worker-stalled|' in config.agent_run.events_log.read_text(encoding='utf-8')

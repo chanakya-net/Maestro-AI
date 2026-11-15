@@ -23,7 +23,7 @@
       "required_bands": ["holy-fuck"],
       "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
     },
-    "claude-fable-5-1": {
+    "claude-fable-5-2": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 10,
