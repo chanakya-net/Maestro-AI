@@ -71,7 +71,7 @@ Use the installed `ai-skills` command on macOS, Linux, and native Windows. Pytho
 
 ## Maintained resources and issue worktree bootstrap
 
-Read `coordinator-rules.md` before routing, each phase, artifact reading and terminal reporting; use file tools to maintain its compaction-safe mirror at `.run-with-it/coordinator-rules.md`. Resolve maintained Markdown and `agent-registry.json` through the selected installed package or its authoritative source checkout. `ai-skills doctor --json` validates package resources; do not look for platform helper scripts. `ASSET_ROOT` means the selected pinned package's maintained resource directory (or the authoritative source `assets/` during development), never the installation manifest directory. Resolve an individual file with `ai_skills.resources.resource_path(name)` from the pinned interpreter.
+Read `coordinator-rules.md` before routing, each phase, artifact reading and terminal reporting; use file tools to maintain its compaction-safe mirror at `.run-with-it/coordinator-rules.md`. Resolve maintained Markdown and `agent-registry.json` through the selected installed package or its authoritative source checkout. `ai-skills doctor --json` validates package resources; do not look for platform helper scripts. `ASSET_ROOT` means the selected pinned package's maintained resource directory (or the authoritative source `assets/` during development), never the installation manifest directory. The pool sets the `ASSET_ROOT` environment variable to that directory; it overrides any `ASSET_ROOT` value written in this context. Resolve an individual file with `ai_skills.resources.resource_path(name)` from the pinned interpreter.
 
 For a new issue call the native worktree operation:
 
@@ -119,7 +119,7 @@ For ordinary managed implementation on any supported enabled route, include `res
 ```json
 {
   "agent": "codex",
-  "model": "gpt-6.1-sol",
+  "model": "gpt-6.2-sol",
   "effort": "high",
   "role": "impl",
   "issue": "42",
@@ -276,8 +276,10 @@ authority for the selected agent, model, effort, and selection reason.
 
 Native route command:
 ```text
-ai-skills route --registry-file <agent-registry.json> --ledger-file <usage-ledger.json> --role <role> --complexity-level <band> --record
+ai-skills route --ledger-file <usage-ledger.json> --role <role> --complexity-level <band> --record
 ```
+
+Omit `--registry-file`: the router uses the run's pinned registry, or `AGENT_REGISTRY_FILE` when the operator set one. It refuses a registry that differs from the pinned runtime's. Treat that refusal as a configuration error; do not work around it by choosing another registry.
 
 Pass trusted forced selectors, detected-agent availability, all cumulative `--exclude-model` values and sticky `--prefer-model` explicitly. Save the entire route decision before dispatch; never infer it from logs.
 
@@ -712,7 +714,7 @@ Write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` using schema_version 1 to survive 
       "cycle": 1,
       "pid": 12345,
       "agent": "codex",
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "selection_reason": "under-target",
       "log_file": ".run-with-it/issues/36/workers/impl/cycle-1.log",
       "done_file": ".run-with-it/issues/36/workers/impl/cycle-1.done",
@@ -853,7 +855,7 @@ When the sub-coordinator reaches any terminal state (completed / failed-review /
       "role": "impl",
       "cycle": 1,
       "agent": "codex",
-      "model": "gpt-6.1-sol",
+      "model": "gpt-6.2-sol",
       "effort": "high",
       "selection_reason": "under-target"
     }

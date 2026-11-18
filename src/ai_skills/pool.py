@@ -77,7 +77,7 @@ class PoolConfig:
     forced_agent: str | None = None
     forced_model: str | None = None
     sub_coord_agent: str = 'codex'
-    sub_coord_model: str = 'gpt-6.1-sol'
+    sub_coord_model: str = 'gpt-6.2-sol'
     effort: str = ''
     registry_file: Path | None = None
     prompt_file: Path | None = None
@@ -327,6 +327,10 @@ class PoolSupervisor:
     def worker_environment(self):
         environment = dict(self.config.environment if self.config.environment is not None else os.environ)
         environment['AI_SKILLS_RUN_ROOT'] = str(self.config.run_root)
+        # The pool runs on the pinned interpreter, so its resources are the run's.
+        environment['ASSET_ROOT'] = str(Path(str(resource_path('agent-registry.json'))).parent)
+        if self.config.registry_file:
+            environment['AGENT_REGISTRY_FILE'] = str(self.config.registry_file)
         for name in ('agent', 'model'):
             selector = getattr(self.config, 'forced_' + name)
             if selector:

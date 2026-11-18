@@ -17,7 +17,7 @@ class RuntimeConfig:
     forced_agent: str | None = None
     forced_model: str | None = None
     sub_coord_agent: str = "codex"
-    sub_coord_model: str = "gpt-6.1-sol"
+    sub_coord_model: str = "gpt-6.2-sol"
     parallel_jobs: int = 4
     poll_interval_seconds: float = 5.0
 

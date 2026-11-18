@@ -53,7 +53,7 @@ def test_gui_mode_permissions(config, agent, flag):
 
 
 def test_alias_and_default_effort(config):
-    spec = build_invocation(config.replace(agent='codex-cli', model='gpt-6.1-sol'), load_registry())
+    spec = build_invocation(config.replace(agent='codex-cli', model='gpt-6.2-sol'), load_registry())
     assert 'model_reasoning_effort=high' in spec.argv
 
 
@@ -66,7 +66,7 @@ def test_claude_default_invocation_uses_sonnet_5_5(config):
 def test_codex_default_invocation_uses_sol_6_1(config):
     spec = build_invocation(config, load_registry())
     model_flag = spec.argv.index('--model')
-    assert spec.argv[model_flag + 1] == 'gpt-6.1-sol'
+    assert spec.argv[model_flag + 1] == 'gpt-6.2-sol'
 
 
 @pytest.mark.parametrize('model', [
@@ -356,5 +356,5 @@ def test_unrelated_options_preserved(config, agent, extra):
 def test_codex_mcp_server_named_like_effort_preserves_arguments(config, override):
     argv = build_invocation(config.replace(extra_args=('-c', override)), load_registry()).argv
     assert argv == ('codex', 'exec', '-C', str(config.repo_root),
-                    '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6.1-sol',
+                    '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6.2-sol',
                     '-c', override, '-c', 'model_reasoning_effort=high', '-')

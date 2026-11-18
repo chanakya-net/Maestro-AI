@@ -46,6 +46,11 @@ def runtime_command(arguments: list[str]) -> list[str] | None:
     if not candidate and state_file:
         parent = Path(state_file).absolute().parent
         candidate = parent.parent if parent.name == '.run-with-it' else parent
+    ledger_file = option('--ledger-file')
+    if not candidate and ledger_file:
+        parent = Path(ledger_file).absolute().parent
+        if parent.name == '.run-with-it':
+            candidate = parent.parent
     if not candidate:
         agent_run = config.get('agent_run', {})
         if not isinstance(agent_run, dict):

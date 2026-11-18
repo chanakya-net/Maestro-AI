@@ -295,8 +295,8 @@ The bundled Claude lineup is limited to Opus 5.5 (`claude-opus-5-5`), Fable 5.2
 (`claude-haiku-5-5`), using the IDs in [Anthropic's model documentation](https://platform.claude.com/docs/en/models/overview).
 They run through the direct Claude CLI, whose default is Sonnet 5.5.
 
-Codex supports only GPT-6.1 Sol (`gpt-6.1-sol`, the default), GPT-6 Astra
-(`gpt-6-astra`), GPT-6.1 Terra (`gpt-6.1-terra`), and GPT-6 Luna (`gpt-6-luna`),
+Codex supports only GPT-6.2 Sol (`gpt-6.2-sol`, the default), GPT-6.2 Astra
+(`gpt-6.2-astra`), GPT-6.1 Terra (`gpt-6.1-terra`), and GPT-6 Luna (`gpt-6-luna`),
 using the IDs in [OpenAI's model documentation](https://learn.chatgpt.com/docs/models#recommended-models).
 Luna handles simple work and scoring, Terra medium work, Sol harder work, and
 Astra the highest work tier. Older model entries retained for other agents do
@@ -305,7 +305,7 @@ not enable those models on Codex.
 Each `model_catalog` entry groups a model's settings together:
 
 ```json
-"gpt-6.1-sol": {
+"gpt-6.2-sol": {
   "provider": "openai",
   "ability": "frontier",
   "complexity_weight": 7,
@@ -450,8 +450,9 @@ rejected in version 2 registries.
 
 Validate edits with `python -m ai_skills doctor --json`. For a custom version 2
 registry, keep its referenced definitions JSON beside it and set
-`AGENT_REGISTRY_FILE` to the registry path. Existing self-contained version 1
-registries remain supported. Python consumers should call
+`AGENT_REGISTRY_FILE` to the registry path. In a pinned run, `ai-skills route`
+refuses any other registry that differs from the pinned runtime's. Existing
+self-contained version 1 registries remain supported. Python consumers should call
 `ai_skills.registry.load_registry(path)` to expand defaults, aliases, and model
 memberships into the runner/router's self-contained version 1 data structure.
 The expanded result can also be saved as a standalone registry override.
@@ -491,7 +492,7 @@ The [run-with-it skill](skills/run-with-it/SKILL.md) creates the main state and 
   "run_root": "/absolute/run",
   "parallel_jobs": 4,
   "sub_coord_agent": "codex",
-  "sub_coord_model": "gpt-6.1-sol",
+  "sub_coord_model": "gpt-6.2-sol",
   "detach": true
 }
 ```

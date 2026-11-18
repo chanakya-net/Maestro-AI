@@ -1,5 +1,6 @@
 import copy
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -325,9 +326,9 @@ def test_retired_claude_models_cannot_be_routed(model):
     ("quite-easy", "gpt-6-luna", "high"),
     ("easy", "gpt-6-luna", "high"),
     ("medium", "gpt-6.1-terra", "high"),
-    ("medium-hard", "gpt-6.1-sol", "high"),
-    ("complex", "gpt-6.1-sol", "high"),
-    ("holy-fuck", "gpt-6-astra", "high"),
+    ("medium-hard", "gpt-6.2-sol", "high"),
+    ("complex", "gpt-6.2-sol", "high"),
+    ("holy-fuck", "gpt-6.2-astra", "high"),
 ])
 def test_codex_routes_use_requested_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -336,14 +337,14 @@ def test_codex_routes_use_requested_model_families(band, model, effort):
 
 @pytest.mark.parametrize("band, model, effort", [
     ("quite-easy", "gpt-6-luna", "high"), ("easy", "gpt-6-luna", "high"), ("medium", "gpt-6.1-terra", "high"),
-    ("medium-hard", "gpt-6.1-sol", "high"), ("complex", "gpt-6.1-sol", "high"), ("holy-fuck", "gpt-6.1-sol", "high"),
+    ("medium-hard", "gpt-6.2-sol", "high"), ("complex", "gpt-6.2-sol", "high"), ("holy-fuck", "gpt-6.2-sol", "high"),
 ])
 def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, model, effort):
     decision = select_route(RouteRequest(role="complexity", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model, decision.effort) == ("codex", model, effort)
 
 
-@pytest.mark.parametrize("model", ["gpt-6.1-sol", "gpt-6-astra", "gpt-6.1-terra", "gpt-6-luna"])
+@pytest.mark.parametrize("model", ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"])
 def test_requested_codex_models_can_be_forced(model):
     decision = select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model) == ("codex", model)
@@ -421,7 +422,7 @@ def test_planning_effort_uses_original_plan_role_not_routing_level():
     assert (decision.routing_level, decision.effort) == ("medium", "xhigh")
 
 
-@pytest.mark.parametrize("agent, model", [("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.1-sol")])
+@pytest.mark.parametrize("agent, model", [("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.2-sol")])
 @pytest.mark.parametrize("role", ["impl", "plan"])
 @pytest.mark.parametrize("setting", ["model_default", "band_override"])
 def test_direct_routes_reject_unknown_configured_effort(agent, model, role, setting):
@@ -439,3 +440,69 @@ def test_direct_routes_reject_unknown_configured_effort(agent, model, role, sett
             registry,
             {},
         )
+
+
+def _pinned_run(tmp_path, python=None):
+    run_dir = tmp_path / "project" / ".run-with-it"
+    run_dir.mkdir(parents=True)
+    (run_dir / "engine.json").write_text(json.dumps({
+        "schema_version": 1, "engine": "python", "engine_version": 1, "python": python or sys.executable,
+    }))
+    return run_dir / "usage-ledger.json"
+
+
+def _stale_registry(tmp_path):
+    stale = tmp_path / "stale"
+    stale.mkdir()
+    source = Path(str(resource_path("agent-registry.json")))
+    (stale / "agent-definitions.json").write_text(source.with_name("agent-definitions.json").read_text())
+    path = stale / "agent-registry.json"
+    path.write_text(source.read_text().replace("claude-fable-5-2", "claude-fable-5-1"))
+    return path
+
+
+def _route_args(ledger, *extra):
+    return [*extra, "--ledger-file", str(ledger), "--role", "review", "--complexity-level", "complex", "--record"]
+
+
+def test_pinned_run_rejects_registry_from_another_install(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("AGENT_REGISTRY_FILE", raising=False)
+    ledger = _pinned_run(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        routing.main(_route_args(ledger, "--registry-file", str(_stale_registry(tmp_path))))
+    assert exc.value.code == 2
+    assert "does not match" in capsys.readouterr().err
+    assert not ledger.exists()
+
+
+def test_pinned_run_defaults_to_runtime_registry(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("AGENT_REGISTRY_FILE", raising=False)
+    ledger = _pinned_run(tmp_path)
+    assert routing.main(_route_args(ledger)) == 0
+    candidates = json.loads(capsys.readouterr().out)["evaluated_candidates"]
+    assert "claude-fable-5-1" not in {candidate["model"] for candidate in candidates}
+
+
+def test_pinned_run_accepts_copy_of_runtime_registry(tmp_path, monkeypatch):
+    monkeypatch.delenv("AGENT_REGISTRY_FILE", raising=False)
+    ledger = _pinned_run(tmp_path)
+    assert routing.main(_route_args(ledger, "--registry-file", str(resource_path("agent-registry.json")))) == 0
+
+
+def test_pinned_run_honors_explicit_registry_override(tmp_path, monkeypatch, capsys):
+    override = _stale_registry(tmp_path)
+    monkeypatch.setenv("AGENT_REGISTRY_FILE", str(override))
+    ledger = _pinned_run(tmp_path)
+    assert routing.main(_route_args(ledger)) == 0
+    candidates = json.loads(capsys.readouterr().out)["evaluated_candidates"]
+    assert "claude-fable-5-2" not in {candidate["model"] for candidate in candidates}
+    assert routing.main(_route_args(ledger, "--registry-file", str(override))) == 0
+
+
+def test_pinned_run_refuses_a_different_interpreter(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("AGENT_REGISTRY_FILE", raising=False)
+    ledger = _pinned_run(tmp_path, python=str(tmp_path / "other-python"))
+    with pytest.raises(SystemExit):
+        routing.main(_route_args(ledger))
+    assert "pinned to" in capsys.readouterr().err
+    assert not ledger.exists()

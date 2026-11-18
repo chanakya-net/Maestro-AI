@@ -122,3 +122,15 @@ def test_update_runs_locally_regardless_of_pin(tmp_path, monkeypatch):
     monkeypatch.setenv('ASSETS_DEST', str(tmp_path / 'assets'))
     monkeypatch.chdir(root)
     assert cli.runtime_command(['update', '--only', 'codex']) is None
+
+
+def test_route_ledger_selects_the_runs_pinned_runtime(tmp_path, monkeypatch):
+    monkeypatch.delenv('AI_SKILLS_RUN_ROOT', raising=False)
+    monkeypatch.chdir(tmp_path)
+    pinned = tmp_path / 'pinned-python'
+    pinned.touch()
+    run_dir = tmp_path / 'project/.run-with-it'
+    run_dir.mkdir(parents=True)
+    (run_dir / 'engine.json').write_text(json.dumps({'schema_version': 1, 'engine': 'python', 'engine_version': 1, 'python': str(pinned)}))
+    arguments = ['route', '--ledger-file', str(run_dir / 'usage-ledger.json'), '--role', 'impl']
+    assert cli.runtime_command(arguments)[:4] == [str(pinned), '-I', '-m', 'ai_skills']

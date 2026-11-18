@@ -64,3 +64,12 @@ def test_worker_selector_overrides_are_explicit_serialized_configuration(tmp_pat
 def test_environment_zero_does_not_enable_detach(tmp_path):
     config=PoolConfig.from_sources({'state_file':str(tmp_path/'state')},{'RUN_WITH_IT_DETACH':'0'})
     assert config.detach is False
+
+def test_worker_environment_publishes_runtime_assets_and_registry_override(tmp_path):
+    from types import SimpleNamespace
+    from ai_skills.resources import resource_path
+    registry=tmp_path/'custom-registry.json'
+    config=SimpleNamespace(environment={'ASSET_ROOT':'/stale/install'},run_root=tmp_path,forced_agent=None,forced_model=None,registry_file=registry)
+    environment=PoolSupervisor.worker_environment(SimpleNamespace(config=config))
+    assert environment['ASSET_ROOT']==str(Path(str(resource_path('agent-registry.json'))).parent)
+    assert environment['AGENT_REGISTRY_FILE']==str(registry)
