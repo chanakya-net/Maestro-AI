@@ -733,7 +733,7 @@ def build_output(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select a run-with-it worker agent/model.")
-    parser.add_argument("--registry-file", required=True)
+    parser.add_argument("--registry-file", default="")
     parser.add_argument("--ledger-file", required=True)
     parser.add_argument(
         "--role",
@@ -755,15 +755,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _same_interpreter(left: str, right: str) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+
+
+def load_run_registry(requested: str, ledger_file: Path) -> dict[str, Any]:
+    """Load routing policy, keeping a pinned run on its runtime's registry.
+
+    The CLI pins a run's code, but a registry path is data supplied by the
+    caller. Only the operator's AGENT_REGISTRY_FILE may replace pinned policy.
+    """
+    from ai_skills.registry import load_registry
+
+    override = os.environ.get("AGENT_REGISTRY_FILE", "")
+    selected = requested or override
+    registry = load_registry(Path(selected) if selected else None)
+    run_dir = ledger_file.absolute().parent
+    engine_file = run_dir / "engine.json"
+    if run_dir.name != ".run-with-it" or not engine_file.is_file():
+        return registry
+    engine = read_json_file(engine_file)
+    pinned = engine.get("python") if isinstance(engine, dict) else None
+    if not isinstance(pinned, str) or not pinned:
+        fail(f"invalid pinned runtime in {engine_file}")
+    if not _same_interpreter(pinned, sys.executable):
+        fail(f"run is pinned to {pinned}; use that interpreter")
+    is_override = bool(override) and Path(selected).absolute() == Path(override).absolute()
+    if selected and not is_override and registry != load_registry():
+        fail(
+            f"registry {selected} does not match the run's pinned runtime; "
+            "omit --registry-file or set AGENT_REGISTRY_FILE to override it"
+        )
+    return registry
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    registry_file = Path(args.registry_file)
     ledger_file = Path(args.ledger_file)
-    from ai_skills.registry import load_registry
     try:
-        registry = load_registry(registry_file)
+        registry = load_run_registry(args.registry_file, ledger_file)
     except (OSError, ValueError) as exc:
-        fail(f"cannot load registry {registry_file}: {exc}")
+        fail(f"cannot load registry {args.registry_file or 'for this runtime'}: {exc}")
 
     if args.complexity_level:
         base_level = args.complexity_level

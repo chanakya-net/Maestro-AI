@@ -155,7 +155,7 @@ assert bundled['model_routing']['usage_distribution'] == source['model_routing']
 assert registry['agents']['claude']['model']['known_models'] == [
     'claude-haiku-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5']
 assert registry['agents']['codex']['model']['known_models'] == [
-    'gpt-6-astra', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.1-sol']
+    'gpt-6.2-astra', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.2-sol']
 for token in ('low', 'medium', 'high', 'xhigh', 'max', 'maximum'):
     assert resolve_effort('codex', token, 'impl', registry).effective == 'high'
     assert resolve_effort('codex', token, 'plan', registry).effective == 'xhigh'
@@ -228,7 +228,7 @@ def test_installed_pair_purpose_defaults_and_rejects_unknown_values(distribution
                RUN_AGENT_BOOTSTRAP_PATH="0",
                ASSETS_DEST=str(work / "absent-assets"))
     env.pop("AI_SKILLS_RUN_ROOT", None)
-    lineup = ["--agent-1-harness", "codex", "--agent-1-model", "gpt-6.1-sol", "--agent-1-effort", "high",
+    lineup = ["--agent-1-harness", "codex", "--agent-1-model", "gpt-6.2-sol", "--agent-1-effort", "high",
               "--agent-2-harness", "claude", "--agent-2-model", "claude-sonnet-5-5", "--agent-2-effort", "medium"]
     for purpose, expected, effort in ((None, "general", "high"), ("plan", "plan", "xhigh")):
         runs = work / f"runs-{expected}"

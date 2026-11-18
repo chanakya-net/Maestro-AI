@@ -10,7 +10,7 @@ def test_cli_precedes_environment_and_defaults():
     assert config.forced_model == "model"
     assert config.parallel_jobs == 2
     assert config.sub_coord_agent == "codex"
-    assert config.sub_coord_model == "gpt-6.1-sol"
+    assert config.sub_coord_model == "gpt-6.2-sol"
 
 
 import json

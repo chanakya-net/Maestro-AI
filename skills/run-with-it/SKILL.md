@@ -136,7 +136,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
-| `SUB_COORD_MODEL` | `gpt-6.1-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
+| `SUB_COORD_MODEL` | `gpt-6.2-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
 | `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
 | `STATUS_POLL_SECONDS` | `10` | Native polling cadence for status line output |
 | `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `ai-skills run watch` call in Step D |
@@ -201,7 +201,7 @@ effective value returned by the shared policy.
 
 ## Runtime and maintained rules
 
-Run `ai-skills doctor --json` and `ai-skills agent list --detected-only`. Resolve maintained prompt/rule Markdown and `agent-registry.json` from the selected installed package (or its authoritative source checkout during development). `ASSETS_DEST` selects the installation manifest root, not a flat prompt directory. Use `AGENT_REGISTRY_FILE` for an explicit registry override. Executables and resources come from the same pinned package. Use the active manifest's `resources` path as `ASSET_ROOT`; for a source checkout use its `assets/` directory. For an existing run use the pinned package's resources, even if the active manifest changed. The Python API `ai_skills.resources.resource_path(name)` resolves an individual maintained file from that interpreter. No OS-dependent helper inventory is needed.
+Run `ai-skills doctor --json` and `ai-skills agent list --detected-only`. Resolve maintained prompt/rule Markdown and `agent-registry.json` from the selected installed package (or its authoritative source checkout during development). `ASSETS_DEST` selects the installation manifest root, not a flat prompt directory. Use `AGENT_REGISTRY_FILE` for an explicit registry override. Executables and resources come from the same pinned package. Use the active manifest's `resources` path as `ASSET_ROOT`; for a source checkout use its `assets/` directory. For an existing run use the pinned package's resources, even if the active manifest changed; `.run-with-it/engine.json` names the pinned interpreter. Do not take `ASSET_ROOT`, prompt paths, or the registry from a checkout's `.venv` or any other separately installed copy unless it is the selected runtime. The Python API `ai_skills.resources.resource_path(name)` resolves an individual maintained file from that interpreter. No OS-dependent helper inventory is needed.
 
 Use file tools to copy maintained `main-orchestrator-rules.md` and `coordinator-rules.md` into `.run-with-it/` for compaction-safe re-reads. The repository copy remains authoritative over an installed mirror. Verify GitHub authentication, issue intake label, run branch/base, coordinator availability, and supplied context/artifact paths before admission. For a new authorized project initialize Git with `git init`; do not require Git merely to locate maintained resources. Never launch paid work in preflight.
 
@@ -275,7 +275,7 @@ The JSON keys below are accepted by `PoolConfig.from_record`; paths must be abso
   "run_root": "/absolute/run",
   "parallel_jobs": 4,
   "sub_coord_agent": "codex",
-  "sub_coord_model": "gpt-6.1-sol",
+  "sub_coord_model": "gpt-6.2-sol",
   "prompt_file": "/absolute/assets/sub-coordinator-prompt.md",
   "merge_prompt_file": "/absolute/assets/merge-recovery-prompt.md",
   "status_file": "/absolute/run/.run-with-it/status/current.txt",
@@ -303,7 +303,7 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
 ```json
 {
   "agent": "codex",
-  "model": "gpt-6.1-sol",
+  "model": "gpt-6.2-sol",
   "effort": "high",
   "role": "impl",
   "issue": "42",
@@ -355,7 +355,7 @@ The rendered body must list completed/closed issues as plain issue links such as
 ```text
 ai-skills agent list --detected-only
 ai-skills agent models codex
-ai-skills agent run --agent codex --model gpt-6.1-sol --effort high --context-file context.md --prompt-file prompt.md --permission-mode safe --unattended --dry-run
+ai-skills agent run --agent codex --model gpt-6.2-sol --effort high --context-file context.md --prompt-file prompt.md --permission-mode safe --unattended --dry-run
 ```
 
 Pass model/effort explicitly from routing. `safe` resolves to a registered read-only profile and fails closed if absent. Default writable permission profiles require explicit unattended authorization; GUI mode applies the registered safer noninteractive permissions. Inline prompt/context values retain exact argv boundaries, Unicode, quotes, spaces and empty extra arguments. Registry and prompt resources come from the pinned package unless explicitly overridden. `AI_SKILLS_RUN_ROOT` remains the shared run root when providers operate inside issue worktrees.
@@ -460,7 +460,7 @@ The Main Orchestrator persists `.run-with-it/main-state.json` (schema_version 4)
           "role": "impl",
           "cycle": 1,
           "agent": "codex",
-          "model": "gpt-6.1-sol",
+          "model": "gpt-6.2-sol",
           "selection_reason": "under-target"
         }
       ],
