@@ -169,3 +169,6 @@ build/
 # Local skill installation mirrors; maintained sources live in skills/
 /.agents/skills/
 /skills-lock.json
+
+# Local planning and design notes
+/docs/
