@@ -39,7 +39,8 @@ def test_worker_recovery_branches(worker_state,done,result,alive,wait,action,rea
     worker={"role":"modify","cycle":2,"state_file":"worker.json","result_file":"result.json"}
     evidence=RecoveryEvidence(issue="7",sub_state={"phase":"modify"},wait_elapsed_seconds=wait,
         workers=((worker,{"state":worker_state},done,result,{"alive":alive,"reason":"fresh" if alive else "state-file-stale","age_seconds":700}),))
-    decision=decide_recovery(evidence,RecoveryPolicy())
+    policy=RecoveryPolicy(max_wait_seconds=3600)
+    decision=decide_recovery(evidence,policy)
     assert (decision.action,decision.reason)==(action,reason)
     assert decision.details["worker_role"] == "modify"
     assert decision.details["worker_cycle"] == 2
@@ -48,6 +49,19 @@ def test_wait_cap_zero_means_no_cap():
     evidence=RecoveryEvidence(issue="7",sub_state={"phase":"impl"},wait_elapsed_seconds=99999,
         workers=(({}, {"state":"running"},False,False,{"alive":True}),))
     assert decide_recovery(evidence,RecoveryPolicy(max_wait_seconds=0)).action == "wait_worker"
+
+def test_default_wait_policy_keeps_live_child_after_one_hour():
+    evidence=RecoveryEvidence(issue="7",sub_state={"phase":"impl"},wait_elapsed_seconds=3601,
+        workers=(({}, {"state":"running"},False,False,{"alive":True}),))
+    assert RecoveryPolicy().max_wait_seconds == 0
+    decision=decide_recovery(evidence,RecoveryPolicy())
+    assert (decision.action,decision.reason)==("wait_worker","in-flight-worker-running")
+
+def test_default_wait_policy_still_recovers_dead_child_after_one_hour():
+    evidence=RecoveryEvidence(issue="7",sub_state={"phase":"impl"},wait_elapsed_seconds=3601,
+        workers=(({}, {"state":"running"},False,False,{"alive":False,"reason":"pids-dead"}),))
+    decision=decide_recovery(evidence,RecoveryPolicy())
+    assert (decision.action,decision.reason)==("spawn_recovery","in-flight-worker-orphaned")
 
 def test_worker_liveness_uses_freshest_artifact_and_unknown_is_conservative(tmp_path,monkeypatch):
     import os
@@ -60,6 +74,14 @@ def test_worker_liveness_uses_freshest_artifact_and_unknown_is_conservative(tmp_
     assert worker_liveness({}, {},now=800,stale_seconds=600,dead_pid_grace_seconds=60)["alive"]
     monkeypatch.setattr(state,"process_alive",lambda pid:False if pid else None)
     assert worker_liveness({}, {"runner_pid":999999},now=800,stale_seconds=600,dead_pid_grace_seconds=60)["reason"] == "pids-dead"
+
+@pytest.mark.parametrize(('age','alive'),[(1199,True),(1200,False)])
+def test_default_worker_stale_threshold_is_twenty_minutes(age,alive):
+    from ai_skills.state import DEFAULT_WORKER_STALE_SECONDS
+    assert DEFAULT_WORKER_STALE_SECONDS==1200
+    result=worker_liveness({}, {'updated_at':'1970-01-01T00:00:00Z'},now=age,
+        stale_seconds=DEFAULT_WORKER_STALE_SECONDS,dead_pid_grace_seconds=60)
+    assert result['alive'] is alive
 
 @pytest.mark.parametrize("pid",[None,True,-1,0,1,"10"])
 def test_invalid_pid_is_unknown(pid):

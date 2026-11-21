@@ -37,6 +37,7 @@ def state_transaction(func):
 TERMINAL_OUTCOMES = {"completed", "failed-review", "blocked", "merge_failed", "failed-merge"}
 LIVE_WORKER_STATES = {"ready", "starting", "running", "quiet", "stalled"}
 FINISHED_WORKER_STATES = {"completed", "failed", "artifact-recovery-required"}
+DEFAULT_WORKER_STALE_SECONDS = 1200
 
 
 def load_json(path: str) -> dict[str, Any]:
@@ -818,7 +819,7 @@ def sub_coord_recovery_decision(args: argparse.Namespace) -> dict:
         done = file_nonempty(item.get("done_file")) or snapshot.get("done") is True
         result = file_has_json(item.get("result_file")) or snapshot.get("result_present") is True
         liveness = worker_liveness(item, snapshot, now=now,
-            stale_seconds=max(int(getattr(args, "worker_stale_seconds", 600) or 0), 60),
+            stale_seconds=max(int(getattr(args, "worker_stale_seconds", DEFAULT_WORKER_STALE_SECONDS) or 0), 60),
             dead_pid_grace_seconds=max(int(getattr(args, "worker_dead_pid_grace_seconds", 60) or 0), 0))
         workers.append((item, snapshot, done, result, liveness))
     evidence = RecoveryEvidence(issue=str(args.issue), issue_dir=issue_dir, sub_state_file=sub_state_file,
@@ -827,7 +828,7 @@ def sub_coord_recovery_decision(args: argparse.Namespace) -> dict:
         wait_elapsed_seconds=max(int(getattr(args, "wait_elapsed_seconds", 0) or 0), 0))
     policy = RecoveryPolicy(max_attempts=recovery_max_attempts(args),
         max_compaction_handoffs=max(int(getattr(args, "max_compaction_handoffs", 6) or 0), 0),
-        max_wait_seconds=max(int(getattr(args, "max_wait_seconds", 3600) or 0), 0))
+        max_wait_seconds=max(int(getattr(args, "max_wait_seconds", 0) or 0), 0))
     return decide_recovery(evidence, policy).details
 
 
@@ -1250,10 +1251,10 @@ def build_parser() -> argparse.ArgumentParser:
     # A live dispatcher rewrites its worker state file every poll (~20s), so
     # silence beyond this means the dispatcher itself is gone and the file's
     # "running" is stale. Floor of 60s inside the analyzer.
-    sub_analysis.add_argument("--worker-stale-seconds", type=int, default=600)
+    sub_analysis.add_argument("--worker-stale-seconds", type=int, default=DEFAULT_WORKER_STALE_SECONDS)
     sub_analysis.add_argument("--worker-dead-pid-grace-seconds", type=int, default=60)
     sub_analysis.add_argument("--wait-elapsed-seconds", type=int, default=0)
-    sub_analysis.add_argument("--max-wait-seconds", type=int, default=3600)
+    sub_analysis.add_argument("--max-wait-seconds", type=int, default=0)
     sub_analysis.set_defaults(func=analyze_sub_coord_failure)
 
     sub_recovery_context = subparsers.add_parser("write-sub-coord-recovery-context")

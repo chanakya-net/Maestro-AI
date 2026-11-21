@@ -25,6 +25,39 @@ def test_slots_refill_and_dependencies_only_admit_after_completion(tmp_path,monk
     events=config.resolved().events_log.read_text()
     assert 'type=run-board' in events and 'type=pool-empty' in events and 'type=pool-heartbeat' in events
 
+def test_live_child_keeps_slot_past_hour_until_terminal_artifact(tmp_path,monkeypatch):
+    import ai_skills.pool as pool
+    from ai_skills.storage import write_json_atomic
+    config=pool_fixture(tmp_path,{1:{}},parallel=1)
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    supervisor=PoolSupervisor(config);assert supervisor.initialize() is None
+    coordinator=supervisor.worker('1')
+    issue_dir=Path(coordinator.agent_run.issue_dir);issue_dir.mkdir(parents=True,exist_ok=True)
+    child_state=issue_dir/'child.state.json'
+    child_result=issue_dir/'child-result.json'
+    child_done=issue_dir/'child.done'
+    child={'role':'impl','cycle':1,'state_file':str(child_state),
+           'result_file':str(child_result),'done_file':str(child_done)}
+    child_state.write_text(json.dumps({'state':'running','updated_at':'1970-01-01T02:46:39Z'}))
+    (issue_dir/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[child]}))
+    supervisor.store.transaction(lambda state:state['issue_registry']['1'].update(worker_wait_since=6399))
+    supervisor.active['1']=coordinator
+    monkeypatch.setattr(pool.time,'time',lambda:10000)
+    monkeypatch.setattr(pool.state_policy,'path_mtime',lambda path:None)
+
+    supervisor.recover('1',coordinator)
+    assert supervisor.active['1'] is coordinator
+    assert driver.started==[]
+
+    child_state.write_text(json.dumps({'state':'completed','updated_at':'1970-01-01T02:46:39Z','done':True}))
+    write_json_atomic(child_result,{'outcome':'completed','summary':'late child result'})
+    child_done.write_text('completed')
+    supervisor.recover('1',coordinator)
+    assert len(driver.started)==1
+    recovery=driver.started[0]
+    assert recovery.agent_run.role=='sub-coord'
+    assert 'SUB_COORD_RECOVERY_MODE=1' in Path(recovery.agent_run.context_file).read_text()
+
 def test_scope_overlap_and_exclusive_issue_never_coschedule(tmp_path,monkeypatch):
     config=pool_fixture(tmp_path,{1:{'parallel_safe':True,'ownership_scope':['src/a']},2:{'parallel_safe':True,'ownership_scope':['src/a/child']},3:{'parallel_safe':False,'ownership_scope':['src/c']}},parallel=3,strict=True)
     driver=FakePoolDriver(delays={'1':2,'2':1});install_fake(monkeypatch,driver)
@@ -101,6 +134,13 @@ def test_pool_coordinator_configs_have_no_default_deadline(tmp_path, kind):
     worker = supervisor.worker('1', kind=kind)
     assert worker.timeout_seconds == worker.hard_limit_seconds == 0
     assert (worker.quiet_seconds, worker.stall_seconds) == (900, 1200)
+
+def test_pool_recovery_wait_defaults_unbounded_and_allows_positive_override(tmp_path):
+    default=PoolConfig(state_file=tmp_path/'state.json')
+    override=PoolConfig.from_sources({'max_worker_wait_seconds':3600},{})
+    assert default.max_worker_wait_seconds==0
+    assert override.max_worker_wait_seconds==3600
+    assert default.worker_stale_seconds==1200
 
 
 @pytest.mark.parametrize('mode', ['completed', 'crash', 'merge_failed'])

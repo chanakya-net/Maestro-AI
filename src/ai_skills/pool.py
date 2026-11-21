@@ -94,8 +94,8 @@ class PoolConfig:
     bootstrap_seconds: float = 10
     max_recovery_attempts: int = 2
     max_compaction_handoffs: int = 6
-    max_worker_wait_seconds: int = 3600
-    worker_stale_seconds: int = 600
+    max_worker_wait_seconds: int = 0
+    worker_stale_seconds: int = state_policy.DEFAULT_WORKER_STALE_SECONDS
     max_bootstrap_attempts: int = 3
     status_file: Path | None = None
     events_log: Path | None = None
