@@ -163,7 +163,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `POOL_HEARTBEAT_SECONDS` | `60` | Cadence of the pool runner's `STATUS|type=pool-heartbeat` liveness line (per-status counts + active pool size) |
 | `MAX_SPAWN_BOOTSTRAP_ATTEMPTS` | `3` | Consecutive failed spawn attempts before the pool runner finalizes an issue as terminal instead of retrying |
 | `RUN_WITH_IT_WORKER_STALE_SECONDS` | `1200` | During recovery, activity from the worker state and log is considered stale after this many seconds. Minimum 60 seconds. |
-| `MAX_WORKER_WAIT_SECONDS` | `0` | Maximum wait for an in-flight worker after its Sub-Coordinator exits. `0` keeps the issue slot while the child remains live; stale or dead child evidence still triggers recovery. |
+| `MAX_WORKER_WAIT_SECONDS` | `0` | A positive value reports recovery wait expiry in seconds after the Sub-Coordinator exits. The issue slot stays held while any listed child has live or unknown ownership. Replacement requires confirmed release of every listed child. `0` disables the expiry notification. |
 | `MAX_SUB_COORD_COMPACTION_HANDOFFS` | `6` | Context-budget handoffs allowed per issue. Budgeted apart from `MAX_SUB_COORD_RECOVERY_ATTEMPTS` because a compaction stop is a contracted handoff, not a failure. |
 | `WAIT_STATUS_INTERVAL_SECONDS` | `300` | Minimum gap between repeats of an unchanged `sub-coord-recovery-wait` line. Changes in worker/role/reason always emit. |
 
@@ -509,6 +509,7 @@ Emit parseable one-line status messages:
 - pool admission deferred: `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`
 - pool unreachable: `STATUS|type=pool-unreachable|count=<n>|unreachable=<issue:root,root;...>` — issues that can never become ready because a dependency ended terminal-but-not-completed. `root` names the terminal issue to blame, attributed transitively. Repeated with `|final=1` when the pool drains, so a run that ends early always says which failures stranded what.
 - sub-coordinator recovery wait: `STATUS|type=sub-coord-recovery-wait|issue=<n>|role=<role>|worker_state=<state>|state_file=<path>|reason=in-flight-worker-running|waited_seconds=<n>|worker_age_seconds=<n>|max_wait_seconds=<n>` — throttled to `WAIT_STATUS_INTERVAL_SECONDS`; `worker_age_seconds` is how long since any of that worker's artifacts moved
+- sub-coordinator recovery wait expired — `STATUS|type=sub-coord-recovery-wait-expired` includes the child attempt, ownership, elapsed seconds, and configured limit. The run board shows `recovery-wait-expired` while any listed child still has live or unknown ownership.
 - pool empty: `STATUS|type=pool-empty|pending_remaining=<n>`
 - merge recovery queued: `STATUS|type=merge-recovery|issue=<n>|report_file=<path>|state=<started|completed|failed-merge|blocked>`
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`

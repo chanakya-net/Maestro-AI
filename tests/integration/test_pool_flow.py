@@ -40,6 +40,7 @@ def test_live_child_keeps_slot_past_hour_until_terminal_artifact(tmp_path,monkey
            'result_file':str(child_result),'done_file':str(child_done)}
     child_state.write_text(json.dumps({'state':'running','updated_at':'1970-01-01T02:46:39Z'}))
     (issue_dir/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[child]}))
+    supervisor._intent('1',coordinator)
     supervisor.store.transaction(lambda state:state['issue_registry']['1'].update(worker_wait_since=6399))
     supervisor.active['1']=coordinator
     monkeypatch.setattr(pool.time,'time',lambda:10000)
@@ -440,3 +441,166 @@ def test_policy_report_storage_failure_never_overwrites_provider_bytes(tmp_path,
         supervisor.tick()
     assert Path(worker.agent_run.result_file).read_bytes()==original
     assert len(driver.started)==1
+
+
+def test_recovery_wait_expiry_is_visible(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ai_skills import pool, state
+    from ai_skills.storage import write_json_atomic
+    from pool_support import recovery_child
+
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    config = replace(pool_fixture(tmp_path, {1:{}, 2:{}}, parallel=1), max_worker_wait_seconds=60)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    worker = supervisor.worker('1')
+    supervisor._intent('1', worker)
+    supervisor.active['1'] = worker
+    issue_dir = worker.agent_run.issue_dir
+    _, ledger, ownership = recovery_child(issue_dir, monkeypatch)
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+
+    for elapsed in (0, 59, 60, 61, 90):
+        clock.now = 1000 + elapsed
+        supervisor.recover('1', worker)
+        supervisor.board()
+        saved = supervisor.read()['issue_registry']['1']
+        assert saved['worker_wait_since'] == 1000
+        assert saved.get('sub_coord_recovery_attempts', 0) == 0
+        assert supervisor.active == {'1':worker}
+        stage = state.issue_stage(saved, set())
+        if elapsed >= 60:
+            assert stage == 'recovery-wait-expired(complexity cycle 1, live, 60s limit)'
+            assert saved['worker_wait']['elapsed_seconds'] == 60
+        else:
+            assert 'recovery-wait-expired' not in stage
+    assert not driver.started
+    events = config.resolved().events_log.read_text().splitlines()
+    expired, = [line for line in events if 'type=sub-coord-recovery-wait-expired' in line]
+    for field in ('elapsed_seconds=60', 'max_wait_seconds=60', 'ownership=live', 'worker_attempt=child-attempt'):
+        assert field in expired
+    assert any('type=run-board' in line and 'recovery-wait-expired' in line for line in events)
+
+    ownership['wrapper'] = 'unknown'
+    supervisor.recover('1', worker)
+    assert not driver.started
+    assert supervisor.read()['issue_registry']['1']['worker_wait']['ownership'] == 'unknown'
+    assert config.resolved().events_log.read_text().count('type=sub-coord-recovery-wait-expired') == 1
+
+
+@pytest.mark.parametrize(('handoff','compaction','exhausted'), [
+    ('valid',False,False), ('valid',True,False), ('invalid',False,False),
+    ('missing',False,False), ('invalid',True,False),
+    ('valid',False,True), ('valid',True,True),
+])
+def test_expired_wait_release_resumes_with_applicable_budget(tmp_path, monkeypatch, handoff, compaction, exhausted):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ai_skills import pool
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child, valid_complexity_result
+
+    budgets = {'sub_coord_recovery_attempts':int(not compaction and exhausted),
+               'sub_coord_compaction_handoffs':int(compaction and exhausted)}
+    config = replace(pool_fixture(tmp_path,{1:budgets}), max_worker_wait_seconds=60,
+                     max_recovery_attempts=1, max_compaction_handoffs=1)
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    predecessor = supervisor.worker('1')
+    supervisor._intent('1', predecessor)
+    supervisor.active['1'] = predecessor
+    issue_dir = predecessor.agent_run.issue_dir
+    child, ledger, ownership = recovery_child(issue_dir, monkeypatch)
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger],
+                                                  'compaction_requested':compaction})
+    write_json_atomic(issue_dir/'report.json', {'outcome':'completed','summary':'unbound coordinator result'})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+    supervisor.recover('1', predecessor)
+
+    ownership['wrapper'] = 'dead'
+    clock.now = 1060
+    result_path = child.agent_run.result_file
+    if handoff != 'missing':
+        payload = valid_complexity_result() if handoff == 'valid' else {'outcome':'completed'}
+        write_json_atomic(result_path, payload)
+    supervisor.recover('1', predecessor)
+    events = config.resolved().events_log.read_text()
+    assert 'type=sub-coord-recovery-wait-expired' in events and 'ownership=released' in events
+    journal = load_json(outcome_path(child.state_file))
+    assert journal['status'] == ('success' if handoff == 'valid' else 'failed')
+    assert child.agent_run.done_file.is_file()
+    if handoff != 'missing':
+        assert load_json(result_path) == payload
+
+    entry = supervisor.read()['issue_registry']['1']
+    counter = 'sub_coord_compaction_handoffs' if compaction else 'sub_coord_recovery_attempts'
+    if exhausted:
+        assert not driver.started
+        assert entry['status'] == 'blocked'
+        assert entry[counter] == 1
+        return
+    assert len(driver.started) == 1
+    assert entry[counter] == 1 and sum(entry[key] for key in budgets) == 1
+    assert 'worker_wait_since' not in entry and 'worker_wait' not in entry
+    context = driver.started[0].agent_run.context_file.read_text()
+    reason = 'finished' if handoff == 'valid' else 'failed'
+    assert f'SUB_COORD_RECOVERY_REASON=in-flight-worker-{reason}' in context
+    assert 'Never rerun a phase that already has a valid result artifact.' in context
+    assert events.index('type=sub-coord-recovery-wait-expired') < events.index('type=sub-coord-spawn')
+    supervisor.recover('1', predecessor)
+    assert len(driver.started) == 1
+
+
+def test_expired_wait_recovers_once_after_prelaunch_finalization(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ai_skills import pool
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import write_json_atomic
+    from pool_support import finalize_prelaunch_child, recovery_child
+
+    config = replace(pool_fixture(tmp_path, {1:{}}), max_worker_wait_seconds=60, max_recovery_attempts=1)
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    predecessor = supervisor.worker('1')
+    supervisor._intent('1', predecessor)
+    supervisor.active['1'] = predecessor
+    issue_dir = predecessor.agent_run.issue_dir
+    child, ledger, ownership = recovery_child(issue_dir, monkeypatch, provider='missing')
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+    supervisor.recover('1', predecessor)
+
+    clock.now += 60
+    supervisor.recover('1', predecessor)
+    entry = supervisor.read()['issue_registry']['1']
+    assert entry['worker_wait']['expired'] and entry['worker_wait']['holding']
+    assert not driver.started
+    assert entry.get('sub_coord_recovery_attempts', 0) == 0
+
+    child.agent_run.result_file.write_text('{"outcome":"completed"}\n')
+    finalize_prelaunch_child(child, 'rate-limited')
+    artifacts = {path:path.read_bytes() for path in (child.state_file, outcome_path(child.state_file),
+        child.agent_run.result_file, child.agent_run.done_file)}
+    ownership['wrapper'] = 'dead'
+    supervisor.recover('1', predecessor)
+    supervisor.recover('1', predecessor)
+
+    assert len(driver.started) == 1
+    entry = supervisor.read()['issue_registry']['1']
+    assert entry['sub_coord_recovery_attempts'] == 1
+    assert entry.get('sub_coord_compaction_handoffs', 0) == 0
+    context = driver.started[0].agent_run.context_file.read_text()
+    assert 'SUB_COORD_RECOVERY_REASON=in-flight-worker-failed' in context
+    assert all(path.read_bytes() == old for path, old in artifacts.items())

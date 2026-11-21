@@ -389,22 +389,38 @@ class PoolSupervisor:
             stall_seconds=self.config.stall_seconds,timeout_seconds=self.config.timeout_seconds,
             hard_limit_seconds=self.config.hard_limit_seconds,bootstrap_seconds=self.config.bootstrap_seconds)
 
-    def _intent(self, issue, worker):
+    def _intent(self, issue, worker, *, recovery=None):
+        issue = str(issue)
+        run = worker.agent_run
+
         def update(value):
-            old = value.setdefault('pool_attempts', {}).get(str(issue))
-            if old and old.get('attempt_id') != worker.agent_run.attempt_id:
+            attempts = value.setdefault('pool_attempts', {})
+            old = attempts.get(issue)
+            if old and old.get('attempt_id') == run.attempt_id:
+                return True
+            entry = value['issue_registry'][issue]
+            if recovery:
+                predecessor, decision = recovery
+                if not self._is_current(value, issue, predecessor):
+                    return False
+                state_policy.record_sub_coord_recovery(entry, context_file=str(run.context_file),
+                    attempt=decision['recovery_attempt'], reason=decision['reason'],
+                    budget=decision['recovery_budget'])
+            if old:
                 value.setdefault('pool_attempt_history', []).append(old)
-            value['pool_attempts'][str(issue)] = {
-                'engine':'python','engine_version':ENGINE_VERSION,'status':'launch-intent',
-                'run_id':worker.agent_run.run_id,'attempt_id':worker.agent_run.attempt_id,
+            attempts[issue] = {'engine':'python','engine_version':ENGINE_VERSION,'status':'launch-intent',
+                'run_id':run.run_id,'attempt_id':run.attempt_id,
                 'worker_config':worker.to_record(),'created_at':time.time()}
-            entry = value['issue_registry'][str(issue)]
-            entry.update(status='in_progress',issue_dir=str(worker.agent_run.issue_dir),
-                report_file=str(worker.agent_run.result_file),context_file=str(worker.agent_run.context_file),
+            for key in ('worker_wait_since', 'worker_wait_signature', 'worker_wait'):
+                entry.pop(key, None)
+            entry.update(status='in_progress',issue_dir=str(run.issue_dir),
+                report_file=str(run.result_file),context_file=str(run.context_file),
                 sub_coord_state_file=str(worker.state_file))
-            if str(issue) not in [str(item) for item in value.setdefault('active_pool_issues', [])]:
-                value['active_pool_issues'].append(str(issue))
-        self.store.transaction(update)
+            if issue not in [str(item) for item in value.setdefault('active_pool_issues', [])]:
+                value['active_pool_issues'].append(issue)
+            return True
+
+        return self.store.transaction(update)
 
     def _registered(self, issue, worker, result):
         run = worker.agent_run
@@ -449,14 +465,15 @@ class PoolSupervisor:
             self.finalize(issue,worker)
         return None
 
-    def launch(self, issue, worker=None):
+    def launch(self, issue, worker=None, *, recovery=None):
         if self.stop_requested():
             return None
         worker = worker or self.worker(issue)
         check_worker_selection(worker)
         # The new intent must own shared paths before old evidence is archived.
         # If publication fails, the previous current attempt remains adoptable.
-        self._intent(issue, worker)
+        if not self._intent(issue, worker, recovery=recovery):
+            return None
         directory = str(worker.agent_run.issue_dir)
         if worker.agent_run.role == 'merge-recovery':
             state_policy.quarantine_artifacts(directory,[str(worker.agent_run.result_file)],'merge-predispatch-'+uuid.uuid4().hex)
@@ -543,37 +560,95 @@ class PoolSupervisor:
         state_policy.write_merge_recovery_context(SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),context_file=str(context),recovery_report_file=str(directory/'merge-recovery-report.json')))
         self.launch(issue,self.worker(issue,kind='merge-recovery',context=context))
 
+    def _recovery_wait_entry(self, issue, worker):
+        def initialize_wait(value):
+            if not self._is_current(value, issue, worker):
+                return None
+            entry = value['issue_registry'][issue]
+            entry.setdefault('worker_wait_since', time.time())
+            return entry
+
+        value = self.read()
+        if not self._is_current(value, issue, worker):
+            return None
+        entry = value['issue_registry'][issue]
+        return entry if 'worker_wait_since' in entry else self.store.transaction(initialize_wait)
+
+    @staticmethod
+    def _is_current(value, issue, worker):
+        intent = value.get('pool_attempts', {}).get(issue, {})
+        return (intent.get('status') != 'finalized' and
+                intent.get('attempt_id') == worker.agent_run.attempt_id)
+
+    def _publish_recovery_wait(self, issue, worker, entry, decision):
+        holding = decision['action'] == 'wait_worker'
+        expired = decision['wait_expired']
+        if not (holding or expired):
+            return
+        fields = dict(reason=decision['reason'], role=decision['worker_role'],
+            cycle=decision['worker_cycle'], worker_attempt=decision['worker_attempt_id'],
+            worker_state_file=decision['worker_state_file'], ownership=decision['worker_ownership'],
+            ownership_reason=decision['worker_liveness'],
+            elapsed_seconds=decision['wait_elapsed_seconds'], max_wait_seconds=decision['max_wait_seconds'])
+        signature = [holding, expired, decision['worker_state'], *(fields[key] for key in
+            ('reason', 'role', 'cycle', 'worker_attempt', 'worker_state_file', 'ownership',
+             'ownership_reason', 'max_wait_seconds'))]
+        if signature == entry.get('worker_wait_signature'):
+            return
+        scope = dict(issue=issue, attempt=worker.agent_run.attempt_id)
+        if holding and decision['check_worker_ownership']:
+            self.emit('sub-coord-recovery-wait', **scope, **fields)
+        elif holding:
+            self.emit('sub-coord-recovery-wait', issue=issue, reason=fields['reason'], role=fields['role'])
+        if expired and not entry.get('worker_wait', {}).get('expired'):
+            self.emit('sub-coord-recovery-wait-expired', **scope,
+                **{**fields, 'reason':'in-flight-worker-wait-timeout'})
+
+        def store_wait(value):
+            if self._is_current(value, issue, worker):
+                value['issue_registry'][issue].update(worker_wait_signature=signature,
+                    worker_wait={**fields, 'holding':holding, 'expired':expired})
+
+        self.store.transaction(store_wait)
+
     def recover(self, issue, worker):
-        entry=self.read()['issue_registry'][str(issue)]
-        wait_since=entry.get('worker_wait_since') or time.time()
-        self.store.transaction(lambda value:value['issue_registry'][str(issue)].setdefault('worker_wait_since',wait_since))
-        args=SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),report_file=str(worker.agent_run.result_file),
+        issue = str(issue)
+        entry = self._recovery_wait_entry(issue, worker)
+        if entry is None:
+            return
+        args=SimpleNamespace(state_file=str(self.config.state_file),issue=issue,report_file=str(worker.agent_run.result_file),
             accept_terminal_report=False,
             max_attempts=self.config.max_recovery_attempts,max_compaction_handoffs=self.config.max_compaction_handoffs,
             worker_stale_seconds=self.config.worker_stale_seconds,worker_dead_pid_grace_seconds=60,
-            wait_elapsed_seconds=int(time.time()-wait_since),max_wait_seconds=self.config.max_worker_wait_seconds)
+            wait_elapsed_seconds=int(time.time()-entry['worker_wait_since']),max_wait_seconds=self.config.max_worker_wait_seconds)
         decision=state_policy.sub_coord_recovery_decision(args)
+        self._publish_recovery_wait(issue, worker, entry, decision)
+        if decision['check_worker_ownership'] and decision['action'] != 'wait_worker':
+            args.reconcile_children = True
+            decision = state_policy.sub_coord_recovery_decision(args)
+            if decision['action'] == 'wait_worker':
+                entry = self.read()['issue_registry'][issue]
+                self._publish_recovery_wait(issue, worker, entry, decision)
         action,reason=decision['action'],decision['reason']
         if action=='wait_worker':
-            signature=(reason,decision.get('worker_state'))
-            if entry.get('worker_wait_signature')!=list(signature):
-                self.emit('sub-coord-recovery-wait',issue=issue,reason=reason,role=decision.get('worker_role'))
-                self.store.transaction(lambda value:value['issue_registry'][str(issue)].update(worker_wait_signature=list(signature)))
             return
         if action=='finalize': self.finalize(issue,worker);return
         if action=='spawn_recovery':
-            attempt=decision['recovery_attempt'];directory=Path(worker.agent_run.issue_dir)
-            context=directory/f'sub-coordinator-recovery-{attempt}-context.md'
-            state_policy.write_sub_coord_recovery_context(SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),context_file=str(context),attempt=attempt,reason=reason))
-            state_policy.mark_sub_coord_recovery_started(SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),context_file=str(context),attempt=attempt,reason=reason))
-            self.store.transaction(lambda value:value['issue_registry'][str(issue)].pop('worker_wait_since',None))
-            self.launch(issue,self.worker(issue,context=context))
+            self._launch_recovery(issue, worker, decision)
             return
         report_file = self.write_policy_report(worker,{'outcome':'blocked',
             'summary':'Sub-coordinator recovery could not continue','blocking_reasons':[reason]})
         args.report_file = str(report_file)
         state_policy.mark_sub_coord_recovery_dispatch_failed(args)
         self.finalize(issue,worker,report_file=report_file)
+
+    def _launch_recovery(self, issue, predecessor, decision):
+        run = predecessor.agent_run
+        attempt = decision['recovery_attempt']
+        context = Path(run.issue_dir)/f'sub-coordinator-recovery-{attempt}-{run.attempt_id}-context.md'
+        state_policy.write_sub_coord_recovery_context(SimpleNamespace(state_file=str(self.config.state_file),
+            issue=issue, context_file=str(context), attempt=attempt, reason=decision['reason']))
+        self.launch(issue, self.worker(issue, context=context), recovery=(predecessor, decision))
 
     def board(self):
         state=self.read();completed=state_policy.completed_issue_numbers(state)

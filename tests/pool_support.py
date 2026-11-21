@@ -125,3 +125,74 @@ print('STATUS|type=heartbeat|issue='+issue+'|role='+role+'|progress=done',flush=
     registry=tmp_path/'registry.json';registry.write_text(json.dumps({'agents':{'fake':{'invocation':{'command':sys.executable,'args_template':[str(script),'{{prompt}}']},'permission_modes':{'default':''},'model':{'default':'fixture','flag_template':''}}}}))
     prompt=tmp_path/'prompt.md';prompt.write_text('Write fixture report and exit.')
     return replace(config,registry_file=registry,prompt_file=prompt,merge_prompt_file=prompt,poll_seconds=.01,heartbeat_seconds=.05,bootstrap_seconds=5,**({'hard_limit_seconds':5} if limits is None else limits),environment=dict(os.environ, RUN_WITH_IT_GITHUB_UPDATES='0', FIXTURE_DELAY=str(delay)))
+
+
+def recovery_child(issue_dir, monkeypatch, *, wrapper='alive', provider='dead', exit_code=0):
+    """Persist admitted child files with process evidence in its own worktree."""
+    from dataclasses import asdict
+    from ai_skills.dispatch import WorkerConfig, expected_artifact_paths
+    from ai_skills.outcomes import outcome_path, pending_outcome
+    from ai_skills.processes import Liveness, ProcessIdentity, ProcessSupervisor
+    from ai_skills.runner import AgentRunConfig
+
+    issue_dir = Path(issue_dir)
+    worktree = issue_dir/'worktree'
+    records = worktree/'.ai-skills'/'processes'
+    path = issue_dir/'workers'/'child.state.json'
+    run = AgentRunConfig(agent='fake', model='fixture', context_file=issue_dir/'context.md',
+        prompt_file=issue_dir/'prompt.md', repo_root=worktree, issue_dir=issue_dir,
+        issue=issue_dir.name, role='complexity', cycle='1', run_id='child-run', attempt_id='child-attempt',
+        state_file=path, done_file=path.with_name('child.done'), result_file=path.with_name('child-result.json'))
+    config = WorkerConfig(run, path, detach=True)
+    write_json_atomic(Path(str(path)+'.config.json'), config.to_record())
+    write_json_atomic(path, {'state':'running', 'run_id':run.run_id, 'attempt_id':run.attempt_id})
+    write_json_atomic(outcome_path(path), pending_outcome(run_id=run.run_id, attempt_id=run.attempt_id,
+        issue=run.issue, role=run.role, state_file=path, expected_artifacts=expected_artifact_paths(config)))
+    identities = {run.run_id:asdict(ProcessIdentity(4000, 1, 'fixture', run.run_id, run.attempt_id)),
+        run.run_id+'-dispatcher':asdict(ProcessIdentity(4001, 1, 'fixture', run.run_id+'-dispatcher', run.attempt_id))}
+    ownership = {'wrapper':wrapper, 'provider':provider, 'exit_code':exit_code}
+    inspect, lookup, return_code = ProcessSupervisor.inspect, ProcessSupervisor.lookup_attempt, ProcessSupervisor.return_code
+
+    def fake_lookup(supervisor, run_id, attempt_id):
+        if supervisor.directory == records and attempt_id == run.attempt_id and run_id in identities:
+            kind = 'wrapper' if run_id.endswith('-dispatcher') else 'provider'
+            if ownership[kind] != 'missing':
+                return {'identity':identities[run_id]}
+        return lookup(supervisor, run_id, attempt_id)
+
+    def fake_inspect(supervisor, identity):
+        if supervisor.directory == records and identity.attempt_id == run.attempt_id:
+            key = 'wrapper' if identity.run_id.endswith('-dispatcher') else 'provider'
+            return Liveness(ownership[key], reason='fixture '+key)
+        return inspect(supervisor, identity)
+
+    def fake_return_code(supervisor, identity):
+        if supervisor.directory == records and identity == ProcessIdentity(**identities[run.run_id]):
+            return ownership['exit_code']
+        return return_code(supervisor, identity)
+
+    monkeypatch.setattr(ProcessSupervisor, 'lookup_attempt', fake_lookup)
+    monkeypatch.setattr(ProcessSupervisor, 'inspect', fake_inspect)
+    monkeypatch.setattr(ProcessSupervisor, 'return_code', fake_return_code)
+    ledger = {key:str(getattr(run, key)) for key in ('state_file','result_file','done_file','run_id','attempt_id','role')}
+    ledger['cycle'] = 1
+    return config, ledger, ownership
+
+
+def finalize_prelaunch_child(child, reason):
+    from ai_skills.dispatch import _finalize_attempt, _record_stop_intent
+
+    if reason == 'interrupted':
+        _record_stop_intent(child, reason)
+    result = _finalize_attempt(child, provider_return_code=None, reason=reason,
+        failure_class='infrastructure', prelaunch_failure=True)
+    assert result.state == ('interrupted' if reason == 'interrupted' else 'failed')
+    assert result.reason == reason
+
+
+def valid_complexity_result():
+    from ai_skills.artifacts import COMPLEXITY_SCORE_KEYS
+
+    return {'level':'easy', 'total':len(COMPLEXITY_SCORE_KEYS),
+            'scores':{key:1 for key in COMPLEXITY_SCORE_KEYS},
+            'rationale':{key:'fixture' for key in COMPLEXITY_SCORE_KEYS}}
