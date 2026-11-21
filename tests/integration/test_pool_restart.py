@@ -286,6 +286,23 @@ def test_intent_only_restart_restores_persisted_worker_overrides_and_current_env
     assert 'current-secret-only' not in Path(config.state_file).read_text()
 
 
+def test_replayed_intent_keeps_persisted_explicit_coordinator_deadline(tmp_path, monkeypatch):
+    from pool_support import install_simulated_dispatch, real_pool_fixture
+    records = install_simulated_dispatch(monkeypatch)
+    config = real_pool_fixture(tmp_path, delay=3, limits={'timeout_seconds': 3600, 'hard_limit_seconds': 7200, 'max_recovery_attempts': 0})
+    first = PoolSupervisor(config); assert first.initialize() is None
+    worker = first.worker('1'); first._intent('1', worker)
+    persisted = json.loads(Path(config.state_file).read_text())['pool_attempts']['1']['worker_config']
+    assert (persisted['timeout_seconds'], persisted['hard_limit_seconds']) == (3600, 7200)
+    assert run_pool(config).state == 'pool-empty'
+    assert len(records) == 1
+    replayed = records[0]
+    assert replayed.config.agent_run.attempt_id == worker.agent_run.attempt_id
+    assert (replayed.config.timeout_seconds, replayed.config.hard_limit_seconds) == (3600, 7200)
+    assert replayed.result.reason == 'dispatch-timeout'
+    assert replayed.simulated_seconds >= 3600
+
+
 def test_claim_only_restart_finalizes_through_bound_outcome(tmp_path):
     config,supervisor,worker=prepared_intent(tmp_path)
     write_json_atomic(worker.state_file,{'state':'launching','run_id':worker.agent_run.run_id,'attempt_id':worker.agent_run.attempt_id,

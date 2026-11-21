@@ -36,7 +36,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Stay attached until every issue is terminal.** The Main Orchestrator session must keep running the watch loop, and after each watch window print a one-line user-facing progress update from the newest `run-board` / `pool-heartbeat` lines (e.g. `Pool alive — 2 running, 3 pending, 4 completed, 1 blocked`). Never end the turn, go silent, or declare the run finished while any issue is still `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means GOTO Step A, not done.
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
-- **Never kill, cancel, or restart a Sub-Coordinator mid-run.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction. **Sole exception:** a user-confirmed `discard`, which terminates the entire run — supervisor, dispatchers, and runners — through the native stop operation (`ai-skills run stop`) per the Cleanup Discard flow. Never hand-roll kills even then.
+- **Never kill, cancel, or restart a Sub-Coordinator mid-run.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report — by default there is no execution deadline (`SUB_COORD_TIMEOUT_SECONDS=0`); or (b) when an operator sets a positive `SUB_COORD_TIMEOUT_SECONDS`, the dispatcher itself stops the owned attempt at that limit and its typed outcome flows through normal recovery. Do not alert-and-wait for continue/skip. **Sole exception:** a user-confirmed `discard`, which terminates the entire run — supervisor, dispatchers, and runners — through the native stop operation (`ai-skills run stop`) per the Cleanup Discard flow. Never hand-roll kills even then.
 - **Never inject worker-routing overrides into a Sub-Coordinator that has already been spawned.** Canonical worker overrides (`FORCED_AGENT`, `FORCED_MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the native dispatcher calls `ai-skills agent run`, those values are locked and the Main Orchestrator must not attempt to change them.
 - **Run the native pool runner (`ai-skills run pool`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
 - **Use the native worker snapshot (`ai-skills worker inspect`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass the durable dispatcher `--state-file`; the inspector reconstructs its recorded configuration and validates process identity. Treat PID liveness as diagnostic only. Completion requires a known dead owned tree, its durable exit status and validated compact report artifacts; the done sentinel is advisory.
@@ -137,7 +137,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
 | `SUB_COORD_MODEL` | `gpt-6.2-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
-| `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
+| `SUB_COORD_TIMEOUT_SECONDS` | `0` | Optional Sub-Coordinator execution deadline in seconds; `0` disables the deadline |
 | `STATUS_POLL_SECONDS` | `10` | Native polling cadence for status line output |
 | `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `ai-skills run watch` call in Step D |
 | `LOG_TAIL_POLL_SECONDS` | `120` | Native polling cadence for sub-coordinator log tail |
@@ -283,8 +283,8 @@ The JSON keys below are accepted by `PoolConfig.from_record`; paths must be abso
   "main_log": "/absolute/run/.run-with-it/main/main.log",
   "pool_state_file": "/absolute/run/.run-with-it/main/pool.state.json",
   "poll_seconds": 10,
-  "timeout_seconds": 3600,
-  "hard_limit_seconds": 7200,
+  "timeout_seconds": 0,
+  "hard_limit_seconds": 0,
   "detach": true
 }
 ```
@@ -321,8 +321,8 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "gui_mode": "0",
   "unattended": true,
   "poll_seconds": 20,
-  "quiet_seconds": 120,
-  "stall_seconds": 600,
+  "quiet_seconds": 900,
+  "stall_seconds": 1200,
   "hard_limit_seconds": 7200,
   "detach": true
 }
