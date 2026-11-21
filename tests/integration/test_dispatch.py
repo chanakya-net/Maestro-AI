@@ -2397,15 +2397,28 @@ def test_agy_gemini_4_modify_rejects_previous_cycle_capture(tmp_path, monkeypatc
     source = script.read_text()
     # Current attempt starts at the committed prior result, without additional Git progress.
     start = source.index('contract = metadata[\'result_capture\']')
-    wire = (f"print({originals[1].decode()!r}, end='')\n" if replay == 'prior-stream' else
-            "envelope = {**metadata['result_capture']['envelope'], 'cycle': '4', 'result': {}}\n" + AGY_CAPTURE)
-    script.write_text(source[:start] + AGY_MODEL_ASSERTION + wire)
+    noop = build_modify_capture(no_op=True).replace(
+        "capture = Path(args[-2])\nassert args[-3:] == ['--output-last-message', str(capture), '-']",
+        "assert args[-4:] == ['--input-format', 'stream-json', '--output-format', 'stream-json']")
+    noop = noop.replace("== 'implemented'", "== 'implemented and reviewed'")
     head = json.loads(originals[0])['commit_sha']
+    if replay == 'prior-cycle':
+        script.write_text(source[:start] + AGY_MODEL_ASSERTION + noop + AGY_CAPTURE)
+        valid = fresh_modify_attempt(config, tmp_path / 'valid', cycle=5, head=head)
+        assert dispatch_worker(valid).state == 'completed'
+        valid_report = json.loads(valid.agent_run.result_file.read_bytes())
+        assert valid_report['no_op'] and valid_report['verification']['commit_sha'] == head
+    wire = (f"print({originals[1].decode()!r}, end='')\n" if replay == 'prior-stream' else
+            noop + "envelope['cycle'] = '4'\n" + AGY_CAPTURE)
+    script.write_text(source[:start] + AGY_MODEL_ASSERTION + wire)
     current = fresh_modify_attempt(config, tmp_path / 'current', cycle=5, head=head)
     result = dispatch_worker(current)
     assert result.state != 'completed'
     assert not current.agent_run.result_file.exists()
-    assert 'reason=capture-identity-mismatch' in current.agent_run.events_log.read_text()
+    current_saved = json.loads(Path(str(current.state_file) + '.config.json').read_bytes())
+    events = current.agent_run.events_log.read_text().splitlines()
+    assert any('reason=capture-identity-mismatch' in line and
+               f"attempt_id={current_saved['agent_run']['attempt_id']}" in line for line in events)
     assert json.loads(Path(str(current.state_file) + '.outcome.json').read_bytes())['status'] == 'failed'
     assert [path.read_bytes() for path in paths] == originals
 

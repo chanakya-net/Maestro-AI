@@ -621,7 +621,14 @@ def test_agy_gemini_4_rejected_source_admits_verification_only_retry(tmp_path, m
 
 def test_agy_gemini_4_modify_hands_verified_range_to_next_review(tmp_path, monkeypatch):
     from test_dispatch import AGY_CAPTURE, GEMINI_4, MODIFY_IDS, agy_gemini_worker
-    source = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE, role='modify')
+    instructions = tmp_path / 'cycle-4-instructions.json'
+    instructions.write_text(json.dumps({'verdict': 'revise', 'comments': [{'id': i} for i in MODIFY_IDS]}))
+    assertion = '''
+path = next(line.split('=', 1)[1] for line in prompt.decode().splitlines() if line.startswith('REVIEWER_INSTRUCTIONS_FILE='))
+assert [c['id'] for c in json.loads(Path(path).read_text())['comments']] == contract['review_comment_ids']
+'''
+    source = agy_gemini_worker(tmp_path, monkeypatch, assertion + AGY_CAPTURE, role='modify')
+    source.agent_run.context_file.write_text(f'REVIEWER_INSTRUCTIONS_FILE={instructions}\n')
     result = dispatch_worker(source)
     assert result.state == 'completed', result.reason
     saved = load_json(Path(str(source.state_file) + '.config.json'))
@@ -634,21 +641,43 @@ def test_agy_gemini_4_modify_hands_verified_range_to_next_review(tmp_path, monke
     assert all(check['passed'] for check in report['verification']['checks'])
     assert outcome['status'] == 'success'
     assert '|status=success|source=dispatcher|' in source.agent_run.done_file.read_text()
+    cycle = saved['agent_run']['cycle']
+    attempt_id = saved['agent_run']['attempt_id']
+    assert cycle == 4 and attempt_id
+    stream = Path(saved['agent_run']['stream_directory']) / 'stdout'
+    terminal = json.loads(stream.read_text().splitlines()[-1])
+    envelope = json.loads(terminal['result']['response'])
+    assert envelope['cycle'] == str(cycle) and envelope['attempt_id'] == attempt_id
     context = {'base': saved['issue_base_sha'], 'head': report['commit_sha'],
-               'closures': report['review_comment_closure']}
+               'cycle': cycle + 1, 'attempt': attempt_id,
+               'PRIOR_REVIEW_LEDGER': f"cycle={cycle} instructions={instructions} modify_result={source.agent_run.result_file}"}
     reviewer_source = '''import json, os, subprocess, sys
 from pathlib import Path
 context=json.loads(sys.argv[1].split('\\nInstructions:',1)[0])
+parts=dict(item.split('=',1) for item in context['PRIOR_REVIEW_LEDGER'].split())
+assert int(parts['cycle']) + 1 == context['cycle'] == 5
+instructions=json.loads(Path(parts['instructions']).read_text())
+report=json.loads(Path(parts['modify_result']).read_text())
+assert [c['id'] for c in instructions['comments']] == [c['id'] for c in report['review_comment_closure']] == ['R001','R002']
+assert report['commit_sha'] == context['head']
+assert context['attempt'] and report['verification']['commit_sha'] == context['head']
 files=subprocess.check_output(['git','diff','--name-only',context['base'],context['head']],text=True).splitlines()
 assert files == ['feature.txt', 'review.txt']
-assert [item['id'] for item in context['closures']] == ['R001', 'R002']
 Path(os.environ['REVIEWER_STATUS_FILE']).write_text(json.dumps({'verdict':'approve','comment_count':0,'nitpick_only':False}))
 Path(os.environ['REVIEWER_INSTRUCTIONS_FILE']).write_text(json.dumps({'verdict':'approve','summary':'Reviewed accumulated changes','comments':[],'blocking_reasons':[]}))
 '''
-    reviewer = attempt(tmp_path, source.agent_run.repo_root, 'review', reviewer_source, role='review', cycle=5)
+    reviewer = attempt(tmp_path, source.agent_run.repo_root, 'review', reviewer_source, role='review', cycle=cycle + 1)
     Path(reviewer.agent_run.context_file).write_text(json.dumps(context))
     reviewer = replace(reviewer, agent_run=reviewer.agent_run.replace(result_file=tmp_path / 'review' / 'review-status.json'))
     assert dispatch_worker(reviewer).state == 'completed'
+    stale = tmp_path / 'stale.json'
+    stale.write_text(json.dumps({'comments': [{'id': 'R999'}]}))
+    for bad in (context['PRIOR_REVIEW_LEDGER'].replace(str(instructions), str(stale)),
+                context['PRIOR_REVIEW_LEDGER'].replace(f'cycle={cycle}', 'cycle=3')):
+        invalid = {**context, 'PRIOR_REVIEW_LEDGER': bad}
+        check = subprocess.run([sys.executable, str(tmp_path / 'review' / 'provider.py'),
+                                json.dumps(invalid)], cwd=source.agent_run.repo_root, capture_output=True)
+        assert check.returncode != 0 and b'AssertionError' in check.stderr
 
 
 def test_agy_gemini_4_modify_verifies_preserved_commit_only_in_source_cycle(tmp_path, monkeypatch):
@@ -667,15 +696,47 @@ def test_agy_gemini_4_modify_verifies_preserved_commit_only_in_source_cycle(tmp_
     paths = [source.agent_run.result_file, Path(saved['agent_run']['stream_directory']) / 'stdout',
              Path(str(source.state_file) + '.outcome.json')]
     originals = [path.read_bytes() for path in paths]
+    checks = saved['result_capture']['required_checks']
     contract = {'source_state_file': str(source.state_file), 'source_attempt_id': saved['agent_run']['attempt_id'],
-                'expected_commit_sha': head, 'required_checks': ['feature acceptance']}
-    verify = VERIFY.replace("Path('feature.txt').read_text()=='implemented\\n'",
-                            "Path('feature.txt').read_text().startswith('implemented')")
-    verify = verify.replace("'files_committed':['feature.txt']", "'files_committed':['feature.txt','review.txt']")
+                'expected_commit_sha': head, 'required_checks': checks}
     closure = [{'id': i, 'status': 'addressed', 'action': 'Fixed ' + i,
-                'files_changed': ['feature.txt'], 'verification': ['feature acceptance passed']} for i in MODIFY_IDS]
-    verify = verify.replace('payload_path.write_text(json.dumps(payload))',
-                            f"payload['review_comment_closure']={closure!r}\npayload_path.write_text(json.dumps(payload))")
+                'files_changed': ['feature.txt', 'review.txt'], 'verification': checks} for i in MODIFY_IDS]
+    verify = '''import json, os, subprocess, sys
+from pathlib import Path
+from ai_skills.artifacts import main
+metadata=json.loads(sys.argv[1].split('Authoritative attempt metadata:\\n',1)[1])
+contract=metadata['verification_contract']
+head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+assert head == contract['expected_commit_sha']
+assert Path('feature.txt').read_text() == 'implemented and reviewed'
+assert Path('review.txt').read_text() == 'review fix'
+assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip()
+checks=contract['required_checks']
+assert checks == ['feature check', 'git check']
+payload={'schema_version':1,'issue':'7','role':'modify','status':'success',
+ 'execution_mode':'verify_existing','commit_sha':head,'files_committed':['feature.txt','review.txt'],
+ 'review_comment_closure':CLOSURE,'verification':{'passed':True,'commit_sha':head,
+ 'checks':[{'command':c,'passed':True,'evidence':'verified review fix and clean preserved commit'} for c in checks]}}
+path=Path(os.environ['RUN_WITH_IT_RESULT_FILE']).with_name('payload.json')
+path.write_text(json.dumps(payload))
+sys.exit(main(['write-json','--role','modify','--issue','7','--repo-root',os.getcwd(),
+ '--payload-file',str(path),'--result-file',os.environ['RUN_WITH_IT_RESULT_FILE'],'--pre-spawn-head',head]))
+'''.replace('CLOSURE', repr(closure))
+    # Exercise the verifier itself against a missing review fix and an incomplete contract.
+    import shutil
+    broken = tmp_path / 'broken-repo'
+    shutil.copytree(repo, broken)
+    (broken / 'review.txt').unlink()
+    metadata = {'verification_contract': {'expected_commit_sha': head, 'required_checks': checks}}
+    def run_verifier(root, data):
+        prompt = 'Authoritative attempt metadata:\n' + json.dumps(data)
+        env = {**os.environ, 'PYTHONPATH': str(Path(__file__).resolve().parents[2] / 'src')}
+        return subprocess.run([sys.executable, '-c', verify, prompt], cwd=root, env=env, capture_output=True)
+    missing_fix = run_verifier(broken, metadata)
+    assert missing_fix.returncode != 0 and b'review.txt' in missing_fix.stderr
+    missing_check = run_verifier(repo, {'verification_contract': {
+        'expected_commit_sha': head, 'required_checks': checks[:1]}})
+    assert missing_check.returncode != 0 and b'AssertionError' in missing_check.stderr
     wrong = attempt(tmp_path, repo, 'wrong-cycle', verify, 'modify', cycle=5,
                     execution_mode='verify_existing', issue_base_sha=base, retry_contract=contract)
     with pytest.raises(ValueError, match='verification-source-mismatch'):
@@ -686,6 +747,8 @@ def test_agy_gemini_4_modify_verifies_preserved_commit_only_in_source_cycle(tmp_
     assert dispatch_worker(retry).state == 'completed'
     report = load_json(retry.agent_run.result_file)
     assert report['commit_sha'] == head and report['review_comment_closure'] == closure
+    assert [c['command'] for c in report['verification']['checks']] == checks
+    assert all(c['passed'] and c['evidence'] == 'verified review fix and clean preserved commit' for c in report['verification']['checks'])
     assert git(repo, 'status', '--porcelain') == '' and git(repo, 'rev-parse', 'HEAD') == head
     assert load_json(Path(str(retry.state_file) + '.config.json'))['issue_base_sha'] == base
     assert adopt_worker(retry.state_file).state == 'completed'
