@@ -6,6 +6,7 @@ import json
 CODEX = 'codex-last-message'
 CLAUDE = 'claude-json'
 AGY = 'agy-stream-json'
+_AGY_FAILED_STATUSES = ('ERROR', 'FAILED', 'CANCELED', 'INTERRUPTED', 'INVALID', 'WAITING')
 OPENCODE_VERSION = '1.16.2'
 OPENCODE = 'opencode-json-v' + OPENCODE_VERSION
 STREAM_SOURCES = frozenset((CLAUDE, AGY, OPENCODE))
@@ -13,6 +14,10 @@ STREAM_SOURCES = frozenset((CLAUDE, AGY, OPENCODE))
 
 class ProviderError(ValueError):
     """The provider explicitly reported a failed request."""
+
+
+class MissingAgyTerminal(ValueError):
+    """An AGY stream ended before emitting a terminal record."""
 
 
 def _unique_object(pairs):
@@ -53,16 +58,39 @@ def _json_events(stream):
             yield _json_object(raw)
 
 
-def agy_result_response(result, *, strict=False):
-    """Shared terminal payload for narrative output and managed capture."""
-    response = result.get('response') if isinstance(result, dict) else None
-    if strict or isinstance(response, str):
-        error = result.get('error')
-        if result.get('status') != 'SUCCESS' or (strict and error):
-            raise ProviderError('AGY result failed: ' + str(error or result.get('status')))
+def agy_result_response(result):
+    """Shared terminal payload semantics for narrative output and managed capture.
+
+    An explicit failed status is a provider error even when ``response`` is
+    absent. A success that also carries an error is ambiguous, not a failure.
+    """
+    if not isinstance(result, dict):
+        raise ValueError('AGY terminal result is not an object')
+    status, error, response = result.get('status'), result.get('error'), result.get('response')
+    if not isinstance(status, str) or status not in ('SUCCESS', *_AGY_FAILED_STATUSES):
+        raise ValueError('AGY terminal result has an invalid status')
+    if error is not None and not isinstance(error, str):
+        raise ValueError('AGY terminal result has a non-string error')
+    if status != 'SUCCESS':
+        raise ProviderError('AGY result failed: ' + (error or status))
+    if error:
+        raise ValueError('AGY terminal result reports both success and an error')
     if not isinstance(response, str):
         raise ValueError('AGY stream ended without a complete terminal result.response')
     return response
+
+
+def agy_narrative_response(stream):
+    """Read a standalone stream, which may contain only the terminal record."""
+    events = _json_events(stream)
+    for event in events:
+        if event.get('event') == 'result':
+            if next(events, None) is not None:
+                raise ValueError('AGY terminal result is followed by another record')
+            response = agy_result_response(event.get('result'))
+            response.encode('utf-8')  # Validate before any line can be published.
+            return response
+    raise MissingAgyTerminal('AGY stream has no terminal result')
 
 
 def _agy_step(event, conversation):
@@ -90,7 +118,7 @@ def _agy_response(stream):
             if (not isinstance(result, dict) or result.get('conversation_id') != conversation or
                     next(events, None) is not None):
                 raise ValueError('invalid or ambiguous Agy terminal result')
-            response = agy_result_response(result, strict=True)
+            response = agy_result_response(result)
             if user_done:
                 return response
             break
