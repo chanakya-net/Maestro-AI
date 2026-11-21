@@ -16,6 +16,7 @@ def configuration(tmp_path, agent='codex', *, response="print('done')", help_tex
     script = tmp_path/'provider.py'
     script.write_text(f'''import json, pathlib, sys
 sys.stdout.reconfigure(encoding='utf-8')
+with open('calls.log', 'a', encoding='utf-8') as calls: calls.write(('probe' if '--help' in sys.argv else 'run') + '\\n')
 if '--help' in sys.argv:
  print({help_text!r}); raise SystemExit(0)
 data = sys.stdin.buffer.read()
@@ -322,3 +323,209 @@ def test_extract_response_handles_xhigh_agy_stream():
     ]
     wire = ''.join(json.dumps(e, ensure_ascii=False) + '\n' for e in events).encode('utf-8')
     assert extract_response('agy-stream-json', io.BytesIO(wire)) == 'neon xhigh 完了'.encode('utf-8')
+
+
+CARBON = 'gemini-4-carbon-high'
+STREAM_FLAGS = ['--input-format', 'stream-json', '--output-format', 'stream-json']
+# The unknown-model and authentication strings follow the AGY headless error
+# documentation. The Carbon account-access denial is a synthetic fixture.
+UNKNOWN_MODEL = (f'invalid model selection (--model "{CARBON}" --effort ""): model {CARBON} '
+                 'is not recognized as a known model or custom model in settings\nAvailable models:\n')
+AGY_FAILURES = {
+    'unknown-model': ('model-unsupported', 'agy models', {'status': 'ERROR', 'response': '', 'error': UNKNOWN_MODEL}),
+    'carbon-denied': ('model-unsupported', 'administrator',
+                      {'status': 'ERROR', 'error': f'permission denied: this account does not have access to model {CARBON}'}),
+    'auth': ('auth', 'authenticate', {'status': 'ERROR', 'response': '', 'error': 'authentication required'}),
+    'quota': ('quota', 'quota resets', {'status': 'ERROR', 'error': 'RESOURCE_EXHAUSTED: usage quota exceeded'}),
+}
+
+
+def explicit_agy_cli(tmp_path, monkeypatch, response="raise AssertionError('inference must not start')", *,
+                     help_text='--model\n--input-format\n--output-format', command=None):
+    from ai_skills import cli
+
+    config = configuration(tmp_path, 'agy', response=response, help_text=help_text)
+    if command is not None:
+        registry = json.loads(config.registry_file.read_bytes())
+        invocation = registry['agents']['agy']['invocation']
+        invocation['command'] = str(command)
+        invocation['args_template'].pop(0)
+        config.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    for key in list(os.environ):
+        if key.startswith('RUN_WITH_IT_') or key in ('AGENT', 'MODEL', 'MODEL_EFFORT', 'AGENT_EXTRA_ARGS', 'UNATTENDED'):
+            monkeypatch.delenv(key)
+    (tmp_path / 'assets').mkdir()
+    monkeypatch.setenv('ASSETS_DEST', str(tmp_path / 'assets'))
+    monkeypatch.setenv('RUN_WITH_IT_HEARTBEAT_SECONDS', '0')
+    for name in ('log_file', 'events_log', 'done_file', 'status_file'):
+        monkeypatch.setenv('RUN_WITH_IT_' + name.upper(), str(tmp_path / name))
+    return cli.main(['agent', 'run', '--agent', 'agy', '--model', CARBON, '--repo-root', str(tmp_path),
+                     '--registry-file', str(config.registry_file), '--context-file', str(config.context_file),
+                     '--prompt-file', str(config.prompt_file), '--gui-mode', '0', '--unattended',
+                     '--process-state-file', str(tmp_path / 'state.json')])
+
+
+def status_lines(tmp_path, kind):
+    return [line for line in (tmp_path / 'events_log').read_text(encoding='utf-8').splitlines()
+            if line.startswith(f'STATUS|type={kind}|')]
+
+
+def calls(tmp_path):
+    path = tmp_path / 'calls.log'
+    return path.read_text(encoding='utf-8').split() if path.exists() else []
+
+
+def assert_failed_without_success(tmp_path, output, code, reason=None):
+    assert code != 0
+    assert output.out == ''
+    assert all('status=failed' in line for line in status_lines(tmp_path, 'agent-complete'))
+    assert len(status_lines(tmp_path, 'agent-complete')) == 1
+    assert 'status=failed' in (tmp_path / 'done_file').read_text(encoding='utf-8')
+    unavailable = status_lines(tmp_path, 'agent-unavailable')
+    if reason is None:
+        assert unavailable == []
+    else:
+        assert len(unavailable) == 1
+        assert f'|model={CARBON}|' in unavailable[0] + '|'
+        assert f'|reason={reason}|' in unavailable[0] + '|'
+        assert '|action=exclude-route' in unavailable[0]
+
+
+@pytest.mark.parametrize('case', ['missing', '--model', '--input-format', '--output-format'])
+def test_explicit_agy_preflight_reports_model_and_remedy(tmp_path, monkeypatch, capsys, case):
+    flags = [flag for flag in ('--model', '--input-format', '--output-format') if flag != case]
+    command = tmp_path / 'missing-agy' if case == 'missing' else None
+    code = explicit_agy_cli(tmp_path, monkeypatch, help_text='\n'.join(flags), command=command)
+    output = capsys.readouterr()
+    reason = 'missing-command' if case == 'missing' else 'cli-unsupported'
+    assert code == (127 if case == 'missing' else 1)
+    assert_failed_without_success(tmp_path, output, code, reason)
+    remedy = ('install', 'PATH') if case == 'missing' else ('Upgrade', case)
+    guidance = [line for line in output.err.splitlines()
+                if not line.startswith('STATUS|') and CARBON in line and all(word in line for word in remedy)]
+    assert guidance and guidance[0] in (tmp_path / 'log_file').read_text(encoding='utf-8')
+    assert 'run' not in calls(tmp_path)
+    assert not (tmp_path / 'received.bin').exists()
+
+
+def agy_failure_script(result, code, stderr=''):
+    return (f"print({stderr!r}, file=sys.stderr)\n"
+            f"print(json.dumps({{'event': 'result', 'result': {result!r}}}))\nraise SystemExit({code})")
+
+
+def assert_one_exact_inference(tmp_path):
+    assert calls(tmp_path) == ['probe', 'run']
+    argv = json.loads((tmp_path / 'argv.json').read_text(encoding='utf-8'))
+    assert argv.count('--model') == 1 and argv[argv.index('--model') + 1] == CARBON
+    assert argv[-4:] == STREAM_FLAGS
+
+
+@pytest.mark.parametrize('case', sorted(AGY_FAILURES))
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_explicit_agy_failure_reports_requested_model_and_remedy(tmp_path, monkeypatch, capsys, case, exit_code):
+    reason, remedy, result = AGY_FAILURES[case]
+    code = explicit_agy_cli(tmp_path, monkeypatch, agy_failure_script(result, exit_code))
+    output = capsys.readouterr()
+    assert code == (exit_code or 1)
+    assert_failed_without_success(tmp_path, output, code, reason)
+    assert_one_exact_inference(tmp_path)
+    guidance = [line for line in output.err.splitlines()
+                if not line.startswith('STATUS|') and CARBON in line and remedy in line.lower()]
+    assert guidance and guidance[0] in (tmp_path / 'log_file').read_text(encoding='utf-8')
+    assert json.loads((tmp_path / 'state.json').read_bytes())['return_code'] == code
+
+
+def test_explicit_agy_stderr_only_startup_failure_reports_model_and_remedy(tmp_path, monkeypatch, capsys):
+    script = "print('Error: authentication required; run agy to sign in', file=sys.stderr)\nraise SystemExit(1)"
+    code = explicit_agy_cli(tmp_path, monkeypatch, script)
+    output = capsys.readouterr()
+    assert code == 1
+    assert_failed_without_success(tmp_path, output, code, 'auth')
+    assert_one_exact_inference(tmp_path)
+    assert any(CARBON in line and 'authenticate' in line.lower() and not line.startswith('STATUS|')
+               for line in output.err.splitlines())
+
+
+QUOTA_STEP = {'event': 'step_update', 'step_update': {'text_delta': 'tool said: usage limit and quota exceeded'}}
+MALFORMED_AGY = {
+    'invalid-json': "print(json.dumps(step)); print('{not json')",
+    'no-terminal': 'print(json.dumps(step))',
+    'duplicate-terminal': "print(json.dumps(step)); [print(json.dumps(done)) for _ in range(2)]",
+    'null-then-terminal': "print(json.dumps(step)); print(json.dumps({'event': 'result', 'result': None})); print(json.dumps(done))",
+    'missing-response': "print(json.dumps(step)); print(json.dumps({'event': 'result', 'result': {'status': 'SUCCESS'}}))",
+    'non-string-response': "print(json.dumps(step)); print(json.dumps({'event': 'result', 'result': {'status': 'SUCCESS', 'response': 5}}))",
+    'missing-status': "print(json.dumps(step)); print(json.dumps({'event': 'result', 'result': {'response': 'ok'}}))",
+    'error-and-success': ("print(json.dumps(step)); print(json.dumps({'event': 'result', 'result': "
+                          "{'status': 'SUCCESS', 'response': 'ok', 'error': 'boom'}}))"),
+}
+
+
+@pytest.mark.parametrize('case', sorted(MALFORMED_AGY))
+@pytest.mark.parametrize('exit_code', [0, 3])
+def test_explicit_agy_validates_terminal_output(tmp_path, monkeypatch, capsys, case, exit_code):
+    script = (f"step = {QUOTA_STEP!r}\ndone = {{'event': 'result', 'result': {{'status': 'SUCCESS', 'response': 'ok'}}}}\n"
+              + MALFORMED_AGY[case] + f'\nraise SystemExit({exit_code})')
+    code = explicit_agy_cli(tmp_path, monkeypatch, script)
+    output = capsys.readouterr()
+    assert code == (exit_code or 1)
+    assert_failed_without_success(tmp_path, output, code)
+    assert_one_exact_inference(tmp_path)
+    if exit_code == 0:
+        assert any(CARBON in line and 'malformed' in line.lower() for line in output.err.splitlines())
+
+
+def test_explicit_agy_valid_result_with_quota_phrase_succeeds(tmp_path, monkeypatch, capsys):
+    narrative = 'quota 🙂 usage limit 完了\n'
+    script = (f"print(json.dumps({QUOTA_STEP!r}))\n"
+              f"print(json.dumps({{'event': 'result', 'result': {{'status': 'SUCCESS', 'response': {narrative!r}}}}}, ensure_ascii=False))")
+    code = explicit_agy_cli(tmp_path, monkeypatch, script)
+    output = capsys.readouterr()
+    assert code == 0
+    assert output.out == narrative
+    assert status_lines(tmp_path, 'agent-unavailable') == []
+    assert 'status=success' in (tmp_path / 'done_file').read_text(encoding='utf-8')
+    assert_one_exact_inference(tmp_path)
+
+
+@pytest.mark.parametrize('case', sorted(AGY_FAILURES))
+@pytest.mark.parametrize('exit_code', [0, 2])
+def test_agy_stream_capture_preserves_explicit_failure(tmp_path, case, exit_code):
+    reason, _remedy, result = AGY_FAILURES[case]
+    cid = 'conv-carbon'
+    events = [
+        {'event': 'init', 'conversation_id': cid, 'init': {'model': CARBON}},
+        {'event': 'step_update', 'step_update': {'conversation_id': cid, 'step_index': 0,
+                                                 'step_type': 'user_input', 'state': 'DONE', 'text_delta': 'quota'}},
+        {'event': 'result', 'result': {**result, 'conversation_id': cid}},
+    ]
+    config = configuration(tmp_path, 'agy', response=f'for event in {events!r}: print(json.dumps(event))\nraise SystemExit({exit_code})')
+    config = config.replace(model=CARBON, role='impl', dispatcher_managed=True, state_file=tmp_path / 'worker.json',
+                            result_file=tmp_path / 'result.json', result_capture_context={'source': 'agy-stream-json'})
+    outcome = run_agent(config)
+    assert (outcome.return_code, outcome.unavailable_reason, outcome.model) == (exit_code or 1, reason, CARBON)
+    state = json.loads(config.process_state_file.read_bytes())
+    assert (state['state'], state['return_code'], state['unavailable_reason']) == ('dead', exit_code or 1, reason)
+    unavailable = [line for line in config.events_log.read_text(encoding='utf-8').splitlines()
+                   if line.startswith('STATUS|type=agent-unavailable|')]
+    assert len(unavailable) == 1 and f'model={CARBON}' in unavailable[0] and f'reason={reason}' in unavailable[0]
+    assert f'return_code={exit_code or 1}' in config.events_log.read_text(encoding='utf-8')
+    assert [json.loads(line) for line in (tmp_path / 'streams' / 'stdout').read_text(encoding='utf-8').splitlines()] == events
+    assert not config.result_file.exists()
+    log = config.log_file.read_text(encoding='utf-8')
+    assert result['error'].splitlines()[0] not in log
+    assert any(CARBON in line and 'STATUS|' not in line for line in log.splitlines())
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+@pytest.mark.parametrize('error', [
+    'permission denied: tool write_file may not modify /etc/hosts',
+    '/model is answered by the CLI itself and is unavailable with --input-format stream-json; '
+    'run it as its own --print /model invocation',
+])
+def test_explicit_agy_generic_denial_is_not_model_unavailability(tmp_path, monkeypatch, capsys, error, exit_code):
+    code = explicit_agy_cli(tmp_path, monkeypatch, agy_failure_script({'status': 'ERROR', 'response': '', 'error': error}, exit_code))
+    output = capsys.readouterr()
+    assert code == (exit_code or 1)
+    assert_failed_without_success(tmp_path, output, code)
+    assert_one_exact_inference(tmp_path)
+    assert any(CARBON in line and error in line for line in output.err.splitlines())

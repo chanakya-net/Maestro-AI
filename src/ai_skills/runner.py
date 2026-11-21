@@ -25,6 +25,7 @@ import tempfile
 import time
 import uuid
 
+from ai_skills import agy_diagnostics
 from ai_skills.effort import raw_effort_overrides, resolve_effort
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
@@ -440,17 +441,17 @@ def read_provider_output(path, *, transport='argv'):
     """
     if transport != 'agy-stream-json':
         return Path(path).read_text(encoding='utf-8', errors='replace')
-    result = None
+    results = []
     with Path(path).open(encoding='utf-8') as stream:
         for line in stream:
             if not line.strip():
                 continue
             event = json.loads(line)
             if isinstance(event, dict) and event.get('event') == 'result':
-                if result is not None:
+                if results:
                     raise ValueError('AGY returned multiple results for a single prompt')
-                result = event.get('result')
-    return agy_result_response(result)
+                results.append(event.get('result'))
+    return agy_result_response(results[0] if results else None)
 
 
 class _RawTail(_Tail):
@@ -466,8 +467,7 @@ class _AgyTail(_RawTail):
         super().__init__(path, channel, bus)
         self.path = path
 
-    def finish(self):
-        response = read_provider_output(self.path, transport='agy-stream-json')
+    def publish(self, response):
         for line in response.splitlines(keepends=True):
             self.bus.forward(line.rstrip('\r\n'), 'stdout', newline=line.endswith('\n'),
                              record_status=len(line) <= 65536)
@@ -518,6 +518,49 @@ def _stream_unavailability(source, tail):
         # The dispatcher rejects invalid framing only when capture is needed.
         pass
     return ''
+
+
+def _classify_agy(text):
+    return classify_unavailable(text) or agy_diagnostics.classify(text)
+
+
+def _agy_terminal(tail, managed):
+    if not managed:
+        return read_provider_output(tail.path, transport='agy-stream-json')
+    tail.stream.seek(0)
+    return extract_response(AGY, tail.stream).decode('utf-8')
+
+
+def _finish_agy(tails, code, model, bus, *, managed):
+    """Classify the structured terminal result before any stderr diagnostic.
+
+    Raw stdout is model-controlled, so only the terminal error and stderr can
+    identify unavailability. Managed capture keeps raw provider text in its
+    stream file and leaves unrecognized failures to the dispatcher.
+    """
+    output, errors = tails
+    try:
+        response = _agy_terminal(output, managed)
+    except ProviderError as error:
+        reason = _classify_agy(str(error))
+        if reason or not managed:
+            bus.forward(agy_diagnostics.failure_message(model, reason, '' if managed else str(error)))
+            code = code or 1
+        return code, reason
+    except (ValueError, RecursionError) as error:
+        reason = _classify_agy(errors.recent) if code else ''
+        if reason:
+            bus.forward(agy_diagnostics.failure_message(model, reason))
+        elif not managed:
+            bus.forward(agy_diagnostics.malformed_message(model, error))
+            code = code or 1
+        return code, reason
+    reason = _classify_agy(errors.recent) if code else ''
+    if reason:
+        bus.forward(agy_diagnostics.failure_message(model, reason))
+    elif code == 0 and not managed:
+        output.publish(response)
+    return code, reason
 
 
 def run_agent(config: AgentRunConfig) -> AgentRunResult:
@@ -604,22 +647,23 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             for tail in tails:
                 while tail.drain(final=True):
                     pass
-            if code == 0 and isinstance(tails[0], _AgyTail):
-                tails[0].finish()
-            reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
-            if stream_capture:
-                reason = reason or _stream_unavailability(source, tails[0])
-                if reason:
-                    state['unavailable_reason'] = reason
-                    code = code or 1
+            if isinstance(tails[0], _AgyTail) or source == AGY:
+                code, reason = _finish_agy(tails, code, model, bus, managed=stream_capture)
+            else:
+                reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
+                if stream_capture:
+                    reason = reason or _stream_unavailability(source, tails[0])
+                    code = code or (1 if reason else 0)
+            if stream_capture and reason:
+                state['unavailable_reason'] = reason
             if config.process_state_file and (not source or code != 0):
                 write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
         except FileNotFoundError as error:
             code, reason = 127, 'missing-command'
-            bus.forward(str(error))
+            bus.forward(f'{error}; install the {name} CLI or add it to PATH (requested model {model})')
         except _CLIUnsupported as error:
             code, reason = 1, 'cli-unsupported'
-            bus.forward(str(error))
+            bus.forward(f'{error} (requested model {model})')
         except (RuntimeError, ValueError, OSError) as error:
             code = 1
             reason = classify_unavailable(str(error))
