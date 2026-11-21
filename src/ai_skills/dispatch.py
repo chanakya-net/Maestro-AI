@@ -38,6 +38,9 @@ from ai_skills.runner import (
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
 from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, outcome_reason
 
+DEFAULT_QUIET_SECONDS = 900
+DEFAULT_STALL_SECONDS = 1200
+
 
 @dataclass(frozen=True)
 class WorkerConfig:
@@ -45,10 +48,10 @@ class WorkerConfig:
     state_file: Path
     detach: bool = False
     poll_seconds: float = .1
-    quiet_seconds: float = 120
-    stall_seconds: float = 600
+    quiet_seconds: float = DEFAULT_QUIET_SECONDS
+    stall_seconds: float = DEFAULT_STALL_SECONDS
     timeout_seconds: float = 0
-    hard_limit_seconds: float = 7200
+    hard_limit_seconds: float | None = None
     bootstrap_seconds: float = 10
     pre_spawn_head: str = ''
     execution_mode: str = 'implement'
@@ -59,6 +62,9 @@ class WorkerConfig:
     result_capture: dict | None = None
 
     def __post_init__(self):
+        if self.hard_limit_seconds is None:
+            default_limit = 0 if self.agent_run.role in ('sub-coord', 'merge-recovery') else 7200
+            object.__setattr__(self, 'hard_limit_seconds', default_limit)
         verification.validate_configuration(self)
         if type(self.detach) is not bool:
             raise ValueError('detach must be a boolean')

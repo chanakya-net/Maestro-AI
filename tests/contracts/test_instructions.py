@@ -103,6 +103,29 @@ def test_documented_pool_json_matches_native_configuration():
     sample=next(value for value in examples if 'sub_coord_agent' in value and 'state_file' in value)
     config=PoolConfig.from_record(sample)
     assert config.sub_coord_agent=='codex' and config.detach is True
+    assert config.timeout_seconds == config.hard_limit_seconds == 0
+
+
+def test_coordinator_deadline_policy_and_child_worker_examples_stay_aligned():
+    import json
+    skill=(ROOT/'skills/run-with-it/SKILL.md').read_text()
+    sub=(ROOT/'assets/sub-coordinator-prompt.md').read_text()
+    coordinator=(ROOT/'assets/coordinator-rules.md').read_text()
+    main=(ROOT/'assets/main-orchestrator-rules.md').read_text()
+    for text in (sub, coordinator, main):
+        assert 'timeout_seconds=0' in text and 'hard_limit_seconds=0' in text
+        assert 'persisted explicit' in text
+
+    def worker_example(text):
+        examples=[json.loads(match.group(1)) for match in re.finditer(r'```json\n(.*?)\n```',text,re.S)]
+        return next(value for value in examples if 'context_file' in value and 'agent' in value and 'hard_limit_seconds' in value)
+
+    skill_worker=worker_example(skill)
+    sub_worker=worker_example(sub)
+    for worker in (skill_worker, sub_worker):
+        assert (worker['quiet_seconds'], worker['stall_seconds'], worker['hard_limit_seconds']) == (900,1200,7200)
+    assert {key:skill_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')} == {
+        key:sub_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')}
 
 
 def test_native_command_families_accept_help_without_launching():

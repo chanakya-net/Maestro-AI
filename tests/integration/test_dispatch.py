@@ -255,6 +255,63 @@ def test_from_sources_cli_over_environment_and_forwarded_fields(tmp_path):
     assert config.hard_limit_seconds == 42
 
 
+@pytest.mark.parametrize(('role', 'hard_limit'), [('impl', 7200), ('sub-coord', 0), ('merge-recovery', 0)])
+def test_role_defaults_and_explicit_recorded_deadlines(tmp_path, role, hard_limit):
+    config = worker_config(tmp_path, 'from pathlib import Path;Path("result.json").write_text("{}")')
+    config = replace(config, agent_run=config.agent_run.replace(role=role), hard_limit_seconds=None)
+    assert config.timeout_seconds == 0
+    assert config.hard_limit_seconds == hard_limit
+    assert (config.quiet_seconds, config.stall_seconds) == (900, 1200)
+
+    restored = WorkerConfig.from_record({**config.to_record(), 'timeout_seconds': 3600, 'hard_limit_seconds': 7200})
+    assert restored.timeout_seconds == 3600
+    assert restored.hard_limit_seconds == 7200
+
+
+@pytest.mark.parametrize('role', ['sub-coord', 'merge-recovery'])
+def test_coordinator_dispatch_survives_both_former_deadlines(tmp_path, monkeypatch, role):
+    from types import SimpleNamespace
+    from ai_skills import dispatch
+
+    source = "import os,time,json; from pathlib import Path; time.sleep(.2); Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({'outcome':'completed','summary':'fixture complete'}))"
+    config = worker_config(tmp_path, source)
+    config = replace(config, agent_run=config.agent_run.replace(role=role), hard_limit_seconds=None)
+    real_time = time
+    elapsed = [0]
+
+    def simulated_monotonic():
+        elapsed[0] += 600
+        return elapsed[0]
+
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(
+        monotonic=simulated_monotonic, sleep=real_time.sleep, time=real_time.time))
+    assert dispatch.dispatch_worker(config).state == 'completed'
+    assert elapsed[0] > 7200
+
+
+@pytest.mark.parametrize(('limit', 'expected'), [('timeout_seconds', 3600), ('hard_limit_seconds', 7200)])
+def test_explicit_coordinator_deadline_still_stops_owned_provider(tmp_path, monkeypatch, limit, expected):
+    from types import SimpleNamespace
+    from ai_skills import dispatch
+
+    source = "import os,time,json; from pathlib import Path; time.sleep(2); Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({'outcome':'completed','summary':'fixture complete'}))"
+    config = worker_config(tmp_path, source)
+    config = replace(config, agent_run=config.agent_run.replace(role='sub-coord'), hard_limit_seconds=None)
+    config = replace(config, **{limit: expected})
+    real_time = time
+    elapsed = [0]
+
+    def simulated_monotonic():
+        elapsed[0] += 600
+        return elapsed[0]
+
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(
+        monotonic=simulated_monotonic, sleep=real_time.sleep, time=real_time.time))
+    result = dispatch.dispatch_worker(config)
+    assert result.reason == ('dispatch-timeout' if limit == 'timeout_seconds' else 'hard-limit-exceeded')
+    assert elapsed[0] >= expected
+
+
 def test_wrapper_exit_waits_for_descendant_cleanup(tmp_path):
     config=worker_config(tmp_path, '''import os,subprocess,sys
 subprocess.Popen([sys.executable,'-c',"import os,time;from pathlib import Path;time.sleep(.2);Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text('{}');Path('child-cleanup').touch()"])

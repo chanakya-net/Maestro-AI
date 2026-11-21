@@ -142,8 +142,8 @@ For ordinary managed implementation on any supported enabled route, include `res
   "gui_mode": "0",
   "unattended": true,
   "poll_seconds": 20,
-  "quiet_seconds": 120,
-  "stall_seconds": 600,
+  "quiet_seconds": 900,
+  "stall_seconds": 1200,
   "hard_limit_seconds": 7200,
   "detach": true
 }
@@ -179,6 +179,8 @@ ai-skills worker inspect --state-file /absolute/run/.run-with-it/issues/42/worke
 Validation starts no provider. Dispatch creates directories, atomically persists admission and a credential-free config, and returns only after durable provider identity or terminal failed evidence. Persist the identity/state path, role, cycle, route, effort, selection reason, log/done/result paths and start time in `sub-state.json` before monitoring. Reusing an admitted attempt is refused; inspect/adopt it instead of replaying the paid launch. A retry uses a fresh attempt-specific state/log/result path only after the previous tree is verified dead.
 
 DONE is advisory. Advance only after the owned tree is dead, its exit status is known, and the role artifact validates. Quiet live providers survive output stalls until an explicit deadline. At the hard limit preserve committed/dirty implementation progress for typed artifact recovery; unverified salvage is never success. Unknown identity blocks relaunch and destructive cleanup.
+
+The Sub-Coordinator and Merge Recovery Coordinator attempts themselves have no execution deadline by default (`timeout_seconds=0`, `hard_limit_seconds=0`). Positive configured limits remain enforceable, and persisted explicit values remain authoritative on adoption. Ordinary child worker attempts retain a two-hour hard limit by default.
 ## Verification-only retries
 
 Use this mode when an implementation/modification attempt committed the requested work and only verification remains. It retains the original role and review cycle; it is not a new role and not a verified no-op.

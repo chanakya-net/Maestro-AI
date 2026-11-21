@@ -35,6 +35,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## Spawning Rules
 
+- New Sub-Coordinator and Merge Recovery Coordinator attempts have no execution deadline by default (`timeout_seconds=0`, `hard_limit_seconds=0`). Positive configured values remain enforceable; persisted explicit values remain authoritative when an attempt is adopted. Ordinary child workers keep the two-hour hard limit.
 - Always spawn sub-coordinators via the native dispatcher (`ai-skills worker dispatch --role sub-coord`), which wraps `ai-skills agent run` with `sub-coordinator-prompt.md`.
 - Always run the rolling pool via the native pool runner (`ai-skills run pool`). Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. The pool dispatcher's `--agent` and `--model` values configure only the Sub-Coordinator process; do not run the routing algorithm to select sub-coordinators and never copy those values into child-worker overrides.

@@ -92,6 +92,29 @@ def test_dry_run_does_not_create_worker_launch_intent(tmp_path,monkeypatch,capsy
     assert not json.loads(Path(config.state_file).read_text())['pool_attempts']
     assert 'worker_config' not in capsys.readouterr().out
 
+
+@pytest.mark.parametrize('kind', ['sub-coord', 'merge-recovery'])
+def test_pool_coordinator_configs_have_no_default_deadline(tmp_path, kind):
+    config = pool_fixture(tmp_path, {1:{}})
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    worker = supervisor.worker('1', kind=kind)
+    assert worker.timeout_seconds == worker.hard_limit_seconds == 0
+    assert (worker.quiet_seconds, worker.stall_seconds) == (900, 1200)
+
+
+@pytest.mark.parametrize('mode', ['completed', 'crash', 'merge_failed'])
+def test_native_pool_coordinator_attempts_use_unbounded_defaults(tmp_path, monkeypatch, mode):
+    from dataclasses import replace
+    from pool_support import real_pool_fixture
+
+    monkeypatch.setenv('RUN_WITH_IT_GITHUB_UPDATES', '0')
+    config = replace(real_pool_fixture(tmp_path, delay=.2, mode=mode), timeout_seconds=0, hard_limit_seconds=0)
+    assert run_pool(config).state == 'pool-empty'
+    attempts = json.loads(Path(config.state_file).read_text())['pool_attempts']['1']
+    assert attempts['worker_config']['timeout_seconds'] == 0
+    assert attempts['worker_config']['hard_limit_seconds'] == 0
+
 @pytest.mark.parametrize('mode',['completed','crash','compaction','merge_failed'])
 def test_real_dispatcher_pool_flows_with_only_python_fixture_provider(tmp_path,monkeypatch,mode):
     from pool_support import real_pool_fixture

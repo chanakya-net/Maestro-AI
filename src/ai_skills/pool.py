@@ -22,7 +22,8 @@ import psutil
 
 from ai_skills import state as state_policy, artifacts
 from ai_skills.outcomes import outcome_path, outcome_reason, role_artifact_paths
-from ai_skills.dispatch import WorkerConfig, WorkerResult, adopt_worker, dispatch_worker
+from ai_skills.dispatch import (DEFAULT_QUIET_SECONDS, DEFAULT_STALL_SECONDS, WorkerConfig,
+    WorkerResult, adopt_worker, dispatch_worker)
 from ai_skills.events import EventBus
 from ai_skills.github import GitHubUpdateRequest, update_github
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor
@@ -86,10 +87,10 @@ class PoolConfig:
     gui_mode: str = '0'
     poll_seconds: float = 10
     heartbeat_seconds: float = 60
-    timeout_seconds: float = 3600
-    hard_limit_seconds: float = 7200
-    quiet_seconds: float = 120
-    stall_seconds: float = 600
+    timeout_seconds: float = 0
+    hard_limit_seconds: float = 0
+    quiet_seconds: float = DEFAULT_QUIET_SECONDS
+    stall_seconds: float = DEFAULT_STALL_SECONDS
     bootstrap_seconds: float = 10
     max_recovery_attempts: int = 2
     max_compaction_handoffs: int = 6

@@ -137,7 +137,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
 | `SUB_COORD_MODEL` | `gpt-6.2-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
-| `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
+| `SUB_COORD_TIMEOUT_SECONDS` | `0` | Optional Sub-Coordinator execution deadline in seconds; `0` disables the deadline |
 | `STATUS_POLL_SECONDS` | `10` | Native polling cadence for status line output |
 | `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `ai-skills run watch` call in Step D |
 | `LOG_TAIL_POLL_SECONDS` | `120` | Native polling cadence for sub-coordinator log tail |
@@ -283,8 +283,8 @@ The JSON keys below are accepted by `PoolConfig.from_record`; paths must be abso
   "main_log": "/absolute/run/.run-with-it/main/main.log",
   "pool_state_file": "/absolute/run/.run-with-it/main/pool.state.json",
   "poll_seconds": 10,
-  "timeout_seconds": 3600,
-  "hard_limit_seconds": 7200,
+  "timeout_seconds": 0,
+  "hard_limit_seconds": 0,
   "detach": true
 }
 ```
@@ -321,8 +321,8 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "gui_mode": "0",
   "unattended": true,
   "poll_seconds": 20,
-  "quiet_seconds": 120,
-  "stall_seconds": 600,
+  "quiet_seconds": 900,
+  "stall_seconds": 1200,
   "hard_limit_seconds": 7200,
   "detach": true
 }
