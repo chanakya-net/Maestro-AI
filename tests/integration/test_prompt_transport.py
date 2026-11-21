@@ -287,3 +287,38 @@ def test_stream_capture_preserves_provider_unavailability(tmp_path, monkeypatch,
     assert json.loads((tmp_path / 'streams' / 'stdout').read_bytes()) == wire
     assert 'agent-unavailable' in config.events_log.read_text(encoding='utf-8')
     assert 'failed to authenticate' not in config.log_file.read_text(encoding='utf-8')
+
+
+GEMINI_4_MODELS = (
+    *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen') for effort in ('low', 'medium', 'high', 'xhigh')),
+    *(f'gemini-4-carbon-{effort}' for effort in ('low', 'medium', 'high')),
+)
+
+
+@pytest.mark.parametrize('model', GEMINI_4_MODELS)
+def test_fake_agy_receives_each_gemini_4_model_once_with_unicode_stream(tmp_path, capsys, model):
+    narrative = f'結果 🙂 {model}\n'
+    events = [{'event': 'result', 'result': {'status': 'SUCCESS', 'response': narrative}}]
+    config = configuration(tmp_path, 'agy', response=f"for event in {events!r}: print(json.dumps(event, ensure_ascii=False))")
+    assert run_agent(config.replace(model=model)).return_code == 0
+    argv = json.loads((tmp_path/'argv.json').read_text(encoding='utf-8'))
+    assert argv.count('--model') == 1
+    assert argv[argv.index('--model') + 1] == model
+    assert '你好🙂' in (tmp_path/'received.bin').read_text(encoding='utf-8')
+    assert capsys.readouterr().out == narrative
+
+
+def test_extract_response_handles_xhigh_agy_stream():
+    import io
+    from ai_skills.provider_capture import extract_response
+    cid = 'conv-1'
+    step = lambda index, kind, state: {'event': 'step_update', 'step_update': {
+        'conversation_id': cid, 'step_index': index, 'state': state, 'step_type': kind}}
+    events = [
+        {'event': 'init', 'conversation_id': cid, 'init': {'model': 'gemini-4-neon-xhigh'}},
+        step(0, 'user_input', 'DONE'), step(1, 'model_response', 'DONE'),
+        {'event': 'result', 'result': {'conversation_id': cid, 'status': 'SUCCESS', 'response': 'neon xhigh 完了'}},
+    ]
+    wire = ''.join(json.dumps(e, ensure_ascii=False) + '\n' for e in events).encode('utf-8')
+    assert extract_response('agy-stream-json', io.BytesIO(wire)) == 'neon xhigh 完了'.encode('utf-8')

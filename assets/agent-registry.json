@@ -173,6 +173,94 @@
       "explicit_only": true,
       "agents": ["agy"]
     },
+    "gemini-4-neon-low": {
+      "provider": "google",
+      "ability": "fast",
+      "complexity_weight": 4,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-neon-medium": {
+      "provider": "google",
+      "ability": "balanced",
+      "complexity_weight": 5,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-neon-high": {
+      "provider": "google",
+      "ability": "frontier",
+      "complexity_weight": 7,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-neon-xhigh": {
+      "provider": "google",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-hydrogen-low": {
+      "provider": "google",
+      "ability": "fast",
+      "complexity_weight": 4,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-hydrogen-medium": {
+      "provider": "google",
+      "ability": "balanced",
+      "complexity_weight": 5,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-hydrogen-high": {
+      "provider": "google",
+      "ability": "frontier",
+      "complexity_weight": 7,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-hydrogen-xhigh": {
+      "provider": "google",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-carbon-low": {
+      "provider": "google",
+      "ability": "fast",
+      "complexity_weight": 4,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-carbon-medium": {
+      "provider": "google",
+      "ability": "balanced",
+      "complexity_weight": 5,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
+    "gemini-4-carbon-high": {
+      "provider": "google",
+      "ability": "frontier",
+      "complexity_weight": 7,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"]
+    },
     "gemini-3.8-flash-high": {
       "provider": "google",
       "ability": "advanced",
