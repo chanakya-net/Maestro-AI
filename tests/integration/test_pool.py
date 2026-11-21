@@ -41,6 +41,20 @@ def test_agy_coordinator_model_must_exist_in_pinned_registry(tmp_path):
         config.validate_coordinator_selection()
 
 
+def test_agent_registry_override_becomes_the_pool_registry(tmp_path):
+    override=tmp_path/'custom-registry.json'
+    config=PoolConfig.from_sources({'state_file':str(tmp_path/'state')},{'AGENT_REGISTRY_FILE':str(override)})
+
+    assert config.resolved().registry_file==override
+
+
+def test_explicit_pool_registry_takes_precedence_over_agent_registry_override(tmp_path):
+    explicit=tmp_path/'explicit.json'
+    config=PoolConfig(state_file=tmp_path/'state',registry_file=explicit,environment={'AGENT_REGISTRY_FILE':str(tmp_path/'override.json')})
+
+    assert config.resolved().registry_file==explicit
+
+
 def test_agy_environment_selection_keeps_worker_override_separate(tmp_path):
     config=PoolConfig.from_sources({'state_file':str(tmp_path/'state')},{
         'SUB_COORD_AGENT':'agy','SUB_COORD_MODEL':'gemini-4-neon-medium',

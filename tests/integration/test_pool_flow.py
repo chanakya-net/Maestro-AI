@@ -155,6 +155,42 @@ def test_invalid_agy_coordinator_pair_is_rejected_before_dispatch(tmp_path,monke
         run_pool(config)
     assert driver.started==[]
 
+
+def _custom_agy_registry(tmp_path,models):
+    registry=tmp_path/'custom-registry.json'
+    registry.write_text(json.dumps({'agents':{'agy':{'model':{'known_models':list(models)}}}}))
+    return registry
+
+
+def test_agent_registry_override_validates_and_forwards_the_same_registry(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from ai_skills.registry import load_registry
+    from ai_skills.routing import load_run_registry
+    registry=_custom_agy_registry(tmp_path,['custom-agy-model'])
+    monkeypatch.setenv('AGENT_REGISTRY_FILE',str(registry))
+    config=replace(pool_fixture(tmp_path,{1:{}}),sub_coord_agent='agy',sub_coord_model='custom-agy-model')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+
+    assert run_pool(config).state=='pool-empty'
+    run=driver.started[0].agent_run
+    assert (run.agent,run.model)==('agy','custom-agy-model')
+    assert Path(run.registry_file)==registry
+    assert run.environment['AGENT_REGISTRY_FILE']==str(registry)
+    assert load_run_registry('',tmp_path/'main-state.json')==load_registry(registry)
+
+
+def test_model_absent_from_agent_registry_override_is_rejected_before_inference(tmp_path,monkeypatch):
+    from dataclasses import replace
+    registry=_custom_agy_registry(tmp_path,['custom-agy-model'])
+    monkeypatch.setenv('AGENT_REGISTRY_FILE',str(registry))
+    # Valid in the packaged registry, but the operator's override does not list it.
+    config=replace(pool_fixture(tmp_path,{1:{}}),sub_coord_agent='agy',sub_coord_model='gemini-4-neon-medium')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+
+    with pytest.raises(ValueError,match='unsupported coordinator model.*gemini-4-neon-medium.*AGY'):
+        run_pool(config)
+    assert driver.started==[]
+
 def test_dry_run_does_not_create_worker_launch_intent(tmp_path,monkeypatch,capsys):
     from dataclasses import replace
     config=replace(pool_fixture(tmp_path,{1:{}}),dry_run=True)

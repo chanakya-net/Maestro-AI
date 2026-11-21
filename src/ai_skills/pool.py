@@ -71,6 +71,27 @@ def select_ready(state: dict, *, limit: int) -> AdmissionDecision:
     return AdmissionDecision(tuple(issue for issue, _ in selected), deferrals, tuple(missing))
 
 
+def check_agy_coordinator(agent, model, registry_file):
+    """Reject an AGY coordinator model absent from the registry the run binds to."""
+    registry = load_registry(registry_file)
+    agent = registry.get('aliases', {}).get(agent, agent)
+    if agent != 'agy':
+        return
+    definition = registry.get('agents', {}).get(agent)
+    models = definition.get('model', {}).get('known_models', []) if isinstance(definition, dict) else []
+    if model not in models:
+        raise ValueError(
+            f'unsupported coordinator model {model!r} for AGY; '
+            f'choose an AGY model from the pinned registry'
+        )
+
+
+def check_worker_selection(worker):
+    """Validate the coordinator pair the dispatched run will actually use."""
+    run = worker.agent_run
+    check_agy_coordinator(run.agent, run.model, run.registry_file)
+
+
 @dataclass(frozen=True)
 class PoolConfig:
     state_file: Path
@@ -131,7 +152,10 @@ class PoolConfig:
         root = Path(self.run_root).absolute() if self.run_root else (state_file.parent.parent if state_file.parent.name == '.run-with-it' else state_file.parent)
         directory = root / '.run-with-it'
         env=self.environment if self.environment is not None else os.environ
+        # An explicit pool registry wins; otherwise the operator's documented override applies.
+        registry = self.registry_file if self.registry_file is not None else env.get('AGENT_REGISTRY_FILE') or None
         return replace(self, state_file=state_file, run_root=root,
+            registry_file=Path(registry).absolute() if registry else None,
             forced_agent=self.forced_agent if self.forced_agent is not None else env.get('FORCED_AGENT') or None,
             forced_model=self.forced_model if self.forced_model is not None else env.get('FORCED_MODEL') or None,
             pool_state_file=Path(self.pool_state_file).absolute() if self.pool_state_file else directory/'main'/'pool.state.json',
@@ -141,18 +165,7 @@ class PoolConfig:
             record_directory=Path(self.record_directory).absolute() if self.record_directory else directory/'processes')
 
     def validate_coordinator_selection(self):
-        registry = load_registry(self.registry_file)
-        aliases = registry.get('aliases', {})
-        agent = aliases.get(self.sub_coord_agent, self.sub_coord_agent)
-        if agent != 'agy':
-            return
-        definition = registry.get('agents', {}).get(agent)
-        models = definition.get('model', {}).get('known_models', []) if isinstance(definition, dict) else []
-        if self.sub_coord_model not in models:
-            raise ValueError(
-                f'unsupported coordinator model {self.sub_coord_model!r} for AGY; '
-                f'choose an AGY model from the pinned registry'
-            )
+        check_agy_coordinator(self.sub_coord_agent, self.sub_coord_model, self.registry_file)
 
     def to_record(self):
         value = asdict(self)
@@ -440,6 +453,7 @@ class PoolSupervisor:
         if self.stop_requested():
             return None
         worker = worker or self.worker(issue)
+        check_worker_selection(worker)
         # The new intent must own shared paths before old evidence is archived.
         # If publication fails, the previous current attempt remains adoptable.
         self._intent(issue, worker)
@@ -594,11 +608,17 @@ class PoolSupervisor:
         for issue in [*result.active,*result.finished]:
             worker=WorkerConfig.from_record(state['pool_attempts'][issue]['worker_config'])
             self._registered(issue,worker,(result.active|result.finished)[issue])
-        for issue in result.launchable:
-            worker=WorkerConfig.from_record(state['pool_attempts'][issue]['worker_config'])
-            worker=replace(worker,agent_run=replace(worker.agent_run,environment=self.worker_environment()))
-            self.launch(issue,worker)
+        launches=[(issue,self._replayed_worker(state,issue)) for issue in result.launchable]
+        # Validate every persisted pair before the first launch so one bad intent starts nothing.
+        for _,worker in launches: check_worker_selection(worker)
+        for issue,worker in launches: self.launch(issue,worker)
         return None
+
+    def _replayed_worker(self, state, issue):
+        worker=WorkerConfig.from_record(state['pool_attempts'][issue]['worker_config'])
+        # Replays bind the current environment and registry, matching what the child sees.
+        return replace(worker,agent_run=replace(worker.agent_run,environment=self.worker_environment(),
+            registry_file=self.config.registry_file))
 
     def tick(self):
         if self.stop_requested():
