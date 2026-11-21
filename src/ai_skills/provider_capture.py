@@ -16,6 +16,10 @@ class ProviderError(ValueError):
     """The provider explicitly reported a failed request."""
 
 
+class MissingAgyTerminal(ValueError):
+    """An AGY stream ended before emitting a terminal record."""
+
+
 def _unique_object(pairs):
     result = dict(pairs)
     if len(result) != len(pairs):
@@ -86,7 +90,7 @@ def agy_narrative_response(stream):
             response = agy_result_response(event.get('result'))
             response.encode('utf-8')  # Validate before any line can be published.
             return response
-    raise ValueError('AGY stream has no terminal result')
+    raise MissingAgyTerminal('AGY stream has no terminal result')
 
 
 def _agy_step(event, conversation):

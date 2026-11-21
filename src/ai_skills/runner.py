@@ -30,8 +30,8 @@ from ai_skills.effort import raw_effort_overrides, resolve_effort
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.provider_capture import (
-    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, ProviderError, agy_narrative_response,
-    extract_response,
+    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, MissingAgyTerminal, ProviderError,
+    agy_narrative_response, extract_response,
 )
 from ai_skills.resources import resource_path
 from ai_skills.registry import load_registry
@@ -528,6 +528,22 @@ def _agy_terminal(tail, managed):
     return extract_response(AGY, tail.stream).decode('utf-8')
 
 
+def _report_agy_stderr(tail, retained_path):
+    """Report the standalone diagnostics path without forwarding provider text."""
+    if not tail.recent:
+        return
+    if retained_path is None:
+        try:
+            with tempfile.NamedTemporaryFile(prefix='ai-skills-agy-stderr-', suffix='.log', delete=False) as stderr:
+                tail.stream.seek(0)
+                shutil.copyfileobj(tail.stream, stderr)
+                retained_path = stderr.name
+        except OSError:
+            print('Could not save AGY stderr.', file=sys.stderr)
+            return
+    print(f'AGY stderr saved to {retained_path}', file=sys.stderr, flush=True)
+
+
 def _finish_agy(tails, code, model, bus, *, managed):
     """Classify the structured terminal result before any stderr diagnostic.
 
@@ -549,14 +565,20 @@ def _finish_agy(tails, code, model, bus, *, managed):
         if reason:
             bus.forward(agy_diagnostics.failure_message(model, reason))
         elif not managed:
-            bus.forward(agy_diagnostics.malformed_message(model, error))
+            if code and isinstance(error, MissingAgyTerminal):
+                bus.forward(f'AGY failed for requested model {model} with exit code {code} without a terminal result.')
+            else:
+                bus.forward(agy_diagnostics.malformed_message(model, error))
             code = code or 1
         return code, reason
     reason = _classify_agy(errors.recent, model) if code else ''
     if reason:
         bus.forward(agy_diagnostics.failure_message(model, reason))
-    elif code == 0 and not managed:
-        output.publish(response)
+    elif not managed:
+        if code:
+            bus.forward(f'AGY failed for requested model {model} with exit code {code}; no result was accepted.')
+        else:
+            output.publish(response)
     return code, reason
 
 
@@ -650,6 +672,8 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
                     pass
             if agy_stream:
                 code, reason = _finish_agy(tails, code, model, bus, managed=stream_capture)
+                if code and not reason and not config.dispatcher_managed:
+                    _report_agy_stderr(tails[1], errors if config.stream_directory else None)
             else:
                 reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
                 if stream_capture:

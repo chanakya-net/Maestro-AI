@@ -61,7 +61,7 @@ def classify(text: str, model: str) -> str:
 
 def failure_message(model: str, reason: str) -> str:
     """Human guidance naming the exact requested model and its remedy."""
-    remedy = _REMEDIES.get(reason, 'retry the request or check the AGY diagnostics if it keeps failing')
+    remedy = _REMEDIES.get(reason, 'retry the request')
     return f'AGY could not run requested model {model}: {remedy}.'
 
 

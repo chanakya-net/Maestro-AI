@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 
 import pytest
@@ -370,6 +371,7 @@ def explicit_agy_cli(tmp_path, monkeypatch, response="raise AssertionError('infe
             monkeypatch.delenv(key)
     (tmp_path / 'assets').mkdir()
     monkeypatch.setenv('ASSETS_DEST', str(tmp_path / 'assets'))
+    monkeypatch.setattr(tempfile, 'tempdir', str(tmp_path))
     monkeypatch.setenv('RUN_WITH_IT_HEARTBEAT_SECONDS', '0')
     for name in ('log_file', 'events_log', 'done_file', 'status_file'):
         monkeypatch.setenv('RUN_WITH_IT_' + name.upper(), str(tmp_path / name))
@@ -488,6 +490,35 @@ def test_explicit_agy_stderr_only_startup_failure_reports_model_and_remedy(tmp_p
     assert_failed_without_success(tmp_path, output, code, 'auth')
     assert_one_exact_inference(tmp_path)
     assert any(CARBON in line and 'authenticate' in line.lower() and not line.startswith('STATUS|')
+               for line in output.err.splitlines())
+
+
+def test_explicit_agy_retains_stderr_when_provider_exits_without_terminal(tmp_path, monkeypatch, capsys):
+    diagnostic = 'FATAL: network is unreachable'
+    script = f"print({diagnostic!r}, file=sys.stderr)\nraise SystemExit(3)"
+    code = explicit_agy_cli(tmp_path, monkeypatch, script)
+    output = capsys.readouterr()
+    assert code == 3
+    assert_failed_without_success(tmp_path, output, code)
+    assert any(CARBON in line and 'exit code 3' in line and 'without a terminal result' in line
+               for line in output.err.splitlines())
+    assert 'malformed' not in output.err.lower()
+    _, separator, path = output.err.partition('AGY stderr saved to ')
+    assert separator
+    assert diagnostic in Path(path.splitlines()[0]).read_text(encoding='utf-8')
+    log_file = tmp_path / 'log_file'
+    assert diagnostic not in log_file.read_text(encoding='utf-8')
+    assert not log_signals_unavailable_route(str(log_file))
+
+
+def test_explicit_agy_reports_nonzero_exit_after_success_terminal(tmp_path, monkeypatch, capsys):
+    result = {'status': 'SUCCESS', 'response': 'This response must not be published.'}
+    script = agy_failure_script(result, 2, 'segfault in renderer')
+    code = explicit_agy_cli(tmp_path, monkeypatch, script)
+    output = capsys.readouterr()
+    assert code == 2
+    assert_failed_without_success(tmp_path, output, code)
+    assert any('AGY failed' in line and CARBON in line and 'exit code 2' in line
                for line in output.err.splitlines())
 
 
