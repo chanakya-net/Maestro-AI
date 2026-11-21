@@ -236,6 +236,24 @@ def routing_availability(
     return availability
 
 
+def availability_from_events(lines: Any) -> Availability:
+    """Fold structured ``agent-unavailable`` events into cumulative exclusions.
+
+    ``scope=agent`` excludes the whole harness; any other scope (``agent-model``)
+    excludes only the reported agent/model pair. Unrelated or malformed lines are ignored.
+    """
+    availability = empty_availability()
+    for line in lines:
+        fields = dict(part.split("=", 1) for part in str(line).split("|") if "=" in part)
+        if fields.get("type") != "agent-unavailable" or not fields.get("agent"):
+            continue
+        if fields.get("scope") == "agent":
+            availability["agents"].add(fields["agent"])
+        elif fields.get("model"):
+            availability["pairs"].add((fields["agent"], fields["model"]))
+    return availability
+
+
 def availability_summary(availability: Availability) -> dict[str, list[Any]]:
     return {
         "agents": sorted(str(agent) for agent in availability.get("agents", set())),
@@ -756,6 +774,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prefer-model", default="")
     parser.add_argument("--model-denylist", default=os.environ.get("RUN_WITH_IT_MODEL_DENYLIST", ""))
     parser.add_argument("--availability-file", default=os.environ.get("RUN_WITH_IT_MODEL_AVAILABILITY_FILE", ""))
+    parser.add_argument("--events-log", default="",
+                        help="fold structured agent-unavailable events from this log into exclusions")
     parser.add_argument("--record", action="store_true")
     return parser.parse_args(argv)
 
@@ -821,6 +841,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
+    if args.events_log and Path(args.events_log).is_file():
+        availability = merge_availability(availability, availability_from_events(
+            Path(args.events_log).read_text(encoding="utf-8").splitlines()))
 
     if args.record:
         with DirectoryLock(ledger_file):

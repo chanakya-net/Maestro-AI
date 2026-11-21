@@ -656,3 +656,12 @@ def test_pinned_run_refuses_a_different_interpreter(tmp_path, monkeypatch, capsy
         routing.main(_route_args(ledger))
     assert "pinned to" in capsys.readouterr().err
     assert not ledger.exists()
+
+
+def test_route_cli_events_log_excludes_reported_harness(tmp_path, capsys):
+    log = tmp_path / 'events.log'
+    log.write_text('STATUS|type=agent-unavailable|issue=227|role=impl|agent=agy|model=m|reason=quota|'
+                   'action=exclude-route|scope=agent\n', encoding='utf-8')
+    routing.main(['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard', '--events-log', str(log),
+        '--ledger-file', str(tmp_path / 'ledger.json')])
+    assert json.loads(capsys.readouterr().out)['agent'] != 'agy'

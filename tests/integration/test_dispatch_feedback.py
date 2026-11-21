@@ -121,6 +121,80 @@ def test_managed_agy_unavailability_reports_routing_scope(tmp_path, error, reaso
         assert retry_config.result_file != config.result_file
 
 
+def _event_lines(config):
+    return config.events_log.read_text(encoding='utf-8').splitlines()
+
+
+def _dispatch_impl_retry(retry_dir, retry, retry_result, cycle):
+    retry_dir.mkdir()
+    success = (
+        "import os; pathlib.Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({"
+        "'schema_version':1,'issue':'227','role':'impl','status':'success','no_op':True,'commit_sha':'NONE',"
+        "'files_committed':[],'verification':{'passed':True,'commands':['retry check']}})); "
+    )
+    if retry['agent'] == 'agy':
+        success += ("print(json.dumps({'event':'init','conversation_id':'r','init':{}})); "
+                    "print(json.dumps({'event':'result','result':{'conversation_id':'r','status':'SUCCESS','response':'done'}}))")
+    config = configuration(retry_dir, retry['agent'], response=success).replace(
+        model=retry['model'], role='impl', issue='227', cycle=cycle, dispatcher_managed=True,
+        state_file=retry_dir / 'provider-state.json', result_file=retry_result,
+        done_file=retry_dir / 'cycle-1-attempt-3.done')
+    worker = WorkerConfig(agent_run=config, state_file=retry_dir / 'cycle-1-attempt-3.state.json', poll_seconds=.02,
+                          pre_spawn_head=None)
+    return config, worker
+
+
+@pytest.mark.parametrize('role', ['impl', 'review'])
+def test_sequential_managed_agy_failures_accumulate_exclusions_until_alternate_or_exhaustion(tmp_path, role):
+    first_dir, second_dir = tmp_path / 'first', tmp_path / 'second'
+    first_dir.mkdir(); second_dir.mkdir()
+    first, first_fields = _dispatch_managed_agy_failure(first_dir, 'model access denied', 'model-unsupported', 'agent-model', role)
+    second, second_fields = _dispatch_managed_agy_failure(second_dir, 'quota exceeded', 'quota', 'agent', role)
+    registry = load_registry(first.registry_file)
+    events = _event_lines(first) + _event_lines(second)
+    # Cumulative: the model pair AND the whole harness are excluded by the folded event stream.
+    availability = routing.availability_from_events(events)
+    assert (first_fields['agent'], first_fields['model']) in availability['pairs']
+    assert 'agy' in availability['agents']
+    # A single event alone does not carry the other exclusion (retries must fold the whole history).
+    only_first = routing.availability_from_events(_event_lines(first))
+    assert 'agy' not in only_first['agents']
+    retry = routing.select_route(routing.RouteRequest(role=role, complexity_level='medium-hard',
+        availability=availability), registry, {}).selection
+    assert retry['agent'] != 'agy'
+    # Same role/cycle, fresh attempt path.
+    assert first_fields['role'] == second_fields['role'] == role
+    assert first_fields['cycle'] == second_fields['cycle'] == '1'
+    # Explicit unavailable selection stays an actionable failure.
+    with pytest.raises(SystemExit):
+        routing.select_route(routing.RouteRequest(role=role, availability=availability,
+            forced_agent='agy', forced_model=first_fields['model']), registry, {})
+    # Exhaustion is bounded.
+    every = routing.availability_from_events(
+        f'type=agent-unavailable|agent={a}|model=m|scope=agent' for a in registry['agents'])
+    with pytest.raises(SystemExit):
+        routing.select_route(routing.RouteRequest(role=role, availability=every), registry, {})
+    retry_dir = tmp_path / 'retry'
+    if role == 'impl':
+        retry_result = tmp_path / 'cycle-1-attempt-3-result.json'
+        retry_config, worker = _dispatch_impl_retry(retry_dir, retry, retry_result, '1')
+        assert dispatch_worker(worker).state == 'completed'
+    else:
+        retry_config, _ = _dispatch_successful_review_retry(retry_dir, retry, tmp_path / 'cycle-1-attempt-3-status.json')
+    assert retry_config.result_file not in (first.result_file, second.result_file)
+    ready = next(line for line in _event_lines(retry_config) if 'type=dispatch-ready|' in line)
+    fields = dict(part.split('=', 1) for part in ready.split('|')[1:])
+    assert fields['role'] == role and fields['cycle'] == '1'
+    assert not any('type=agent-unavailable|' in line for line in _event_lines(retry_config))
+
+
+def test_availability_events_ignore_unstructured_and_unrelated_lines():
+    availability = routing.availability_from_events([
+        'type=agent-unavailable|agent=agy|reason=quota', 'type=dispatch-failed|agent=codex|scope=agent',
+        'noise', 'type=agent-unavailable|agent=codex|model=m1|scope=agent-model'])
+    assert availability['agents'] == set() and availability['pairs'] == {('codex', 'm1')}
+
+
 @pytest.mark.parametrize(('value', 'expected'), [('0', False), ('false', False), ('no', False), ('off', False),
                                                ('1', True), ('true', True), ('yes', True), ('on', True)])
 def test_detach_environment_boolean_controls_dispatch_mode(tmp_path, value, expected):
