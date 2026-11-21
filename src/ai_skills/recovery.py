@@ -47,7 +47,7 @@ def compact_worker_decision(
 class RecoveryPolicy:
     max_attempts: int = 2
     max_compaction_handoffs: int = 6
-    max_wait_seconds: int = 3600
+    max_wait_seconds: int = 0
 
 @dataclass(frozen=True)
 class RecoveryEvidence:

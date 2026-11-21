@@ -162,8 +162,8 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `PARALLEL_JOBS` | `4` | Rolling pool size. Freed slots fill immediately. Set to `1` for sequential. |
 | `POOL_HEARTBEAT_SECONDS` | `60` | Cadence of the pool runner's `STATUS|type=pool-heartbeat` liveness line (per-status counts + active pool size) |
 | `MAX_SPAWN_BOOTSTRAP_ATTEMPTS` | `3` | Consecutive failed spawn attempts before the pool runner finalizes an issue as terminal instead of retrying |
-| `RUN_WITH_IT_WORKER_STALE_SECONDS` | `600` | A worker state file untouched this long is treated as an orphaned snapshot, not a running worker. A live dispatcher rewrites it every poll (~20s), so silence this long means the dispatcher died. Floored at 60. |
-| `MAX_WORKER_WAIT_SECONDS` | `3600` | Ceiling on waiting for one in-flight worker after its Sub-Coordinator exits, even while the worker still looks alive. `0` disables the ceiling — the staleness bound is then the only backstop. |
+| `RUN_WITH_IT_WORKER_STALE_SECONDS` | `1200` | During recovery, activity from the worker state and log is considered stale after this many seconds. Minimum 60 seconds. |
+| `MAX_WORKER_WAIT_SECONDS` | `0` | Maximum wait for an in-flight worker after its Sub-Coordinator exits. `0` keeps the issue slot while the child remains live; stale or dead child evidence still triggers recovery. |
 | `MAX_SUB_COORD_COMPACTION_HANDOFFS` | `6` | Context-budget handoffs allowed per issue. Budgeted apart from `MAX_SUB_COORD_RECOVERY_ATTEMPTS` because a compaction stop is a contracted handoff, not a failure. |
 | `WAIT_STATUS_INTERVAL_SECONDS` | `300` | Minimum gap between repeats of an unchanged `sub-coord-recovery-wait` line. Changes in worker/role/reason always emit. |
 

@@ -174,6 +174,40 @@ def test_recovery_analyzer_consumes_snapshots(tmp_path,capsys):
     decision=json.loads(capsys.readouterr().out)
     assert decision["action"]=="spawn_recovery" and decision["reason"]=="sub-coordinator-context-exhausted"
 
+@pytest.mark.parametrize(('updated_at','wait','override','expected'),[
+    ('1970-01-01T02:46:39Z',3601,None,('wait_worker','in-flight-worker-running')),
+    ('1970-01-01T02:46:39Z',3601,60,('spawn_recovery','in-flight-worker-wait-timeout')),
+    ('1970-01-01T02:13:20Z',0,None,('spawn_recovery','in-flight-worker-orphaned')),
+    ('1970-01-01T02:46:39Z',3601,None,('spawn_recovery','in-flight-worker-finished')),
+])
+def test_recovery_analyzer_default_wait_and_live_child_outcomes(
+        tmp_path,capsys,monkeypatch,updated_at,wait,override,expected):
+    from ai_skills import state as state_module
+    issue=tmp_path/'7';issue.mkdir()
+    path=state_file(tmp_path,{'7':{'status':'in_progress','issue_dir':str(issue)}})
+    child_state=issue/'child.json';child_state.write_text(json.dumps({'state':'running','updated_at':updated_at}))
+    result=issue/'child-result.json';done=issue/'child.done'
+    child={'role':'impl','state_file':str(child_state),'result_file':str(result),'done_file':str(done)}
+    (issue/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[child]}))
+    now=10000
+    monkeypatch.setattr(state_module.time,'time',lambda:now)
+    monkeypatch.setattr(state_module,'path_mtime',lambda path:None)
+    if expected[1]=='in-flight-worker-finished':
+        child_state.write_text(json.dumps({'state':'completed','updated_at':updated_at,'done':True}))
+        result.write_text(json.dumps({'outcome':'completed'}));done.write_text('completed')
+    args=['analyze-sub-coord-failure','--issue',7,'--report-file',issue/'report.json',
+          '--wait-elapsed-seconds',wait]
+    if override is not None:args += ['--max-wait-seconds',override]
+    command(path,*args)
+    decision=json.loads(capsys.readouterr().out)
+    assert (decision['action'],decision['reason'])==expected
+
+def test_recovery_analyzer_parser_defaults_wait_unbounded_and_keeps_stale_threshold():
+    parser=state.build_parser()
+    args=parser.parse_args(['analyze-sub-coord-failure','--state-file','state.json','--issue','7','--report-file','report.json'])
+    assert args.max_wait_seconds==0
+    assert args.worker_stale_seconds==1200
+
 def test_main_state_and_github_mutations_share_lock_without_lost_updates(tmp_path):
     path=state_file(tmp_path,{str(issue):{"status":"pending"} for issue in range(1,9)})
     def mark(issue):
