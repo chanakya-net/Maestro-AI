@@ -2411,6 +2411,23 @@ def test_agy_gemini_4_impl_failure_retains_raw_capture_and_recovers(tmp_path, mo
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
 
 
+@pytest.mark.parametrize('direct', ['invalid', 'valid'])
+def test_agy_gemini_4_preserves_direct_result_file(tmp_path, monkeypatch, direct):
+    write = "result_path.write_bytes(b'')" if direct == 'invalid' else (
+        "result_path.write_text(json.dumps({**report, 'publication': 'direct'}), encoding='utf-8')")
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE + write + '\n')
+    result = dispatch_worker(config)
+    raw = config.agent_run.result_file.read_bytes()
+    if direct == 'valid':
+        assert result.state == 'completed'
+        assert json.loads(raw)['publication'] == 'direct'
+        assert f'|model={GEMINI_4}|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    else:
+        assert result.state != 'completed'
+        assert raw == b''
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
 @pytest.mark.parametrize(('agent', 'options'), [
     ('claude', {'help_text': '--output-format (choices: "text", "stream-json")\n --other json'}),
     ('opencode', {'version': '1.16.1'}),
