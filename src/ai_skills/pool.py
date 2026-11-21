@@ -28,6 +28,7 @@ from ai_skills.events import EventBus
 from ai_skills.github import GitHubUpdateRequest, update_github
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor
 from ai_skills.resources import resource_path
+from ai_skills.registry import load_registry
 from ai_skills.runner import AgentRunConfig
 from ai_skills.storage import DirectoryLock, LockTimeoutError, StateStore, load_json, write_json_atomic
 
@@ -138,6 +139,20 @@ class PoolConfig:
             events_log=Path(self.events_log).absolute() if self.events_log else directory/'status'/'events.log',
             main_log=Path(self.main_log).absolute() if self.main_log else directory/'main'/'main.log',
             record_directory=Path(self.record_directory).absolute() if self.record_directory else directory/'processes')
+
+    def validate_coordinator_selection(self):
+        registry = load_registry(self.registry_file)
+        aliases = registry.get('aliases', {})
+        agent = aliases.get(self.sub_coord_agent, self.sub_coord_agent)
+        if agent != 'agy':
+            return
+        definition = registry.get('agents', {}).get(agent)
+        models = definition.get('model', {}).get('known_models', []) if isinstance(definition, dict) else []
+        if self.sub_coord_model not in models:
+            raise ValueError(
+                f'unsupported coordinator model {self.sub_coord_model!r} for AGY; '
+                f'choose an AGY model from the pinned registry'
+            )
 
     def to_record(self):
         value = asdict(self)
@@ -339,6 +354,7 @@ class PoolSupervisor:
         return environment
 
     def worker(self, issue, *, kind='sub-coord', context=None):
+        self.config.validate_coordinator_selection()
         state = self.read(); entry = state['issue_registry'][str(issue)]
         directory = Path(entry.get('issue_dir') or self.config.run_root/'.run-with-it'/'issues'/str(issue)).absolute()
         attempt = uuid.uuid4().hex

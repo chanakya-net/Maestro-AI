@@ -116,6 +116,45 @@ def test_merge_recovery_uses_same_owned_pool_slot(tmp_path,monkeypatch):
     assert state['issue_registry']['1']['status']=='completed'
     assert state['issue_registry']['2']['status']=='completed'
 
+
+@pytest.mark.parametrize(('mode','roles'),[
+    ('completed',['sub-coord']),
+    ('crash',['sub-coord','sub-coord']),
+    ('merge_failed',['sub-coord','merge-recovery']),
+])
+def test_agy_coordinator_selection_stays_independent_from_worker_overrides(tmp_path,monkeypatch,mode,roles):
+    from dataclasses import replace
+    from pathlib import Path
+
+    config=pool_fixture(tmp_path,{1:{}})
+    config=replace(config,sub_coord_agent='agy',sub_coord_model='gemini-4-neon-medium',
+        forced_agent='claude',forced_model='claude-sonnet-5-5',
+        registry_file=Path(__file__).parents[2]/'assets'/'agent-registry.json')
+    driver=FakePoolDriver(outcomes={'1':[mode,'completed']});install_fake(monkeypatch,driver)
+
+    assert run_pool(config).state=='pool-empty'
+    assert [item.agent_run.role for item in driver.started]==roles
+    for item in driver.started:
+        assert (item.agent_run.agent,item.agent_run.model)==('agy','gemini-4-neon-medium')
+        assert item.agent_run.environment['FORCED_AGENT']=='claude'
+        assert item.agent_run.environment['FORCED_MODEL']=='claude-sonnet-5-5'
+        assert item.agent_run.environment.get('AGENT') is None
+        assert item.agent_run.environment.get('MODEL') is None
+
+
+def test_invalid_agy_coordinator_pair_is_rejected_before_dispatch(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from pathlib import Path
+
+    config=pool_fixture(tmp_path,{1:{}})
+    config=replace(config,sub_coord_agent='agy',sub_coord_model='unknown-model',
+        registry_file=Path(__file__).parents[2]/'assets'/'agent-registry.json')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+
+    with pytest.raises(ValueError,match='unsupported coordinator model.*unknown-model.*AGY'):
+        run_pool(config)
+    assert driver.started==[]
+
 def test_dry_run_does_not_create_worker_launch_intent(tmp_path,monkeypatch,capsys):
     from dataclasses import replace
     config=replace(pool_fixture(tmp_path,{1:{}}),dry_run=True)
@@ -138,6 +177,7 @@ def test_pool_coordinator_configs_have_no_default_deadline(tmp_path, kind):
 def test_pool_recovery_wait_defaults_unbounded_and_allows_positive_override(tmp_path):
     default=PoolConfig(state_file=tmp_path/'state.json')
     override=PoolConfig.from_sources({'max_worker_wait_seconds':3600},{})
+    assert (default.sub_coord_agent,default.sub_coord_model)==('codex','gpt-6.2-sol')
     assert default.max_worker_wait_seconds==0
     assert override.max_worker_wait_seconds==3600
     assert default.worker_stale_seconds==1200

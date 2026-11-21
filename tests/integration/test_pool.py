@@ -30,6 +30,25 @@ def test_subcoord_selectors_do_not_inherit_worker_forced_values(tmp_path):
     assert config.sub_coord_agent=='coordinator' and config.sub_coord_model=='coordinator-model'
     assert config.environment['FORCED_AGENT']=='worker'
 
+
+def test_agy_coordinator_model_must_exist_in_pinned_registry(tmp_path):
+    from pathlib import Path
+
+    config=PoolConfig(state_file=tmp_path/'state',sub_coord_agent='agy',
+        sub_coord_model='unknown-model',registry_file=Path(__file__).parents[2]/'assets'/'agent-registry.json')
+
+    with pytest.raises(ValueError,match='unsupported coordinator model.*unknown-model'):
+        config.validate_coordinator_selection()
+
+
+def test_agy_environment_selection_keeps_worker_override_separate(tmp_path):
+    config=PoolConfig.from_sources({'state_file':str(tmp_path/'state')},{
+        'SUB_COORD_AGENT':'agy','SUB_COORD_MODEL':'gemini-4-neon-medium',
+        'FORCED_AGENT':'claude','FORCED_MODEL':'claude-sonnet-5-5'})
+
+    assert (config.sub_coord_agent,config.sub_coord_model)==('agy','gemini-4-neon-medium')
+    assert (config.forced_agent,config.forced_model)==('claude','claude-sonnet-5-5')
+
 def test_all_nondefault_configuration_values_survive_detach_record(tmp_path):
     config=PoolConfig(state_file=tmp_path/'state',parallel_jobs=3,sub_coord_agent='fake',sub_coord_model='custom',effort='xhigh',
         poll_seconds=.4,timeout_seconds=42,hard_limit_seconds=43,quiet_seconds=7,stall_seconds=8,bootstrap_seconds=9,
