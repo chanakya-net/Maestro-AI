@@ -93,6 +93,8 @@ def test_forced_agy_model_keeps_explicit_band_exception():
 
 AGY_EXPLICIT_MODELS = (
     *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
+    *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
+    *(f"gemini-4-carbon-{effort}" for effort in ("low", "medium", "high")),
     *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
     *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
     *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),

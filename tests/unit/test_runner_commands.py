@@ -71,6 +71,8 @@ def test_codex_default_invocation_uses_sol_6_1(config):
 
 @pytest.mark.parametrize('model', [
     *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen') for effort in ('low', 'medium', 'high', 'xhigh')),
+    *(f'gemini-4-carbon-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
@@ -358,3 +360,25 @@ def test_codex_mcp_server_named_like_effort_preserves_arguments(config, override
     assert argv == ('codex', 'exec', '-C', str(config.repo_root),
                     '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6.2-sol',
                     '-c', override, '-c', 'model_reasoning_effort=high', '-')
+
+
+GEMINI_4_MODELS = (
+    *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen') for effort in ('low', 'medium', 'high', 'xhigh')),
+    *(f'gemini-4-carbon-{effort}' for effort in ('low', 'medium', 'high')),
+)
+
+
+def test_agent_models_lists_all_fourteen_gemini_4_ids_for_agy(capsys):
+    from ai_skills.runner import main
+    assert main(['models', 'agy']) == 0
+    listed = capsys.readouterr().out.split()
+    assert len(GEMINI_4_MODELS) == 14
+    assert sorted(m for m in listed if m.startswith('gemini-4-')) == sorted(GEMINI_4_MODELS)
+
+
+@pytest.mark.parametrize('model', GEMINI_4_MODELS)
+def test_gemini_4_invocation_has_exactly_one_unchanged_model(config, model):
+    spec = build_invocation(config.replace(agent='agy', model=model), load_registry())
+    assert spec.argv.count('--model') == 1
+    assert spec.argv[spec.argv.index('--model') + 1] == model

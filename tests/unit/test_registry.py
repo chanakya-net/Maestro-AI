@@ -179,6 +179,8 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     )
     expected_agy_models = [
         *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
+        *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
+        *(f"gemini-4-carbon-{effort}" for effort in ("low", "medium", "high")),
         *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
         *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
         *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),

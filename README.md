@@ -409,12 +409,15 @@ edit `model_routing.usage_distribution`:
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
 
-The maintained AGY selectable inventory contains 13 exact IDs, all registered
+The maintained AGY selectable inventory contains 24 exact IDs, all registered
 for AGY only:
 
 | Family | Explicit model IDs |
 | --- | --- |
 | Gemini 4 Argon | `gemini-4-argon-low`, `gemini-4-argon-medium`, `gemini-4-argon-high` |
+| Gemini 4 Neon | `gemini-4-neon-low`, `gemini-4-neon-medium`, `gemini-4-neon-high`, `gemini-4-neon-xhigh` |
+| Gemini 4 Hydrogen | `gemini-4-hydrogen-low`, `gemini-4-hydrogen-medium`, `gemini-4-hydrogen-high`, `gemini-4-hydrogen-xhigh` |
+| Gemini 4 Carbon | `gemini-4-carbon-low`, `gemini-4-carbon-medium`, `gemini-4-carbon-high` |
 | Gemini 3.8 Flash | `gemini-3.8-flash-low`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-high` |
 | Claude Opus 5.5 through AGY | `claude-opus-5-5-low`, `claude-opus-5-5-medium`, `claude-opus-5-5-high` |
 | Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
@@ -423,8 +426,12 @@ for AGY only:
 Only Flash Low (`gemini-3.8-flash-low`) enters automatic non-scoring work at
 effective `quite-easy`, and only Flash Medium (`gemini-3.8-flash-medium`)
 enters it at `easy`. Flash Medium is also the only AGY complexity-scoring
-model, eligible at all six scoring bands. The other 11 models are explicit-only
-and excluded from automatic work and scoring. A direct AGY run without an
+model, eligible at all six scoring bands. The other 22 models are explicit-only
+and excluded from automatic work and scoring. The 14 Gemini 4 IDs are explicit-only and declare no context limit. Verification
+so far is catalog listing, explicit routing, and fake-AGY argv/stream tests;
+live inference is tracked separately and not yet confirmed. Carbon is a known
+catalog entry whose use depends on account entitlement, which is not verified
+here. A direct AGY run without an
 explicit model pins `gemini-3.8-flash-high`; this direct-run default does not
 add that model to automatic routing, which keeps the Flash Low/Medium choices
 above. AGY has no automatic worker at

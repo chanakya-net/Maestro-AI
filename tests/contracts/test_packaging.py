@@ -128,6 +128,8 @@ registry = load_registry()
 definitions = json.loads(resource_path('agent-definitions.json').read_text())
 expected = {
     *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen') for effort in ('low', 'medium', 'high', 'xhigh')),
+    *(f'gemini-4-carbon-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
@@ -139,7 +141,7 @@ assert catalog['gemini-3.8-flash-low']['work_bands'] == ['quite-easy']
 assert catalog['gemini-3.8-flash-medium']['work_bands'] == ['easy']
 assert catalog['gemini-3.8-flash-medium']['complexity_bands'] == [
     'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
-assert sum(model.get('explicit_only') is True for model in catalog.values()) == 11
+assert sum(model.get('explicit_only') is True for model in catalog.values()) == 22
 assert definitions['agents']['agy']['model']['default'] == 'gemini-3.8-flash-high'
 assert definitions['agents']['agy']['model']['flag_template'] == '--model {{model}}'
 for band, model in (('quite-easy', 'gemini-3.8-flash-low'),
