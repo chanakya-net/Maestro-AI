@@ -2346,8 +2346,68 @@ AGY_UNVERIFIED = BUILD_CAPTURE.replace("'passed': True, 'evidence': 'observed ex
                                        "'passed': False, 'evidence': 'observed exit 1'")
 
 
-def agy_gemini_worker(tmp_path, monkeypatch, wire, build=None):
-    return stream_capture_worker(tmp_path, monkeypatch, 'agy', AGY_MODEL_ASSERTION + wire, build=build, model=GEMINI_4)
+def agy_gemini_worker(tmp_path, monkeypatch, wire, build=None, *, role='impl', **options):
+    return stream_capture_worker(tmp_path, monkeypatch, 'agy', AGY_MODEL_ASSERTION + wire,
+                                 build=build, model=GEMINI_4, role=role, **options)
+
+
+def fresh_modify_attempt(config, directory, *, cycle=4, head=None):
+    directory.mkdir()
+    run = config.agent_run.replace(cycle=cycle, result_file=directory / 'result.json',
+        done_file=directory / 'worker.done', log_file=directory / 'worker.log',
+        run_id='', attempt_id='')
+    return replace(config, agent_run=run, state_file=directory / 'worker.state.json',
+                   pre_spawn_head=head or config.pre_spawn_head)
+
+
+def test_agy_gemini_4_modify_retries_missing_terminal_in_same_cycle(tmp_path, monkeypatch):
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_STEPS_ONLY,
+                               build=build_modify_capture(no_op=True), role='modify')
+    first = dispatch_worker(config)
+    assert first.state == 'failed'
+    assert not config.agent_run.result_file.exists()
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    raw = Path(saved['agent_run']['stream_directory']) / 'stdout'
+    outcome = Path(str(config.state_file) + '.outcome.json')
+    originals = [p.read_bytes() for p in (raw, outcome)]
+    assert json.loads(originals[1])['status'] == 'failed'
+    assert 'reason=capture-response-invalid' in config.agent_run.events_log.read_text()
+    script = config.agent_run.repo_root / 'exec'
+    script.write_text(script.read_text().replace(AGY_STEPS_ONLY, AGY_CAPTURE))
+    retry = fresh_modify_attempt(config, tmp_path / 'retry')
+    result = dispatch_worker(retry)
+    assert result.state == 'completed', result.reason
+    retry_saved = json.loads(Path(str(retry.state_file) + '.config.json').read_bytes())
+    assert retry_saved['agent_run']['attempt_id'] != saved['agent_run']['attempt_id']
+    assert retry_saved['agent_run']['cycle'] == saved['agent_run']['cycle'] == 4
+    report = json.loads(retry.agent_run.result_file.read_bytes())
+    assert [item['id'] for item in report['review_comment_closure']] == MODIFY_IDS
+    assert [p.read_bytes() for p in (raw, outcome)] == originals
+
+
+@pytest.mark.parametrize('replay', ['prior-stream', 'prior-cycle'])
+def test_agy_gemini_4_modify_rejects_previous_cycle_capture(tmp_path, monkeypatch, replay):
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE, role='modify')
+    assert dispatch_worker(config).state == 'completed'
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    raw = Path(saved['agent_run']['stream_directory']) / 'stdout'
+    paths = [config.agent_run.result_file, raw, Path(str(config.state_file) + '.outcome.json')]
+    originals = [path.read_bytes() for path in paths]
+    script = config.agent_run.repo_root / 'exec'
+    source = script.read_text()
+    # Current attempt starts at the committed prior result, without additional Git progress.
+    start = source.index('contract = metadata[\'result_capture\']')
+    wire = (f"print({originals[1].decode()!r}, end='')\n" if replay == 'prior-stream' else
+            "envelope = {**metadata['result_capture']['envelope'], 'cycle': '4', 'result': {}}\n" + AGY_CAPTURE)
+    script.write_text(source[:start] + AGY_MODEL_ASSERTION + wire)
+    head = json.loads(originals[0])['commit_sha']
+    current = fresh_modify_attempt(config, tmp_path / 'current', cycle=5, head=head)
+    result = dispatch_worker(current)
+    assert result.state != 'completed'
+    assert not current.agent_run.result_file.exists()
+    assert 'reason=capture-identity-mismatch' in current.agent_run.events_log.read_text()
+    assert json.loads(Path(str(current.state_file) + '.outcome.json').read_bytes())['status'] == 'failed'
+    assert [path.read_bytes() for path in paths] == originals
 
 
 def test_agy_gemini_4_impl_publishes_verified_success(tmp_path, monkeypatch):
