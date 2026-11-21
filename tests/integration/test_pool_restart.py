@@ -451,8 +451,8 @@ def test_real_recovery_intent_precedes_shared_quarantine_and_restarts_once(tmp_p
     with monkeypatch.context() as patch:
         if stage.startswith('intent'):
             actual=first._intent
-            def interrupted(issue,next_worker):
-                if stage=='intent-after':actual(issue,next_worker)
+            def interrupted(issue,next_worker,**kwargs):
+                if stage=='intent-after':actual(issue,next_worker,**kwargs)
                 raise PoolTransitionCrash('injected next intent boundary')
             patch.setattr(first,'_intent',interrupted)
         else:
@@ -550,3 +550,113 @@ def test_stream_capture_restart_keeps_original_attempt(tmp_path, monkeypatch, bo
     assert [entry['id'] for entry in json.loads(report)['review_comment_closure']] == ['R001', 'R002']
     assert all(json.loads(outcome)[key] == initial_outcome[key] for key in ('run_id', 'attempt_id'))
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize('restart_elapsed',[20, 70])
+def test_restart_preserves_expired_child_wait(tmp_path, monkeypatch, restart_elapsed):
+    import os
+    import psutil
+    from ai_skills import pool
+    from pool_support import recovery_child
+
+    config = replace(pool_fixture(tmp_path,{1:{},2:{}},parallel=1), max_worker_wait_seconds=60)
+    driver = FakePoolDriver(outcomes={'1':['crash','completed']})
+    install_fake(monkeypatch, driver)
+    first = PoolSupervisor(config)
+    assert first.initialize() is None
+    first.launch('1')
+    worker = first.active['1']
+    driver.adopt(worker.state_file)
+    _, ledger, ownership = recovery_child(worker.agent_run.issue_dir, monkeypatch, wrapper='unknown')
+    write_json_atomic(worker.agent_run.issue_dir/'sub-state.json',
+                      {'phase':'complexity','in_flight_agents':[ledger]})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+    assert first.tick() is None
+    clock.now = 1000 + restart_elapsed
+    assert first.tick() is None
+
+    restarted = PoolSupervisor(config)
+    assert restarted.initialize() is None
+    assert restarted.reconcile() is None
+    assert restarted.tick() is None
+    ownership['wrapper'] = 'alive'
+    clock.now = 1080
+    assert restarted.tick() is None
+    saved = restarted.read()
+    entry = saved['issue_registry']['1']
+    assert entry['worker_wait_since'] == 1000
+    assert entry['worker_wait']['ownership'] == 'live'
+    assert entry.get('sub_coord_recovery_attempts',0) == 0
+    assert saved['pool_attempts']['1']['attempt_id'] == worker.agent_run.attempt_id
+    assert config.resolved().events_log.read_text().count('type=sub-coord-recovery-wait-expired') == 1
+    assert driver.started == [worker]
+
+    write_json_atomic(Path(str(restarted.config.pool_state_file)+'.stop'),
+        {'pool_pid':os.getpid(), 'pool_created_at':psutil.Process().create_time(), 'host':socket.gethostname()})
+    ownership['wrapper'] = 'dead'
+    assert restarted.tick().state == 'stopped'
+    assert driver.started == [worker]
+
+
+@pytest.mark.parametrize('stage',['before','after'])
+@pytest.mark.parametrize('compaction',[False,True])
+def test_expired_wait_replacement_replay_charges_once(tmp_path, monkeypatch, stage, compaction):
+    from ai_skills import pool
+    from ai_skills.outcomes import outcome_path
+    from pool_support import recovery_child, valid_complexity_result
+
+    config = replace(pool_fixture(tmp_path,{1:{}},parallel=1), max_worker_wait_seconds=60,
+                     max_recovery_attempts=1, max_compaction_handoffs=1)
+    driver = FakePoolDriver(outcomes={'1':['crash','completed']})
+    install_fake(monkeypatch, driver)
+    first = PoolSupervisor(config)
+    assert first.initialize() is None
+    first.launch('1')
+    worker = first.active['1']
+    driver.adopt(worker.state_file)
+    child, ledger, ownership = recovery_child(worker.agent_run.issue_dir, monkeypatch)
+    write_json_atomic(worker.agent_run.issue_dir/'sub-state.json',
+        {'phase':'complexity','in_flight_agents':[ledger],'compaction_requested':compaction})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+    assert first.tick() is None
+    clock.now = 1060
+    ownership['wrapper'] = 'dead'
+    write_json_atomic(child.agent_run.result_file,valid_complexity_result())
+    actual_intent = first._intent
+
+    def interrupt_intent(issue, replacement, **kwargs):
+        if stage == 'after':
+            actual_intent(issue, replacement, **kwargs)
+        raise PoolTransitionCrash('injected recovery intent boundary')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(first,'_intent',interrupt_intent)
+        with pytest.raises(PoolTransitionCrash):
+            first.tick()
+
+    saved = first.read()
+    counter = 'sub_coord_compaction_handoffs' if compaction else 'sub_coord_recovery_attempts'
+    entry = saved['issue_registry']['1']
+    assert entry.get(counter,0) == (1 if stage == 'after' else 0)
+    assert ('worker_wait_since' in entry) is (stage == 'before')
+    prior_intent = saved['pool_attempts']['1']
+    assert (prior_intent['attempt_id'] == worker.agent_run.attempt_id) is (stage == 'before')
+    artifacts = {path:path.read_bytes() for path in
+                 (child.agent_run.result_file, child.agent_run.done_file, outcome_path(child.state_file))}
+    assert driver.started == [worker]
+
+    resumed = PoolSupervisor(config)
+    assert resumed.initialize() is None
+    assert resumed.reconcile() is None
+    result = resumed.tick()
+    assert result is None if stage == 'before' else result.state == 'pool-empty'
+    assert len(driver.started) == 2
+    replacement = driver.started[-1].agent_run
+    if stage == 'after':
+        assert replacement.attempt_id == prior_intent['attempt_id']
+    assert 'SUB_COORD_RECOVERY_REASON=in-flight-worker-finished' in Path(replacement.context_file).read_text()
+    assert resumed.read()['issue_registry']['1'][counter] == 1
+    assert all(path.read_bytes() == data for path, data in artifacts.items())
+    assert config.resolved().events_log.read_text().count('type=sub-coord-recovery-wait-expired') == 1

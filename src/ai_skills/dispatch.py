@@ -562,6 +562,8 @@ def _provider_record(config, *, allow_supervisor_fallback=True):
     run = config.agent_run
     supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
     process = _process_record(config)
+    if not isinstance(process, dict):
+        raise ValueError('invalid-provider-process-record')
     if not process.get('identity') and allow_supervisor_fallback:
         raw = supervisor.lookup_attempt(run.run_id, run.attempt_id)
         if raw is not None:
@@ -940,72 +942,167 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         return WorkerResult(worker_state,code,Path(config.state_file),reason,process.get('identity'))
 
 
+def _admitted_worker(state_file):
+    config = WorkerConfig.from_record(load_json(Path(str(state_file)+'.config.json')))
+    if (canonical_path(config.state_file) != canonical_path(state_file) or
+            (config.agent_run.state_file is not None and
+             canonical_path(config.agent_run.state_file) != canonical_path(state_file))):
+        raise ValueError('worker-config-state-binding-mismatch')
+    return config
+
+
+def _dispatcher_record(config, supervisor):
+    run = config.agent_run
+    wrapper = _optional(Path(str(config.state_file)+'.dispatcher.process.json'))
+    if not isinstance(wrapper, dict):
+        raise ValueError('invalid-dispatcher-process-record')
+    if not wrapper.get('identity'):
+        raw = supervisor.lookup_attempt(run.run_id+'-dispatcher',run.attempt_id)
+        if raw is not None:
+            return {**raw,'record_directory':str(supervisor.directory)}
+    return wrapper
+
+
+def _owner_result(config, state, reason, identity=None):
+    return WorkerResult('running' if state == 'alive' else 'unknown',
+        0 if state == 'alive' else 3, config.state_file, reason, identity)
+
+
+def _inspect_dispatcher(config, wrapper):
+    if not wrapper.get('identity'):
+        return _owner_result(config, 'unknown', 'dispatcher-launch-identity-unknown')
+    identity = ProcessIdentity(**wrapper['identity'])
+    run = config.agent_run
+    if (identity.run_id, identity.attempt_id) != (run.run_id+'-dispatcher', run.attempt_id):
+        raise ValueError('dispatcher identity binding mismatch')
+    owner = ProcessSupervisor(Path(wrapper['record_directory'])).inspect(identity)
+    if owner.state != 'dead':
+        return _owner_result(config, owner.state, 'dispatcher-finalizing')
+    return None
+
+
+def _inspect_adoption(config, state, *, strict=False) -> WorkerResult | int | None:
+    """Return a hold, or the durable provider exit code (None for prelaunch)."""
+    journal = _read_bound_outcome(config)
+    if strict and journal is None:
+        raise ValueError('worker-outcome-missing')
+    _bound_stop_intent(config,state)
+    process, supervisor = _provider_record(config)
+    wrapper = _dispatcher_record(config, supervisor)
+    if strict and not wrapper:
+        launcher = _launcher_state(state)
+        if launcher != 'dead':
+            return _owner_result(config, launcher, 'launcher-ownership-'+launcher, process.get('identity'))
+        # Admission could publish a dispatcher after the first lookup.
+        wrapper = _dispatcher_record(config, supervisor)
+    if wrapper:
+        hold = _inspect_dispatcher(config, wrapper)
+        if hold:
+            return replace(hold, identity=process.get('identity'))
+    if wrapper or strict:
+        # The dispatcher may have admitted a provider just before it died.
+        process, supervisor = _provider_record(config)
+    if not process.get('identity'):
+        return _inspect_prelaunch(config, state, process, wrapper, strict=strict)
+    identity = ProcessIdentity(**process['identity'])
+    liveness = supervisor.inspect(identity)
+    if liveness.state != 'dead':
+        return _owner_result(config, liveness.state, liveness.reason, process['identity'])
+    if strict and config.detach and not wrapper:
+        return _owner_result(config, 'unknown', 'dispatcher-launch-identity-unknown')
+    if not strict and not wrapper and (journal is None or journal['status']=='pending'):
+        launcher = _launcher_state(state)
+        if launcher != 'dead':
+            return _owner_result(config, launcher, 'launcher-ownership-'+launcher, process['identity'])
+    code = supervisor.return_code(identity)
+    if not strict:
+        deadline = time.monotonic()+.5
+        while code is None and time.monotonic()<deadline:
+            time.sleep(.02)
+            code = supervisor.return_code(identity)
+    if code is None:
+        return _owner_result(config, 'unknown', 'provider-exit-status-unknown', process['identity'])
+    return code
+
+
+def _inspect_prelaunch(config, state, process, wrapper, *, strict):
+    if process or (strict and state.get('provider_identity')):
+        return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
+    if not wrapper and not strict:
+        launcher = _launcher_state(state)
+        if launcher != 'dead':
+            return _owner_result(config, launcher, 'launcher-ownership-'+launcher)
+    if strict or not wrapper:
+        if (state.get('state') not in ('launching','starting') and
+                state.get('reason') not in ('dispatch-bootstrap-failed','missing-command','cli-unsupported')):
+            return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
+    return None
+
+
+def _adopt_released(config, state, code):
+    if code is None:
+        return _finalize_attempt(config,provider_return_code=None,
+            reason=state.get('reason') or '', failure_class=state.get('failure_class','capability'),
+            prelaunch_failure=True)
+    process, _ = _provider_record(config)
+    reason = process.get('unavailable_reason', '') or (_availability_reason(config) if code else '')
+    return _finalize_attempt(config,provider_return_code=code,reason=reason,
+        failure_class='infrastructure' if reason else 'capability')
+
+
 def adopt_worker(state_file) -> WorkerResult:
     """Reconcile only after provider and dispatcher death; never launch work."""
     state_file = Path(state_file)
-    config = WorkerConfig.from_record(load_json(Path(str(state_file)+'.config.json')))
-    if canonical_path(config.state_file) != canonical_path(state_file) or (config.agent_run.state_file is not None and canonical_path(config.agent_run.state_file) != canonical_path(state_file)):
-        return WorkerResult('unknown',3,state_file,'worker-config-state-binding-mismatch')
-    state = load_json(state_file)
     try:
-        journal = _read_bound_outcome(config)
-        _bound_stop_intent(config,state)
-        process, supervisor = _provider_record(config)
-        run = config.agent_run
-        wrapper = _optional(Path(str(state_file)+'.dispatcher.process.json'))
-        if not wrapper.get('identity'):
-            raw = supervisor.lookup_attempt(run.run_id+'-dispatcher',run.attempt_id)
-            if raw is not None:
-                wrapper = {**raw,'record_directory':str(supervisor.directory)}
-        if wrapper:
-            if not wrapper.get('identity'):
-                return WorkerResult('unknown',3,state_file,'dispatcher-launch-identity-unknown')
-            identity = ProcessIdentity(**wrapper['identity'])
-            if identity.run_id != run.run_id+'-dispatcher' or identity.attempt_id != run.attempt_id:
-                raise ValueError('dispatcher identity binding mismatch')
-            owner = ProcessSupervisor(Path(wrapper['record_directory'])).inspect(identity)
-            if owner.state != 'dead':
-                return WorkerResult('running' if owner.state=='alive' else 'unknown',
-                    0 if owner.state=='alive' else 3,state_file,'dispatcher-finalizing',process.get('identity'))
-        if not process.get('identity'):
-            if process:
-                return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
-            if not wrapper:
-                launcher = _launcher_state(state)
-                if launcher != 'dead':
-                    return WorkerResult('running' if launcher=='alive' else 'unknown',
-                        0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher)
-                if state.get('state') not in ('launching','starting') and state.get('reason') not in ('dispatch-bootstrap-failed','missing-command','cli-unsupported'):
-                    return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
-            # State can lag the journal if terminal publication was interrupted.
-            # Let the finalizer reuse the journal reason before defaulting it.
-            return _finalize_attempt(config,provider_return_code=None,
-                reason=state.get('reason') or '',
-                failure_class=state.get('failure_class','capability'),prelaunch_failure=True)
-        identity = ProcessIdentity(**process['identity'])
-        liveness = supervisor.inspect(identity)
-        if liveness.state != 'dead':
-            return WorkerResult('running' if liveness.state=='alive' else 'unknown',
-                0 if liveness.state=='alive' else 3,state_file,liveness.reason,process['identity'])
-        if not wrapper and (journal is None or journal['status']=='pending'):
-            launcher = _launcher_state(state)
-            if launcher != 'dead':
-                return WorkerResult('running' if launcher=='alive' else 'unknown',
-                    0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher,process['identity'])
-        code = supervisor.return_code(identity)
-        exit_deadline = time.monotonic()+.5
-        while code is None and time.monotonic()<exit_deadline:
-            time.sleep(.02)
-            code = supervisor.return_code(identity)
-        if code is None:
-            return WorkerResult('unknown',3,state_file,'provider-exit-status-unknown',process['identity'])
-        reason = process.get('unavailable_reason', '')
-        if not reason and code:
-            reason = _availability_reason(config)
-        return _finalize_attempt(config,provider_return_code=code,reason=reason,
-            failure_class='infrastructure' if reason else 'capability')
-    except (ValueError,TypeError,KeyError) as error:
+        config = _admitted_worker(state_file)
+        state = load_json(state_file)
+        inspected = _inspect_adoption(config, state)
+        if isinstance(inspected, WorkerResult):
+            return inspected
+        return _adopt_released(config, state, inspected)
+    except (ValueError, TypeError, KeyError) as error:
         return WorkerResult('unknown',3,state_file,str(error))
+
+
+def _bind_recovery_child(config, state, snapshot, issue, issue_dir):
+    run = config.agent_run
+    if str(run.issue) != str(issue) or run.role != snapshot.get('role'):
+        raise ValueError('child-issue-or-role-binding-mismatch')
+    if not run.issue_dir or canonical_path(run.issue_dir) != canonical_path(issue_dir):
+        raise ValueError('child-issue-directory-binding-mismatch')
+    for key in ('done_file', 'result_file'):
+        path, recorded = getattr(run, key), snapshot.get(key)
+        if not path or not isinstance(recorded, str) or not recorded or canonical_path(path) != canonical_path(recorded):
+            raise ValueError('child-artifact-path-binding-mismatch')
+    for key in ('run_id', 'attempt_id'):
+        expected = getattr(run, key)
+        if not expected or state.get(key) != expected or (key in snapshot and snapshot[key] != expected):
+            raise ValueError('child-attempt-binding-mismatch')
+    if run.cycle and snapshot.get('cycle') is not None:
+        if verification.capture_cycle(run.cycle) != verification.capture_cycle(snapshot['cycle']):
+            raise ValueError('child-cycle-binding-mismatch')
+
+
+def inspect_recovery_child(issue, issue_dir, child, *, reconcile=False):
+    """Inspect the exact ledger child, optionally adopting its released handoff."""
+    recorded = child.get('state_file')
+    if not isinstance(recorded, str) or not recorded:
+        return WorkerResult('unknown', 3, Path(), 'child-state-path-missing')
+    state_file = Path(recorded)
+    try:
+        config = _admitted_worker(state_file)
+        state = load_json(state_file)
+        if not isinstance(state, dict):
+            raise ValueError('invalid-child-claim')
+        _bind_recovery_child(config, state, child, issue, issue_dir)
+        inspected = _inspect_adoption(config, state, strict=True)
+        if isinstance(inspected, WorkerResult):
+            return inspected
+        if reconcile:
+            return _adopt_released(config, state, inspected)
+        return WorkerResult('released', 0, state_file, 'child-ownership-released')
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        return WorkerResult('unknown', 3, state_file, str(error))
 
 
 def _detached(path):

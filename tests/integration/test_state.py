@@ -176,7 +176,7 @@ def test_recovery_analyzer_consumes_snapshots(tmp_path,capsys):
 
 @pytest.mark.parametrize(('updated_at','wait','override','expected'),[
     ('1970-01-01T02:46:39Z',3601,None,('wait_worker','in-flight-worker-running')),
-    ('1970-01-01T02:46:39Z',3601,60,('spawn_recovery','in-flight-worker-wait-timeout')),
+    ('1970-01-01T02:46:39Z',3601,60,('wait_worker','in-flight-worker-wait-timeout')),
     ('1970-01-01T02:13:20Z',0,None,('spawn_recovery','in-flight-worker-orphaned')),
     ('1970-01-01T02:46:39Z',3601,None,('spawn_recovery','in-flight-worker-finished')),
 ])
@@ -224,3 +224,68 @@ def test_nonobject_authoritative_state_rejected(tmp_path,payload):
     path=tmp_path/"state.json";path.write_text(payload)
     with pytest.raises(ValueError):command(path,"requeue","--issue",7)
     assert path.read_text()==payload
+
+
+@pytest.mark.parametrize(('evidence', 'ownership'), [
+    ('live-wrapper','live'), ('live-provider','live'), ('released','released'),
+    ('exit-unknown','unknown'), ('no-config','unknown'), ('bad-config','unknown'),
+    ('no-claim','unknown'), ('foreign-claim','unknown'), ('no-journal','unknown'),
+    ('foreign-journal','unknown'), ('foreign-path','unknown'), ('foreign-attempt','unknown'),
+    ('no-wrapper','unknown'), ('no-provider','unknown'), ('late-provider','live'),
+])
+def test_recovery_analyzer_binds_child_ownership_on_explicit_wait(
+        tmp_path, capsys, monkeypatch, evidence, ownership):
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child
+
+    issue_dir = tmp_path/'7'
+    child, ledger, processes = recovery_child(issue_dir, monkeypatch,
+        wrapper={'live-wrapper':'alive','no-wrapper':'missing'}.get(evidence, 'dead'),
+        provider={'live-provider':'alive','no-provider':'missing','late-provider':'missing'}.get(evidence, 'dead'),
+        exit_code=None if evidence == 'exit-unknown' else 0)
+    path = state_file(tmp_path, {'7':{'status':'in_progress','issue_dir':str(issue_dir)}})
+    claim = child.state_file
+    config = Path(str(claim)+'.config.json')
+    journal = outcome_path(claim)
+    result = child.agent_run.result_file
+    done = child.agent_run.done_file
+    write_json_atomic(result, {'outcome':'completed'})
+    done.write_text('unvalidated marker')
+    if evidence == 'late-provider':
+        from ai_skills.processes import ProcessSupervisor
+
+        write_json_atomic(claim, {**load_json(claim), 'state':'starting'})
+        inspect = ProcessSupervisor.inspect
+
+        def publish_on_wrapper_exit(supervisor, identity):
+            if identity.run_id == 'child-run-dispatcher':
+                processes['provider'] = 'alive'
+            return inspect(supervisor, identity)
+
+        monkeypatch.setattr(ProcessSupervisor, 'inspect', publish_on_wrapper_exit)
+    elif evidence == 'no-config':
+        config.unlink()
+    elif evidence == 'bad-config':
+        config.write_text('[]')
+    elif evidence == 'no-claim':
+        claim.unlink()
+    elif evidence == 'no-journal':
+        journal.unlink()
+    elif evidence in ('foreign-claim','foreign-journal'):
+        target = claim if evidence == 'foreign-claim' else journal
+        write_json_atomic(target, {**load_json(target), 'attempt_id':'foreign'})
+    elif evidence == 'foreign-path':
+        ledger['result_file'] = str(issue_dir/'report.json')
+    elif evidence == 'foreign-attempt':
+        ledger['attempt_id'] = 'foreign'
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
+    files = {file:file.read_bytes() for file in (claim, config, journal, result, done) if file.exists()}
+
+    command(path, 'analyze-sub-coord-failure', '--issue', 7, '--report-file', issue_dir/'report.json',
+            '--wait-elapsed-seconds',60,'--max-wait-seconds',60)
+    decision = json.loads(capsys.readouterr().out)
+    assert decision['worker_ownership'] == ownership
+    assert decision['wait_expired'] is True
+    assert decision['action'] == ('spawn_recovery' if ownership == 'released' else 'wait_worker')
+    assert all(file.read_bytes() == previous for file, previous in files.items())
