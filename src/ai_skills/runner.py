@@ -30,7 +30,8 @@ from ai_skills.effort import raw_effort_overrides, resolve_effort
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.provider_capture import (
-    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, ProviderError, agy_result_response, extract_response,
+    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, ProviderError, agy_narrative_response,
+    extract_response,
 )
 from ai_skills.resources import resource_path
 from ai_skills.registry import load_registry
@@ -439,19 +440,10 @@ def read_provider_output(path, *, transport='argv'):
     AGY step deltas can repeat final text and include tool output. Only the
     terminal result is authoritative, including when the wrapper died early.
     """
-    if transport != 'agy-stream-json':
+    if transport != AGY:
         return Path(path).read_text(encoding='utf-8', errors='replace')
-    results = []
-    with Path(path).open(encoding='utf-8') as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            event = json.loads(line)
-            if isinstance(event, dict) and event.get('event') == 'result':
-                if results:
-                    raise ValueError('AGY returned multiple results for a single prompt')
-                results.append(event.get('result'))
-    return agy_result_response(results[0] if results else None)
+    with Path(path).open('rb') as stream:
+        return agy_narrative_response(stream)
 
 
 class _RawTail(_Tail):
@@ -486,15 +478,19 @@ def _check_cli_capabilities(argv, spec, invocation):
             help_output = help_result.stdout + help_result.stderr
         except (subprocess.TimeoutExpired, OSError) as error:
             raise _CLIUnsupported(f'Cannot verify provider stdin capabilities; upgrade the CLI: {error}') from error
-        missing = [flag for flag in required if not _help_option(help_output, flag.encode())]
-        if help_result.returncode or missing:
-            details = {
-                '--model': 'exact model selection',
-                '--input-format': 'stream-json input',
-                '--output-format': 'stream-json output',
-            }
-            capabilities = ', '.join(f'{flag} ({details.get(flag, "required capability")})' for flag in missing)
-            reason = f'required capabilities are missing: {capabilities}' if missing else 'capabilities could not be verified'
+        options = {flag: _help_option(help_output, flag.encode()) for flag in required}
+        missing = [flag for flag, option in options.items() if not option]
+        incompatible = [flag for flag in ('--input-format', '--output-format')
+                        if not agy_diagnostics.supports_stream_json(options.get(flag, b''))]
+        if help_result.returncode or missing or incompatible:
+            reason = 'capabilities could not be verified'
+            if missing:
+                details = {'--model': 'exact model selection', '--input-format': 'stream-json input',
+                           '--output-format': 'stream-json output'}
+                capabilities = ', '.join(f'{flag} ({details.get(flag, "required capability")})' for flag in missing)
+                reason = 'required capabilities are missing: ' + capabilities
+            elif incompatible:
+                reason = 'stream-json is unavailable for ' + ', '.join(incompatible)
             raise _CLIUnsupported('Upgrade AGY CLI: ' + reason + '; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
 
 
@@ -520,8 +516,9 @@ def _stream_unavailability(source, tail):
     return ''
 
 
-def _classify_agy(text):
-    return classify_unavailable(text) or agy_diagnostics.classify(text)
+def _classify_agy(text, model):
+    reason = classify_unavailable(text)
+    return reason if reason in ('auth', 'quota') else agy_diagnostics.classify(text, model)
 
 
 def _agy_terminal(tail, managed):
@@ -542,20 +539,20 @@ def _finish_agy(tails, code, model, bus, *, managed):
     try:
         response = _agy_terminal(output, managed)
     except ProviderError as error:
-        reason = _classify_agy(str(error))
+        reason = _classify_agy(str(error), model) or _classify_agy(errors.recent, model)
         if reason or not managed:
-            bus.forward(agy_diagnostics.failure_message(model, reason, '' if managed else str(error)))
+            bus.forward(agy_diagnostics.failure_message(model, reason))
             code = code or 1
         return code, reason
     except (ValueError, RecursionError) as error:
-        reason = _classify_agy(errors.recent) if code else ''
+        reason = _classify_agy(errors.recent, model) if code else ''
         if reason:
             bus.forward(agy_diagnostics.failure_message(model, reason))
         elif not managed:
             bus.forward(agy_diagnostics.malformed_message(model, error))
             code = code or 1
         return code, reason
-    reason = _classify_agy(errors.recent) if code else ''
+    reason = _classify_agy(errors.recent, model) if code else ''
     if reason:
         bus.forward(agy_diagnostics.failure_message(model, reason))
     elif code == 0 and not managed:
@@ -598,10 +595,14 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         output, errors = directory/'stdout', directory/'stderr'
         with output.open('xb') as stdout, errors.open('xb'):
             stdout_info = os.fstat(stdout.fileno())
-        output_tail = _AgyTail if invocation.get('prompt_transport') == 'agy-stream-json' else _Tail
+        agy_stream = invocation.get('prompt_transport') == AGY or source == AGY
+        output_tail = _AgyTail if agy_stream else _Tail
         if stream_capture:
             output_tail = _RawTail
-        tails = [output_tail(output, 'stdout', bus), _Tail(errors, 'stderr', bus)]
+        # AGY can repeat terminal errors on stderr. Keep both raw streams out
+        # of routing-visible diagnostics and emit wrapper guidance instead.
+        error_tail = _RawTail if agy_stream else _Tail
+        tails = [output_tail(output, 'stdout', bus), error_tail(errors, 'stderr', bus)]
         owned = None
         try:
             argv = resolve_executable(spec.argv, spec.env)
@@ -647,7 +648,7 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             for tail in tails:
                 while tail.drain(final=True):
                     pass
-            if isinstance(tails[0], _AgyTail) or source == AGY:
+            if agy_stream:
                 code, reason = _finish_agy(tails, code, model, bus, managed=stream_capture)
             else:
                 reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''

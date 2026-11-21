@@ -6,6 +6,7 @@ import json
 CODEX = 'codex-last-message'
 CLAUDE = 'claude-json'
 AGY = 'agy-stream-json'
+_AGY_FAILED_STATUSES = ('ERROR', 'FAILED', 'CANCELED', 'INTERRUPTED', 'INVALID', 'WAITING')
 OPENCODE_VERSION = '1.16.2'
 OPENCODE = 'opencode-json-v' + OPENCODE_VERSION
 STREAM_SOURCES = frozenset((CLAUDE, AGY, OPENCODE))
@@ -62,15 +63,30 @@ def agy_result_response(result):
     if not isinstance(result, dict):
         raise ValueError('AGY terminal result is not an object')
     status, error, response = result.get('status'), result.get('error'), result.get('response')
+    if not isinstance(status, str) or status not in ('SUCCESS', *_AGY_FAILED_STATUSES):
+        raise ValueError('AGY terminal result has an invalid status')
+    if error is not None and not isinstance(error, str):
+        raise ValueError('AGY terminal result has a non-string error')
     if status != 'SUCCESS':
-        if (isinstance(status, str) and status) or error:
-            raise ProviderError('AGY result failed: ' + str(error or status))
-        raise ValueError('AGY terminal result has no status')
+        raise ProviderError('AGY result failed: ' + (error or status))
     if error:
         raise ValueError('AGY terminal result reports both success and an error')
     if not isinstance(response, str):
         raise ValueError('AGY stream ended without a complete terminal result.response')
     return response
+
+
+def agy_narrative_response(stream):
+    """Read a standalone stream, which may contain only the terminal record."""
+    events = _json_events(stream)
+    for event in events:
+        if event.get('event') == 'result':
+            if next(events, None) is not None:
+                raise ValueError('AGY terminal result is followed by another record')
+            response = agy_result_response(event.get('result'))
+            response.encode('utf-8')  # Validate before any line can be published.
+            return response
+    raise ValueError('AGY stream has no terminal result')
 
 
 def _agy_step(event, conversation):

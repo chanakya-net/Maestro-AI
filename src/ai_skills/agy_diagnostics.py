@@ -8,37 +8,61 @@ from __future__ import annotations
 
 import re
 
+_FORMAT_VALUE = rb'["\']?[\w-]+["\']?'
+_FORMAT_CHOICES = re.compile(
+    rb'[(\[<{]\s*(?:(?:choices|possible values):\s*)?('
+    + _FORMAT_VALUE + rb'(?:\s*[,|/]\s*' + _FORMAT_VALUE + rb')*)'
+    rb'(?:\s+only)?\s*[)\]>}]', re.IGNORECASE,
+)
+_KNOWN_FORMATS = {b'text', b'json', b'stream-json'}
+
 _PATTERNS = (
-    ('model-unsupported', re.compile(
-        r'invalid model selection|not recognized as a known model|unknown model'
-        r'|\b(?:access|permission)\b[^\n]{0,40}\bdenied\b[^\n]{0,60}\bmodel\b'
-        r'|\bmodel\b[^\n]{0,60}\b(?:access|permission)\b[^\n]{0,20}\bdenied\b'
-        r'|\b(?:not entitled to|(?:does not|doesn\'t) have access to)\b[^\n]{0,20}\bmodel\b', re.IGNORECASE)),
     ('auth', re.compile(r'authentication required|not authenticated|unauthenticated|not signed in', re.IGNORECASE)),
     ('quota', re.compile(r'resource[_ ]exhausted|quota exceeded', re.IGNORECASE)),
 )
 
 _REMEDIES = {
-    'model-unsupported': ('check the exact slug with `agy models`; if it is listed, verify the signed-in account '
-                          'has access to it or ask the account administrator'),
+    'model-unsupported': ('check the exact slug with `agy models`; if the model is absent, verify access for the '
+                          'signed-in account or ask its administrator'),
     'auth': 'authenticate interactively by running `agy` and signing in, then retry',
     'quota': 'check AGY usage and retry after the quota resets',
 }
 
 
-def classify(text: str) -> str:
+def supports_stream_json(option: bytes) -> bool:
+    """Accept an unspecified format list, but reject an incompatible one."""
+    for match in _FORMAT_CHOICES.finditer(option.lower()):
+        choices = set(re.findall(rb'[\w-]+', match[1]))
+        if choices & _KNOWN_FORMATS:
+            return b'stream-json' in choices
+    return True
+
+
+def classify(text: str, model: str) -> str:
     """Map an AGY provider diagnostic to an existing unavailability reason."""
+    model_term = r'\bmodel\b(?![./\\])'
+    slug = re.escape(model)
+    target = rf'(?:{model_term}|["\']?{slug}(?![\w./\\-]))' if model else model_term
+    model_failure = (
+        r'\binvalid model selection\b|\bnot recognized as a known model\b'
+        rf'|\b(?:unknown|unsupported) {model_term}'
+        rf'|{model_term} (?:["\']?{slug}["\']? )?(?:is )?not supported\b'
+        r'|\bmodel access (?:is )?denied\b'
+        r'|\b(?:(?:access|permission) denied (?:for|to)|not entitled to'
+        rf'|does not have access to|doesn\'t have access to) (?:the )?(?:requested )?{target}'
+    )
+    if re.search(model_failure, text, re.IGNORECASE):
+        return 'model-unsupported'
     for reason, pattern in _PATTERNS:
         if pattern.search(text):
             return reason
     return ''
 
 
-def failure_message(model: str, reason: str, detail: str = '') -> str:
+def failure_message(model: str, reason: str) -> str:
     """Human guidance naming the exact requested model and its remedy."""
-    remedy = _REMEDIES.get(reason, 'inspect the provider error and retry; no other model was selected')
-    message = f'AGY could not run requested model {model}: {remedy}.'
-    return message + (f' Provider error: {detail}' if detail else '')
+    remedy = _REMEDIES.get(reason, 'retry the request or check the AGY diagnostics if it keeps failing')
+    return f'AGY could not run requested model {model}: {remedy}.'
 
 
 def malformed_message(model: str, error: Exception) -> str:
