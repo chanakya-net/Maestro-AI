@@ -171,7 +171,8 @@
       "complexity_weight": 7,
       "exclude_from_complexity": true,
       "explicit_only": true,
-      "agents": ["agy"]
+      "agents": ["agy"],
+      "work_bands": ["medium-hard"]
     },
     "gemini-4-neon-low": {
       "provider": "google",
@@ -195,7 +196,8 @@
       "complexity_weight": 7,
       "exclude_from_complexity": true,
       "explicit_only": true,
-      "agents": ["agy"]
+      "agents": ["agy"],
+      "work_bands": ["complex", "holy-fuck"]
     },
     "gemini-4-neon-xhigh": {
       "provider": "google",
@@ -219,7 +221,8 @@
       "complexity_weight": 5,
       "exclude_from_complexity": true,
       "explicit_only": true,
-      "agents": ["agy"]
+      "agents": ["agy"],
+      "work_bands": ["medium"]
     },
     "gemini-4-hydrogen-high": {
       "provider": "google",
@@ -227,7 +230,8 @@
       "complexity_weight": 7,
       "exclude_from_complexity": true,
       "explicit_only": true,
-      "agents": ["agy"]
+      "agents": ["agy"],
+      "work_bands": ["medium-hard"]
     },
     "gemini-4-hydrogen-xhigh": {
       "provider": "google",

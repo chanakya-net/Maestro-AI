@@ -193,11 +193,17 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     }
     catalog = source["model_catalog"]
     explicit_only = set(expected_agy_models) - {"gemini-3.8-flash-low", "gemini-3.8-flash-medium"}
+    designated_work_bands = {
+        "gemini-4-hydrogen-medium": ["medium"],
+        "gemini-4-argon-high": ["medium-hard"],
+        "gemini-4-hydrogen-high": ["medium-hard"],
+        "gemini-4-neon-high": ["complex", "holy-fuck"],
+    }
     for model in explicit_only:
         assert catalog[model]["agents"] == ["agy"]
         assert catalog[model]["explicit_only"] is True
         assert catalog[model]["exclude_from_complexity"] is True
-        assert "work_bands" not in catalog[model]
+        assert catalog[model].get("work_bands") == designated_work_bands.get(model)
         assert "context_window" not in catalog[model]
     assert "gemini-3.8-flash-high" in explicit_only
     definitions = json.loads(SOURCE_REGISTRY.with_name("agent-definitions.json").read_text())

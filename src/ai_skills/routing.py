@@ -41,6 +41,9 @@ PLAN_BUMP = {
     "holy-fuck": "holy-fuck",
 }
 DEFAULT_AGENTS = ["codex", "agy", "claude"]
+# AGY planning (automatic or forced, agent or model) stays closed until source
+# protection is verified separately; other roles keep AGY as a fallback.
+GATED_AGENTS_BY_ROLE = {"plan": frozenset({"agy"})}
 PERMANENTLY_BLOCKED_AGENTS = {"github-copilot"}
 GLOBAL_DEBT_WEIGHT = 1.5
 
@@ -495,6 +498,8 @@ def candidate_pairs(
             availability,
             forced_agent,
         ):
+            if agent_id in GATED_AGENTS_BY_ROLE.get(role, ()):
+                continue
             entry = catalog[model_id]
             pairs.append(
                 {
