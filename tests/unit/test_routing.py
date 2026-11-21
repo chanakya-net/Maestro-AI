@@ -118,6 +118,41 @@ def test_unavailable_designated_agy_model_falls_back_to_sibling_at_band():
     assert selection["model"] == "gemini-4-hydrogen-high"
 
 
+def test_routing_availability_excludes_model_pair_without_disabling_agy(tmp_path):
+    path = tmp_path / "availability.json"
+    path.write_text(json.dumps({"unavailable": [{"agent": "agy", "model": "gemini-4-argon-high"}]}))
+    availability = routing.routing_availability(load_registry(SOURCE_REGISTRY), "", str(path))
+    selection = select_route(
+        RouteRequest(role="impl", complexity_level="medium-hard", forced_agent="agy", availability=availability),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+
+    assert selection["model"] == "gemini-4-hydrogen-high"
+    assert availability["agents"] == {"github-copilot"}
+    assert availability["pairs"] == {("agy", "gemini-4-argon-high")}
+
+
+def test_routing_availability_excludes_unavailable_agy_harness(tmp_path):
+    path = tmp_path / "availability.json"
+    path.write_text(json.dumps({"deny_agents": ["agy"]}))
+    availability = routing.routing_availability(load_registry(SOURCE_REGISTRY), "", str(path))
+    selection = select_route(
+        RouteRequest(role="impl", complexity_level="medium-hard", availability=availability),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+
+    assert selection["agent"] != "agy"
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            RouteRequest(role="impl", complexity_level="medium-hard", forced_agent="agy", availability=availability),
+            load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
+
+
 @pytest.mark.parametrize("band", BANDS)
 def test_planning_never_routes_agy_forced_or_automatic(band):
     registry = load_registry(SOURCE_REGISTRY)

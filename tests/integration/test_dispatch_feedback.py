@@ -16,8 +16,32 @@ import pytest
 
 from ai_skills import dispatch
 from ai_skills.dispatch import WorkerConfig, WatchConfig, dispatch_worker, watch_run
+from ai_skills.runner import run_agent
 from ai_skills.storage import load_json, write_json_atomic
 from test_dispatch import worker_config
+from test_prompt_transport import configuration
+
+
+@pytest.mark.parametrize(('error', 'reason', 'scope'), [
+    ('quota exceeded', 'quota', 'agent'),
+    ('model access denied', 'model-unsupported', 'agent-model'),
+])
+def test_managed_agy_unavailability_reports_routing_scope(tmp_path, error, reason, scope):
+    config = configuration(tmp_path, 'agy', response=(
+        "print(json.dumps({'event':'init','conversation_id':'c','init':{}}))\n"
+        "print(json.dumps({'event':'result','result':{'conversation_id':'c','status':'FAILED','error':"
+        f"{error!r}" + "}}))\n"))
+    config = config.replace(role='impl', issue='227', cycle='1', dispatcher_managed=True,
+                            state_file=tmp_path / 'state.json', result_file=tmp_path / 'result.json')
+    result = run_agent(config)
+
+    assert result.return_code != 0
+    assert result.unavailable_reason == reason
+    events = config.events_log.read_text(encoding='utf-8')
+    unavailable = next(line for line in events.splitlines() if 'type=agent-unavailable|' in line)
+    assert '|issue=227|role=impl|agent=agy|' in unavailable
+    assert '|model=' in unavailable
+    assert f'|reason={reason}|action=exclude-route|scope={scope}' in unavailable
 
 
 @pytest.mark.parametrize(('value', 'expected'), [('0', False), ('false', False), ('no', False), ('off', False),

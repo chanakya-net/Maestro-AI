@@ -521,6 +521,13 @@ def _classify_agy(text, model):
     return reason if reason in ('auth', 'quota') else agy_diagnostics.classify(text, model)
 
 
+def _unavailability_scope(reason):
+    """Choose whether retry routing should exclude a harness or one model pair."""
+    if reason in ('auth', 'quota', 'missing-command', 'cli-unsupported'):
+        return 'agent'
+    return 'agent-model'
+
+
 def _agy_terminal(tail, managed):
     if not managed:
         return read_provider_output(tail.path, transport='agy-stream-json')
@@ -702,7 +709,8 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
                 tail.close()
     status = 'success' if code == 0 else 'failed'
     if reason:
-        bus.emit('agent-unavailable', {**fields, 'reason':reason, 'action':'exclude-route'})
+        bus.emit('agent-unavailable', {**fields, 'reason':reason,
+            'action':'exclude-route', 'scope':_unavailability_scope(reason)})
     if config.dispatcher_managed:
         bus.emit('provider-exit', {**fields, 'return_code':code})
     else:
