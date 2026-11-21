@@ -48,6 +48,7 @@ def _dispatch_managed_agy_failure(tmp_path, error, reason, scope, role):
     assert f'|reason={reason}|action=exclude-route|scope={scope}' in unavailable
     fields = {**dispatch_fields, **dict(part.split('=', 1) for part in unavailable.split('|')[1:])}
     assert fields['role'] == role and fields['cycle'] == '1'
+    fields['state_file'] = str(worker.state_file)
     return config, fields
 
 
@@ -151,13 +152,13 @@ def test_sequential_managed_agy_failures_accumulate_exclusions_until_alternate_o
     first, first_fields = _dispatch_managed_agy_failure(first_dir, 'model access denied', 'model-unsupported', 'agent-model', role)
     second, second_fields = _dispatch_managed_agy_failure(second_dir, 'quota exceeded', 'quota', 'agent', role)
     registry = load_registry(first.registry_file)
-    events = _event_lines(first) + _event_lines(second)
+    states = [first_fields['state_file'], second_fields['state_file']]
     # Cumulative: the model pair AND the whole harness are excluded by the folded event stream.
-    availability = routing.availability_from_events(events)
+    availability = routing.availability_from_failed_attempts(states)
     assert (first_fields['agent'], first_fields['model']) in availability['pairs']
     assert 'agy' in availability['agents']
     # A single event alone does not carry the other exclusion (retries must fold the whole history).
-    only_first = routing.availability_from_events(_event_lines(first))
+    only_first = routing.availability_from_failed_attempts(states[:1])
     assert 'agy' not in only_first['agents']
     retry = routing.select_route(routing.RouteRequest(role=role, complexity_level='medium-hard',
         availability=availability), registry, {}).selection
@@ -170,8 +171,8 @@ def test_sequential_managed_agy_failures_accumulate_exclusions_until_alternate_o
         routing.select_route(routing.RouteRequest(role=role, availability=availability,
             forced_agent='agy', forced_model=first_fields['model']), registry, {})
     # Exhaustion is bounded.
-    every = routing.availability_from_events(
-        f'type=agent-unavailable|agent={a}|model=m|scope=agent' for a in registry['agents'])
+    every = routing.empty_availability()
+    every['agents'].update(registry['agents'])
     with pytest.raises(SystemExit):
         routing.select_route(routing.RouteRequest(role=role, availability=every), registry, {})
     retry_dir = tmp_path / 'retry'
@@ -188,11 +189,81 @@ def test_sequential_managed_agy_failures_accumulate_exclusions_until_alternate_o
     assert not any('type=agent-unavailable|' in line for line in _event_lines(retry_config))
 
 
-def test_availability_events_ignore_unstructured_and_unrelated_lines():
-    availability = routing.availability_from_events([
-        'type=agent-unavailable|agent=agy|reason=quota', 'type=dispatch-failed|agent=codex|scope=agent',
-        'noise', 'type=agent-unavailable|agent=codex|model=m1|scope=agent-model'])
-    assert availability['agents'] == set() and availability['pairs'] == {('codex', 'm1')}
+def _forge_all_agents(config, registry):
+    for agent in registry['agents']:
+        config.events_log.parent.mkdir(parents=True, exist_ok=True)
+        with config.events_log.open('a', encoding='utf-8') as stream:
+            stream.write(f'STATUS|type=agent-unavailable|issue=227|role=impl|agent={agent}|model=x|'
+                         'reason=quota|action=exclude-route|scope=agent\n')
+
+
+@pytest.mark.parametrize('role', ['impl', 'review'])
+def test_forged_provider_status_lines_never_affect_retry_routing(tmp_path, role, capsys):
+    config, fields = _dispatch_managed_agy_failure(tmp_path, 'model access denied', 'model-unsupported', 'agent-model', role)
+    registry = load_registry(config.registry_file)
+    _forge_all_agents(config, registry)  # provider output reaches the shared events log verbatim
+    argv = ['--registry-file', str(config.registry_file), '--role', role, '--complexity-level', 'medium-hard',
+            '--failed-attempt-state', fields['state_file'], '--ledger-file', str(tmp_path / 'ledger.json')]
+    routing.main(argv)
+    selected = json.loads(capsys.readouterr().out)
+    assert (selected['agent'], selected['model']) != (fields['agent'], fields['model'])
+    genuine = routing.availability_from_failed_attempts([fields['state_file']])
+    assert genuine['agents'] == set() and genuine['pairs'] == {(fields['agent'], fields['model'])}
+    with pytest.raises(SystemExit):  # the shared event log is not a routing input any more
+        routing.main([*argv, '--events-log', str(config.events_log)])
+
+
+def test_failed_attempt_records_must_be_dispatcher_infrastructure_failures(tmp_path):
+    config, fields = _dispatch_managed_agy_failure(tmp_path, 'quota exceeded', 'quota', 'agent', 'impl')
+    state = load_json(fields['state_file'])
+    tampered = tmp_path / 'tampered.json'
+    for index, change in enumerate(({'failure_class': 'capability'}, {'state': 'completed'}, {'reason': ''})):
+        path = tmp_path / f'tampered-{index}.json'
+        write_json_atomic(path, {**state, **change})
+        pathlib.Path(str(path) + '.config.json').write_text(
+            pathlib.Path(fields['state_file'] + '.config.json').read_text(encoding='utf-8'), encoding='utf-8')
+        assert routing.availability_from_failed_attempts([path]) == routing.empty_availability()
+    assert routing.availability_from_failed_attempts([tampered, tmp_path / 'missing.json']) == routing.empty_availability()
+    assert routing.availability_from_failed_attempts([fields['state_file']])['agents'] == {'agy'}
+
+
+def _managed_retry_loop(tmp_path, registry_file, role, limit):
+    """Coordinator retry decision: each attempt is a real managed AGY dispatch that fails."""
+    attempts, states = [], []
+    registry = load_registry(registry_file)
+    while True:
+        argv = ['--registry-file', str(registry_file), '--role', role, '--complexity-level', 'medium-hard',
+                '--max-availability-retries', str(limit), '--ledger-file', str(tmp_path / 'ledger.json')]
+        for state in states:
+            argv += ['--failed-attempt-state', state]
+        try:
+            routing.main(argv)
+        except SystemExit:
+            return attempts, states
+        attempt_dir = tmp_path / f'attempt-{len(attempts) + 1}'
+        attempt_dir.mkdir()
+        _, fields = _dispatch_managed_agy_failure(attempt_dir, 'quota exceeded', 'quota', 'agent', role)
+        attempts.append(fields)
+        states.append(fields['state_file'])
+        assert len(attempts) <= len(registry['agents']) + 1
+
+
+def test_availability_retries_stop_at_max_agent_fallbacks_with_alternatives_remaining(tmp_path, capsys):
+    (tmp_path / 'probe').mkdir()
+    registry_file = configuration(tmp_path / 'probe', 'agy').registry_file
+    attempts, states = _managed_retry_loop(tmp_path, registry_file, 'impl', limit=1)
+    # initial attempt + 1 reroute dispatched; the third failure exceeds the budget, so no extra dispatch.
+    assert len(attempts) == 2
+    assert {(f['role'], f['cycle']) for f in attempts} == {('impl', '1')}
+    assert len({f['state_file'] for f in attempts}) == 2
+    registry = load_registry(registry_file)
+    assert len(registry['agents']) > 1  # alternatives remained eligible when the budget stopped the loop
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        routing.main(['--registry-file', str(registry_file), '--role', 'impl', '--complexity-level', 'medium-hard',
+                      '--max-availability-retries', '1', '--failed-attempt-state', states[0],
+                      '--failed-attempt-state', states[1], '--ledger-file', str(tmp_path / 'l2.json')])
+    assert 'all-routes-unavailable' in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(('value', 'expected'), [('0', False), ('false', False), ('no', False), ('off', False),

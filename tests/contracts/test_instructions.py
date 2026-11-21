@@ -68,7 +68,8 @@ def test_managed_availability_retries_precede_artifact_recovery_for_every_role()
     for role in ('impl', 'modify', 'review'):
         assert role in policy
     assert 'failure_class=infrastructure' in policy
-    assert 'agent-unavailable' in policy
+    assert '--failed-attempt-state' in policy and '--max-availability-retries' in policy
+    assert 'forge' in policy and 'MAX_AGENT_FALLBACKS' in policy
     assert 'same role and same cycle' in policy
     assert 'all-routes-unavailable' in policy
     assert 'FORCED_AGENT' in policy and 'FORCED_MODEL' in policy

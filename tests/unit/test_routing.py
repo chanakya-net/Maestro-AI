@@ -658,10 +658,32 @@ def test_pinned_run_refuses_a_different_interpreter(tmp_path, monkeypatch, capsy
     assert not ledger.exists()
 
 
-def test_route_cli_events_log_excludes_reported_harness(tmp_path, capsys):
-    log = tmp_path / 'events.log'
-    log.write_text('STATUS|type=agent-unavailable|issue=227|role=impl|agent=agy|model=m|reason=quota|'
-                   'action=exclude-route|scope=agent\n', encoding='utf-8')
-    routing.main(['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard', '--events-log', str(log),
-        '--ledger-file', str(tmp_path / 'ledger.json')])
+def _failed_state(tmp_path, name, agent, model, reason, failure_class='infrastructure'):
+    state = tmp_path / f'{name}.state.json'
+    state.write_text(json.dumps({'state': 'failed', 'failure_class': failure_class, 'reason': reason}), encoding='utf-8')
+    Path(str(state) + '.config.json').write_text(
+        json.dumps({'agent_run': {'agent': agent, 'model': model, 'role': 'impl', 'cycle': '1'}}), encoding='utf-8')
+    return state
+
+
+def test_route_cli_failed_attempt_state_excludes_harness_or_pair(tmp_path, capsys):
+    quota = _failed_state(tmp_path, 'quota', 'agy', 'm', 'quota')
+    routing.main(['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard',
+        '--failed-attempt-state', str(quota), '--ledger-file', str(tmp_path / 'ledger.json')])
     assert json.loads(capsys.readouterr().out)['agent'] != 'agy'
+    availability = routing.availability_from_failed_attempts([
+        quota, _failed_state(tmp_path, 'model', 'codex', 'm1', 'model-unsupported'),
+        _failed_state(tmp_path, 'cap', 'claude', 'm2', 'quota', failure_class='capability')])
+    assert availability['agents'] == {'agy'} and availability['pairs'] == {('codex', 'm1')}
+
+
+def test_route_cli_refuses_beyond_availability_retry_budget(tmp_path, capsys):
+    states = [str(_failed_state(tmp_path, f's{i}', 'agy', f'm{i}', 'model-unsupported')) for i in range(3)]
+    base = ['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard',
+            '--ledger-file', str(tmp_path / 'ledger.json')]
+    flags = [x for state in states for x in ('--failed-attempt-state', state)]
+    routing.main([*base, '--max-availability-retries', '3', *flags])
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        routing.main([*base, '--max-availability-retries', '2', *flags])
+    assert 'all-routes-unavailable' in capsys.readouterr().err

@@ -430,7 +430,8 @@ def _work(config):
     reason = (result.unavailable_reason or 'dispatch-bootstrap-failed') if prelaunch else timeout_reason or result.unavailable_reason or (errors[0] if errors else '')
     return _finalize_attempt(config, provider_return_code=code, reason=reason,
         failure_class='infrastructure' if result.unavailable_reason else 'capability',
-        prelaunch_failure=prelaunch, runner_failed=result.return_code != 0)
+        prelaunch_failure=prelaunch, runner_failed=result.return_code != 0,
+        route=(result.agent, result.model))
 
 
 def _bind_result_capture(config, registry, original_run):
@@ -824,7 +825,8 @@ def _publish_captured_result(config, *, eligible):
 
 def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                       reason: str = '', failure_class: str = 'capability',
-                      prelaunch_failure: bool = False, runner_failed: bool = False) -> WorkerResult:
+                      prelaunch_failure: bool = False, runner_failed: bool = False,
+                      route: tuple[str, str] | None = None) -> WorkerResult:
     """Journal one decision after callers prove owned death or no launch.
 
     Outcome -> state -> DONE -> event. A storage failure propagates, retaining
@@ -927,6 +929,8 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         state.update(state=worker_state,return_code=code,exit_code=code,reason=reason,
             completed_at=outcome['finished_at'],alive=False,provider_identity=process.get('identity'),
             failure_class=failure_class)
+        if route and failure_class == 'infrastructure':
+            state.update(agent=route[0], model=route[1])  # resolved route, dispatcher-owned
         write_json_atomic(Path(config.state_file),state)
         if run.done_file:
             fields = {'issue':run.issue,'role':run.role,'agent':run.agent,'model':run.model,
