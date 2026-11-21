@@ -1120,7 +1120,7 @@ def issue_stage(entry: dict[str, Any], completed: set[int]) -> str:
             role = wait.get("role") or "worker"
             cycle = f" cycle {wait['cycle']}" if wait.get("cycle") is not None else ""
             return (f"recovery-wait-expired({role}{cycle}, {wait['ownership']}, "
-                    f"{wait['elapsed_seconds']}s/{wait['max_wait_seconds']}s)")
+                    f"{wait['max_wait_seconds']}s limit)")
         # Pool registration may point at dispatcher liveness rather than the
         # coordinator's semantic state. Prefer explicit stage evidence, then
         # consult the canonical coordinator state without changing ownership.

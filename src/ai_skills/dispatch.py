@@ -1003,7 +1003,7 @@ def _inspect_adoption(config, state, *, strict=False) -> WorkerResult | int | No
         # The dispatcher may have admitted a provider just before it died.
         process, supervisor = _provider_record(config)
     if not process.get('identity'):
-        return _inspect_prelaunch(config, state, process, wrapper, strict=strict)
+        return _inspect_prelaunch(config, state, process, wrapper, journal, strict=strict)
     identity = ProcessIdentity(**process['identity'])
     liveness = supervisor.inspect(identity)
     if liveness.state != 'dead':
@@ -1025,18 +1025,29 @@ def _inspect_adoption(config, state, *, strict=False) -> WorkerResult | int | No
     return code
 
 
-def _inspect_prelaunch(config, state, process, wrapper, *, strict):
-    if process or (strict and state.get('provider_identity')):
+def _inspect_prelaunch(config, state, process, wrapper, journal, *, strict):
+    if process or (strict and state.get('provider_identity') is not None):
         return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
     if not wrapper and not strict:
         launcher = _launcher_state(state)
         if launcher != 'dead':
             return _owner_result(config, launcher, 'launcher-ownership-'+launcher)
-    if strict or not wrapper:
-        if (state.get('state') not in ('launching','starting') and
-                state.get('reason') not in ('dispatch-bootstrap-failed','missing-command','cli-unsupported')):
-            return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
-    return None
+    claim_state = state.get('state')
+    launching = claim_state in ('launching', 'starting')
+    if strict:
+        if journal['status'] == 'pending':
+            released = launching
+        else:
+            # A bound terminal journal with no provider exit supports prelaunch finalization.
+            # The claim may still be in bootstrap if publication stopped after the journal.
+            finalized = claim_state in ('failed', 'interrupted', 'artifact-recovery-required', 'completed')
+            released = journal['provider_return_code'] is None and (launching or finalized)
+    else:
+        released = wrapper or launching or state.get('reason') in (
+            'dispatch-bootstrap-failed', 'missing-command', 'cli-unsupported')
+    if released:
+        return None
+    return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
 
 
 def _adopt_released(config, state, code):

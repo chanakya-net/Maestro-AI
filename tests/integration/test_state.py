@@ -232,6 +232,9 @@ def test_nonobject_authoritative_state_rejected(tmp_path,payload):
     ('no-claim','unknown'), ('foreign-claim','unknown'), ('no-journal','unknown'),
     ('foreign-journal','unknown'), ('foreign-path','unknown'), ('foreign-attempt','unknown'),
     ('no-wrapper','unknown'), ('no-provider','unknown'), ('late-provider','live'),
+    ('prelaunch-interrupted','released'), ('prelaunch-rate-limited','released'),
+    ('prelaunch-provider-exit','unknown'), ('prelaunch-provider-claim','unknown'),
+    ('prelaunch-unknown-claim','unknown'), ('prelaunch-incomplete-record','unknown'),
 ])
 def test_recovery_analyzer_binds_child_ownership_on_explicit_wait(
         tmp_path, capsys, monkeypatch, evidence, ownership):
@@ -240,10 +243,12 @@ def test_recovery_analyzer_binds_child_ownership_on_explicit_wait(
     from pool_support import recovery_child
 
     issue_dir = tmp_path/'7'
+    provider = 'missing' if evidence.startswith('prelaunch-') else {
+        'live-provider':'alive', 'no-provider':'missing', 'late-provider':'missing',
+    }.get(evidence, 'dead')
     child, ledger, processes = recovery_child(issue_dir, monkeypatch,
         wrapper={'live-wrapper':'alive','no-wrapper':'missing'}.get(evidence, 'dead'),
-        provider={'live-provider':'alive','no-provider':'missing','late-provider':'missing'}.get(evidence, 'dead'),
-        exit_code=None if evidence == 'exit-unknown' else 0)
+        provider=provider, exit_code=None if evidence == 'exit-unknown' else 0)
     path = state_file(tmp_path, {'7':{'status':'in_progress','issue_dir':str(issue_dir)}})
     claim = child.state_file
     config = Path(str(claim)+'.config.json')
@@ -279,6 +284,8 @@ def test_recovery_analyzer_binds_child_ownership_on_explicit_wait(
         ledger['result_file'] = str(issue_dir/'report.json')
     elif evidence == 'foreign-attempt':
         ledger['attempt_id'] = 'foreign'
+    elif evidence.startswith('prelaunch-'):
+        prepare_prelaunch_evidence(child, evidence, journal)
     write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
     files = {file:file.read_bytes() for file in (claim, config, journal, result, done) if file.exists()}
 
@@ -289,3 +296,20 @@ def test_recovery_analyzer_binds_child_ownership_on_explicit_wait(
     assert decision['wait_expired'] is True
     assert decision['action'] == ('spawn_recovery' if ownership == 'released' else 'wait_worker')
     assert all(file.read_bytes() == previous for file, previous in files.items())
+
+
+def prepare_prelaunch_evidence(child, evidence, journal):
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import finalize_prelaunch_child
+
+    reason = 'interrupted' if evidence == 'prelaunch-interrupted' else 'rate-limited'
+    finalize_prelaunch_child(child, reason)
+    claim = child.state_file
+    if evidence == 'prelaunch-provider-exit':
+        write_json_atomic(journal, {**load_json(journal), 'provider_return_code':1})
+    elif evidence == 'prelaunch-provider-claim':
+        write_json_atomic(claim, {**load_json(claim), 'provider_identity':{'pid':4000}})
+    elif evidence == 'prelaunch-unknown-claim':
+        write_json_atomic(claim, {**load_json(claim), 'state':'unknown'})
+    elif evidence == 'prelaunch-incomplete-record':
+        write_json_atomic(Path(str(claim)+'.process.json'), {'run_id':child.agent_run.run_id})

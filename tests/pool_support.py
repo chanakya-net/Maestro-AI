@@ -179,6 +179,17 @@ def recovery_child(issue_dir, monkeypatch, *, wrapper='alive', provider='dead', 
     return config, ledger, ownership
 
 
+def finalize_prelaunch_child(child, reason):
+    from ai_skills.dispatch import _finalize_attempt, _record_stop_intent
+
+    if reason == 'interrupted':
+        _record_stop_intent(child, reason)
+    result = _finalize_attempt(child, provider_return_code=None, reason=reason,
+        failure_class='infrastructure', prelaunch_failure=True)
+    assert result.state == ('interrupted' if reason == 'interrupted' else 'failed')
+    assert result.reason == reason
+
+
 def valid_complexity_result():
     from ai_skills.artifacts import COMPLEXITY_SCORE_KEYS
 
