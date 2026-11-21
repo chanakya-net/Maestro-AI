@@ -439,15 +439,20 @@ catalog entry whose use depends on account entitlement, which is not verified
 here. A direct AGY run without an
 explicit model pins `gemini-3.8-flash-high`; this direct-run default does not
 add that model to automatic routing, which keeps the Flash Low/Medium choices
-above. Above `easy`, AGY keeps a 0% band target: it is chosen only when no
-other eligible agent remains, or when a designated sibling is unavailable or
-excluded. Planning never routes to AGY, automatic or forced, until source
-protection is verified separately. Review raises the effective band by one
-and planning by two, capped at the highest. Existing global, role, and band
-usage targets remain unchanged. Explicit agent/model overrides retain
-compatibility and availability checks, preserve the exact selected ID and its
-suffix, and continue to count usage against AGY; pair read-only eligibility
-checks also remain in force.
+above. Above `easy`, AGY keeps a 0% band target. During ordinary automatic
+selection, AGY is a fallback when no positive-target candidate remains eligible;
+an unavailable or excluded AGY model alone does not trigger fallback while a
+positive-target candidate remains. When AGY is forced, its eligible models at
+the effective band are selected by the normal model ordering, so an unavailable
+or excluded sibling can yield another eligible AGY sibling. Explicit agent or
+model overrides can also select AGY despite the target, subject to compatibility
+and availability checks. A sticky reviewer preference can retain an eligible
+AGY model across review cycles. Planning never routes to AGY, automatic or
+forced, until source protection is verified separately. Review raises the
+effective band by one and planning by two, capped at the highest. Existing
+global, role, and band usage targets remain unchanged. Overrides preserve the
+exact selected ID and its suffix, and usage continues to count against AGY;
+pair read-only eligibility checks also remain in force.
 
 The inventory records models observed in the AGY CLI on November 7, 2026.
 Actual access depends on the user's account, quota, and provider availability.
