@@ -2122,7 +2122,7 @@ result_path.write_text(json.dumps(dict(report, summary='Direct blocked report.')
 STREAM_SOURCES = {'claude': 'claude-json', 'agy': 'agy-stream-json', 'opencode': 'opencode-json-v1.16.2'}
 
 
-def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2', build=None, **modify_options):
+def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2', build=None, model='', **modify_options):
     from ai_skills import runner
 
     invocation = {
@@ -2165,7 +2165,7 @@ if '--help' in sys.argv:
         return resolve(argv, environment)
 
     monkeypatch.setattr(runner, 'resolve_executable', fake_executable)
-    return replace(config, agent_run=config.agent_run.replace(agent=agent))
+    return replace(config, agent_run=config.agent_run.replace(agent=agent, model=model))
 
 
 CLAUDE_CAPTURE = """
@@ -2335,6 +2335,80 @@ def test_stream_capture_preserves_direct_result_file(tmp_path, monkeypatch, dire
     else:
         assert result.state != 'completed'
         assert raw == b''
+
+
+GEMINI_4 = 'gemini-4-neon-high'
+AGY_MODEL_ASSERTION = ("assert args.count('--model') == 1\n"
+                       f"assert args[args.index('--model') + 1] == {GEMINI_4!r}\n")
+AGY_STEPS_ONLY = AGY_CAPTURE.split("    {'event': 'result'", 1)[0] + "]:\n    print(json.dumps(event))\n"
+AGY_MALFORMED_TERMINAL = AGY_CAPTURE.replace("'response': json.dumps(envelope)", "'response': '{'")
+AGY_UNVERIFIED = BUILD_CAPTURE.replace("'passed': True, 'evidence': 'observed exit 0'",
+                                       "'passed': False, 'evidence': 'observed exit 1'")
+
+
+def agy_gemini_worker(tmp_path, monkeypatch, wire, build=None):
+    return stream_capture_worker(tmp_path, monkeypatch, 'agy', AGY_MODEL_ASSERTION + wire, build=build, model=GEMINI_4)
+
+
+def test_agy_gemini_4_impl_publishes_verified_success(tmp_path, monkeypatch):
+    from ai_skills.git import current_head
+
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE)
+    root = str(config.agent_run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['commit_sha'] == current_head(root) != config.issue_base_sha
+    assert report['verification']['commands'] == CAPTURE_CHECKS['required_checks']
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    assert (saved['agent_run']['agent'], saved['agent_run']['model']) == ('agy', GEMINI_4)
+    assert saved['agent_run']['result_capture_context']['source'] == 'agy-stream-json'
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['status'] == 'success' and outcome['git_progress']['head'] == report['commit_sha']
+    done = config.agent_run.done_file.read_text(encoding='utf-8')
+    assert f'|model={GEMINI_4}|' in done and '|status=success|source=dispatcher|' in done
+    assert f'model={GEMINI_4}' in config.agent_run.events_log.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_agy_gemini_4_publishes_result_before_outcome_and_done(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    order = []
+    for name in ('write_json_atomic', 'write_text_atomic'):
+        def record(path, *args, _original=getattr(dispatch, name), **kwargs):
+            order.append(Path(path).name)
+            return _original(path, *args, **kwargs)
+        monkeypatch.setattr(dispatch, name, record)
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE)
+    assert dispatch_worker(config).state == 'completed'
+    # The admission journal is pending; only terminal journaling follows the published result.
+    terminal = order[order.index('result.json'):]
+    assert terminal.index('worker.state.json.outcome.json') < terminal.index('worker.done')
+
+
+@pytest.mark.parametrize(('wire', 'build', 'diagnostic'), [
+    (AGY_STEPS_ONLY, None, 'capture-response-invalid'),
+    (AGY_MALFORMED_TERMINAL, None, 'capture-invalid-json'),
+    (AGY_CAPTURE, AGY_UNVERIFIED, 'verification-check-not-passed'),
+])
+def test_agy_gemini_4_impl_failure_retains_raw_capture_and_recovers(tmp_path, monkeypatch, wire, build, diagnostic):
+    from ai_skills.git import current_head
+
+    config = agy_gemini_worker(tmp_path, monkeypatch, wire, build=build)
+    root = str(config.agent_run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'artifact-recovery-required', result.reason
+    salvage = json.loads(config.agent_run.result_file.read_bytes())
+    assert salvage['status'] == 'artifact_recovery_required' and salvage['verification']['passed'] is False
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['status'] == 'failed' and outcome['reason'] == 'artifact-recovery-required'
+    assert outcome['git_progress']['head'] == current_head(root)
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    raw = Path(saved['agent_run']['stream_directory'], 'stdout').read_bytes()
+    assert b'"event": "init"' in raw and saved['agent_run']['model'] == GEMINI_4
+    assert 'reason=' + diagnostic in config.agent_run.events_log.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
 
 
 @pytest.mark.parametrize(('agent', 'options'), [

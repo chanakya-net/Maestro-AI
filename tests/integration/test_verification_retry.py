@@ -590,3 +590,30 @@ def test_captured_evidence_cannot_substitute_for_retry_evidence(tmp_path):
     result = dispatch_worker(retry)
     assert (result.state, result.reason) == ('failed', 'verification-checks-incomplete')
     assert git(repo, 'rev-parse', 'HEAD') == head
+
+
+@pytest.mark.parametrize('kind', ['stale-identity', 'missing-terminal'])
+def test_agy_gemini_4_rejected_source_admits_verification_only_retry(tmp_path, monkeypatch, kind):
+    from test_dispatch import AGY_CAPTURE, AGY_STEPS_ONLY, GEMINI_4, agy_gemini_worker
+    wire = "\nenvelope['attempt_id'] = 'stale'\n" + AGY_CAPTURE if kind == 'stale-identity' else AGY_STEPS_ONLY
+    source = agy_gemini_worker(tmp_path, monkeypatch, wire)
+    assert dispatch_worker(source).state == 'artifact-recovery-required'
+    saved = load_json(Path(str(source.state_file) + '.config.json'))
+    assert (saved['agent_run']['agent'], saved['agent_run']['model']) == ('agy', GEMINI_4)
+    repo, base = source.agent_run.repo_root, source.issue_base_sha
+    head = git(repo, 'rev-parse', 'HEAD')
+    raw = Path(saved['agent_run']['stream_directory'], 'stdout')
+    paths = [Path(str(source.state_file) + '.outcome.json'), source.agent_run.result_file, raw]
+    originals = [path.read_bytes() for path in paths]
+    contract = {'source_state_file': str(source.state_file), 'source_attempt_id': saved['agent_run']['attempt_id'],
+                'expected_commit_sha': head, 'required_checks': ['feature acceptance']}
+    verify = VERIFY.replace("Path('feature.txt').read_text()=='implemented\\n'",
+                            "Path('feature.txt').read_text().startswith('implemented')")
+    retry = attempt(tmp_path, repo, 'retry', verify, cycle=4, execution_mode='verify_existing',
+                    issue_base_sha=base, retry_contract=contract)
+    assert dispatch_worker(retry).state == 'completed'
+    report = load_json(retry.agent_run.result_file)
+    assert report['commit_sha'] == head and not report.get('no_op')
+    assert git(repo, 'rev-parse', 'HEAD') == head and git(repo, 'status', '--porcelain') == ''
+    assert [path.read_bytes() for path in paths] == originals
+    assert adopt_worker(retry.state_file).state == 'completed'
