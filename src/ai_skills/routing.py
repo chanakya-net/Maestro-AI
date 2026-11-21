@@ -236,6 +236,53 @@ def routing_availability(
     return availability
 
 
+def _failed_attempt_route(state_file: Path) -> tuple[str, str, str] | None:
+    """Return (agent, model, reason) for a dispatcher-owned infrastructure failure, else None."""
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        config = json.loads(Path(str(state_file) + ".config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict) or not isinstance(config, dict):
+        return None
+    if state.get("state") != "failed" or state.get("failure_class") != "infrastructure":
+        return None
+    run = config.get("agent_run")
+    reason = state.get("reason")
+    if not isinstance(run, dict) or not isinstance(reason, str) or not reason:
+        return None
+    agent = state.get("agent") or run.get("agent")
+    model = state.get("model") or run.get("model")
+    if not isinstance(agent, str) or not agent or not isinstance(model, str):
+        return None
+    return agent, model, reason
+
+
+def failed_attempt_routes(state_files: Any) -> list[tuple[str, str, str]]:
+    """Dispatcher-owned infrastructure failures as (agent, model, reason); others are ignored."""
+    routes = (_failed_attempt_route(Path(state_file)) for state_file in state_files)
+    return [route for route in routes if route is not None]
+
+
+def availability_from_failed_attempts(state_files: Any) -> Availability:
+    """Fold dispatcher-owned failed-attempt records into cumulative exclusions.
+
+    Only a worker state with ``state=failed`` and ``failure_class=infrastructure`` and its
+    dispatcher-written records count (resolved agent/model from the state, else its config); provider-supplied status lines are never consulted.
+    Auth/quota/missing/unsupported-CLI reasons exclude the harness, any other reason only the
+    agent/model pair. Unreadable or non-matching records are ignored.
+    """
+    from ai_skills.runner import _unavailability_scope
+
+    availability = empty_availability()
+    for agent, model, reason in failed_attempt_routes(state_files):
+        if _unavailability_scope(reason) == "agent":
+            availability["agents"].add(agent)
+        elif model:
+            availability["pairs"].add((agent, model))
+    return availability
+
+
 def availability_summary(availability: Availability) -> dict[str, list[Any]]:
     return {
         "agents": sorted(str(agent) for agent in availability.get("agents", set())),
@@ -756,6 +803,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prefer-model", default="")
     parser.add_argument("--model-denylist", default=os.environ.get("RUN_WITH_IT_MODEL_DENYLIST", ""))
     parser.add_argument("--availability-file", default=os.environ.get("RUN_WITH_IT_MODEL_AVAILABILITY_FILE", ""))
+    parser.add_argument("--failed-attempt-state", action="append", default=[],
+                        help="dispatcher state file of a failed attempt; infrastructure failures become exclusions")
+    parser.add_argument("--max-availability-retries", type=int, default=None,
+                        help="existing MAX_AGENT_FALLBACKS budget: fail once more availability failures than this are recorded")
     parser.add_argument("--record", action="store_true")
     return parser.parse_args(argv)
 
@@ -821,6 +872,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
+    availability = merge_availability(availability, availability_from_failed_attempts(args.failed_attempt_state))
+    retries = len(failed_attempt_routes(args.failed_attempt_state))
+    if args.max_availability_retries is not None and retries > args.max_availability_retries:
+        fail(f"all-routes-unavailable: availability retry budget reached "
+             f"({retries} failures > MAX_AGENT_FALLBACKS={args.max_availability_retries})")
 
     if args.record:
         with DirectoryLock(ledger_file):

@@ -118,6 +118,41 @@ def test_unavailable_designated_agy_model_falls_back_to_sibling_at_band():
     assert selection["model"] == "gemini-4-hydrogen-high"
 
 
+def test_routing_availability_excludes_model_pair_without_disabling_agy(tmp_path):
+    path = tmp_path / "availability.json"
+    path.write_text(json.dumps({"unavailable": [{"agent": "agy", "model": "gemini-4-argon-high"}]}))
+    availability = routing.routing_availability(load_registry(SOURCE_REGISTRY), "", str(path))
+    selection = select_route(
+        RouteRequest(role="impl", complexity_level="medium-hard", forced_agent="agy", availability=availability),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+
+    assert selection["model"] == "gemini-4-hydrogen-high"
+    assert availability["agents"] == {"github-copilot"}
+    assert availability["pairs"] == {("agy", "gemini-4-argon-high")}
+
+
+def test_routing_availability_excludes_unavailable_agy_harness(tmp_path):
+    path = tmp_path / "availability.json"
+    path.write_text(json.dumps({"deny_agents": ["agy"]}))
+    availability = routing.routing_availability(load_registry(SOURCE_REGISTRY), "", str(path))
+    selection = select_route(
+        RouteRequest(role="impl", complexity_level="medium-hard", availability=availability),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+
+    assert selection["agent"] != "agy"
+    with pytest.raises(SystemExit) as exc:
+        select_route(
+            RouteRequest(role="impl", complexity_level="medium-hard", forced_agent="agy", availability=availability),
+            load_registry(SOURCE_REGISTRY),
+            {},
+        )
+    assert exc.value.code == 2
+
+
 @pytest.mark.parametrize("band", BANDS)
 def test_planning_never_routes_agy_forced_or_automatic(band):
     registry = load_registry(SOURCE_REGISTRY)
@@ -621,3 +656,34 @@ def test_pinned_run_refuses_a_different_interpreter(tmp_path, monkeypatch, capsy
         routing.main(_route_args(ledger))
     assert "pinned to" in capsys.readouterr().err
     assert not ledger.exists()
+
+
+def _failed_state(tmp_path, name, agent, model, reason, failure_class='infrastructure'):
+    state = tmp_path / f'{name}.state.json'
+    state.write_text(json.dumps({'state': 'failed', 'failure_class': failure_class, 'reason': reason}), encoding='utf-8')
+    Path(str(state) + '.config.json').write_text(
+        json.dumps({'agent_run': {'agent': agent, 'model': model, 'role': 'impl', 'cycle': '1'}}), encoding='utf-8')
+    return state
+
+
+def test_route_cli_failed_attempt_state_excludes_harness_or_pair(tmp_path, capsys):
+    quota = _failed_state(tmp_path, 'quota', 'agy', 'm', 'quota')
+    routing.main(['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard',
+        '--failed-attempt-state', str(quota), '--ledger-file', str(tmp_path / 'ledger.json')])
+    assert json.loads(capsys.readouterr().out)['agent'] != 'agy'
+    availability = routing.availability_from_failed_attempts([
+        quota, _failed_state(tmp_path, 'model', 'codex', 'm1', 'model-unsupported'),
+        _failed_state(tmp_path, 'cap', 'claude', 'm2', 'quota', failure_class='capability')])
+    assert availability['agents'] == {'agy'} and availability['pairs'] == {('codex', 'm1')}
+
+
+def test_route_cli_refuses_beyond_availability_retry_budget(tmp_path, capsys):
+    states = [str(_failed_state(tmp_path, f's{i}', 'agy', f'm{i}', 'model-unsupported')) for i in range(3)]
+    base = ['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard',
+            '--ledger-file', str(tmp_path / 'ledger.json')]
+    flags = [x for state in states for x in ('--failed-attempt-state', state)]
+    routing.main([*base, '--max-availability-retries', '3', *flags])
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        routing.main([*base, '--max-availability-retries', '2', *flags])
+    assert 'all-routes-unavailable' in capsys.readouterr().err
