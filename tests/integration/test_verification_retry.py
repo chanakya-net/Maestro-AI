@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from ai_skills.artifacts import valid_review_instructions
 from ai_skills.dispatch import WorkerConfig, adopt_worker, dispatch_worker
 from ai_skills.runner import AgentRunConfig
 from ai_skills.storage import load_json
@@ -619,25 +620,101 @@ def test_agy_gemini_4_rejected_source_admits_verification_only_retry(tmp_path, m
     assert adopt_worker(retry.state_file).state == 'completed'
 
 
-def test_agy_gemini_4_modify_hands_verified_range_to_next_review(tmp_path, monkeypatch):
-    from test_dispatch import AGY_CAPTURE, GEMINI_4, MODIFY_IDS, agy_gemini_worker
-    instructions = tmp_path / 'cycle-4-instructions.json'
-    instructions.write_text(json.dumps({'verdict': 'revise', 'comments': [{'id': i} for i in MODIFY_IDS]}))
+def write_cycle_four_instructions(path, ids):
+    comments = [
+        {
+            'id': comment_id, 'file': file, 'severity': 'warning',
+            'category': 'correctness', 'blocking': True,
+            'evidence': evidence, 'fix': fix, 'expected_change': expected,
+            'verification': f'git show HEAD:{file}',
+        }
+        for comment_id, (file, evidence, fix, expected) in zip(ids, [
+            ('feature.txt', 'The reviewed feature omits the revision marker.',
+             'Update feature.txt.', 'The feature reads implemented and reviewed.'),
+            ('review.txt', 'The reviewed commit omits the review record.',
+             'Add review.txt.', 'The review record reads review fix.'),
+        ], strict=True)
+    ]
+    path.write_text(json.dumps({
+        'verdict': 'revise', 'summary': 'Revise the feature and record the review fix.',
+        'comments': comments, 'blocking_reasons': [],
+    }), encoding='utf-8')
+
+
+def dispatch_reviewed_agy_modifier(tmp_path, monkeypatch, instructions, ids, checks):
+    from test_dispatch import AGY_CAPTURE, agy_gemini_worker
+
     assertion = '''
 path = next(line.split('=', 1)[1] for line in prompt.decode().splitlines() if line.startswith('REVIEWER_INSTRUCTIONS_FILE='))
-assert [c['id'] for c in json.loads(Path(path).read_text())['comments']] == contract['review_comment_ids']
+comments = json.loads(Path(path).read_text())['comments']
+assert [c['id'] for c in comments] == contract['review_comment_ids']
+expected = {'feature.txt': 'implemented and reviewed', 'review.txt': 'review fix'}
+for comment, closure in zip(comments, report['review_comment_closure'], strict=True):
+    command = comment['verification']
+    assert command in contract['required_checks']
+    observed = subprocess.check_output(command.split(), text=True)
+    assert observed == expected[comment['file']]
+    closure['verification'] = [f'{command} returned {observed!r}']
+report['verification']['commands'] = contract['required_checks']
 '''
-    source = agy_gemini_worker(tmp_path, monkeypatch, assertion + AGY_CAPTURE, role='modify')
+    source = agy_gemini_worker(tmp_path, monkeypatch, assertion + AGY_CAPTURE,
+                               role='modify', ids=ids, checks=checks)
     source.agent_run.context_file.write_text(f'REVIEWER_INSTRUCTIONS_FILE={instructions}\n')
     result = dispatch_worker(source)
     assert result.state == 'completed', result.reason
+    return source
+
+
+AGY_MODIFY_NEXT_REVIEW = '''import json, os, subprocess, sys
+from pathlib import Path
+context = json.loads(sys.argv[1].split('\\nInstructions:', 1)[0])
+ledger = context['PRIOR_REVIEW_LEDGER']
+cycle, paths = ledger.removeprefix('cycle=').split(' instructions=', 1)
+instructions_path, result_path = paths.split(' modify_result=', 1)
+assert int(cycle) + 1 == context['cycle'] == 5, 'stale review cycle'
+instructions = json.loads(Path(instructions_path).read_text())
+report = json.loads(Path(result_path).read_text())
+assert [c['id'] for c in instructions['comments']] == [
+    c['id'] for c in report['review_comment_closure']
+], 'review instructions do not match modifier closures'
+assert report['commit_sha'] == context['head']
+assert context['attempt'] and report['verification']['commit_sha'] == context['head']
+files = subprocess.check_output(
+    ['git', 'diff', '--name-only', context['base'], context['head']], text=True
+).splitlines()
+assert files == ['feature.txt', 'review.txt']
+Path(os.environ['REVIEWER_STATUS_FILE']).write_text(json.dumps(
+    {'verdict': 'approve', 'comment_count': 0, 'nitpick_only': False}
+))
+Path(os.environ['REVIEWER_INSTRUCTIONS_FILE']).write_text(json.dumps(
+    {'verdict': 'approve', 'summary': 'Reviewed accumulated changes', 'comments': [], 'blocking_reasons': []}
+))
+'''
+
+
+def test_agy_gemini_4_modify_hands_verified_range_to_next_review(tmp_path, monkeypatch):
+    from test_dispatch import CAPTURE_CHECKS, GEMINI_4, MODIFY_IDS
+
+    tmp_path = tmp_path / 'managed handoff'
+    tmp_path.mkdir()
+    instructions = tmp_path / 'cycle-4-instructions.json'
+    write_cycle_four_instructions(instructions, MODIFY_IDS)
+    finalized = load_json(instructions)
+    assert valid_review_instructions(finalized)
+    ids = [comment['id'] for comment in finalized['comments']]
+    checks = [*CAPTURE_CHECKS['required_checks'],
+              *(comment['verification'] for comment in finalized['comments'])]
+    source = dispatch_reviewed_agy_modifier(tmp_path, monkeypatch, instructions, ids, checks)
     saved = load_json(Path(str(source.state_file) + '.config.json'))
     report = load_json(source.agent_run.result_file)
     outcome = load_json(Path(str(source.state_file) + '.outcome.json'))
     assert (saved['agent_run']['agent'], saved['agent_run']['model']) == ('agy', GEMINI_4)
     assert saved['agent_run']['result_capture_context']['source'] == 'agy-stream-json'
-    assert [item['id'] for item in report['review_comment_closure']] == MODIFY_IDS
+    assert saved['result_capture']['review_comment_ids'] == ids
+    assert saved['result_capture']['required_checks'] == checks
+    assert [item['id'] for item in report['review_comment_closure']] == ids
     assert report['verification']['commit_sha'] == report['commit_sha']
+    assert [check['command'] for check in report['verification']['checks']] == checks
     assert all(check['passed'] for check in report['verification']['checks'])
     assert outcome['status'] == 'success'
     assert '|status=success|source=dispatcher|' in source.agent_run.done_file.read_text()
@@ -651,33 +728,23 @@ assert [c['id'] for c in json.loads(Path(path).read_text())['comments']] == cont
     context = {'base': saved['issue_base_sha'], 'head': report['commit_sha'],
                'cycle': cycle + 1, 'attempt': attempt_id,
                'PRIOR_REVIEW_LEDGER': f"cycle={cycle} instructions={instructions} modify_result={source.agent_run.result_file}"}
-    reviewer_source = '''import json, os, subprocess, sys
-from pathlib import Path
-context=json.loads(sys.argv[1].split('\\nInstructions:',1)[0])
-parts=dict(item.split('=',1) for item in context['PRIOR_REVIEW_LEDGER'].split())
-assert int(parts['cycle']) + 1 == context['cycle'] == 5
-instructions=json.loads(Path(parts['instructions']).read_text())
-report=json.loads(Path(parts['modify_result']).read_text())
-assert [c['id'] for c in instructions['comments']] == [c['id'] for c in report['review_comment_closure']] == ['R001','R002']
-assert report['commit_sha'] == context['head']
-assert context['attempt'] and report['verification']['commit_sha'] == context['head']
-files=subprocess.check_output(['git','diff','--name-only',context['base'],context['head']],text=True).splitlines()
-assert files == ['feature.txt', 'review.txt']
-Path(os.environ['REVIEWER_STATUS_FILE']).write_text(json.dumps({'verdict':'approve','comment_count':0,'nitpick_only':False}))
-Path(os.environ['REVIEWER_INSTRUCTIONS_FILE']).write_text(json.dumps({'verdict':'approve','summary':'Reviewed accumulated changes','comments':[],'blocking_reasons':[]}))
-'''
-    reviewer = attempt(tmp_path, source.agent_run.repo_root, 'review', reviewer_source, role='review', cycle=cycle + 1)
+    reviewer = attempt(tmp_path, source.agent_run.repo_root, 'review',
+                       AGY_MODIFY_NEXT_REVIEW, role='review', cycle=cycle + 1)
     Path(reviewer.agent_run.context_file).write_text(json.dumps(context))
     reviewer = replace(reviewer, agent_run=reviewer.agent_run.replace(result_file=tmp_path / 'review' / 'review-status.json'))
     assert dispatch_worker(reviewer).state == 'completed'
     stale = tmp_path / 'stale.json'
-    stale.write_text(json.dumps({'comments': [{'id': 'R999'}]}))
-    for bad in (context['PRIOR_REVIEW_LEDGER'].replace(str(instructions), str(stale)),
-                context['PRIOR_REVIEW_LEDGER'].replace(f'cycle={cycle}', 'cycle=3')):
+    write_cycle_four_instructions(stale, ['R999', ids[1]])
+    assert valid_review_instructions(load_json(stale))
+    ledger = context['PRIOR_REVIEW_LEDGER']
+    for bad, message in (
+        (ledger.replace(str(instructions), str(stale)), b'review instructions do not match modifier closures'),
+        (ledger.replace(f'cycle={cycle}', 'cycle=3', 1), b'stale review cycle'),
+    ):
         invalid = {**context, 'PRIOR_REVIEW_LEDGER': bad}
         check = subprocess.run([sys.executable, str(tmp_path / 'review' / 'provider.py'),
                                 json.dumps(invalid)], cwd=source.agent_run.repo_root, capture_output=True)
-        assert check.returncode != 0 and b'AssertionError' in check.stderr
+        assert check.returncode == 1 and b'AssertionError: ' + message in check.stderr
 
 
 def test_agy_gemini_4_modify_verifies_preserved_commit_only_in_source_cycle(tmp_path, monkeypatch):
