@@ -1,5 +1,6 @@
 """Deterministic pool fixtures; no provider executable or network connection."""
 import json
+import time
 from pathlib import Path
 from ai_skills.pool import PoolConfig
 from ai_skills.dispatch import WorkerResult
@@ -58,7 +59,44 @@ def install_fake(monkeypatch,driver):
     monkeypatch.setattr(pool,'update_github',lambda request:None)
 
 
-def real_pool_fixture(tmp_path,*,delay=.15,mode='completed'):
+def _provider_started(state_file):
+    """Production deadlines count from the durable provider identity, so simulated time waits for it."""
+    try: return bool(json.loads(Path(state_file).read_text()).get('provider_identity'))
+    except (OSError,ValueError): return False
+
+
+class SimulatedClock:
+    """Monotonic clock that advances per dispatcher poll, so former limits pass without real waits."""
+    def __init__(self,step,state_file=None):
+        self.step=step;self.offset=0;self.state_file=state_file
+    def monotonic(self):
+        if self.state_file is None or _provider_started(self.state_file):
+            self.offset+=self.step
+        return time.monotonic()+self.offset
+
+
+def install_simulated_dispatch(monkeypatch,step=600.0):
+    """Run each pool attempt in-process on a simulated clock; returns per-attempt records.
+
+    Detached dispatchers run their poll loop in a child process that monkeypatching cannot reach,
+    so attempts are forced in-process while the production deadline logic runs unchanged.
+    """
+    import dataclasses
+    from types import SimpleNamespace
+    import ai_skills.dispatch as dispatch
+    import ai_skills.pool as pool
+    clock=SimulatedClock(step);records=[];real_dispatch=dispatch.dispatch_worker
+    def simulated_dispatch(config):
+        before=clock.offset;clock.state_file=config.state_file
+        result=real_dispatch(dataclasses.replace(config,detach=False))
+        records.append(SimpleNamespace(config=config,result=result,simulated_seconds=clock.offset-before))
+        return result
+    monkeypatch.setattr(dispatch,'time',SimpleNamespace(monotonic=clock.monotonic,sleep=time.sleep,time=time.time))
+    monkeypatch.setattr(pool,'dispatch_worker',simulated_dispatch)
+    return records
+
+
+def real_pool_fixture(tmp_path,*,delay=.15,mode='completed',limits=None):
     import os,sys
     from dataclasses import replace
     config=pool_fixture(tmp_path,{1:{}},parallel=1)
@@ -73,7 +111,7 @@ with Path('launches.log').open('a') as stream:
     stream.write(json.dumps({'issue':issue,'role':role,'forced_agent':os.environ.get('FORCED_AGENT'),'forced_model':os.environ.get('FORCED_MODEL')})+'\\n')
 recovery='SUB_COORD_RECOVERY_MODE=1' in payload or role=='merge-recovery'
 mode=next((line.split('=',1)[1] for line in payload.splitlines() if line.startswith('OUTCOME=')),'completed')
-delay=float(next((line.split('=',1)[1] for line in payload.splitlines() if line.startswith('DELAY=')),'0'))
+delay=float(next((line.split('=',1)[1] for line in payload.splitlines() if line.startswith('DELAY=')),os.environ.get('FIXTURE_DELAY','0')))
 time.sleep(delay)
 if mode in ('crash','compaction') and not recovery:
     path=Path(os.environ['RUN_WITH_IT_ISSUE_DIR'])/'sub-state.json'
@@ -86,4 +124,4 @@ print('STATUS|type=heartbeat|issue='+issue+'|role='+role+'|progress=done',flush=
 ''')
     registry=tmp_path/'registry.json';registry.write_text(json.dumps({'agents':{'fake':{'invocation':{'command':sys.executable,'args_template':[str(script),'{{prompt}}']},'permission_modes':{'default':''},'model':{'default':'fixture','flag_template':''}}}}))
     prompt=tmp_path/'prompt.md';prompt.write_text('Write fixture report and exit.')
-    return replace(config,registry_file=registry,prompt_file=prompt,merge_prompt_file=prompt,poll_seconds=.01,heartbeat_seconds=.05,bootstrap_seconds=5,hard_limit_seconds=5,environment=dict(os.environ, RUN_WITH_IT_GITHUB_UPDATES='0'))
+    return replace(config,registry_file=registry,prompt_file=prompt,merge_prompt_file=prompt,poll_seconds=.01,heartbeat_seconds=.05,bootstrap_seconds=5,**({'hard_limit_seconds':5} if limits is None else limits),environment=dict(os.environ, RUN_WITH_IT_GITHUB_UPDATES='0', FIXTURE_DELAY=str(delay)))

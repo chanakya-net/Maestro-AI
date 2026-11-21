@@ -115,6 +115,24 @@ def test_native_pool_coordinator_attempts_use_unbounded_defaults(tmp_path, monke
     assert attempts['worker_config']['timeout_seconds'] == 0
     assert attempts['worker_config']['hard_limit_seconds'] == 0
 
+@pytest.mark.parametrize(('mode','labels'),[
+    ('completed',[('normal','sub-coord')]),
+    ('crash',[('recovering','sub-coord')]),
+    ('merge_failed',[('normal','sub-coord'),('merge-recovery','merge-recovery')]),
+])
+def test_default_pool_coordinator_attempts_outlive_both_former_limits(tmp_path,monkeypatch,mode,labels):
+    from pool_support import install_simulated_dispatch,real_pool_fixture
+    records=install_simulated_dispatch(monkeypatch)
+    config=real_pool_fixture(tmp_path,delay=1,mode=mode,limits={})
+    assert (config.timeout_seconds,config.hard_limit_seconds)==(0,0)
+    assert run_pool(config).state=='pool-empty'
+    completed=[item for item in records if item.result.state=='completed']
+    assert [item.config.agent_run.role for item in completed]==[role for _,role in labels]
+    for item,(label,_) in zip(completed,labels):
+        assert item.config.timeout_seconds==item.config.hard_limit_seconds==0,label
+        assert item.simulated_seconds>7200,label
+        assert ('SUB_COORD_RECOVERY_MODE=1' in Path(item.config.agent_run.context_file).read_text())==(label=='recovering')
+
 @pytest.mark.parametrize('mode',['completed','crash','compaction','merge_failed'])
 def test_real_dispatcher_pool_flows_with_only_python_fixture_provider(tmp_path,monkeypatch,mode):
     from pool_support import real_pool_fixture

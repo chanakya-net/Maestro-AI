@@ -268,6 +268,23 @@ def test_role_defaults_and_explicit_recorded_deadlines(tmp_path, role, hard_limi
     assert restored.hard_limit_seconds == 7200
 
 
+def test_persisted_explicit_deadline_record_is_enforced_after_reload(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ai_skills import dispatch
+    from pool_support import SimulatedClock
+
+    config = worker_config(tmp_path, 'import time; time.sleep(5)')
+    config = replace(config, agent_run=config.agent_run.replace(role='sub-coord'), hard_limit_seconds=None)
+    persisted = {**config.to_record(), 'timeout_seconds': 3600, 'hard_limit_seconds': 7200}
+    reloaded = WorkerConfig.from_record(persisted)
+    clock = SimulatedClock(600, reloaded.state_file)
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(monotonic=clock.monotonic, sleep=time.sleep, time=time.time))
+    result = dispatch_worker(reloaded)
+    assert result.reason == 'dispatch-timeout'
+    assert result.return_code == 124
+    assert inspect_worker(reloaded).liveness == 'dead'
+
+
 @pytest.mark.parametrize('role', ['sub-coord', 'merge-recovery'])
 def test_coordinator_dispatch_survives_both_former_deadlines(tmp_path, monkeypatch, role):
     from types import SimpleNamespace

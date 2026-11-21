@@ -128,6 +128,16 @@ def test_coordinator_deadline_policy_and_child_worker_examples_stay_aligned():
         key:sub_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')}
 
 
+def test_orchestrator_rules_reject_stale_alert_and_wait_timeout_interpretation():
+    stale=re.compile(r"alert the user after[^.\n]*(?:SUB_COORD_TIMEOUT_SECONDS|timeout|deadline)|wait for a 'continue' or 'skip'",re.I)
+    offenders=[f'{path.relative_to(ROOT)}:{number}: {line}' for path in ACTIVE
+        for number,line in enumerate(path.read_text().splitlines(),1) if stale.search(line)]
+    assert offenders==[],'\n'.join(offenders)
+    rule=next(line for line in (ROOT/'skills/run-with-it/SKILL.md').read_text().splitlines()
+        if 'Never kill, cancel, or restart a Sub-Coordinator mid-run' in line)
+    assert '`SUB_COORD_TIMEOUT_SECONDS=0`' in rule and 'dispatcher itself stops' in rule
+
+
 def test_native_command_families_accept_help_without_launching():
     import subprocess
     import sys
