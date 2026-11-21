@@ -2491,5 +2491,356 @@
         "agent_models": []
       }
     }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-medium",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-argon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "complex",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "holy-fuck",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "holy-fuck",
+      "complexity_level": "holy-fuck",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "agy"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-argon-high",
+      "effort": "",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "forced_agent": "agy",
+      "model_denylist": "gemini-4-argon-high"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [
+          "gemini-4-argon-high"
+        ],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "forced_agent": "agy",
+      "exclude_models": [
+        "gemini-4-argon-high"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [
+        "gemini-4-argon-high"
+      ],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-argon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "medium-hard",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "complex",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "review",
+      "complexity_level": "complex",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "holy-fuck",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "medium-hard",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-argon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "medium-hard",
+      "complexity_level": "medium-hard",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "artifact-recovery",
+      "complexity_level": "complex",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
+      "selection_reason": "forced-agent",
+      "routing_level": "complex",
+      "complexity_level": "complex",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "quite-easy",
+      "forced_model": "gemini-4-neon-high"
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
+      "selection_reason": "forced-model",
+      "routing_level": "quite-easy",
+      "complexity_level": "quite-easy",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "easy",
+      "detected_agents": [
+        "agy"
+      ]
+    },
+    "expected": {
+      "exit_code": 2
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "medium-hard",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "exit_code": 2
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "complex",
+      "forced_agent": "agy"
+    },
+    "expected": {
+      "exit_code": 2
+    }
+  },
+  {
+    "request": {
+      "role": "plan",
+      "complexity_level": "complex",
+      "forced_model": "gemini-4-neon-high"
+    },
+    "expected": {
+      "exit_code": 2
+    }
   }
 ]

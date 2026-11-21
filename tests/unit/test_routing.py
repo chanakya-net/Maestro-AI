@@ -51,15 +51,128 @@ def test_plan_band_bump_removes_agy_from_simple_worker_pool():
     assert exc.value.code == 2
 
 
-@pytest.mark.parametrize("band", ["medium", "medium-hard", "complex", "holy-fuck"])
-def test_legacy_agy_memberships_do_not_admit_harder_automatic_work(band):
+AGY_WORK_MATRIX = {
+    "quite-easy": {"gemini-3.8-flash-low"},
+    "easy": {"gemini-3.8-flash-medium"},
+    "medium": {"gemini-4-hydrogen-medium"},
+    "medium-hard": {"gemini-4-argon-high", "gemini-4-hydrogen-high"},
+    "complex": {"gemini-4-neon-high"},
+    "holy-fuck": {"gemini-4-neon-high"},
+}
+NON_AGY_BANDS = ("medium", "medium-hard", "complex", "holy-fuck")
+
+
+@pytest.mark.parametrize("band", BANDS)
+def test_agy_automatic_work_pool_matches_approved_matrix(band):
+    registry = load_registry(SOURCE_REGISTRY)
+    agy_models = set(registry["agents"]["agy"]["model"]["known_models"])
+    pool = set(routing.automatic_policy_model_ids(registry, band)) & agy_models
+    assert pool == AGY_WORK_MATRIX[band]
+
+
+@pytest.mark.parametrize("role", ["impl", "modify", "review", "artifact-recovery", "merge-recovery"])
+@pytest.mark.parametrize("band", BANDS)
+def test_forced_agy_work_uses_only_designated_models_at_effective_band(band, role):
+    selection = select_route(
+        RouteRequest(role=role, complexity_level=band, forced_agent="agy"),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    effective = routing.routing_level(role, band)
+    assert selection["routing_level"] == effective
+    assert selection["model"] in AGY_WORK_MATRIX[effective]
+    assert {c["model"] for c in selection["evaluated_candidates"]} == AGY_WORK_MATRIX[effective]
+
+
+@pytest.mark.parametrize("band", NON_AGY_BANDS)
+@pytest.mark.parametrize("role", ["impl", "review"])
+def test_agy_is_never_automatic_above_easy_while_other_agents_are_present(band, role):
+    selection = select_route(
+        RouteRequest(role=role, complexity_level=band), load_registry(SOURCE_REGISTRY), {},
+    ).selection
+    assert selection["agent"] != "agy"
+
+
+@pytest.mark.parametrize("band", NON_AGY_BANDS)
+def test_agy_fallback_takes_designated_model_when_it_is_the_only_agent(band):
+    selection = select_route(
+        RouteRequest(role="impl", complexity_level=band, detected_agents=frozenset({"agy"})),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert selection["agent"] == "agy"
+    assert selection["model"] in AGY_WORK_MATRIX[band]
+
+
+def test_unavailable_designated_agy_model_falls_back_to_sibling_at_band():
+    selection = select_route(
+        RouteRequest(
+            role="impl",
+            complexity_level="medium-hard",
+            forced_agent="agy",
+            availability={"models": {"gemini-4-argon-high"}},
+        ),
+        load_registry(SOURCE_REGISTRY),
+        {},
+    ).selection
+    assert selection["model"] == "gemini-4-hydrogen-high"
+
+
+@pytest.mark.parametrize("band", BANDS)
+def test_planning_never_routes_agy_forced_or_automatic(band):
+    registry = load_registry(SOURCE_REGISTRY)
     with pytest.raises(SystemExit) as exc:
-        select_route(
-            RouteRequest(role="impl", complexity_level=band, forced_agent="agy"),
-            load_registry(SOURCE_REGISTRY),
-            {},
-        )
+        select_route(RouteRequest(role="plan", complexity_level=band, forced_agent="agy"), registry, {})
     assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        select_route(RouteRequest(role="plan", complexity_level=band, detected_agents=frozenset({"agy"})), registry, {})
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("model", ["gemini-4-hydrogen-medium", "gemini-4-argon-high", "gemini-4-hydrogen-high", "gemini-4-neon-high"])
+def test_planning_rejects_forced_agy_models_from_new_matrix(model):
+    with pytest.raises(SystemExit) as exc:
+        select_route(RouteRequest(role="plan", complexity_level="medium-hard", forced_model=model),
+                     load_registry(SOURCE_REGISTRY), {})
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("band", BANDS)
+def test_normal_planning_selection_stays_non_agy_at_every_band(band):
+    selection = select_route(
+        RouteRequest(role="plan", complexity_level=band), load_registry(SOURCE_REGISTRY), {},
+    ).selection
+    assert selection["agent"] in {"codex", "claude"}
+    assert all(candidate["agent"] != "agy" for candidate in selection["evaluated_candidates"])
+
+
+def test_explicit_valid_band_override_still_routes_non_agy_planning():
+    selection = select_route(
+        RouteRequest(role="plan", complexity_level="holy-fuck", forced_agent="claude", forced_model="claude-sonnet-5-5"),
+        load_registry(SOURCE_REGISTRY), {},
+    ).selection
+    assert (selection["agent"], selection["model"], selection["routing_level"]) == (
+        "claude", "claude-sonnet-5-5", "holy-fuck",
+    )
+
+
+def test_agy_sticky_reviewer_and_usage_attribution_survive_escalated_band():
+    registry = load_registry(SOURCE_REGISTRY)
+    ledger = routing.normalize_ledger({})
+    first = select_route(
+        RouteRequest(role="review", complexity_level="medium-hard", detected_agents=frozenset({"agy"})),
+        registry, ledger,
+    ).selection
+    assert (first["routing_level"], first["model"]) == ("complex", "gemini-4-neon-high")
+    routing.append_decision(ledger, first)
+    assert ledger["totals"]["agents"]["agy"] == 1
+    assert ledger["totals"]["roles"]["review"]["agents"]["agy"] == 1
+    sticky = select_route(
+        RouteRequest(role="review", complexity_level="medium-hard", prefer_model="gemini-4-neon-high"),
+        registry, ledger,
+    ).selection
+    assert (sticky["agent"], sticky["model"]) == ("agy", "gemini-4-neon-high")
+    assert sticky["selection_reason"] == "sticky-reviewer-preference"
 
 
 @pytest.mark.parametrize("model, band", [
@@ -251,7 +364,7 @@ def test_distribution_and_sticky_reviewer():
         selection=select_route(RouteRequest(role="impl",complexity_level="medium"),registry,ledger).selection
         routing.append_decision(ledger,selection)
     counts=ledger["totals"]["agents"]
-    assert counts == {"codex":78,"claude":42}  # Captured legacy policy; AGY has no eligible medium implementation model.
+    assert counts == {"codex":78,"claude":42}  # Captured legacy policy; medium AGY (0%) is fallback-only.
     base=select_route(RouteRequest(role="review",complexity_level="medium"),registry,ledger)
     preferred=base.selection["evaluated_candidates"][-1]["model"]
     sticky=select_route(RouteRequest(role="review",complexity_level="medium",prefer_model=preferred),registry,ledger)

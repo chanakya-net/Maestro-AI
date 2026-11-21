@@ -333,7 +333,7 @@ complexity-scoring restrictions and required-pool settings.
 | `complexity_bands` | Optional exact bands for the worker that **scores** task complexity, separate from the workers doing the task. Otherwise scoring uses the existing weight/minimum-band rules. |
 | `min_band` | Minimum scoring band when `complexity_bands` is absent; it does not override explicit `work_bands`. |
 | `exclude_from_complexity` | Prevents normal selection as the complexity-scoring worker. |
-| `explicit_only` | Documents a selectable model that is excluded from automatic work and scoring pools. |
+| `explicit_only` | Excludes the model from complexity-scoring pools. Automatic non-scoring work is governed by `work_bands`. |
 | `required_bands` | Adds the model to complexity-scoring candidate pools at these bands, subject to existing restrictions; selection is still balanced. |
 | `alias_of` | Reuses another model's metadata for a different CLI ID. Declare its own `agents`, `work_bands`, and `required_bands`; these memberships are not inherited. |
 
@@ -423,24 +423,36 @@ for AGY only:
 | Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
 | GPT-OSS | `gpt-oss-120b-medium` |
 
-Only Flash Low (`gemini-3.8-flash-low`) enters automatic non-scoring work at
-effective `quite-easy`, and only Flash Medium (`gemini-3.8-flash-medium`)
-enters it at `easy`. Flash Medium is also the only AGY complexity-scoring
-model, eligible at all six scoring bands. The other 22 models are explicit-only
-and excluded from automatic work and scoring. The 14 Gemini 4 IDs are explicit-only and declare no context limit. Verification
+Automatic non-scoring AGY work follows the approved band matrix. Only Flash Low
+(`gemini-3.8-flash-low`) serves `quite-easy`, and only Flash Medium
+(`gemini-3.8-flash-medium`) serves `easy`. Hydrogen Medium
+(`gemini-4-hydrogen-medium`) serves `medium`, Argon High
+(`gemini-4-argon-high`) and Hydrogen High (`gemini-4-hydrogen-high`) serve
+`medium-hard`, and Neon High (`gemini-4-neon-high`) serves `complex` and
+`holy-fuck`. Flash Medium is still the only AGY complexity-scoring model,
+eligible at all six scoring bands. Every other AGY model keeps `explicit_only`,
+which excludes it from scoring pools; the four Gemini 4 models above also carry
+`work_bands`. The 14 Gemini 4 IDs declare no context limit. Verification
 so far is catalog listing, explicit routing, and fake-AGY argv/stream tests;
 live inference is tracked separately and not yet confirmed. Carbon is a known
 catalog entry whose use depends on account entitlement, which is not verified
 here. A direct AGY run without an
 explicit model pins `gemini-3.8-flash-high`; this direct-run default does not
 add that model to automatic routing, which keeps the Flash Low/Medium choices
-above. AGY has no automatic worker at
-medium or harder non-scoring bands. Review raises the effective band by one
-and planning by two, capped at the highest. Existing global, role, and band
-usage targets remain unchanged. Explicit agent/model overrides retain
-compatibility and availability checks, preserve the exact selected ID and its
-suffix, and continue to count usage against AGY; pair read-only eligibility
-checks also remain in force.
+above. Above `easy`, AGY keeps a 0% band target. During ordinary automatic
+selection, AGY is a fallback when no positive-target candidate remains eligible;
+an unavailable or excluded AGY model alone does not trigger fallback while a
+positive-target candidate remains. When AGY is forced, its eligible models at
+the effective band are selected by the normal model ordering, so an unavailable
+or excluded sibling can yield another eligible AGY sibling. Explicit agent or
+model overrides can also select AGY despite the target, subject to compatibility
+and availability checks. A sticky reviewer preference can retain an eligible
+AGY model across review cycles. Planning never routes to AGY, automatic or
+forced, until source protection is verified separately. Review raises the
+effective band by one and planning by two, capped at the highest. Existing
+global, role, and band usage targets remain unchanged. Overrides preserve the
+exact selected ID and its suffix, and usage continues to count against AGY;
+pair read-only eligibility checks also remain in force.
 
 The inventory records models observed in the AGY CLI on November 7, 2026.
 Actual access depends on the user's account, quota, and provider availability.
