@@ -33,6 +33,31 @@ def prepared_intent(tmp_path):
     worker=supervisor.worker('1');supervisor._intent('1',worker)
     return config,supervisor,worker
 
+def prepared_agy_intent(tmp_path,*,persisted_model=None):
+    config=replace(pool_fixture(tmp_path,{1:{}}),sub_coord_agent='agy',sub_coord_model='gemini-4-neon-medium')
+    supervisor=PoolSupervisor(config);assert supervisor.initialize() is None
+    worker=supervisor.worker('1')
+    if persisted_model:
+        worker=replace(worker,agent_run=replace(worker.agent_run,model=persisted_model))
+    supervisor._intent('1',worker)
+    return config,worker
+
+def test_stored_invalid_agy_intent_fails_configuration_before_any_launch(tmp_path,monkeypatch):
+    config,_=prepared_agy_intent(tmp_path,persisted_model='unknown-model')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    with pytest.raises(ValueError,match="unsupported coordinator model 'unknown-model' for AGY"):
+        run_pool(config)
+    assert driver.started==[]
+
+def test_stored_valid_agy_intent_resumes_with_persisted_pair(tmp_path,monkeypatch):
+    config,worker=prepared_agy_intent(tmp_path)
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    assert run_pool(config).state=='pool-empty'
+    assert len(driver.started)==1
+    run=driver.started[0].agent_run
+    assert run.attempt_id==worker.agent_run.attempt_id
+    assert (run.agent,run.model)==('agy','gemini-4-neon-medium')
+
 def test_incomplete_intent_without_any_claim_resumes_same_attempt(tmp_path,monkeypatch):
     config,first,worker=prepared_intent(tmp_path)
     driver=FakePoolDriver();install_fake(monkeypatch,driver)
