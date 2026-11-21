@@ -59,6 +59,21 @@ def test_model_effort_guidance_keeps_explicit_planning_and_provenance():
     assert 'Neither task wording nor inherited planning variables change it.' in readme
 
 
+def test_managed_availability_retries_precede_artifact_recovery_for_every_role():
+    prompt = (ROOT/'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    availability = prompt.index('### Managed route availability failure contract')
+    artifact = prompt.index('### Worker Artifact Recovery Contract')
+    policy = prompt[availability:artifact]
+    assert availability < artifact
+    for role in ('impl', 'modify', 'review'):
+        assert role in policy
+    assert 'failure_class=infrastructure' in policy
+    assert 'agent-unavailable' in policy
+    assert 'same role and same cycle' in policy
+    assert 'all-routes-unavailable' in policy
+    assert 'FORCED_AGENT' in policy and 'FORCED_MODEL' in policy
+
+
 def test_all_documented_json_objects_parse_and_authority_twins_match():
     import json
     authority=[]

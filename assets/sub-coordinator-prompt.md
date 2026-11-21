@@ -217,6 +217,17 @@ Worker payloads begin with explicit `RUN_WITH_IT_RESULT_FILE`, `RUN_WITH_IT_DONE
 
 Do not read raw worker logs into coordinator context or re-append dispatcher events. Inspect structured state and artifacts only. A live owned tree must finish cleanup before the next phase. Availability failures exclude routes cumulatively without spending capability fallback slots; missing or invalid handoff artifacts follow the bounded recovery rules below.
 
+### Managed route availability failure contract
+
+This branch applies to every routed worker role (`complexity`, `plan`, `impl`, `review`, `modify`, `artifact-recovery`, and any later routed role), and runs before Worker Artifact Recovery or Review Artifact Guardrail checks.
+
+1. After a managed worker finishes with `state="failed"` and `failure_class=infrastructure`, read its dispatcher state JSON and the matching structured `STATUS|type=agent-unavailable` event. Treat the attempt as a route-availability failure only when the event's `reason`, `agent`, and `model` match the failed attempt; do not infer availability from raw provider logs or an artifact stall reason.
+2. If `FORCED_MODEL` explicitly selected the unavailable model, stop with an actionable blocked outcome naming that model and its unavailable reason. Do not silently choose another model. If `FORCED_AGENT` selected an unavailable harness, likewise stop rather than changing harness. Preserve any still-eligible forced selector when retrying.
+3. Apply the event's structured `scope` cumulatively: `agent` adds the harness to `deny_agents` in `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`; `agent-model` adds only the `agent/model` pair to `RUN_WITH_IT_MODEL_DENYLIST` or `deny_agent_models`. AGY auth/quota failures use `agent`; AGY model-unsupported failures use `agent-model`.
+4. Re-run `ai-skills route` for the failed attempt's original role and complexity using all accumulated exclusions and the original trusted allowlist/forced selectors. Each dispatch gets fresh attempt-specific result, done, log, and state paths. Preserve the same role and same cycle; increment only the physical attempt number. Availability reroutes do not consume the capability retry budget and do not advance the review cycle.
+5. Continue after each matching infrastructure availability failure, excluding that route before the next selection. Because each retry removes an eligible harness or pair from the finite route set, stop as soon as routing reports no candidate or all eligible routes are excluded. Publish the compact coordinator outcome as `blocked` with `blocking_reasons=["all-routes-unavailable"]`, and include the cumulative exclusions and each structured unavailable reason. Never retry an excluded route or wait indefinitely for provider availability.
+6. A failed dispatch without a matching structured availability event follows its normal failure contract below; an artifact stall or capability failure must not be relabeled as route unavailability.
+
 ### Worker Artifact Recovery Contract
 
 Implementation and modification worker artifact failures are infrastructure/handoff failures before they are issue failures. Do not terminal-block on the first missing or malformed implementation/modification result artifact.
