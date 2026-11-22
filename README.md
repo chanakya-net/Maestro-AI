@@ -409,8 +409,8 @@ edit `model_routing.usage_distribution`:
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
 
-The maintained AGY selectable inventory contains 24 exact IDs, all registered
-for AGY only:
+The installed AGY catalog lists 24 exact IDs, including 14 Gemini 4 variants.
+All 24 IDs are registered for AGY only.
 
 | Family | Explicit model IDs |
 | --- | --- |
@@ -429,35 +429,44 @@ Automatic non-scoring AGY work follows the approved band matrix. Only Flash Low
 (`gemini-4-hydrogen-medium`) serves `medium`, Argon High
 (`gemini-4-argon-high`) and Hydrogen High (`gemini-4-hydrogen-high`) serve
 `medium-hard`, and Neon High (`gemini-4-neon-high`) serves `complex` and
-`holy-fuck`. Flash Medium is still the only AGY complexity-scoring model,
-eligible at all six scoring bands. Every other AGY model keeps `explicit_only`,
-which excludes it from scoring pools; the four Gemini 4 models above also carry
-`work_bands`. The 14 Gemini 4 IDs declare no context limit. Verification
-so far is catalog listing, explicit routing, and fake-AGY argv/stream tests;
-live inference is tracked separately and not yet confirmed. Carbon is a known
-catalog entry whose use depends on account entitlement, which is not verified
-here. A direct AGY run without an
-explicit model pins `gemini-3.8-flash-high`; this direct-run default does not
-add that model to automatic routing, which keeps the Flash Low/Medium choices
-above. Above `easy`, AGY keeps a 0% band target. During ordinary automatic
-selection, AGY is a fallback when no positive-target candidate remains eligible;
-an unavailable or excluded AGY model alone does not trigger fallback while a
-positive-target candidate remains. When AGY is forced, its eligible models at
-the effective band are selected by the normal model ordering, so an unavailable
-or excluded sibling can yield another eligible AGY sibling. Explicit agent or
-model overrides can also select AGY despite the target, subject to compatibility
-and availability checks. A sticky reviewer preference can retain an eligible
-AGY model across review cycles. Planning never routes to AGY, automatic or
-forced, until source protection is verified separately. Review raises the
-effective band by one and planning by two, capped at the highest. Existing
-global, role, and band usage targets remain unchanged. Overrides preserve the
-exact selected ID and its suffix, and usage continues to count against AGY;
-pair read-only eligibility checks also remain in force.
+`holy-fuck`. Flash Medium is the sole AGY complexity-scoring model and is
+eligible at all six scoring bands. AGY models outside Flash Low and Flash
+Medium carry `explicit_only`. The four Gemini 4 work models above also carry
+`work_bands`. The 14 Gemini 4 IDs declare no context limit. Select Carbon by
+exact ID with an entitled account. Listing the model or selecting a route
+performs no authenticated inference or entitlement check. A direct AGY run
+without an explicit model uses `gemini-3.8-flash-high`.
 
-The inventory records models observed in the AGY CLI on November 7, 2026.
-Actual access depends on the user's account, quota, and provider availability.
-Registry membership and model listing document selectable IDs; they do not
-verify that inference is available or succeeds for a particular account.
+| Effective worker band | Codex | Claude | AGY |
+| --- | ---: | ---: | ---: |
+| `quite-easy` | 55% | 35% | 10% |
+| `easy` | 55% | 40% | 5% |
+| `medium`, `medium-hard`, `complex` | 70% | 30% | 0% |
+| `holy-fuck` | 60% | 40% | 0% |
+
+During automatic selection, a 0% AGY route is a fallback when eligible
+positive-target candidates are exhausted. At `medium-hard`, Hydrogen High can
+take over when Argon High is excluded. Explicit agent or model overrides still
+observe compatibility and availability checks. A sticky reviewer preference can
+retain an eligible model across cycles. Review raises the effective band by one
+and planning by two, capped at the highest. Usage counts against AGY for every
+model selected through that harness.
+
+List the installed catalog and preview the `medium` fallback with only AGY
+available. The route preview uses an empty ledger if the path is absent.
+
+```text
+python -m ai_skills agent models agy
+python -m ai_skills route --role impl --complexity-level medium --detected-agents agy --ledger-file preview-ledger.json
+```
+
+Managed planning and pair read-only eligibility for `general` and `plan`
+depend on a verified AGY profile for the selected invocation. The profile must
+enforce source and Git protection and bind trusted output capture. The stock
+runtime refuses these AGY routes without a verified profile, including forced
+planning and pair runs with `PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE=1`. Use an
+eligible harness for these roles. CLI flags and registry permission tokens
+alone provide no enforcement evidence.
 
 `selection_strategy: "usage-share-debt"` describes the existing deterministic
 algorithm. The router ranks eligible agent/model pairs by global and role usage
@@ -518,6 +527,10 @@ The [run-with-it skill](skills/run-with-it/SKILL.md) creates the main state and 
 
 Replace the paths with absolute paths for your system, including a drive letter on Windows, and choose an installed, authenticated coordinator provider/model. Windows paths in JSON can use forward slashes, such as `C:/work/project`. Keep generated configuration under the ignored `.run-with-it/` directory. Run the following commands from the run root. With `detach: true`, launch returns after startup so the same terminal can watch; the default is foreground execution.
 
+`sub_coord_agent` and `sub_coord_model` select the pool's coordinators.
+`forced_agent` and `forced_model` independently constrain child worker
+routing when set.
+
 ```text
 python -m ai_skills run pool --config .run-with-it/pool.json --validate-only
 python -m ai_skills run pool --config .run-with-it/pool.json
@@ -572,13 +585,33 @@ Unknown process ownership or missing exit evidence leaves the attempt nontermina
 <details>
 <summary id="recovery-and-upgrades"><strong>Runtime versions, process ownership, and recovery details</strong></summary>
 
-A pool records its Python engine and interpreter in `.run-with-it/engine.json`; pair runs pin their engine in `config.json`. Commands select that interpreter before parsing version-specific arguments. Installing a newer default does not move an existing run to another runtime. Missing or incompatible pinned runtimes fail explicitly.
+A pool records its Python engine and interpreter in `.run-with-it/engine.json`.
+Pair runs pin their engine in `config.json`. Commands select the pinned
+interpreter before parsing version-specific arguments. An installed update
+changes the default for new runs. Saved runs keep their pinned interpreter and
+its bundled registry and prompts. A saved launch intent reuses its recorded
+run and attempt IDs, worker configuration, and explicit execution limits.
+Resume with the saved pool configuration to reuse its recovery-wait setting.
+Missing or incompatible pinned runtimes fail explicitly.
 
 Only a JSON object explicitly containing `engine_runtime` is treated as a pair runtime pin. Other valid project `config.json` values do not select a pair runtime; malformed JSON or an invalid explicit pin still reports an error.
 
 Finish or stop legacy runs before migrating. Active legacy state is refused rather than adopted into an incompatible engine. The Python runtime preserves existing state schema contracts and supports guarded imports of quiescent pair runs. Historical design documents describe earlier implementations; executable instructions in `skills/` and this README describe the current runtime.
 
-Worker silence is measured from captured provider stdout/stderr, separately from wrapper heartbeats. Defaults report `quiet` after 120 seconds and `stalled` with `stall_reason=alive-but-silent` after 600 seconds; new output returns the worker to `running`. These are diagnostic states: silence alone does not terminate a live worker. Configure explicit `timeout_seconds` and `hard_limit_seconds` for execution limits. Preserved but unverified work enters artifact recovery instead of being accepted as success.
+New pools default to `timeout_seconds=0` and `hard_limit_seconds=0` for
+Sub-Coordinator and Merge Recovery Coordinator attempts. Set either limit to a
+positive number of seconds to opt in to an execution deadline. The separate
+`max_worker_wait_seconds` setting defaults to zero, which disables recovery
+wait expiry notices. A positive value reports expiry after a Sub-Coordinator
+exits. Live or uncertain child ownership keeps the issue slot held even after
+expiry. Replacement requires confirmed release of every listed child.
+
+Ordinary child workers have a 7,200-second hard limit by default. The
+dispatcher measures provider stdout and stderr silence separately from wrapper
+heartbeats. By default it reports `quiet` after 900 seconds and `stalled` with
+`stall_reason=alive-but-silent` after 1,200 seconds. These diagnostics leave
+the worker running. New output returns its status to `running`. Preserved
+work without passing verification enters artifact recovery.
 
 Restart with the same pool configuration or pair run directory to reconcile existing attempts. Live or uncertain ownership prevents a replacement launch, including when provider startup metadata is still being published. Detached worker startup allows for capability checks and the ownership handshake in addition to its configured bootstrap interval. Preserve run state, process records, logs, and worktrees until recovery or confirmed shutdown is complete.
 
