@@ -158,21 +158,20 @@ registry = load_registry()
 definitions = json.loads(resource_path('agent-definitions.json').read_text())
 expected = {
     *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
-    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen') for effort in ('low', 'medium', 'high', 'xhigh')),
-    *(f'gemini-4-carbon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen', 'carbon') for effort in ('low', 'medium', 'high', 'xhigh')),
     *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     'gpt-oss-120b-medium',
 }
-assert len(expected) == len(sys.argv[2:]) == 21
+assert len(expected) == len(sys.argv[2:]) == 22
 assert set(sys.argv[2:]) == expected
-assert sum(model.startswith('gemini-4-') for model in expected) == 14
+assert sum(model.startswith('gemini-4-') for model in expected) == 15
 catalog = bundled['model_catalog']
 assert {name for name, model in catalog.items() if 'agy' in model.get('agents', [])} == expected
 assert catalog['gemini-4-neon-medium']['work_bands'] == ['quite-easy', 'easy']
 assert catalog['gemini-4-hydrogen-high']['complexity_bands'] == [
     'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
-assert sum(model.get('explicit_only') is True for model in catalog.values()) == 20
+assert sum(model.get('explicit_only') is True for model in catalog.values()) == 21
 assert definitions['agents']['agy']['model']['default'] == 'gemini-4-neon-high'
 assert definitions['agents']['agy']['model']['flag_template'] == '--model {{model}}'
 matrix = {
@@ -181,7 +180,7 @@ matrix = {
     'medium': {'gemini-4-neon-high'},
     'medium-hard': {'gemini-4-neon-high'},
     'complex': {'gemini-4-neon-xhigh', 'gemini-4-neon-high'},
-    'holy-fuck': {'gemini-4-neon-high'},
+    'holy-fuck': {'gemini-4-carbon-xhigh', 'gemini-4-carbon-high'},
 }
 agy = frozenset({'agy'})
 for band, candidates in matrix.items():

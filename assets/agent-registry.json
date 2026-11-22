@@ -20,8 +20,8 @@
       "min_band": "medium",
       "context_window": 1000000,
       "agents": ["claude"],
-      "work_bands": ["medium", "medium-hard", "holy-fuck"],
-      "effort_by_band": {"medium": "high", "medium-hard": "high", "holy-fuck": "high"}
+      "work_bands": ["medium", "medium-hard"],
+      "effort_by_band": {"medium": "high", "medium-hard": "high"}
     },
     "claude-fable-5-2": {
       "provider": "anthropic",
@@ -54,7 +54,7 @@
       "reasoning_effort": "high",
       "agents": ["codex"],
       "work_bands": ["complex", "holy-fuck"],
-      "effort_by_band": {"complex": "high", "holy-fuck": "high"}
+      "effort_by_band": {"complex": "high", "holy-fuck": "xhigh"}
     },
     "gpt-6.1-terra": {
       "provider": "openai",
@@ -76,8 +76,8 @@
       "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
-      "work_bands": ["medium", "medium-hard", "holy-fuck"],
-      "effort_by_band": {"medium": "high", "medium-hard": "high", "holy-fuck": "high"}
+      "work_bands": ["medium", "medium-hard"],
+      "effort_by_band": {"medium": "high", "medium-hard": "high"}
     },
     "gpt-5.4-mini": {
       "provider": "openai",
@@ -170,7 +170,7 @@
       "exclude_from_complexity": true,
       "explicit_only": true,
       "agents": ["agy"],
-      "work_bands": ["medium", "medium-hard", "complex", "holy-fuck"]
+      "work_bands": ["medium", "medium-hard", "complex"]
     },
     "gemini-4-neon-xhigh": {
       "provider": "google",
@@ -234,7 +234,17 @@
       "complexity_weight": 7,
       "exclude_from_complexity": true,
       "explicit_only": true,
-      "agents": ["agy"]
+      "agents": ["agy"],
+      "work_bands": ["holy-fuck"]
+    },
+    "gemini-4-carbon-xhigh": {
+      "provider": "google",
+      "ability": "frontier",
+      "complexity_weight": 8,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
+      "agents": ["agy"],
+      "work_bands": ["holy-fuck"]
     },
     "claude-opus-5-5-low": {
       "provider": "anthropic",

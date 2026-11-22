@@ -384,12 +384,12 @@ def effective_config(config: AgentRunConfig, registry: dict) -> AgentRunConfig:
     model = config.model or agent.get('model', {}).get('default', '')
     configured = registry.get('model_catalog', {}).get(model, {}).get('reasoning_effort', '')
     if config.effort:
-        resolution = resolve_effort(name, config.effort, config.role)
+        resolution = resolve_effort(name, config.effort, config.role, registry, model=model)
         requested = config.requested_effort or resolution.requested
     else:
-        resolution = resolve_effort(name, configured, config.role)
+        resolution = resolve_effort(name, configured, config.role, registry, model=model)
         if name == 'claude' and config.role == 'plan':
-            resolution = resolve_effort(name, '', config.role)
+            resolution = resolve_effort(name, '', config.role, registry, model=model)
         requested = config.requested_effort
     return config.replace(effort=resolution.effective, requested_effort=requested)
 

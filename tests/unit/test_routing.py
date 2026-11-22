@@ -58,7 +58,7 @@ AGY_WORK_MATRIX = {
     "medium": {"gemini-4-neon-high"},
     "medium-hard": {"gemini-4-neon-high"},
     "complex": {"gemini-4-neon-xhigh", "gemini-4-neon-high"},
-    "holy-fuck": {"gemini-4-neon-high"},
+    "holy-fuck": {"gemini-4-carbon-xhigh", "gemini-4-carbon-high"},
 }
 NON_AGY_BANDS = ("complex", "holy-fuck")
 
@@ -181,8 +181,12 @@ def test_normal_planning_selection_stays_non_agy_at_every_band(band):
     assert all(candidate["agent"] != "agy" for candidate in selection["evaluated_candidates"])
 
 
-@pytest.mark.parametrize("selectors", [{}, {"forced_agent": "agy"}, {"forced_model": "gemini-4-neon-high"}])
-def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors):
+@pytest.mark.parametrize("selectors, expected_model", [
+    ({}, "gemini-4-carbon-xhigh"),
+    ({"forced_agent": "agy"}, "gemini-4-carbon-xhigh"),
+    ({"forced_model": "gemini-4-neon-high"}, "gemini-4-neon-high"),
+])
+def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors, expected_model):
     from ai_skills import runner
 
     monkeypatch.setattr(runner, "resolve_agy_plan_profile", lambda registry: lambda config, spec: True)
@@ -190,11 +194,12 @@ def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors):
                            **selectors)
     registry = load_registry(SOURCE_REGISTRY)
     selected = select_route(request, registry, {})
-    assert (selected.agent, selected.model, selected.routing_level) == ("agy", "gemini-4-neon-high", "holy-fuck")
+    assert (selected.agent, selected.model, selected.routing_level) == ("agy", expected_model, "holy-fuck")
 
 
 @pytest.mark.parametrize("availability", [
-    {"agents": {"agy"}}, {"models": {"gemini-4-neon-high"}}, {"pairs": {("agy", "gemini-4-neon-high")}},
+    {"agents": {"agy"}}, {"models": {"gemini-4-carbon-xhigh", "gemini-4-carbon-high"}},
+    {"pairs": {("agy", "gemini-4-carbon-xhigh"), ("agy", "gemini-4-carbon-high")}},
 ])
 def test_verified_agy_plan_preserves_availability_exclusions(monkeypatch, availability):
     from ai_skills import runner
@@ -268,8 +273,7 @@ def test_forced_agy_model_keeps_explicit_band_exception():
 
 AGY_EXPLICIT_MODELS = (
     *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
-    *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
-    *(f"gemini-4-carbon-{effort}" for effort in ("low", "medium", "high")),
+    *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen", "carbon") for effort in ("low", "medium", "high", "xhigh")),
     *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
     *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
     "gpt-oss-120b-medium",
@@ -505,7 +509,7 @@ def test_retired_claude_models_cannot_be_routed(model):
     ("medium", "gpt-6.2-sol", "high"),
     ("medium-hard", "gpt-6.2-sol", "high"),
     ("complex", "gpt-6.2-astra", "high"),
-    ("holy-fuck", "gpt-6.2-astra", "high"),
+    ("holy-fuck", "gpt-6.2-astra", "xhigh"),
 ])
 def test_codex_routes_use_requested_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -552,7 +556,8 @@ def test_direct_non_planning_effort_is_high_or_lower_configured(agent, model, ro
         load_registry(SOURCE_REGISTRY), {})
     assert decision.model == model
     if agent == "codex":
-        assert decision.effort == "high"
+        expected = "xhigh" if (model == "gpt-6.2-astra" and decision.routing_level == "holy-fuck") else "high"
+        assert decision.effort == expected
     else:
         assert decision.effort in {"low", "medium", "high"}
 
@@ -573,7 +578,10 @@ def test_high_difficulty_never_grants_planning_effort_to_ordinary_roles(agent, m
     decision = select_route(
         RouteRequest(role="review", complexity_level=band, forced_agent=agent, forced_model=model),
         load_registry(SOURCE_REGISTRY), {})
-    assert decision.effort != "xhigh"
+    if model == "gpt-6.2-astra" and decision.routing_level == "holy-fuck":
+        assert decision.effort == "xhigh"
+    else:
+        assert decision.effort != "xhigh"
     assert decision.effort not in {"max", "maximum"}
 
 
@@ -791,3 +799,37 @@ def test_complex_uses_astra_high_fable_medium_and_neon_xhigh_with_high_fallback(
         {},
     )
     assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-neon-high")
+
+
+def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallback(tmp_path):
+    from ai_skills.runner import AgentRunConfig, build_invocation
+
+    registry = load_registry(SOURCE_REGISTRY)
+    codex = select_route(RouteRequest(role="impl", complexity_level="holy-fuck", forced_agent="codex"), registry, {})
+    assert (codex.agent, codex.model, codex.effort) == ("codex", "gpt-6.2-astra", "xhigh")
+    ctx, prm = tmp_path / "context.md", tmp_path / "prompt.md"
+    ctx.write_text("ctx")
+    prm.write_text("prm")
+    spec = build_invocation(
+        AgentRunConfig(agent="codex", model="gpt-6.2-astra", effort=codex.effort, role="impl",
+                       context_file=ctx, prompt_file=prm, repo_root=tmp_path, unattended=True),
+        registry,
+    )
+    assert any(spec.argv[i:i + 2] == ("-c", "model_reasoning_effort=xhigh") for i in range(len(spec.argv) - 1))
+
+    claude = select_route(RouteRequest(role="impl", complexity_level="holy-fuck", forced_agent="claude"), registry, {})
+    assert (claude.agent, claude.model, claude.effort) == ("claude", "claude-fable-5-2", "high")
+
+    agy_primary = select_route(RouteRequest(role="impl", complexity_level="holy-fuck", forced_agent="agy"), registry, {})
+    assert (agy_primary.agent, agy_primary.model) == ("agy", "gemini-4-carbon-xhigh")
+    agy_fallback = select_route(
+        RouteRequest(
+            role="impl",
+            complexity_level="holy-fuck",
+            forced_agent="agy",
+            availability={"models": {"gemini-4-carbon-xhigh"}},
+        ),
+        registry,
+        {},
+    )
+    assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-carbon-high")

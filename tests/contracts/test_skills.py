@@ -261,7 +261,7 @@ def test_model_and_effort_guidance_matches_the_approved_contract():
     assert 'requested effort' in pair_skill and 'effective effort' in pair_skill
     assert 'effective value returned by the shared policy' in run_skill
     assert 'gemini-4-neon-high' in readme
-    assert '21 exact IDs' in readme
+    assert '22 exact IDs' in readme
     assert 'Only Neon Medium' in readme
     assert 'pair read-only eligibility' in readme
     assert 'Only `plan` (the original role, not `routing_level`)' in run_skill
