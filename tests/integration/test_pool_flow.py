@@ -637,13 +637,14 @@ def test_default_wait_holds_live_native_child_and_reconciles_on_release(tmp_path
     events = config.resolved().events_log.read_text(encoding='utf-8')
     assert 'sub-coord-recovery-wait-expired' not in events
 
-    write_json_atomic(child.agent_run.result_file, {'total': 5, 'level': 'easy', 'scores': {
+    write_json_atomic(child.agent_run.result_file, {'total': 9, 'level': 'quite-easy', 'scores': {
         key: 1 for key in ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
                            'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
                            'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
         'rationale': {key: 'ok' for key in ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
                                             'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
-                                            'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')}})
+                                            'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+        'files_inspected': ['src/example.py']})
     ownership['provider'] = 'dead'
     supervisor.recover('1', predecessor)
     assert len(driver.started) == 1

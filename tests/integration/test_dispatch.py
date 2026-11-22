@@ -102,7 +102,7 @@ def test_plan_success_requires_issue_directory_and_nonempty_markdown(tmp_path):
     with pytest.raises(ValueError,match='issue_dir'):
         dispatch_worker(replace(config,agent_run=config.agent_run.replace(role='plan')))
     assert not (tmp_path/'provider-invoked').exists()
-    plan={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Build','complexity_level':'easy','slices':[{'id':1}]}
+    plan={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Build','complexity_level':'easy','complexity_rationale':'Single-file change along an existing seam.','slices':[{'id':1}]}
     config.agent_run.result_file.write_text(json.dumps(plan))
     (tmp_path/'plan.md').write_text('')
     snapshot=inspect_worker(replace(config,agent_run=config.agent_run.replace(role='plan',issue_dir=tmp_path)))
@@ -2554,13 +2554,14 @@ if {role!r} == 'review':
 
 
 @pytest.mark.parametrize(('role', 'result', 'instructions', 'valid', 'model'), [
-    ('complexity', {'total': 9, 'level': 'medium', 'scores': {key: 1 for key in
+    ('complexity', {'total': 9, 'level': 'quite-easy', 'scores': {key: 1 for key in
      ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
       'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
       'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
      'rationale': {key: 'reason' for key in ('dependency_complexity', 'ownership_overlap_risk',
       'architecture_risk', 'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
-      'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')}},
+      'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+     'files_inspected': ['src/example.py']},
      None, True, 'gemini-4-hydrogen-high'),
     ('complexity', {'total': 9}, None, False, 'gemini-4-hydrogen-high'),
     ('review', {'verdict': 'approve', 'comment_count': 0, 'nitpick_only': False},
@@ -2915,7 +2916,9 @@ def test_saved_raw_effort_config_rejected_before_provider(tmp_path, validate):
 
 
 PLAN_RESULT = {'schema_version': 1, 'issue': '7', 'role': 'plan', 'status': 'success',
-               'approach': 'Preserve the canary', 'complexity_level': 'complex', 'slices': [{'id': 1}]}
+               'approach': 'Preserve the canary', 'complexity_level': 'complex',
+               'complexity_rationale': 'Cross-module protocol change with read-only capture invariants.',
+               'slices': [{'id': 1}]}
 PLAN_MARKDOWN = '# Preserve the canary\n\n- Read source and preserve café labels.\n'
 PLAN_INVOCATION = ['--fixture-read-only', '--model', GEMINI_4,
                    '--input-format', 'stream-json', '--output-format', 'stream-json']

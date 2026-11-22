@@ -347,10 +347,12 @@ def role_agent_counts(ledger: dict[str, Any], role: str) -> dict[str, int]:
 
 
 def score_to_level(registry: dict[str, Any], score: int) -> str:
-    for row in registry.get("model_routing", {}).get("score_to_weight", []):
+    rows = registry.get("model_routing", {}).get("score_to_weight", [])
+    for row in rows:
         if int(row["score_min"]) <= score <= int(row["score_max"]):
             return str(row["label"])
-    if score > 40:
+    max_score = max((int(row["score_max"]) for row in rows), default=45)
+    if score > max_score:
         return "holy-fuck"
     fail(f"complexity score does not map to a routing band: {score}")
 

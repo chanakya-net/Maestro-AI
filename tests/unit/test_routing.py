@@ -837,3 +837,31 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
     assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-carbon-high")
     for band in ("complex", "holy-fuck"):
         assert routing.target_policy(registry, "impl", band) == {"codex": 38, "agy": 38, "claude": 24}
+
+
+@pytest.mark.parametrize(("score", "expected"), [
+    (9, "quite-easy"),
+    (12, "quite-easy"),
+    (13, "easy"),
+    (17, "easy"),
+    (18, "medium"),
+    (22, "medium"),
+    (23, "medium-hard"),
+    (27, "medium-hard"),
+    (28, "complex"),
+    (32, "complex"),
+    (33, "holy-fuck"),
+    (45, "holy-fuck"),
+    (46, "holy-fuck"),
+])
+def test_score_to_level_matches_9_to_45_rubric_bounds(score, expected):
+    registry = load_registry(SOURCE_REGISTRY)
+    assert routing.score_to_level(registry, score) == expected
+
+
+@pytest.mark.parametrize("score", [0, 8])
+def test_score_to_level_rejects_below_minimum_rubric_score(score):
+    registry = load_registry(SOURCE_REGISTRY)
+    with pytest.raises(SystemExit) as exc:
+        routing.score_to_level(registry, score)
+    assert exc.value.code == 2

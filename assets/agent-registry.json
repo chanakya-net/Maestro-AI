@@ -306,12 +306,12 @@
   "model_routing": {
     "selection_strategy": "usage-share-debt",
     "score_to_weight": [
-      {"score_min": 8, "score_max": 12, "weight_min": 1, "weight_max": 3, "label": "quite-easy"},
+      {"score_min": 9, "score_max": 12, "weight_min": 1, "weight_max": 3, "label": "quite-easy"},
       {"score_min": 13, "score_max": 17, "weight_min": 2, "weight_max": 4, "label": "easy"},
       {"score_min": 18, "score_max": 22, "weight_min": 4, "weight_max": 6, "label": "medium"},
       {"score_min": 23, "score_max": 27, "weight_min": 6, "weight_max": 7, "label": "medium-hard"},
       {"score_min": 28, "score_max": 32, "weight_min": 7, "weight_max": 9, "label": "complex"},
-      {"score_min": 33, "score_max": 40, "weight_min": 9, "weight_max": 10, "label": "holy-fuck"}
+      {"score_min": 33, "score_max": 45, "weight_min": 9, "weight_max": 10, "label": "holy-fuck"}
     ],
     "usage_distribution": {
       "default_target_percent": {"agy": 38, "codex": 37, "claude": 25},

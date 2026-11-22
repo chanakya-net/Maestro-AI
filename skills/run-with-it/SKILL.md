@@ -90,7 +90,7 @@ Preferred upstream flow:
 - Reads the issue worktree **read-only** with a strong model and writes a concrete approach plan to `.run-with-it/issues/<n>/plan.md` plus a machine-readable `plan.json` under `workers/plan/`
 - Never edits or commits — it runs before the baseline SHA so it cannot corrupt the implementer's diff
 - Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
-- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues skip planning and route weak regardless
+- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues (`quite-easy`, `easy`) skip planning and route weak regardless
 - The implementer, reviewer, and modifier all consume `plan.md` via `RUN_WITH_IT_PLAN_FILE`
 
 **Artifact Recovery Worker** (spawned via `artifact-recovery-prompt.md`, runs only after exhausted impl/modify artifact failures):
@@ -134,7 +134,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
 | `MAX_ITERATIONS` | `20` | Deprecated / no effect — the review/modify loop cap is hardcoded to 8 cycles in `sub-coordinator-prompt.md` (Appendix B); still forwarded in context files for backward compatibility but not consulted |
 | `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
-| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
+| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
 | `SUB_COORD_MODEL` | `gpt-6.2-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
 | `SUB_COORD_TIMEOUT_SECONDS` | `0` | Optional Sub-Coordinator execution deadline in seconds; `0` disables the deadline |

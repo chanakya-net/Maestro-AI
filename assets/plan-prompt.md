@@ -45,11 +45,17 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 2. **Decide the approach.** Choose the smallest correct change that satisfies the acceptance criteria. Prefer extending an existing seam over adding parallel structure. Name the concrete files (real paths verified to exist for `extend`; intended new paths for `add`).
 3. **Order the work as vertical slices.** Each slice is one tracer bullet: a thin end-to-end behavior with a single test target. Order them so each builds on the last. These map 1:1 onto the implementer's TDD loop, so keep them vertical (a behavior), never horizontal (a layer).
 4. **Name risks and out-of-scope.** Call out ordering constraints, known gotchas, public-interface changes, and the tempting-but-out-of-scope work the implementer must avoid.
-5. **Re-score complexity.** Having read the real code, set `complexity_level` to the grounded band using the same vocabulary the router accepts: `quite-easy`, `easy`, `medium`, `medium-hard`, `complex`, `holy-fuck`. This grounded re-score is preferred over the blind complexity score for downstream routing, so it must be a real judgment based on the files/slices/interfaces/risks you just laid out — not a copy of the blind score unless that score still holds.
+5. **Re-score complexity.** Having read the real code, set `complexity_level` to the grounded band using the same vocabulary the router accepts (`quite-easy`, `easy`, `medium`, `medium-hard`, `complex`, `holy-fuck`) and explain the choice in `complexity_rationale`. This grounded re-score is preferred over the blind complexity score for downstream routing, so it must be a concrete judgment anchored to the files, slices, interfaces, and risks you just laid out — not a copy of the blind score unless that score still holds. Use these band anchors (consistent with the complexity rubric and peak-dimension floor):
+   - `quite-easy`: 1–2 files, 1 trivial slice, no contract or persisted-state changes, trivial deterministic unit test.
+   - `easy`: 1–3 files, 1–2 straightforward slices extending an existing seam, clear deterministic unit tests.
+   - `medium`: multiple files or 2–4 slices with moderate module coupling, new branching/logic, or straightforward contract/test updates.
+   - `medium-hard`: non-trivial architectural seam, stateful/lifecycle coordination, notable edge-case ambiguity, or hard-to-test integration interactions (also the minimum band when any single risk area is high).
+   - `complex`: deep refactoring, protocol/schema/concurrency/recovery changes, high regression surface, or 5+ tightly coupled slices (also the minimum band when any single risk area is severe).
+   - `holy-fuck`: system-wide or foundational architectural redesign with compounding risks across multiple subsystems, migrations, or critical safety invariants.
 
 ## Output: `plan.json` schema
 
-Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `schema_version`, `issue`, `role`, `status`, `approach`, `complexity_level`, `slices`. The `files`, `interfaces`, `risks`, and `out_of_scope` keys are expected but may be empty arrays when genuinely not applicable.
+Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `schema_version`, `issue`, `role`, `status`, `approach`, `complexity_level`, `complexity_rationale`, `slices`. The `files`, `interfaces`, `risks`, and `out_of_scope` keys are expected but may be empty arrays when genuinely not applicable.
 
 ```json
 {
@@ -59,6 +65,7 @@ Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `sche
   "status": "success",
   "approach": "1-3 sentence summary of the chosen approach and the seam being extended",
   "complexity_level": "medium-hard",
+  "complexity_rationale": "Grounded at medium-hard because the change extends a core handler seam across 3 files with stateful retry edge cases, matching the blind score.",
   "files": [
     { "path": "src/foo/bar.ts", "change": "extend", "why": "add the X branch to existing handler" }
   ],
@@ -73,15 +80,16 @@ Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `sche
 
 - `change` is one of `extend`, `add`, or `delete`.
 - `complexity_level` must be one of the six router bands listed above. Emit a valid band even on the verified-skip path below — downstream routing and recovery both read it.
+- `complexity_rationale` must be a non-empty 1–2 sentence justification referencing the concrete files, slices, interfaces, or risks observed (and explicitly noting why the band stayed the same or moved from the blind score).
 - `slices` must be non-empty on the success path (at least one tracer bullet). On the verified-skip path a single trivial slice is acceptable.
 
 ## Output: `plan.md`
 
-Write a terse human-readable companion to `RUN_WITH_IT_PLAN_FILE`. Mirror the JSON: a one-paragraph approach, a files table, the ordered slice list with test targets, and short risks / out-of-scope sections. Keep it scannable — the implementer reads this first.
+Write a terse human-readable companion to `RUN_WITH_IT_PLAN_FILE`. Mirror the JSON: a one-paragraph approach, the grounded `complexity_level` and `complexity_rationale`, a files table, the ordered slice list with test targets, and short risks / out-of-scope sections. Keep it scannable — the implementer reads this first.
 
 ## Verified-skip path
 
-If, after reading the code, the issue is trivial enough that a detailed plan adds no value (a one-line change, a rename, a doc tweak), still emit a **minimal valid** `plan.json`: a short `approach`, a single `slices[]` entry naming the change and its test target (or `"manual"` when no test applies), the grounded `complexity_level`, and empty `files`/`interfaces`/`risks`/`out_of_scope` as appropriate. Never leave the artifact missing — recovery keys off it and routing reads `complexity_level` from it. Set `status` to `"success"`.
+If, after reading the code, the issue is trivial enough that a detailed plan adds no value (a one-line change, a rename, a doc tweak), still emit a **minimal valid** `plan.json`: a short `approach`, a single `slices[]` entry naming the change and its test target (or `"manual"` when no test applies), the grounded `complexity_level`, a concise `complexity_rationale`, and empty `files`/`interfaces`/`risks`/`out_of_scope` as appropriate. Never leave the artifact missing — recovery keys off it and routing reads `complexity_level` from it. Set `status` to `"success"`.
 
 ## Output Contract (sequencing)
 

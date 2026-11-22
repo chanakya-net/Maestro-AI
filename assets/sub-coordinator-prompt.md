@@ -318,7 +318,7 @@ Override handling:
 
 Sub-agent selection for complexity:
 1. Use `ai-skills route` with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
-2. The helper restricts the candidate pool to easy-medium band models, excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
+2. The helper restricts the candidate pool to the configured complexity-scoring models (`complexity_bands`), excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
 3. Pass both selected `AGENT` and selected `MODEL` explicitly to the sub-agent runner.
 
 Before spawning the complexity sub-agent, create a dedicated sanitized payload file:
@@ -355,16 +355,15 @@ Native invocation (use only the current tool's documented permission mechanism i
 Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `COMPLEXITY_LOG_FILE`, `COMPLEXITY_DONE_FILE`, `COMPLEXITY_RESULT_FILE`, and `COMPLEXITY_STATE_FILE`. Monitor `COMPLEXITY_STATE_FILE`; complexity is complete only after the owned tree is dead, its exit status is known, and the machine-readable score JSON validates; record its matching `COMPLEXITY|` event without using logs as completion authority.
-Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
 
 Sub-agent output handling:
 - Parse the `COMPLEXITY|` line for the run log.
-- Parse the JSON blob for per-dimension scores and route-report population.
+- Parse the JSON blob for per-dimension scores, `files_inspected`, and route-report population.
 - Persist the normalized score/rationale and its artifact path in `sub-state.json`; retain the validated artifact for restart-safe reuse. Delete only redundant temporary scoring payloads, never the sole completion evidence.
 
 Fallback chain:
-1. Attempt the selected easy-medium model.
-2. On failure, retry with a different model from the same band.
+1. Attempt the selected complexity-scoring model.
+2. On failure, retry with a different eligible complexity-scoring model.
 3. On the second failure, default to `medium-hard` (`score=25`), emit:
    `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
 
@@ -378,7 +377,7 @@ Use this section only when `ai-skills route` is unavailable or exits non-zero. T
 
 Read version 2 registries through `ai_skills.registry.load_registry(path)` so model memberships, aliases, CLI defaults, and usage defaults are expanded. The editable model entries live in `agent-registry.json`; CLI definitions live in its sibling `agent-definitions.json`. Version 1 registries remain self-contained.
 
-Map the complexity score using `model_routing.score_to_weight`: 8–12 is `quite-easy`, 13–17 `easy`, 18–22 `medium`, 23–27 `medium-hard`, 28–32 `complex`, and 33–40 `holy-fuck`; scores above 40 also map to `holy-fuck`. Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
+Map the complexity score using `model_routing.score_to_weight`: 9–12 is `quite-easy`, 13–17 `easy`, 18–22 `medium`, 23–27 `medium-hard`, 28–32 `complex`, and 33–45 `holy-fuck`; scores above 45 also map to `holy-fuck`. When routing from a validated complexity artifact, use its `level` (which already applies the peak-dimension floor: any dimension scored `5` floors at `complex`; any dimension scored `4` floors at `medium-hard`). Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
 
 #### Step 2 — Build Eligible Agent/Model Pairs
 
@@ -413,7 +412,7 @@ After complexity is scored (and before the baseline SHA is captured), optionally
 **Gate (reads the BLIND complexity level only).** The gate decides whether a plan is worth its cost. Refinement does not exist until a plan runs, so it can never feed back into its own gate.
 
 - `RUN_WITH_IT_PLAN_ENABLED` (default `1`) — master switch. When `0`, skip the phase entirely.
-- `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) — run a plan only when the blind complexity level is at or above this band.
+- `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`) — run a plan only when the blind complexity level is at or above this band.
 
 Resolve `EFFECTIVE_COMPLEXITY` once, right after this phase. It is the routing band for the `impl` spawn and **every later `modify` spawn**:
 - plan ran and `plan.json` has a valid `complexity_level` → `EFFECTIVE_COMPLEXITY = <plan complexity_level>` (the grounded re-score).
@@ -823,7 +822,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 The dispatcher alone writes managed DONE after report validation and confirmed owned-tree shutdown. The worker never writes it. Consume the bound validated outcome and required success artifacts before a successful phase transition:
 
 - complexity: the required machine-readable score JSON validates; logs are diagnostic only
-- plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `ai-skills artifact failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
+- plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, `complexity_rationale`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `ai-skills artifact failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
 - impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the dispatcher validates an admitted `verify_existing` contract for the preserved commit, **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `ai-skills artifact`
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 
