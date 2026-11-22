@@ -440,8 +440,7 @@ without an explicit model uses `gemini-4-neon-high`.
 | --- | ---: | ---: | ---: |
 | `quite-easy`, `easy` | 33% | 33% | 33% |
 | `medium`, `medium-hard` | 35% | 25% | 40% |
-| `complex` | 70% | 30% | 0% |
-| `holy-fuck` | 60% | 40% | 0% |
+| `complex`, `holy-fuck` | 38% | 24% | 38% |
 
 During automatic selection, a 0% AGY route is a fallback when eligible
 positive-target candidates are exhausted. Explicit agent or model overrides still

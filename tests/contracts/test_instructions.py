@@ -382,7 +382,7 @@ def test_readme_installed_catalog_and_pool_examples(tmp_path, monkeypatch, capsy
 
     decision = json.loads(invoke(next(cmd for cmd in commands if cmd[0] == 'route')))
     assert (decision['agent'], decision['model'], decision['routing_level']) == ('agy', 'gemini-4-neon-xhigh', 'complex')
-    assert decision['target_percent'] == decision['ledger']['total_decisions'] == 0
+    assert decision['target_percent'] == 38 and decision['ledger']['total_decisions'] == 0
 
     setup = pool_fixture(tmp_path, {1: {}}, parallel=1)
     pool_section = readme.split('a minimal `.run-with-it/pool.json` is:', 1)[1]

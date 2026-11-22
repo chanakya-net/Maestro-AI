@@ -191,7 +191,7 @@ for band, candidates in matrix.items():
     assert (scorer.agent, scorer.model) == ('agy', 'gemini-4-hydrogen-high')
     assert {c['model'] for c in scorer.selection['evaluated_candidates']} == {'gemini-4-hydrogen-high'}
 positive_target = select_route(RouteRequest('impl', 'complex', agy | {'codex', 'claude'}), registry, {})
-assert positive_target.agent in {'codex', 'claude'} and positive_target.target_percent > 0
+assert positive_target.agent in {'codex', 'claude', 'agy'} and positive_target.target_percent > 0
 carbon = select_route(RouteRequest('impl', 'medium', agy,
     forced_model='gemini-4-carbon-medium'), registry, {})
 assert (carbon.agent, carbon.model) == ('agy', 'gemini-4-carbon-medium')

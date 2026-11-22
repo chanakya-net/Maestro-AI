@@ -530,9 +530,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
       "complexity_level": "complex",
@@ -582,9 +582,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "xhigh",
+      "agent": "agy",
+      "model": "gemini-4-carbon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "holy-fuck",
@@ -790,9 +790,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
       "complexity_level": "medium-hard",
@@ -842,9 +842,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "xhigh",
+      "agent": "agy",
+      "model": "gemini-4-carbon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "complex",
@@ -894,9 +894,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "xhigh",
+      "agent": "agy",
+      "model": "gemini-4-carbon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "holy-fuck",
@@ -1154,9 +1154,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
       "complexity_level": "complex",
@@ -1206,9 +1206,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "xhigh",
+      "agent": "agy",
+      "model": "gemini-4-carbon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "holy-fuck",
@@ -1466,9 +1466,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
       "complexity_level": "complex",
@@ -1518,9 +1518,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "xhigh",
+      "agent": "agy",
+      "model": "gemini-4-carbon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "holy-fuck",
@@ -1778,9 +1778,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
       "complexity_level": "complex",
@@ -1830,9 +1830,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-astra",
-      "effort": "xhigh",
+      "agent": "agy",
+      "model": "gemini-4-carbon-xhigh",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "holy-fuck",

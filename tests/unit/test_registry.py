@@ -210,7 +210,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
                 if agent in entry.get("agents", [])] == expected_models
         assert definitions["agents"][agent]["model"]["default"] == expected_default
     assert source["model_routing"]["usage_distribution"] == {
-        "default_target_percent": {"agy": 40, "codex": 35, "claude": 25},
+        "default_target_percent": {"agy": 38, "codex": 37, "claude": 25},
         "role_target_percent": {
             "complexity": {"codex": 33, "claude": 33, "agy": 33},
             "impl": {"codex": 65, "claude": 30, "agy": 5},
@@ -221,12 +221,12 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
             "plan": {"claude": 70, "codex": 30, "agy": 0},
         },
         "non_complexity_band_target_percent": {
-            "default": {"codex": 70, "claude": 30, "agy": 0},
+            "default": {"codex": 38, "agy": 38, "claude": 24},
             "quite-easy": {"codex": 33, "claude": 33, "agy": 33},
             "easy": {"codex": 33, "claude": 33, "agy": 33},
             "medium": {"agy": 40, "codex": 35, "claude": 25},
             "medium-hard": {"agy": 40, "codex": 35, "claude": 25},
-            "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
+            "holy-fuck": {"codex": 38, "agy": 38, "claude": 24},
         },
         "role_band_target_percent": {
             "complexity": {

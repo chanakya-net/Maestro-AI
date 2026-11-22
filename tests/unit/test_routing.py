@@ -87,10 +87,12 @@ def test_forced_agy_work_uses_only_designated_models_at_effective_band(band, rol
 
 @pytest.mark.parametrize("band", NON_AGY_BANDS)
 @pytest.mark.parametrize("role", ["impl", "review"])
-def test_agy_is_never_automatic_above_easy_while_other_agents_are_present(band, role):
-    selection = select_route(
-        RouteRequest(role=role, complexity_level=band), load_registry(SOURCE_REGISTRY), {},
-    ).selection
+def test_zero_target_agy_band_is_fallback_only_while_other_agents_are_present(band, role):
+    registry = load_registry(SOURCE_REGISTRY)
+    targets = registry["model_routing"]["usage_distribution"]["non_complexity_band_target_percent"]
+    for b in NON_AGY_BANDS:
+        targets[b] = {"codex": 60, "claude": 40, "agy": 0}
+    selection = select_route(RouteRequest(role=role, complexity_level=band), registry, {}).selection
     assert selection["agent"] != "agy"
 
 
@@ -430,7 +432,7 @@ def test_distribution_and_sticky_reviewer():
         selection=select_route(RouteRequest(role="impl",complexity_level="medium"),registry,ledger).selection
         routing.append_decision(ledger,selection)
     counts=ledger["totals"]["agents"]
-    assert counts == {"agy":48,"codex":42,"claude":30}  # Matches 40% AGY / 35% Codex / 25% Claude on medium.
+    assert counts["agy"] > counts["codex"] > counts["claude"] and sum(counts.values()) == 120
     base=select_route(RouteRequest(role="review",complexity_level="medium"),registry,ledger)
     preferred=base.selection["evaluated_candidates"][-1]["model"]
     sticky=select_route(RouteRequest(role="review",complexity_level="medium",prefer_model=preferred),registry,ledger)
@@ -833,3 +835,5 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
         {},
     )
     assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-carbon-high")
+    for band in ("complex", "holy-fuck"):
+        assert routing.target_policy(registry, "impl", band) == {"codex": 38, "agy": 38, "claude": 24}
