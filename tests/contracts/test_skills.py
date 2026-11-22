@@ -149,12 +149,35 @@ def test_verified_noop_examples_are_accepted_by_the_real_artifact_validator(name
     assert 'ai-skills artifact write-json' in text
 
 
+def test_complexity_example_is_valid_and_enforces_grounding_and_peak_floor():
+    prompt = resource('complexity-prompt.md')
+    examples = [value for value in json_examples(prompt) if 'scores' in value and 'rationale' in value]
+    assert examples and all(artifacts.valid_complexity_payload(value) for value in examples)
+    for value in examples:
+        assert value['files_inspected']
+    assert 'Peak-dimension floor' in prompt
+    assert 'must not print those paths' not in prompt
+
+    coordinator = resource('sub-coordinator-prompt.md')
+    run_skill = skill('run-with-it')
+    assert 'easy-medium' not in coordinator
+    assert '8–12' not in coordinator and '33–40' not in coordinator
+    assert '9–12 is `quite-easy`' in coordinator and '33–45 `holy-fuck`' in coordinator
+    assert '`RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`)' in coordinator
+    assert '`RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium`' in run_skill
+    assert '(default `medium`)' in run_skill
+    native_block = coordinator.split('Native invocation (use only the current tool\'s documented permission mechanism if required):', 1)[1].split('Sub-agent output handling:', 1)[0]
+    assert native_block.count('Write a fresh attempt-specific `worker.json`') == 1
+
+
 def test_plan_example_is_a_valid_nonempty_plan_and_remains_read_only():
     text=resource('plan-prompt.md')
     plans=[value for value in json_examples(text) if value.get('role')=='plan']
     assert plans and all(artifacts.valid_plan_payload(value) for value in plans)
     for value in plans:
         assert value['slices'] and value['complexity_level'] in routing.BAND_ORDER
+        assert value['complexity_rationale'].strip()
+    assert 'band anchors' in text
     assert 'Do NOT run tests' in text
     assert 'Do NOT edit, stage, or commit any code' in text
     assert 'plan.json' in text and 'plan.md' in text
@@ -260,9 +283,9 @@ def test_model_and_effort_guidance_matches_the_approved_contract():
     assert 'requested_effort' in coordinator
     assert 'requested effort' in pair_skill and 'effective effort' in pair_skill
     assert 'effective value returned by the shared policy' in run_skill
-    assert 'gemini-3.8-flash-high' in readme
-    assert '13 exact IDs' in readme
-    assert 'Only Flash Low' in readme and 'only Flash Medium' in readme
+    assert 'gemini-4-neon-high' in readme
+    assert '22 exact IDs' in readme
+    assert 'Only Neon Medium' in readme
     assert 'pair read-only eligibility' in readme
     assert 'Only `plan` (the original role, not `routing_level`)' in run_skill
     assert '`--role plan`' in readme

@@ -35,79 +35,80 @@ File discovery instructions (read-only)
 
 - Use CodeGraph when initialized, otherwise read-only file search (`rg`/`rg --files` when available) and file-reading tools. These mechanisms must not edit the repository.
 - Do NOT run any command that writes, installs, compiles, or modifies anything.
-- The sub-agent MUST identify the files it considered before scoring ownership/architecture dimensions, using those paths as internal scoring context without adding extra output outside the required contract.
+- The sub-agent MUST inspect the relevant repository files before scoring and record every repo-relative file path it read in the `files_inspected` array of the JSON output (use `[]` only when no existing repository files apply).
 
 Rules for scoring
 
 - Score each dimension integer 1 (lowest) to 5 (highest) using the rubric below.
-- Compute `total` as the sum of d1..d9 (range 9–45).
-- Do NOT provide implementation advice, migration plans, remediation steps, or code changes of any kind. Provide scoring and one-sentence rationale per dimension only.
+- Compute `total` as the exact integer sum of d1..d9 (range 9–45).
+- Compute `level` from `total` using the mapping below, then apply the peak-dimension floor.
+- Do NOT provide implementation advice, migration plans, remediation steps, or code changes of any kind. Provide scoring, `files_inspected`, and one-sentence rationale per dimension only.
 - Do NOT use Edit, Write, or any file-modifying shell command except result publication and publication-only payload scratch described by the shared protocol. All other tool use is strictly limited to read-only operations.
 
 Dimensions and Rubrics (1–5)
 
 d1 = dependency_complexity
-- 1: No external dependencies; single-file or trivial internal calls.
-- 2: Few stable dependencies; well-known libraries with tiny surface area.
-- 3: Several dependencies including internal modules; moderate coupling.
-- 4: Many dependencies across packages/services; nontrivial dependency graph.
-- 5: Deep transitive dependency graph with cyclic risks or fragile third-party pins.
+- 1: Single-file or leaf change; no cross-module or external library coupling.
+- 2: Few stable internal imports or well-known library calls with tiny surface area.
+- 3: Several internal modules or package interfaces coupled together; moderate dependency graph.
+- 4: Cross-subsystem coupling across many modules/packages or complex third-party API interactions.
+- 5: Deep transitive or cyclic dependency graph, fragile third-party constraints, or multi-package ripple effects.
 
 d2 = ownership_overlap_risk
-- 1: Single clear owner; no cross-team touches.
-- 2: Primary owner with rare external contributions.
-- 3: Multiple teams touch the area; some unclear handoffs.
-- 4: Ownership split across teams with conflicting responsibilities.
-- 5: No clear ownership; high coordination friction and possible blockers.
+- 1: Isolated leaf file or dedicated module with no shared callers.
+- 2: Single-purpose module with a small, stable set of internal callers.
+- 3: Shared helper, schema, or config touched by multiple features or likely parallel issues.
+- 4: Core shared seam with tight coupling across multiple subsystems and nontrivial conflict risk.
+- 5: Central repo hotspot, shared protocol, or foundational contract touched across the codebase with high merge/conflict risk.
 
 d3 = architecture_risk
-- 1: Simple, well-understood architecture; isolated change.
-- 2: Small architectural surface; few modules affected.
-- 3: Core architecture touched; moderate design constraints.
-- 4: Architecture-level changes required; substantial refactoring risk.
-- 5: Fundamental architectural shift or unknowns that could cascade.
+- 1: Simple, well-understood pattern; localized change within an existing seam.
+- 2: Small architectural surface; few modules affected with clear boundaries.
+- 3: Core module or invariant touched; moderate design constraints.
+- 4: Architecture-level changes required; substantial refactoring or invariant risk.
+- 5: Fundamental architectural shift, core invariant redesign, or unknowns that could cascade.
 
 d4 = orchestration_burden
-- 1: No orchestration; single process or script.
-- 2: Minor coordination tasks (one cron, one service).
-- 3: Multiple services/processes require coordinated updates.
-- 4: Cross-environment orchestration (deploy, DB migration, jobs).
-- 5: Complex, time-ordered orchestration across many services/environments.
+- 1: Single synchronous code path; no lifecycle, async, or multi-step coordination.
+- 2: Simple linear multi-step flow, hook, or single background/CLI invocation.
+- 3: Coordinated updates across multiple components, worker stages, or execution modes.
+- 4: Stateful lifecycle, async/concurrency, retry/recovery, locking, or multi-process coordination.
+- 5: Complex time-ordered, concurrent, or distributed state-machine coordination with subtle race or ordering hazards.
 
 d5 = verification_risk
-- 1: Fully covered by unit tests; deterministic behavior.
-- 2: Mostly unit-tested; small manual verification steps.
-- 3: Integration tests needed; some nondeterminism possible.
-- 4: Hard-to-test interactions; flakey or environment-sensitive tests.
-- 5: Unverifiable in CI; requires manual/integration steps with risk.
+- 1: Fully covered by fast deterministic unit tests.
+- 2: Mostly unit-tested with straightforward fixtures or minor manual checks.
+- 3: Integration tests or multi-component fixtures needed; moderate setup or edge-case surface.
+- 4: Hard-to-test interactions; timing, concurrency, OS-specific, or environment-sensitive verification.
+- 5: Unverifiable deterministically in CI; requires complex live/external environment or high-risk manual verification.
 
 d6 = ambiguity_of_requirements
-- 1: Requirements are crystal clear and bounded.
-- 2: Minor clarifications needed; acceptance criteria mostly present.
-- 3: Several ambiguous areas requiring stakeholder clarification.
-- 4: Key behaviors undefined; multiple valid interpretations.
-- 5: Requirements missing or contradictory; high discovery risk.
+- 1: Requirements and acceptance criteria are crystal clear and bounded.
+- 2: Minor edge-case clarifications needed; acceptance criteria mostly concrete.
+- 3: Several ambiguous areas or implicit invariants requiring design judgment.
+- 4: Key behaviors undefined; multiple valid interpretations with meaningful trade-offs.
+- 5: Requirements missing, contradictory, or open-ended; high discovery risk.
 
 d7 = integration_surface_breadth
-- 1: No integrations; local-only change.
-- 2: One integration point with stable contract.
-- 3: Several integration points; moderately coupled interfaces.
-- 4: Many external integrations or cross-team APIs.
-- 5: Wide integration footprint spanning external systems and teams.
+- 1: Internal-only change; no public API, CLI, schema, or external contract changes.
+- 2: One stable contract or adapter touchpoint (single CLI flag, endpoint, or schema field).
+- 3: Several contract points; moderately coupled internal/external interfaces or artifacts.
+- 4: Many coupled APIs, CLI contracts, persisted schemas, or external provider adapters.
+- 5: Wide contract footprint spanning multiple external systems, protocols, or cross-boundary interfaces.
 
 d8 = rollback_recovery_risk
-- 1: Instant revert; no stateful changes.
-- 2: Simple rollback with minor cleanup.
-- 3: Rollback requires data migration or orchestration.
-- 4: Risky rollback with potential partial failures.
-- 5: Rollback nearly impossible or catastrophic without full recovery plan.
+- 1: Stateless code-only change; instant clean revert with zero state cleanup.
+- 2: Minor config or local non-durable format tweak; simple revert.
+- 3: Persisted artifact, state file, or schema format change requiring backward compatibility.
+- 4: Stateful migration, lock/recovery semantics, or durable-format change with partial-failure risk.
+- 5: Irreversible data/schema/protocol change or high corruption risk on partial failure.
 
 d9 = blast_radius
-- 1: Change impacts only a tiny scoped area or developer env.
-- 2: Small subset of users or services affected.
-- 3: Moderate user-visible impact if wrong.
-- 4: Large portion of system or many users could be affected.
-- 5: System-wide or cross-tenant catastrophic impact.
+- 1: Change impacts only a tiny scoped helper or narrow edge path.
+- 2: Small subset of commands, routes, or callers affected if wrong.
+- 3: Moderate regression surface across core user-facing or runtime workflows.
+- 4: Large portion of the codebase or many critical paths affected if wrong.
+- 5: System-wide critical-path impact where a defect breaks core operation or safety invariants.
 
 Score-to-level mapping (total 9–45)
 
@@ -117,6 +118,13 @@ Score-to-level mapping (total 9–45)
 - 23–27 → medium-hard
 - 28–32 → complex
 - 33–45 → holy-fuck
+
+Peak-dimension floor (mandatory)
+
+Linear sums can dilute a localized hard problem when unrelated dimensions score 1–2. After mapping `total` to its base band above, enforce this floor:
+- If **any** dimension is scored `5`, `level` MUST be at least `complex` (use `holy-fuck` if `total` is 33–45).
+- If **any** dimension is scored `4` (and none is `5`), `level` MUST be at least `medium-hard` (use the base band if `total` is 28–45).
+- `total` MUST always equal `d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8 + d9`, and `level` MUST match the post-floor band. The artifact validator rejects arithmetic mismatches and band/floor mismatches.
 
 Success output contract (STRICT, machine-parseable)
 
@@ -129,10 +137,11 @@ COMPLEXITY|score=<total>|level=<label>|d1=<n>|d2=<n>|d3=<n>|d4=<n>|d5=<n>|d6=<n>
 ```
 
 - Immediately following that single line, the sub-agent MUST emit exactly one JSON blob (pretty-printed or single-line JSON is acceptable). The JSON MUST contain these keys:
-  - `total` (integer)
-  - `level` (string — one of the labels in the mapping)
+  - `total` (integer — exact sum of the 9 dimension scores, range 9–45)
+  - `level` (string — exact label from the score-to-level mapping after applying the peak-dimension floor)
   - `scores` (object) — contains all 9 keys using the dimension names: `dependency_complexity`, `ownership_overlap_risk`, `architecture_risk`, `orchestration_burden`, `verification_risk`, `ambiguity_of_requirements`, `integration_surface_breadth`, `rollback_recovery_risk`, `blast_radius` with integer values 1–5
-  - `rationale` (object) — contains the same 9 keys, each mapped to a single-sentence rationale explaining the score for that dimension
+  - `rationale` (object) — contains the same 9 keys, each mapped to a non-empty single-sentence rationale explaining the score for that dimension
+  - `files_inspected` (array of non-empty strings) — repo-relative paths of the files actually read during scoring (`[]` only when no existing repository files apply)
 
 - If `RUN_WITH_IT_RESULT_FILE` is present in the environment, write that same JSON blob to exactly that path before exiting:
 
@@ -141,7 +150,7 @@ Publish the exact JSON object to `RUN_WITH_IT_RESULT_FILE` through `ai-skills ar
 Example output (exact formatting not required, content required):
 
 ```text
-COMPLEXITY|score=27|level=medium-hard|d1=3|d2=3|d3=4|d4=3|d5=3|d6=3|d7=4|d8=3|d9=3
+COMPLEXITY|score=27|level=medium-hard|d1=3|d2=3|d3=4|d4=2|d5=3|d6=3|d7=4|d8=2|d9=3
 ```
 
 ```json
@@ -152,41 +161,46 @@ COMPLEXITY|score=27|level=medium-hard|d1=3|d2=3|d3=4|d4=3|d5=3|d6=3|d7=4|d8=3|d9
     "dependency_complexity": 3,
     "ownership_overlap_risk": 3,
     "architecture_risk": 4,
-    "orchestration_burden": 3,
+    "orchestration_burden": 2,
     "verification_risk": 3,
     "ambiguity_of_requirements": 3,
     "integration_surface_breadth": 4,
-    "rollback_recovery_risk": 3,
+    "rollback_recovery_risk": 2,
     "blast_radius": 3
   },
   "rationale": {
-    "dependency_complexity": "Moderate internal dependencies across two packages.",
-    "ownership_overlap_risk": "Multiple teams touch the modules with occasional handoffs.",
-    "architecture_risk": "Change affects a core module requiring design consideration.",
-    "orchestration_burden": "Needs coordination across services but limited steps.",
-    "verification_risk": "Integration tests needed but achievable.",
-    "ambiguity_of_requirements": "Some acceptance criteria need clarification.",
-    "integration_surface_breadth": "Touches several APIs across internal services.",
-    "rollback_recovery_risk": "Rollback requires moderate data cleanup steps.",
-    "blast_radius": "Could impact multiple services if incorrect."
-  }
+    "dependency_complexity": "Moderate internal dependencies across two modules.",
+    "ownership_overlap_risk": "Shared routing config is touched by multiple features.",
+    "architecture_risk": "Change modifies a core dispatch invariant requiring careful design.",
+    "orchestration_burden": "Simple linear two-step update with no concurrent coordination.",
+    "verification_risk": "Integration tests are needed alongside unit coverage.",
+    "ambiguity_of_requirements": "Some edge-case acceptance criteria need design judgment.",
+    "integration_surface_breadth": "Touches multiple CLI flags and persisted artifact contracts.",
+    "rollback_recovery_risk": "Minor config tweak with clean code revert.",
+    "blast_radius": "Regression would affect core worker routing workflows."
+  },
+  "files_inspected": [
+    "src/ai_skills/routing.py",
+    "src/ai_skills/artifacts.py",
+    "assets/agent-registry.json"
+  ]
 }
 ```
 
 Mandatory constraints
 
 - Exactly one COMPLEXITY| line and exactly one JSON blob must be emitted. No extra text before, between, or after these outputs.
-- No implementation advice, remediation steps, migration instructions, or code changes are allowed — scoring and rationale only.
+- No implementation advice, remediation steps, migration instructions, or code changes are allowed — scoring, `files_inspected`, and rationale only.
 - Do NOT use Edit, Write, or any file-modifying tool or shell command except result publication and publication-only payload scratch described by the shared protocol. All other tool use is strictly limited to read-only operations (grep, find, cat, Read).
-- The sub-agent MUST identify the files it considered prior to scoring ownership/architecture dimensions, but must not print those paths because the output contract allows only the required JSON blob and `COMPLEXITY|` line.
+- The sub-agent MUST inspect relevant repository files before scoring and record every inspected repo-relative path inside `files_inspected` in the JSON blob (never as extra prose outside the `COMPLEXITY|` line and JSON blob).
 - When done scoring, stop. Do not continue with any further tool calls or text of any kind — no suggestions, no commentary, no next steps, no implementation hints.
 
 Acceptance checks (for human or automated verifier)
 
 - File path: `assets/complexity-prompt.md` exists.
-- Contains all 9 dimension rubrics and 1–5 level descriptions.
+- Contains all 9 dimension rubrics and 1–5 level descriptions plus the peak-dimension floor rule.
 - Contains the `COMPLEXITY|` line format spec with d1..d9.
-- Contains the JSON blob format spec with `total`, `level`, `scores` (9 keys), and `rationale` (9 keys).
+- Contains the JSON blob format spec with `total`, `level`, `scores` (9 keys), `rationale` (9 keys), and `files_inspected`.
 - Contains read-only file-discovery instructions (grep/find/cat/Read).
 - Contains an explicit prohibition on implementation advice.
 

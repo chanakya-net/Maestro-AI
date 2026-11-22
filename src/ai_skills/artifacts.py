@@ -16,13 +16,29 @@ from ai_skills import verification
 from ai_skills.git import git_output, git_success, current_head, repo_available, working_tree_clean, commit_exists, resolve_commit, is_ancestor, abort_cherry_pick, commit_salvaged_tree
 
 
-COMPLEXITY_LEVELS = {
+COMPLEXITY_BAND_ORDER = (
     "quite-easy",
     "easy",
     "medium",
     "medium-hard",
     "complex",
     "holy-fuck",
+)
+
+COMPLEXITY_LEVELS = set(COMPLEXITY_BAND_ORDER)
+
+COMPLEXITY_SCORE_BANDS = (
+    (9, 12, "quite-easy"),
+    (13, 17, "easy"),
+    (18, 22, "medium"),
+    (23, 27, "medium-hard"),
+    (28, 32, "complex"),
+    (33, 45, "holy-fuck"),
+)
+
+COMPLEXITY_PEAK_FLOORS = {
+    4: "medium-hard",
+    5: "complex",
 }
 
 COMPLEXITY_SCORE_KEYS = {
@@ -48,6 +64,7 @@ PLAN_REQUIRED_KEYS = {
     "status",
     "approach",
     "complexity_level",
+    "complexity_rationale",
     "slices",
 }
 REVIEW_SEVERITIES = {"info", "warning", "critical"}
@@ -275,12 +292,34 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
     return decision.reason
 
 
+def expected_complexity_level(scores: dict[str, int]) -> str:
+    """Compute the canonical complexity band from 9 integer dimension scores (1-5).
+
+    Applies the 9-45 sum thresholds and the peak-dimension floor: any dimension
+    scored 5 floors the band at `complex`, and any dimension scored 4 floors
+    the band at `medium-hard`.
+    """
+    total = sum(scores.values())
+    base = "holy-fuck"
+    for score_min, score_max, label in COMPLEXITY_SCORE_BANDS:
+        if score_min <= total <= score_max:
+            base = label
+            break
+    peak = max(scores.values())
+    floor = COMPLEXITY_PEAK_FLOORS.get(peak)
+    if floor and COMPLEXITY_BAND_ORDER.index(floor) > COMPLEXITY_BAND_ORDER.index(base):
+        return floor
+    return base
+
+
 def valid_complexity_payload(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
-    if not isinstance(payload.get("total"), int):
+    total = payload.get("total")
+    if type(total) is not int:
         return False
-    if payload.get("level") not in COMPLEXITY_LEVELS:
+    level = payload.get("level")
+    if not isinstance(level, str) or level not in COMPLEXITY_LEVELS:
         return False
     scores = payload.get("scores")
     rationale = payload.get("rationale")
@@ -288,20 +327,32 @@ def valid_complexity_payload(payload: Any) -> bool:
         return False
     if not isinstance(rationale, dict) or set(rationale) != COMPLEXITY_SCORE_KEYS:
         return False
-    return all(isinstance(scores[key], int) and 1 <= scores[key] <= 5 for key in COMPLEXITY_SCORE_KEYS)
+    if not all(type(scores[key]) is int and 1 <= scores[key] <= 5 for key in COMPLEXITY_SCORE_KEYS):
+        return False
+    if total != sum(scores.values()):
+        return False
+    if level != expected_complexity_level(scores):
+        return False
+    if not all(non_empty_str(rationale[key]) for key in COMPLEXITY_SCORE_KEYS):
+        return False
+    files_inspected = payload.get("files_inspected")
+    if not isinstance(files_inspected, list) or not all(non_empty_str(item) for item in files_inspected):
+        return False
+    return True
 
 
 def valid_plan_payload(payload: Any) -> bool:
-    """Structural validity for plan.json. complexity_level must be a router band
-    and slices must be a non-empty ordered list; the plan never commits, so no
-    commit_sha is required. Issue-number matching is checked by the caller."""
+    """Structural validity for plan.json. complexity_level must be a router band,
+    complexity_rationale must be a non-empty string explaining the grounded
+    band, and slices must be a non-empty ordered list; the plan never commits,
+    so no commit_sha is required. Issue-number matching is checked by the caller."""
     if not isinstance(payload, dict):
         return False
     if not PLAN_REQUIRED_KEYS.issubset(payload):
         return False
     if payload.get("role") != "plan":
         return False
-    if not isinstance(payload.get("schema_version"), int):
+    if type(payload.get("schema_version")) is not int:
         return False
     # A self-reported failure is not a usable plan. Match the impl/modify
     # convention (status must be exactly "success") so a failed planner cannot
@@ -312,6 +363,8 @@ def valid_plan_payload(payload: Any) -> bool:
     if not isinstance(approach, str) or not approach.strip():
         return False
     if payload.get("complexity_level") not in COMPLEXITY_LEVELS:
+        return False
+    if not non_empty_str(payload.get("complexity_rationale")):
         return False
     slices = payload.get("slices")
     if not isinstance(slices, list) or not slices:

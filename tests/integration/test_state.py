@@ -174,6 +174,40 @@ def test_recovery_analyzer_consumes_snapshots(tmp_path,capsys):
     decision=json.loads(capsys.readouterr().out)
     assert decision["action"]=="spawn_recovery" and decision["reason"]=="sub-coordinator-context-exhausted"
 
+@pytest.mark.parametrize(('updated_at','wait','override','expected'),[
+    ('1970-01-01T02:46:39Z',3601,None,('wait_worker','in-flight-worker-running')),
+    ('1970-01-01T02:46:39Z',3601,60,('wait_worker','in-flight-worker-wait-timeout')),
+    ('1970-01-01T02:13:20Z',0,None,('spawn_recovery','in-flight-worker-orphaned')),
+    ('1970-01-01T02:46:39Z',3601,None,('spawn_recovery','in-flight-worker-finished')),
+])
+def test_recovery_analyzer_default_wait_and_live_child_outcomes(
+        tmp_path,capsys,monkeypatch,updated_at,wait,override,expected):
+    from ai_skills import state as state_module
+    issue=tmp_path/'7';issue.mkdir()
+    path=state_file(tmp_path,{'7':{'status':'in_progress','issue_dir':str(issue)}})
+    child_state=issue/'child.json';child_state.write_text(json.dumps({'state':'running','updated_at':updated_at}))
+    result=issue/'child-result.json';done=issue/'child.done'
+    child={'role':'impl','state_file':str(child_state),'result_file':str(result),'done_file':str(done)}
+    (issue/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[child]}))
+    now=10000
+    monkeypatch.setattr(state_module.time,'time',lambda:now)
+    monkeypatch.setattr(state_module,'path_mtime',lambda path:None)
+    if expected[1]=='in-flight-worker-finished':
+        child_state.write_text(json.dumps({'state':'completed','updated_at':updated_at,'done':True}))
+        result.write_text(json.dumps({'outcome':'completed'}));done.write_text('completed')
+    args=['analyze-sub-coord-failure','--issue',7,'--report-file',issue/'report.json',
+          '--wait-elapsed-seconds',wait]
+    if override is not None:args += ['--max-wait-seconds',override]
+    command(path,*args)
+    decision=json.loads(capsys.readouterr().out)
+    assert (decision['action'],decision['reason'])==expected
+
+def test_recovery_analyzer_parser_defaults_wait_unbounded_and_keeps_stale_threshold():
+    parser=state.build_parser()
+    args=parser.parse_args(['analyze-sub-coord-failure','--state-file','state.json','--issue','7','--report-file','report.json'])
+    assert args.max_wait_seconds==0
+    assert args.worker_stale_seconds==1200
+
 def test_main_state_and_github_mutations_share_lock_without_lost_updates(tmp_path):
     path=state_file(tmp_path,{str(issue):{"status":"pending"} for issue in range(1,9)})
     def mark(issue):
@@ -190,3 +224,140 @@ def test_nonobject_authoritative_state_rejected(tmp_path,payload):
     path=tmp_path/"state.json";path.write_text(payload)
     with pytest.raises(ValueError):command(path,"requeue","--issue",7)
     assert path.read_text()==payload
+
+
+@pytest.mark.parametrize(('evidence', 'ownership'), [
+    ('live-wrapper','live'), ('live-provider','live'), ('released','released'),
+    ('exit-unknown','unknown'), ('no-config','unknown'), ('bad-config','unknown'),
+    ('no-claim','unknown'), ('foreign-claim','unknown'), ('no-journal','unknown'),
+    ('foreign-journal','unknown'), ('foreign-path','unknown'), ('foreign-attempt','unknown'),
+    ('no-wrapper','unknown'), ('no-provider','unknown'), ('late-provider','live'),
+    ('prelaunch-interrupted','released'), ('prelaunch-rate-limited','released'),
+    ('prelaunch-provider-exit','unknown'), ('prelaunch-provider-claim','unknown'),
+    ('prelaunch-unknown-claim','unknown'), ('prelaunch-incomplete-record','unknown'),
+])
+def test_recovery_analyzer_binds_child_ownership_on_explicit_wait(
+        tmp_path, capsys, monkeypatch, evidence, ownership):
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child
+
+    issue_dir = tmp_path/'7'
+    provider = 'missing' if evidence.startswith('prelaunch-') else {
+        'live-provider':'alive', 'no-provider':'missing', 'late-provider':'missing',
+    }.get(evidence, 'dead')
+    child, ledger, processes = recovery_child(issue_dir, monkeypatch,
+        wrapper={'live-wrapper':'alive','no-wrapper':'missing'}.get(evidence, 'dead'),
+        provider=provider, exit_code=None if evidence == 'exit-unknown' else 0)
+    path = state_file(tmp_path, {'7':{'status':'in_progress','issue_dir':str(issue_dir)}})
+    claim = child.state_file
+    config = Path(str(claim)+'.config.json')
+    journal = outcome_path(claim)
+    result = child.agent_run.result_file
+    done = child.agent_run.done_file
+    write_json_atomic(result, {'outcome':'completed'})
+    done.write_text('unvalidated marker')
+    if evidence == 'late-provider':
+        from ai_skills.processes import ProcessSupervisor
+
+        write_json_atomic(claim, {**load_json(claim), 'state':'starting'})
+        inspect = ProcessSupervisor.inspect
+
+        def publish_on_wrapper_exit(supervisor, identity):
+            if identity.run_id == 'child-run-dispatcher':
+                processes['provider'] = 'alive'
+            return inspect(supervisor, identity)
+
+        monkeypatch.setattr(ProcessSupervisor, 'inspect', publish_on_wrapper_exit)
+    elif evidence == 'no-config':
+        config.unlink()
+    elif evidence == 'bad-config':
+        config.write_text('[]')
+    elif evidence == 'no-claim':
+        claim.unlink()
+    elif evidence == 'no-journal':
+        journal.unlink()
+    elif evidence in ('foreign-claim','foreign-journal'):
+        target = claim if evidence == 'foreign-claim' else journal
+        write_json_atomic(target, {**load_json(target), 'attempt_id':'foreign'})
+    elif evidence == 'foreign-path':
+        ledger['result_file'] = str(issue_dir/'report.json')
+    elif evidence == 'foreign-attempt':
+        ledger['attempt_id'] = 'foreign'
+    elif evidence.startswith('prelaunch-'):
+        prepare_prelaunch_evidence(child, evidence, journal)
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
+    files = {file:file.read_bytes() for file in (claim, config, journal, result, done) if file.exists()}
+
+    command(path, 'analyze-sub-coord-failure', '--issue', 7, '--report-file', issue_dir/'report.json',
+            '--wait-elapsed-seconds',60,'--max-wait-seconds',60)
+    decision = json.loads(capsys.readouterr().out)
+    assert decision['worker_ownership'] == ownership
+    assert decision['wait_expired'] is True
+    assert decision['action'] == ('spawn_recovery' if ownership == 'released' else 'wait_worker')
+    assert all(file.read_bytes() == previous for file, previous in files.items())
+
+
+def prepare_prelaunch_evidence(child, evidence, journal):
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import finalize_prelaunch_child
+
+    reason = 'interrupted' if evidence == 'prelaunch-interrupted' else 'rate-limited'
+    finalize_prelaunch_child(child, reason)
+    claim = child.state_file
+    if evidence == 'prelaunch-provider-exit':
+        write_json_atomic(journal, {**load_json(journal), 'provider_return_code':1})
+    elif evidence == 'prelaunch-provider-claim':
+        write_json_atomic(claim, {**load_json(claim), 'provider_identity':{'pid':4000}})
+    elif evidence == 'prelaunch-unknown-claim':
+        write_json_atomic(claim, {**load_json(claim), 'state':'unknown'})
+    elif evidence == 'prelaunch-incomplete-record':
+        write_json_atomic(Path(str(claim)+'.process.json'), {'run_id':child.agent_run.run_id})
+
+
+@pytest.mark.parametrize(('provider', 'wrapper', 'ownership'), [
+    ('alive', 'dead', 'live'),
+    ('missing', 'dead', 'unknown'),
+    ('dead', 'dead', 'released'),
+])
+def test_recovery_analyzer_default_wait_checks_native_child_ownership(
+        tmp_path, capsys, monkeypatch, provider, wrapper, ownership):
+    from ai_skills import state as state_module
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child
+
+    issue_dir = tmp_path / '7'
+    child, ledger, _ = recovery_child(issue_dir, monkeypatch, wrapper=wrapper, provider=provider, exit_code=0)
+    # Age timestamps far past worker_stale_seconds (1200s): ownership must still govern.
+    write_json_atomic(child.state_file, {**load_json(child.state_file), 'updated_at': '1970-01-01T00:00:00Z'})
+    write_json_atomic(issue_dir / 'sub-state.json', {'phase': 'impl', 'in_flight_agents': [ledger]})
+    path = state_file(tmp_path, {'7': {'status': 'in_progress', 'issue_dir': str(issue_dir)}})
+    monkeypatch.setattr(state_module.time, 'time', lambda: 100000)
+    monkeypatch.setattr(state_module, 'path_mtime', lambda _: None)
+
+    command(path, 'analyze-sub-coord-failure', '--issue', 7, '--report-file', issue_dir / 'report.json',
+            '--wait-elapsed-seconds', 3601)
+    decision = json.loads(capsys.readouterr().out)
+    assert decision['check_worker_ownership'] is True
+    assert decision['wait_expired'] is False
+    assert decision['worker_ownership'] == ownership
+    assert decision['action'] == ('spawn_recovery' if ownership == 'released' else 'wait_worker')
+    if ownership != 'released':
+        assert decision['reason'] == 'in-flight-worker-running'
+
+
+@pytest.mark.parametrize('malformed', ['corrupt', [None]])
+def test_recovery_analyzer_default_wait_fails_closed_on_malformed_in_flight(tmp_path, capsys, malformed):
+    from ai_skills.storage import write_json_atomic
+
+    issue_dir = tmp_path / '7'
+    issue_dir.mkdir()
+    write_json_atomic(issue_dir / 'sub-state.json', {'phase': 'impl', 'in_flight_agents': malformed})
+    path = state_file(tmp_path, {'7': {'status': 'in_progress', 'issue_dir': str(issue_dir)}})
+
+    command(path, 'analyze-sub-coord-failure', '--issue', 7, '--report-file', issue_dir / 'report.json')
+    decision = json.loads(capsys.readouterr().out)
+    assert decision['check_worker_ownership'] is True
+    assert decision['wait_expired'] is False
+    assert decision['worker_ownership'] == 'unknown'
+    assert decision['action'] == 'wait_worker'

@@ -47,7 +47,7 @@ def compact_worker_decision(
 class RecoveryPolicy:
     max_attempts: int = 2
     max_compaction_handoffs: int = 6
-    max_wait_seconds: int = 3600
+    max_wait_seconds: int = 0
 
 @dataclass(frozen=True)
 class RecoveryEvidence:
@@ -72,37 +72,79 @@ class RecoveryDecision:
     def reason(self): return self.details["reason"]
 
 
-def decide_recovery(evidence: RecoveryEvidence, policy: RecoveryPolicy) -> RecoveryDecision:
-    def decision(action, reason, *, phase=None, worker=None, worker_state=None, liveness=None, attempt=None, maximum=None):
-        return RecoveryDecision(compact_worker_decision(action=action, reason=reason,
-            issue=evidence.issue, issue_dir=evidence.issue_dir, sub_state_file=evidence.sub_state_file,
-            phase=phase, worker=worker, worker_state=worker_state, liveness=liveness,
-            attempt=attempt if attempt is not None else evidence.recovery_attempts+1,
-            max_attempts=maximum if maximum is not None else max(policy.max_attempts, 0)))
-    if isinstance(evidence.report.get("outcome"), str) and evidence.report["outcome"] in TERMINAL_OUTCOMES:
-        return decision("finalize", "terminal-report-present")
-    compaction=evidence.sub_state.get("compaction_requested") is True
-    attempt=(evidence.compaction_handoffs if compaction else evidence.recovery_attempts)+1
-    maximum=max(policy.max_compaction_handoffs if compaction else policy.max_attempts, 0)
-    common={"attempt":attempt,"maximum":maximum}
-    if attempt > maximum:
-        return decision("block", "sub-coordinator-compaction-handoffs-exhausted" if compaction else "sub-coordinator-recovery-attempts-exhausted", **common)
-    if not evidence.sub_state:
-        return decision("block", "missing-sub-state", **common)
-    phase=evidence.sub_state.get("phase") if isinstance(evidence.sub_state.get("phase"),str) else None
-    common["phase"]=phase
-    for worker, snapshot, done, result, liveness in evidence.workers:
-        if snapshot.get("state") not in LIVE_WORKER_STATES or (done and result): continue
-        if not liveness.get("alive", True):
-            reason="in-flight-worker-orphaned"; action="spawn_recovery"
-        elif policy.max_wait_seconds and evidence.wait_elapsed_seconds >= policy.max_wait_seconds:
-            reason="in-flight-worker-wait-timeout"; action="spawn_recovery"
-        else:
-            reason="in-flight-worker-running"; action="wait_worker"
-        return decision(action, reason, worker=worker,worker_state=snapshot,liveness=liveness,**common)
-    for worker, snapshot, done, result, liveness in evidence.workers:
-        state=snapshot.get("state")
+def _legacy_worker_action(workers):
+    for evidence in workers:
+        _, snapshot, done, result, liveness = evidence
+        if snapshot.get("state") in LIVE_WORKER_STATES and not (done and result):
+            if not liveness.get("alive", True):
+                return "spawn_recovery", "in-flight-worker-orphaned", evidence
+            return "wait_worker", "in-flight-worker-running", evidence
+    for evidence in workers:
+        _, snapshot, done, result, _ = evidence
+        state = snapshot.get("state")
+        if state == "artifact-recovery-required":
+            return "spawn_recovery", state, evidence
         if state in FINISHED_WORKER_STATES or done or result:
-            reason="artifact-recovery-required" if state=="artifact-recovery-required" else ("in-flight-worker-finished" if state=="completed" or result else "in-flight-worker-failed")
-            return decision("spawn_recovery",reason,worker=worker,worker_state=snapshot,**common)
-    return decision("spawn_recovery", "sub-coordinator-context-exhausted" if compaction else "sub-state-present-no-in-flight-worker", **common)
+            reason = "in-flight-worker-finished" if state == "completed" or result else "in-flight-worker-failed"
+            return "spawn_recovery", reason, evidence
+    return None
+
+
+def _released_worker_action(workers):
+    for state, reason in (
+        ("completed", "in-flight-worker-finished"),
+        ("artifact-recovery-required", "artifact-recovery-required"),
+    ):
+        for evidence in workers:
+            if evidence[4].get("handoff_state") == state:
+                return "spawn_recovery", reason, evidence
+    selected = workers[0]
+    reason = ("in-flight-worker-released" if selected[4].get("handoff_state") == "released"
+              else "in-flight-worker-failed")
+    return "spawn_recovery", reason, selected
+
+
+def decide_recovery(evidence: RecoveryEvidence, policy: RecoveryPolicy) -> RecoveryDecision:
+    compaction = evidence.sub_state.get("compaction_requested") is True
+    attempt = (evidence.compaction_handoffs if compaction else evidence.recovery_attempts) + 1
+    maximum = max(policy.max_compaction_handoffs if compaction else policy.max_attempts, 0)
+    phase = evidence.sub_state.get("phase")
+    check_ownership = bool(evidence.workers) and (
+        policy.max_wait_seconds > 0 or any("handoff_state" in item[4] for item in evidence.workers))
+    expired = policy.max_wait_seconds > 0 and check_ownership and evidence.wait_elapsed_seconds >= policy.max_wait_seconds
+
+    def decision(action, reason, selected=None):
+        if selected is None and check_ownership:
+            selected = evidence.workers[0]
+        worker, snapshot, _, _, liveness = selected or ({}, {}, False, False, {})
+        details = compact_worker_decision(action=action, reason=reason, issue=evidence.issue,
+            issue_dir=evidence.issue_dir, sub_state_file=evidence.sub_state_file,
+            phase=phase if isinstance(phase, str) else None, worker=worker,
+            worker_state=snapshot, liveness=liveness, attempt=attempt, max_attempts=maximum)
+        details.update(wait_expired=expired, wait_elapsed_seconds=evidence.wait_elapsed_seconds,
+            max_wait_seconds=policy.max_wait_seconds, check_worker_ownership=check_ownership,
+            worker_ownership=liveness.get("ownership"), worker_attempt_id=liveness.get("attempt_id"),
+            recovery_budget=("sub_coord_compaction_handoffs" if compaction else "sub_coord_recovery_attempts"))
+        return RecoveryDecision(details)
+
+    if check_ownership:
+        for selected in evidence.workers:
+            if selected[4].get("ownership") != "released":
+                reason = "in-flight-worker-wait-timeout" if expired else "in-flight-worker-running"
+                return decision("wait_worker", reason, selected)
+    outcome = evidence.report.get("outcome")
+    if isinstance(outcome, str) and outcome in TERMINAL_OUTCOMES:
+        return decision("finalize", "terminal-report-present")
+    if attempt > maximum:
+        reason = ("sub-coordinator-compaction-handoffs-exhausted" if compaction
+                  else "sub-coordinator-recovery-attempts-exhausted")
+        return decision("block", reason)
+    if not evidence.sub_state:
+        return decision("block", "missing-sub-state")
+    if check_ownership:
+        return decision(*_released_worker_action(evidence.workers))
+    action = _legacy_worker_action(evidence.workers)
+    if action:
+        return decision(*action)
+    reason = "sub-coordinator-context-exhausted" if compaction else "sub-state-present-no-in-flight-worker"
+    return decision("spawn_recovery", reason)

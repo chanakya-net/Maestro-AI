@@ -59,6 +59,22 @@ def test_model_effort_guidance_keeps_explicit_planning_and_provenance():
     assert 'Neither task wording nor inherited planning variables change it.' in readme
 
 
+def test_managed_availability_retries_precede_artifact_recovery_for_every_role():
+    prompt = (ROOT/'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    availability = prompt.index('### Managed route availability failure contract')
+    artifact = prompt.index('### Worker Artifact Recovery Contract')
+    policy = prompt[availability:artifact]
+    assert availability < artifact
+    for role in ('impl', 'modify', 'review'):
+        assert role in policy
+    assert 'failure_class=infrastructure' in policy
+    assert '--failed-attempt-state' in policy and '--max-availability-retries' in policy
+    assert 'forge' in policy and 'MAX_AGENT_FALLBACKS' in policy
+    assert 'same role and same cycle' in policy
+    assert 'all-routes-unavailable' in policy
+    assert 'FORCED_AGENT' in policy and 'FORCED_MODEL' in policy
+
+
 def test_all_documented_json_objects_parse_and_authority_twins_match():
     import json
     authority=[]
@@ -103,6 +119,39 @@ def test_documented_pool_json_matches_native_configuration():
     sample=next(value for value in examples if 'sub_coord_agent' in value and 'state_file' in value)
     config=PoolConfig.from_record(sample)
     assert config.sub_coord_agent=='codex' and config.detach is True
+    assert config.timeout_seconds == config.hard_limit_seconds == 0
+
+
+def test_coordinator_deadline_policy_and_child_worker_examples_stay_aligned():
+    import json
+    skill=(ROOT/'skills/run-with-it/SKILL.md').read_text()
+    sub=(ROOT/'assets/sub-coordinator-prompt.md').read_text()
+    coordinator=(ROOT/'assets/coordinator-rules.md').read_text()
+    main=(ROOT/'assets/main-orchestrator-rules.md').read_text()
+    for text in (sub, coordinator, main):
+        assert 'timeout_seconds=0' in text and 'hard_limit_seconds=0' in text
+        assert 'persisted explicit' in text
+
+    def worker_example(text):
+        examples=[json.loads(match.group(1)) for match in re.finditer(r'```json\n(.*?)\n```',text,re.S)]
+        return next(value for value in examples if 'context_file' in value and 'agent' in value and 'hard_limit_seconds' in value)
+
+    skill_worker=worker_example(skill)
+    sub_worker=worker_example(sub)
+    for worker in (skill_worker, sub_worker):
+        assert (worker['quiet_seconds'], worker['stall_seconds'], worker['hard_limit_seconds']) == (900,1200,7200)
+    assert {key:skill_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')} == {
+        key:sub_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')}
+
+
+def test_orchestrator_rules_reject_stale_alert_and_wait_timeout_interpretation():
+    stale=re.compile(r"alert the user after[^.\n]*(?:SUB_COORD_TIMEOUT_SECONDS|timeout|deadline)|wait for a 'continue' or 'skip'",re.I)
+    offenders=[f'{path.relative_to(ROOT)}:{number}: {line}' for path in ACTIVE
+        for number,line in enumerate(path.read_text().splitlines(),1) if stale.search(line)]
+    assert offenders==[],'\n'.join(offenders)
+    rule=next(line for line in (ROOT/'skills/run-with-it/SKILL.md').read_text().splitlines()
+        if 'Never kill, cancel, or restart a Sub-Coordinator mid-run' in line)
+    assert '`SUB_COORD_TIMEOUT_SECONDS=0`' in rule and 'dispatcher itself stops' in rule
 
 
 def test_native_command_families_accept_help_without_launching():
@@ -298,3 +347,55 @@ def test_modifier_capture_falls_back_to_file_contract_on_ambiguous_ids():
     revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
     for phrase in ('IDs repeat', 'review-required check cannot be named exactly', 'use the existing file contract', 'dispatcher selects the adapter'):
         assert phrase in revise
+
+
+def test_readme_installed_catalog_and_pool_examples(tmp_path, monkeypatch, capsys):
+    import json
+    import os
+    from ai_skills.cli import main
+    from ai_skills.pool import PoolConfig
+    from ai_skills.registry import load_registry
+    from pool_support import pool_fixture
+
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    commands = [line.split()[3:] for line in readme.splitlines() if line.startswith('python -m ai_skills ')]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(os, 'environ', {'ASSETS_DEST': str(tmp_path / 'absent-assets'),
+                                        'PATH': '', 'RUN_WITH_IT_GITHUB_UPDATES': '0'})
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError('Could not determine home directory.'))))
+
+    def invoke(command):
+        assert main(command) == 0
+        return capsys.readouterr().out
+
+    models = invoke(next(cmd for cmd in commands if cmd[:2] == ['agent', 'models'])).splitlines()
+    inventory = readme.split('| Family | Explicit model IDs |', 1)[1].split('\n\n', 1)[0]
+    registry = load_registry(ROOT / 'assets/agent-registry.json')
+    assert len(models) == 22
+    assert set(re.findall(r'`([\w.-]+)`', inventory)) == set(models)
+    table = readme.split('| Effective worker band | Codex | Claude | AGY |', 1)[1].split('\n\n', 1)[0]
+    targets = {}
+    for row in table.splitlines()[2:]:
+        bands, *shares = row.strip('|').split('|')
+        for band in re.findall(r'`([\w-]+)`', bands):
+            targets[band] = dict(zip(('codex', 'claude', 'agy'), (int(share.strip().rstrip('%')) for share in shares)))
+    assert targets == registry['model_routing']['usage_distribution']['non_complexity_band_target_percent']
+
+    decision = json.loads(invoke(next(cmd for cmd in commands if cmd[0] == 'route')))
+    assert (decision['agent'], decision['model'], decision['routing_level']) == ('agy', 'gemini-4-neon-xhigh', 'complex')
+    assert decision['target_percent'] == 38 and decision['ledger']['total_decisions'] == 0
+
+    setup = pool_fixture(tmp_path, {1: {}}, parallel=1)
+    pool_section = readme.split('a minimal `.run-with-it/pool.json` is:', 1)[1]
+    record = json.loads(re.search(r'```json\n(.*?)\n```', pool_section, re.S)[1])
+    record.update(state_file=str(setup.state_file), run_root=str(tmp_path))
+    config = PoolConfig.from_record(record)
+    assert (config.sub_coord_agent, config.sub_coord_model) == ('codex', 'gpt-6.2-sol')
+    assert config.detach and not config.forced_agent and not config.forced_model
+    assert (config.timeout_seconds, config.hard_limit_seconds, config.max_worker_wait_seconds) == (0, 0, 0)
+    (setup.state_file.parent / 'pool.json').write_text(json.dumps(dict(record, detach=False)), encoding='utf-8')
+    validate, launch = [cmd for cmd in commands if cmd[:2] == ['run', 'pool']]
+    assert validate[-1] == '--validate-only'
+    invoke(validate)
+    (worker,) = (json.loads(line) for line in invoke([*launch, '--dry-run']).splitlines() if line.startswith('{'))
+    assert (worker['agent_run']['agent'], worker['agent_run']['model']) == (config.sub_coord_agent, config.sub_coord_model)

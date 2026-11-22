@@ -28,7 +28,7 @@ def test_recovery_budget_and_terminal_branches(report,sub,attempts,handoffs,poli
 @pytest.mark.parametrize("worker_state,done,result,alive,wait,action,reason",[
     ("running",False,False,True,0,"wait_worker","in-flight-worker-running"),
     ("quiet",False,False,False,0,"spawn_recovery","in-flight-worker-orphaned"),
-    ("running",False,False,True,3600,"spawn_recovery","in-flight-worker-wait-timeout"),
+    ("running",False,False,True,3600,"wait_worker","in-flight-worker-wait-timeout"),
     ("completed",False,False,True,0,"spawn_recovery","in-flight-worker-finished"),
     ("failed",False,False,False,0,"spawn_recovery","in-flight-worker-failed"),
     ("artifact-recovery-required",False,False,False,0,"spawn_recovery","artifact-recovery-required"),
@@ -38,16 +38,55 @@ def test_recovery_budget_and_terminal_branches(report,sub,attempts,handoffs,poli
 def test_worker_recovery_branches(worker_state,done,result,alive,wait,action,reason):
     worker={"role":"modify","cycle":2,"state_file":"worker.json","result_file":"result.json"}
     evidence=RecoveryEvidence(issue="7",sub_state={"phase":"modify"},wait_elapsed_seconds=wait,
-        workers=((worker,{"state":worker_state},done,result,{"alive":alive,"reason":"fresh" if alive else "state-file-stale","age_seconds":700}),))
-    decision=decide_recovery(evidence,RecoveryPolicy())
+        workers=((worker,{"state":worker_state},done,result,{"alive":alive,"reason":"fresh" if alive else "state-file-stale","age_seconds":700,
+         "ownership":"live" if wait else "released"}),))
+    policy=RecoveryPolicy(max_wait_seconds=3600 if wait else 0)
+    decision=decide_recovery(evidence,policy)
     assert (decision.action,decision.reason)==(action,reason)
     assert decision.details["worker_role"] == "modify"
     assert decision.details["worker_cycle"] == 2
 
+@pytest.mark.parametrize("ownership", ["live", "unknown", "released"])
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("elapsed", [59, 60])
+def test_explicit_wait_expiry_gates_all_children(ownership, reverse, elapsed):
+    finished = ({"role": "plan"}, {"state": "completed"}, True, True, {"ownership": "released"})
+    selected = ({"role": "impl"}, {"state": "failed"}, True, True, {"ownership": ownership})
+    workers = (selected, finished) if reverse else (finished, selected)
+    evidence = RecoveryEvidence(issue="7", sub_state={"phase": "impl"}, workers=workers,
+                                recovery_attempts=2, wait_elapsed_seconds=elapsed)
+    policy = RecoveryPolicy(max_attempts=2, max_wait_seconds=60)
+    decision = decide_recovery(evidence, policy)
+    assert decision.details["wait_expired"] is (elapsed == 60)
+    if ownership == "released":
+        assert decision.action == "block"
+    else:
+        assert (decision.action, decision.details["worker_role"]) == ("wait_worker", "impl")
+        assert decision.details["worker_ownership"] == ownership
+        assert decision.reason == ("in-flight-worker-wait-timeout" if elapsed == 60 else "in-flight-worker-running")
+        hinted = decide_recovery(replace(evidence, report={"outcome": "completed"}), policy)
+        assert hinted.action == "wait_worker"
+
+
 def test_wait_cap_zero_means_no_cap():
     evidence=RecoveryEvidence(issue="7",sub_state={"phase":"impl"},wait_elapsed_seconds=99999,
         workers=(({}, {"state":"running"},False,False,{"alive":True}),))
-    assert decide_recovery(evidence,RecoveryPolicy(max_wait_seconds=0)).action == "wait_worker"
+    decision = decide_recovery(evidence,RecoveryPolicy(max_wait_seconds=0))
+    assert decision.action == "wait_worker"
+    assert decision.details["wait_expired"] is False
+
+def test_default_wait_policy_keeps_live_child_after_one_hour():
+    evidence=RecoveryEvidence(issue="7",sub_state={"phase":"impl"},wait_elapsed_seconds=3601,
+        workers=(({}, {"state":"running"},False,False,{"alive":True}),))
+    assert RecoveryPolicy().max_wait_seconds == 0
+    decision=decide_recovery(evidence,RecoveryPolicy())
+    assert (decision.action,decision.reason)==("wait_worker","in-flight-worker-running")
+
+def test_default_wait_policy_still_recovers_dead_child_after_one_hour():
+    evidence=RecoveryEvidence(issue="7",sub_state={"phase":"impl"},wait_elapsed_seconds=3601,
+        workers=(({}, {"state":"running"},False,False,{"alive":False,"reason":"pids-dead"}),))
+    decision=decide_recovery(evidence,RecoveryPolicy())
+    assert (decision.action,decision.reason)==("spawn_recovery","in-flight-worker-orphaned")
 
 def test_worker_liveness_uses_freshest_artifact_and_unknown_is_conservative(tmp_path,monkeypatch):
     import os
@@ -60,6 +99,14 @@ def test_worker_liveness_uses_freshest_artifact_and_unknown_is_conservative(tmp_
     assert worker_liveness({}, {},now=800,stale_seconds=600,dead_pid_grace_seconds=60)["alive"]
     monkeypatch.setattr(state,"process_alive",lambda pid:False if pid else None)
     assert worker_liveness({}, {"runner_pid":999999},now=800,stale_seconds=600,dead_pid_grace_seconds=60)["reason"] == "pids-dead"
+
+@pytest.mark.parametrize(('age','alive'),[(1199,True),(1200,False)])
+def test_default_worker_stale_threshold_is_twenty_minutes(age,alive):
+    from ai_skills.state import DEFAULT_WORKER_STALE_SECONDS
+    assert DEFAULT_WORKER_STALE_SECONDS==1200
+    result=worker_liveness({}, {'updated_at':'1970-01-01T00:00:00Z'},now=age,
+        stale_seconds=DEFAULT_WORKER_STALE_SECONDS,dead_pid_grace_seconds=60)
+    assert result['alive'] is alive
 
 @pytest.mark.parametrize("pid",[None,True,-1,0,1,"10"])
 def test_invalid_pid_is_unknown(pid):

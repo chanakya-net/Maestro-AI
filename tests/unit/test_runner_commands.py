@@ -71,7 +71,7 @@ def test_codex_default_invocation_uses_sol_6_1(config):
 
 @pytest.mark.parametrize('model', [
     *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
-    *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen', 'carbon') for effort in ('low', 'medium', 'high', 'xhigh')),
     *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     'gpt-oss-120b-medium',
@@ -83,24 +83,24 @@ def test_agy_invocation_forwards_selected_model_unchanged(config, model):
     assert spec.argv[-4:] == ('--input-format', 'stream-json', '--output-format', 'stream-json')
 
 
-def test_agy_default_invocation_pins_flash_high_once(config):
+def test_agy_default_invocation_pins_neon_high_once(config):
     spec = build_invocation(config.replace(agent='agy', model=''), load_registry())
     assert spec.argv.count('--model') == 1
     model_flag = spec.argv.index('--model')
-    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-high')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-4-neon-high')
 
 
-def test_agy_explicit_model_overrides_flash_high_default_once(config):
-    spec = build_invocation(config.replace(agent='agy', model='gemini-3.8-flash-low'), load_registry())
+def test_agy_explicit_model_overrides_neon_high_default_once(config):
+    spec = build_invocation(config.replace(agent='agy', model='gemini-4-neon-low'), load_registry())
     assert spec.argv.count('--model') == 1
     model_flag = spec.argv.index('--model')
-    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-3.8-flash-low')
+    assert spec.argv[model_flag:model_flag + 2] == ('--model', 'gemini-4-neon-low')
 
 
 @pytest.mark.parametrize('extra_args', [('--model', 'other-model'), ('--model=other-model',), ('-m', 'other-model')])
 def test_agy_rejects_extra_model_selection_options(config, extra_args):
     with pytest.raises(ValueError, match='AGY.*--model'):
-        build_invocation(config.replace(agent='agy', model='gemini-3.8-flash-high', extra_args=extra_args), load_registry())
+        build_invocation(config.replace(agent='agy', model='gemini-4-neon-high', extra_args=extra_args), load_registry())
 
 
 def test_agy_preserves_unrelated_extra_args(config):
@@ -358,3 +358,24 @@ def test_codex_mcp_server_named_like_effort_preserves_arguments(config, override
     assert argv == ('codex', 'exec', '-C', str(config.repo_root),
                     '--dangerously-bypass-approvals-and-sandbox', '--model', 'gpt-6.2-sol',
                     '-c', override, '-c', 'model_reasoning_effort=high', '-')
+
+
+GEMINI_4_MODELS = (
+    *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
+    *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen', 'carbon') for effort in ('low', 'medium', 'high', 'xhigh')),
+)
+
+
+def test_agent_models_lists_all_fourteen_gemini_4_ids_for_agy(capsys):
+    from ai_skills.runner import main
+    assert main(['models', 'agy']) == 0
+    listed = capsys.readouterr().out.split()
+    assert len(GEMINI_4_MODELS) == 15
+    assert sorted(m for m in listed if m.startswith('gemini-4-')) == sorted(GEMINI_4_MODELS)
+
+
+@pytest.mark.parametrize('model', GEMINI_4_MODELS)
+def test_gemini_4_invocation_has_exactly_one_unchanged_model(config, model):
+    spec = build_invocation(config.replace(agent='agy', model=model), load_registry())
+    assert spec.argv.count('--model') == 1
+    assert spec.argv[spec.argv.index('--model') + 1] == model

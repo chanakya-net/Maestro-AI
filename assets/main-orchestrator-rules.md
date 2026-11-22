@@ -6,10 +6,10 @@ Re-read this file before EVERY loop iteration and after any context compression 
 
 <!-- NATIVE_AUTHORITY_START: keep this compaction-safe authority block synchronized in all four coordinator documents. -->
 - **Authority after compaction:** re-read maintained rules, main/issue state, exact worker identities and role artifacts from disk; never reconstruct a paid attempt from memory or logs.
-- **Independent selectors:** `SUB_COORD_AGENT` / `SUB_COORD_MODEL` select only the Sub-Coordinator. `FORCED_AGENT` / `FORCED_MODEL` select routed workers only when explicitly requested; ambient aliases never cross that boundary.
+- **Independent selectors:** Set `SUB_COORD_AGENT=agy` and an exact `SUB_COORD_MODEL` from the run's pinned registry to select AGY for every Sub-Coordinator and merge-recovery launch. The pool validates this pair before dispatch. `FORCED_AGENT` / `FORCED_MODEL` independently select routed workers only when explicitly requested; coordinator settings never replace worker overrides, and ambient aliases never cross that boundary. The default remains `codex` / `gpt-6.2-sol`.
 - **Verification and artifacts:** consume the validated outcome bound to the exact attempt, never raw process success. Managed DONE is dispatcher-owned after shutdown and report validation. Success requires role-valid artifacts and passing verification; failed/blocked/interrupted attempts publish failure even without a commit via the shared `artifact-protocol.md`. Negative coordinator issue outcomes are valid handoffs and never satisfy dependencies.
 - **Check-in ownership:** implementation/modification workers commit only in their assigned issue worktree; Sub-Coordinators coordinate and own normal merge attempts; Main owns intake/state/GitHub; merge recovery owns conflict resolution.
-- **Availability and review:** keep cumulative unavailable-route exclusions and separate infrastructure/capability budgets. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
+- **Availability and review:** keep cumulative structured exclusions at their declared scope (`agent` for an unavailable harness, `agent-model` for an unavailable model pair) and separate infrastructure/capability counters; availability reroutes are still bounded by `MAX_AGENT_FALLBACKS`. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
 - **Identity and recovery:** a live or unknown owned attempt is never relaunched. Persist in-flight identities before compaction handoff; stop pool admission and verify every owned tree is dead before destructive cleanup.
 <!-- NATIVE_AUTHORITY_END -->
 
@@ -35,6 +35,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 
 ## Spawning Rules
 
+- New Sub-Coordinator and Merge Recovery Coordinator attempts have no execution deadline by default (`timeout_seconds=0`, `hard_limit_seconds=0`). Positive configured values remain enforceable; persisted explicit values remain authoritative when an attempt is adopted. Ordinary child workers keep the two-hour hard limit.
 - Always spawn sub-coordinators via the native dispatcher (`ai-skills worker dispatch --role sub-coord`), which wraps `ai-skills agent run` with `sub-coordinator-prompt.md`.
 - Always run the rolling pool via the native pool runner (`ai-skills run pool`). Do not synthesize a new rolling-pool shell script in the Main Orchestrator session.
 - Use the fixed model/agent specified by `SUB_COORD_MODEL` and `SUB_COORD_AGENT`. The pool dispatcher's `--agent` and `--model` values configure only the Sub-Coordinator process; do not run the routing algorithm to select sub-coordinators and never copy those values into child-worker overrides.

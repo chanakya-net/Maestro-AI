@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ai_skills import runner
+
 
 BAND_ORDER = ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
 REVIEW_BUMP = {
@@ -233,6 +235,69 @@ def routing_availability(
     return availability
 
 
+def _failed_attempt_route(state_file: Path, *, aliases: dict[str, Any] | None = None) -> tuple[str, str, str] | None:
+    """Return (agent, model, reason) for a dispatcher-owned infrastructure failure, else None."""
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        config = json.loads(Path(str(state_file) + ".config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict) or not isinstance(config, dict):
+        return None
+    if state.get("state") != "failed" or state.get("failure_class") != "infrastructure":
+        return None
+    run = config.get("agent_run")
+    reason = state.get("reason")
+    if not isinstance(run, dict) or not isinstance(reason, str) or not reason:
+        return None
+    agent = state.get("agent") or run.get("agent")
+    model = state.get("model") or run.get("model")
+    if not isinstance(agent, str) or not agent or not isinstance(model, str):
+        return None
+    if isinstance(aliases, dict):
+        agent = str(aliases.get(agent, agent))
+    return agent, model, reason
+
+
+def failed_attempt_routes(state_files: Any, *, registry: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
+    """Dispatcher-owned infrastructure failures as (agent, model, reason); others are ignored."""
+    aliases = registry.get("aliases", {}) if isinstance(registry, dict) else None
+    seen: set[Path] = set()
+    routes: list[tuple[str, str, str]] = []
+    for state_file in state_files:
+        path = Path(state_file)
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path.absolute()
+        if key in seen:
+            continue
+        seen.add(key)
+        route = _failed_attempt_route(path, aliases=aliases)
+        if route is not None:
+            routes.append(route)
+    return routes
+
+
+def availability_from_failed_attempts(state_files: Any, *, registry: dict[str, Any] | None = None) -> Availability:
+    """Fold dispatcher-owned failed-attempt records into cumulative exclusions.
+
+    Only a worker state with ``state=failed`` and ``failure_class=infrastructure`` and its
+    dispatcher-written records count (resolved agent/model from the state, else its config); provider-supplied status lines are never consulted.
+    Auth/quota/missing/unsupported-CLI reasons exclude the harness, any other reason only the
+    agent/model pair. Unreadable or non-matching records are ignored.
+    """
+    from ai_skills.runner import _unavailability_scope
+
+    availability = empty_availability()
+    for agent, model, reason in failed_attempt_routes(state_files, registry=registry):
+        if _unavailability_scope(reason) == "agent":
+            availability["agents"].add(agent)
+        elif model:
+            availability["pairs"].add((agent, model))
+    return availability
+
+
 def availability_summary(availability: Availability) -> dict[str, list[Any]]:
     return {
         "agents": sorted(str(agent) for agent in availability.get("agents", set())),
@@ -282,10 +347,12 @@ def role_agent_counts(ledger: dict[str, Any], role: str) -> dict[str, int]:
 
 
 def score_to_level(registry: dict[str, Any], score: int) -> str:
-    for row in registry.get("model_routing", {}).get("score_to_weight", []):
+    rows = registry.get("model_routing", {}).get("score_to_weight", [])
+    for row in rows:
         if int(row["score_min"]) <= score <= int(row["score_max"]):
             return str(row["label"])
-    if score > 40:
+    max_score = max((int(row["score_max"]) for row in rows), default=45)
+    if score > max_score:
         return "holy-fuck"
     fail(f"complexity score does not map to a routing band: {score}")
 
@@ -482,6 +549,8 @@ def candidate_pairs(
     forced_model: str | None,
     exclude_models: set[str],
 ) -> list[dict[str, Any]]:
+    if role == "plan" and runner.resolve_agy_plan_profile(registry) is None:
+        availability = merge_availability(availability, {"agents": {"agy"}})
     catalog = registry.get("model_catalog", {})
     model_ids = candidate_model_ids(registry, role, level, forced_model, exclude_models)
     pairs: list[dict[str, Any]] = []
@@ -530,9 +599,9 @@ def route_effort(registry: dict[str, Any], agent: str, model_id: str, role: str,
     configured = model_effort_for_level(registry, model_id, level)
     if canonical_harness(agent, registry) not in DIRECT_EFFORT_HARNESSES:
         return configured
-    resolve_effort(agent, configured, role, registry)
+    resolve_effort(agent, configured, role, registry, model=model_id)
     requested = "" if role in PLANNING_ROLES else configured
-    return resolve_effort(agent, requested, role, registry).effective
+    return resolve_effort(agent, requested, role, registry, model=model_id).effective
 
 
 def select_pair(
@@ -751,6 +820,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--prefer-model", default="")
     parser.add_argument("--model-denylist", default=os.environ.get("RUN_WITH_IT_MODEL_DENYLIST", ""))
     parser.add_argument("--availability-file", default=os.environ.get("RUN_WITH_IT_MODEL_AVAILABILITY_FILE", ""))
+    parser.add_argument("--failed-attempt-state", action="append", default=[],
+                        help="dispatcher state file of a failed attempt; infrastructure failures become exclusions")
+    parser.add_argument("--max-availability-retries", type=int, default=None,
+                        help="existing MAX_AGENT_FALLBACKS budget: fail once more availability failures than this are recorded")
     parser.add_argument("--record", action="store_true")
     return parser.parse_args(argv)
 
@@ -816,6 +889,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
+    availability = merge_availability(availability, availability_from_failed_attempts(args.failed_attempt_state, registry=registry))
+    retries = len(failed_attempt_routes(args.failed_attempt_state, registry=registry))
+    if args.max_availability_retries is not None and retries > args.max_availability_retries:
+        fail(f"all-routes-unavailable: availability retry budget reached "
+             f"({retries} failures > MAX_AGENT_FALLBACKS={args.max_availability_retries})")
 
     if args.record:
         with DirectoryLock(ledger_file):

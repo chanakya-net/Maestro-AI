@@ -23,7 +23,19 @@ def canonical_harness(harness, registry=None):
     return (registry or {}).get('aliases', {}).get(harness, harness)
 
 
-def resolve_effort(harness, effort, role, registry=None) -> EffortResolution:
+def _model_allows_xhigh(registry, model) -> bool:
+    if not model or not isinstance(registry, dict):
+        return False
+    band_map = registry.get('model_routing', {}).get('effort_by_model_and_band', {}).get(model, {})
+    if isinstance(band_map, dict) and band_map.get('holy-fuck') == 'xhigh':
+        return True
+    entry = registry.get('model_catalog', {}).get(model, {})
+    if isinstance(entry, dict) and (entry.get('effort_by_band') or {}).get('holy-fuck') == 'xhigh':
+        return True
+    return False
+
+
+def resolve_effort(harness, effort, role, registry=None, *, model=None) -> EffortResolution:
     """Return effective effort; `requested` is set only when an explicit value changed."""
     effort = (effort or '').strip().lower()
     if effort and effort not in RECOGNIZED:
@@ -33,7 +45,10 @@ def resolve_effort(harness, effort, role, registry=None) -> EffortResolution:
         return EffortResolution(effort)
     planning = role in PLANNING_ROLES
     if name == 'codex':
-        effective = 'xhigh' if planning else 'high'
+        if planning or (effort == 'xhigh' and _model_allows_xhigh(registry, model)):
+            effective = 'xhigh'
+        else:
+            effective = 'high'
     elif not effort:
         effective = 'xhigh' if planning else 'high'
     else:

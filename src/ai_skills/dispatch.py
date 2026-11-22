@@ -30,13 +30,17 @@ from ai_skills import artifacts, git, verification
 from ai_skills.outcomes import role_artifact_paths
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
-from ai_skills.provider_capture import CODEX, ProviderError, extract_response
+from ai_skills.provider_capture import AGY, CODEX, ProviderError, agy_narrative_response, extract_response
 from ai_skills.runner import (
-    AgentRunConfig, AgentRunResult, build_invocation, classify_unavailable, effective_config,
-    capture_candidate, capture_source, load_registry, run_agent, supports_final_response_capture,
+    AgentRunConfig, AgentRunResult, _agent, _classify_agy, agy_plan_invocation, build_invocation,
+    classify_unavailable, effective_config, capture_candidate, capture_source, load_registry,
+    managed_agy_plan, require_agy_plan_profile, run_agent, supports_final_response_capture,
 )
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
 from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, outcome_reason
+
+DEFAULT_QUIET_SECONDS = 900
+DEFAULT_STALL_SECONDS = 1200
 
 
 @dataclass(frozen=True)
@@ -45,10 +49,10 @@ class WorkerConfig:
     state_file: Path
     detach: bool = False
     poll_seconds: float = .1
-    quiet_seconds: float = 120
-    stall_seconds: float = 600
+    quiet_seconds: float = DEFAULT_QUIET_SECONDS
+    stall_seconds: float = DEFAULT_STALL_SECONDS
     timeout_seconds: float = 0
-    hard_limit_seconds: float = 7200
+    hard_limit_seconds: float | None = None
     bootstrap_seconds: float = 10
     pre_spawn_head: str = ''
     execution_mode: str = 'implement'
@@ -59,6 +63,9 @@ class WorkerConfig:
     result_capture: dict | None = None
 
     def __post_init__(self):
+        if self.hard_limit_seconds is None:
+            default_limit = 0 if self.agent_run.role in ('sub-coord', 'merge-recovery') else 7200
+            object.__setattr__(self, 'hard_limit_seconds', default_limit)
         verification.validate_configuration(self)
         if type(self.detach) is not bool:
             raise ValueError('detach must be a boolean')
@@ -268,6 +275,16 @@ def _artifact_reason(config):
     run = config.agent_run
     if not run.result_file:
         return 'missing-result-artifact'
+    if _protected_plan_capture(run):
+        try:
+            journal = _read_bound_outcome(config)
+            if not journal or journal['status'] == 'pending':
+                return 'capture-attempt-not-finalized'
+            if journal['status'] != 'success':
+                return journal['reason']
+            return _plan_handoff_change(run, journal)
+        except (OSError, ValueError, TypeError):
+            return 'capture-plan-handoff-unavailable'
     if config.execution_mode == 'verify_existing':
         try:
             journal = _read_bound_outcome(config)
@@ -412,6 +429,11 @@ def _work(config):
             return _unknown_attempt(config, 'shutdown-identity-unknown', process['identity'])
         code = supervisor.return_code(identity)
         if code is None:
+            deadline = time.monotonic() + 1.5
+            while code is None and time.monotonic() < deadline:
+                time.sleep(.02)
+                code = supervisor.return_code(identity)
+        if code is None:
             return _unknown_attempt(config, 'provider-exit-status-unknown', process['identity'])
         prelaunch = False
     else:
@@ -424,11 +446,14 @@ def _work(config):
     reason = (result.unavailable_reason or 'dispatch-bootstrap-failed') if prelaunch else timeout_reason or result.unavailable_reason or (errors[0] if errors else '')
     return _finalize_attempt(config, provider_return_code=code, reason=reason,
         failure_class='infrastructure' if result.unavailable_reason else 'capability',
-        prelaunch_failure=prelaunch, runner_failed=result.return_code != 0)
+        prelaunch_failure=prelaunch, runner_failed=result.return_code != 0,
+        route=(result.agent, result.model))
 
 
 def _bind_result_capture(config, registry, original_run):
     run = config.agent_run
+    if managed_agy_plan(run, registry):
+        return _bind_agy_plan_capture(config, registry, original_run)
     ids = (config.result_capture or {}).get('review_comment_ids')
     # Review comment IDs are modifier closure authority; an impl never binds them.
     if (config.result_capture is None or config.execution_mode != 'implement' or
@@ -458,22 +483,68 @@ def _bind_result_capture(config, registry, original_run):
     return replace(config, agent_run=run, result_capture=contract)
 
 
+def _bind_agy_plan_capture(config, registry, original_run):
+    run = config.agent_run
+    if (not verification.capture_cycle(run.cycle) or run.extra_args or
+            run.permission_mode not in ('', 'safe') or run.gui_mode not in ('auto', '0')):
+        raise ValueError('agy-plan-read-only-unavailable: unsafe invocation settings or missing cycle')
+    if original_run.stream_directory and Path(original_run.stream_directory).is_symlink():
+        raise ValueError('capture paths must not be symlinks')
+    identity = verification.capture_identity(run)
+    context = {'schema_version': 1, 'source': AGY, 'cycle': identity['cycle'], 'envelope': identity}
+    run = replace(run, permission_mode='safe', gui_mode='0', result_capture_context=context)
+    _, digest = agy_plan_invocation(run, registry)
+    return replace(config, agent_run=replace(run, result_capture_context={**context, 'invocation_digest': digest}),
+                   result_capture=None)
+
+
+def _check_protected_plan_locations(config, original_run):
+    run = config.agent_run
+    plan, result = _plan_paths(original_run)
+    if any(path.absolute() != path.resolve() for path in (plan, result)):
+        raise ValueError('unsafe protected plan artifact path')
+    if Path(str(config.state_file) + '.lock').is_symlink():
+        raise ValueError('unsafe protected plan state lock path')
+    source = str(run.repo_root)
+    roots = [Path(source)]
+    if git.repo_available(source):
+        roots.extend(Path(git.git_output(source, 'rev-parse', '--path-format=absolute', flag)).resolve()
+                     for flag in ('--show-toplevel', '--git-dir', '--git-common-dir'))
+    locations = (plan, result, config.state_file, config.tail_state_file, run.log_file, run.events_log,
+                 run.status_file, run.done_file, run.process_state_file, run.stream_directory, run.record_directory)
+    for location in locations:
+        if location is None:
+            continue
+        path = Path(location).resolve()
+        if any(_paths_collide(path, root) for root in roots):
+            raise ValueError(f'protected plan writes must be outside source and Git metadata: {path}')
+        if path.is_file() and path.stat().st_nlink != 1:
+            raise ValueError(f'unsafe hard-linked protected plan path: {path}')
+    if plan.exists():
+        raise RuntimeError(f'occupied plan path prohibits a new attempt: {plan}')
+
+
 def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     # Complete input validation before writing launch state or starting a child.
     registry = load_registry(config.agent_run.registry_file)
     original_run = config.agent_run
     run = replace(original_run, final_response_file=None, result_capture_context=None)
-    build_invocation(run, registry)
+    protected_plan = managed_agy_plan(replace(run, dispatcher_managed=True), registry)
+    if protected_plan:
+        require_agy_plan_profile(registry)
+    else:
+        build_invocation(run, registry)
     if not config.agent_run.result_file:
         raise ValueError('result_file is required')
     state_file = Path(config.state_file).resolve()
     directory = state_file.parent
-    directory.mkdir(parents=True, exist_ok=True)
     run = replace(run, state_file=state_file, scrub_ambient_aliases=True, dispatcher_managed=True,
                   process_state_file=config.agent_run.process_state_file or Path(str(state_file)+'.process.json'),
                   stream_directory=config.agent_run.stream_directory or Path(str(state_file)+'.streams'),
                   run_id=config.agent_run.run_id or f'worker-{config.agent_run.issue}-{config.agent_run.role}-{uuid.uuid4().hex}',
                   attempt_id=config.agent_run.attempt_id or uuid.uuid4().hex)
+    if protected_plan and run.record_directory is None:
+        run = replace(run, record_directory=directory / 'processes')
     # Bind the paths used by the provider to the exact paths preflight checks.
     run = replace(run, **{name: Path(getattr(run, name)).resolve() for name in (
         'repo_root', 'context_file', 'prompt_file', 'registry_file', 'issue_dir', 'result_file',
@@ -493,6 +564,8 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     else:
         run = replace(run, verification_context=None)
     config = replace(config,agent_run=run,state_file=state_file,pre_spawn_head=pre_head)
+    if protected_plan:
+        _check_protected_plan_locations(config, original_run)
     if config.execution_mode == 'verify_existing':
         reason = verification.admission_reason(config)
         if reason:
@@ -504,6 +577,8 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
             raise RuntimeError('existing worker state prohibits relaunch; inspect or create a new attempt')
         config = _bind_result_capture(config, registry, original_run)
         run = config.agent_run
+        if protected_plan:
+            _check_protected_plan_locations(config, original_run)
         expected = _preflight_paths(config)
         write_json_atomic(state_file,{'schema_version':1,'state':'launching','run_id':run.run_id,'attempt_id':run.attempt_id,
             'launcher_identity':{'pid':os.getpid(),'created_at':psutil.Process().create_time(),'host':socket.gethostname()}})
@@ -516,7 +591,8 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     root = str(Path(__file__).resolve().parents[1])
     bootstrap = 'import sys;sys.path.insert(0,sys.argv[1]);from ai_skills.dispatch import _detached;raise SystemExit(_detached(sys.argv[2]))'
     output = Path(str(state_file)+'.dispatcher.log')
-    owned = supervisor.start(ProcessSpec((sys.executable,'-c',bootstrap,root,str(config_path)),Path(run.repo_root),run.environment or {},output,output),
+    wrapper_environment = {} if protected_plan else run.environment or {}
+    owned = supervisor.start(ProcessSpec((sys.executable,'-c',bootstrap,root,str(config_path)),Path(run.repo_root),wrapper_environment,output,output),
                              run_id=run.run_id+'-dispatcher',attempt_id=run.attempt_id)
     # Store the wrapper identity separately. Provider process_state_file is the
     # authority for nested session shutdown, including after dispatcher loss.
@@ -556,6 +632,8 @@ def _provider_record(config, *, allow_supervisor_fallback=True):
     run = config.agent_run
     supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
     process = _process_record(config)
+    if not isinstance(process, dict):
+        raise ValueError('invalid-provider-process-record')
     if not process.get('identity') and allow_supervisor_fallback:
         raw = supervisor.lookup_attempt(run.run_id, run.attempt_id)
         if raw is not None:
@@ -585,7 +663,7 @@ def write_text_atomic(path, text, *, exclusive=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='', dir=path.parent,
                 prefix=f'.{path.name}.', suffix='.tmp', delete=False) as stream:
             temporary = Path(stream.name)
             stream.write(text)
@@ -651,16 +729,55 @@ def _safe_synthesis(config, reason):
         artifacts.synthesize_review, artifacts.synthesize_complexity))
 
 
-def _availability_reason(config):
+def _resolved_route(config):
+    run = config.agent_run
+    try:
+        registry = load_registry(run.registry_file)
+        name, agent = _agent(registry, run.agent)
+        model = effective_config(run, registry).model or agent.get('model', {}).get('default', '')
+        agy_stream = agent.get('invocation', {}).get('prompt_transport') == AGY or capture_source(run, name) == AGY
+        return name, model, agy_stream
+    except (OSError, ValueError):
+        return run.agent, run.model, capture_source(run) == AGY
+
+
+def _read_tail_text(path):
+    with Path(path).open('rb') as stream:
+        stream.seek(max(0, Path(path).stat().st_size - 65536))
+        return stream.read().decode('utf-8', errors='replace')
+
+
+def _agy_adoption_diagnostic(config, model, process, raw, *, provider_code):
+    """Classify AGY failure on adoption using only structured terminal errors and stderr."""
+    stdout_path = process.get('stdout_file') or raw.get('spec', {}).get('stdout')
+    stderr_path = process.get('stderr_file') or raw.get('spec', {}).get('stderr')
+    stderr_text = _read_tail_text(stderr_path) if stderr_path and Path(stderr_path).is_file() else ''
+    if stdout_path and Path(stdout_path).is_file():
+        managed = capture_source(config.agent_run) == AGY
+        try:
+            with Path(stdout_path).open('rb') as stream:
+                if managed:
+                    extract_response(AGY, stream)
+                else:
+                    agy_narrative_response(stream)
+        except ProviderError as error:
+            return _classify_agy(str(error), model) or _classify_agy(stderr_text, model)
+        except (ValueError, RecursionError):
+            pass
+    return _classify_agy(stderr_text, model) if provider_code else ''
+
+
+def _availability_reason(config, *, provider_code=1):
     process, supervisor = _provider_record(config)
     raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+    _, model, agy_stream = _resolved_route(config)
+    if agy_stream:
+        return _agy_adoption_diagnostic(config, model, process, raw, provider_code=provider_code)
     text = ''
     for key, stream_key in (('stdout_file','stdout'),('stderr_file','stderr')):
         path = process.get(key) or raw.get('spec',{}).get(stream_key)
-        if path:
-            with Path(path).open('rb') as stream:
-                stream.seek(max(0, Path(path).stat().st_size - 65536))
-                text += stream.read().decode('utf-8', errors='replace')
+        if path and Path(path).is_file():
+            text += _read_tail_text(path)
     return classify_unavailable(text)
 
 
@@ -722,6 +839,7 @@ def _record_stop_intent(config, reason):
 def _capture_rejected(run, reason):
     EventBus(events_log=run.events_log, log_file=run.log_file).emit('dispatch-capture-rejected',
         {'run_id':run.run_id, 'attempt_id':run.attempt_id, 'issue':run.issue, 'role':run.role, 'cycle':verification.capture_cycle(run.cycle), 'reason':reason})
+    return reason, None
 
 
 def _capture_bytes(run, process, supervisor):
@@ -773,12 +891,13 @@ def _check_capture_file(path, opened, original):
 def _publish_captured_result(config, *, eligible):
     """Publish a validated captured report while the attempt lock excludes other finalizers."""
     run = config.agent_run
-    if (config.result_capture is None or config.execution_mode != 'implement' or run.role not in ('impl', 'modify') or
-            not capture_source(run)):
-        return
+    protected_plan = _protected_plan_capture(run)
+    if not protected_plan and (config.result_capture is None or config.execution_mode != 'implement' or
+                               not capture_source(run)):
+        return '', None
     path = Path(run.result_file)
-    if path.exists() or path.is_symlink():
-        return
+    if not protected_plan and (path.exists() or path.is_symlink()):
+        return '', None
     if not eligible:
         return _capture_rejected(run, 'capture-attempt-not-successful')
     # The supervisor can prove provider exit even if the runner failed before
@@ -800,23 +919,102 @@ def _publish_captured_result(config, *, eligible):
         return _capture_rejected(run, 'capture-response-invalid')
     except (OSError, RuntimeError):
         return _capture_rejected(run, 'capture-path-unsafe')
-    reason, payload = verification.captured_result_reason(config, response)
+    reason, payload, markdown = verification.captured_result_reason(config, response)
     if reason:
         return _capture_rejected(run, reason)
+    if protected_plan:
+        reason, proof = _publish_protected_plan(config, payload, markdown)
+        return _capture_rejected(run, reason) if reason else ('', proof)
     if path.resolve() != path:
         return _capture_rejected(run, 'capture-result-path-unsafe')
     if path.exists() or path.is_symlink():
-        return
+        return '', None
     try:
         write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + '\n', exclusive=True)
     except FileExistsError:
         # A direct file published concurrently has precedence.
-        return
+        pass
+    return '', None
+
+
+def _protected_plan_capture(run):
+    return run.role == 'plan' and capture_source(run) == AGY
+
+
+def _plan_paths(run):
+    if not run.issue_dir:
+        raise ValueError('issue_dir is required for plan workers')
+    return Path(run.issue_dir) / 'plan.md', Path(run.result_file)
+
+
+def _protected_artifact_bytes(path):
+    if path.resolve() != path:
+        raise ValueError('unsafe protected plan artifact path')
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise ValueError('unsafe protected plan artifact file')
+    return path.read_bytes()
+
+
+def _plan_handoff_fingerprint(contents):
+    return [hashlib.sha256(content).hexdigest() if content is not None else None for content in contents]
+
+
+def _plan_handoff_change(run, journal):
+    if 'plan_handoff' not in journal:
+        return 'capture-plan-handoff-missing' if journal['status'] == 'success' else ''
+    try:
+        contents = map(_protected_artifact_bytes, _plan_paths(run))
+        if journal['plan_handoff'] != _plan_handoff_fingerprint(contents):
+            return 'capture-plan-handoff-changed'
+    except (OSError, ValueError, RuntimeError):
+        return 'capture-plan-handoff-unavailable'
+    return ''
+
+
+def _publish_protected_plan(config, payload, markdown):
+    run = config.agent_run
+    plan, result = _plan_paths(run)
+    report = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + '\n'
+    paths = {plan: markdown, result: report}
+    if _paths_collide(plan, result):
+        return 'capture-result-path-unsafe', None
+    missing = []
+    for path, content in paths.items():
+        try:
+            existing = _protected_artifact_bytes(path)
+        except (ValueError, RuntimeError):
+            return 'capture-result-path-unsafe', None
+        if existing is None:
+            if content is not None:
+                missing.append(path)
+            continue
+        if content is None or existing != content.encode('utf-8'):
+            return 'capture-plan-artifact-conflict', None
+    if plan in missing and result not in missing:
+        return 'capture-plan-artifact-conflict', None
+    created = []
+    for path in missing:
+        try:
+            write_text_atomic(path, paths[path], exclusive=True)
+            created.append(path)
+        except FileExistsError:
+            for written in reversed(created):
+                written.unlink(missing_ok=True)
+            return 'capture-plan-artifact-conflict', None
+    proof = _plan_handoff_fingerprint(content.encode('utf-8') if content is not None else None
+                                      for content in paths.values())
+    reason = _plan_handoff_change(run, {'plan_handoff': proof})
+    return reason, proof if not reason else None
 
 
 def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                       reason: str = '', failure_class: str = 'capability',
-                      prelaunch_failure: bool = False, runner_failed: bool = False) -> WorkerResult:
+                      prelaunch_failure: bool = False, runner_failed: bool = False,
+                      route: tuple[str, str] | None = None) -> WorkerResult:
     """Journal one decision after callers prove owned death or no launch.
 
     Outcome -> state -> DONE -> event. A storage failure propagates, retaining
@@ -836,6 +1034,11 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         if provider_return_code is None and not prelaunch_failure:
             return WorkerResult('unknown',3,Path(config.state_file),'provider-exit-status-unknown')
         terminal = previous is not None and previous['status'] != 'pending'
+        protected_plan = _protected_plan_capture(run)
+        if terminal and protected_plan:
+            changed = _plan_handoff_change(run, previous)
+            if changed:
+                return WorkerResult('unknown', 3, Path(config.state_file), changed)
         if terminal and config.execution_mode == 'verify_existing':
             try:
                 if previous.get('verification_handoff') != verification.handoff_fingerprint(config):
@@ -853,10 +1056,19 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 failure_class = 'infrastructure'
         if stop_intent:
             reason = stop_intent['reason']
+        capture_reason = 'capture-attempt-not-bound' if protected_plan and previous is None else ''
+        plan_handoff = None
         if previous is not None and not terminal and capture_source(run):
-            _publish_captured_result(config, eligible=(provider_return_code == 0 and not reason and
-                not prelaunch_failure and not runner_failed))
-        payload, error = artifacts.load_json(str(run.result_file))
+            capture_reason, plan_handoff = _publish_captured_result(config, eligible=(provider_return_code == 0 and
+                not reason and not prelaunch_failure and not runner_failed))
+        if protected_plan and terminal:
+            plan_handoff = previous.get('plan_handoff')
+            capture_reason = previous['reason']
+        # A failed protected capture must never read a stray direct report.
+        if protected_plan and plan_handoff is None:
+            payload = None
+        else:
+            payload, _ = artifacts.load_json(str(run.result_file))
         typed = isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure'
         status, issue_outcome = 'failed', None
         if typed:
@@ -868,8 +1080,8 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 status, reason = payload['status'], payload['reason']
                 code = 130 if status == 'interrupted' else provider_return_code or 1
         else:
-            artifact_reason = _artifact_reason(config)
-            if artifact_reason and not terminal and not prelaunch_failure:
+            artifact_reason = capture_reason if protected_plan else _artifact_reason(config)
+            if artifact_reason and not protected_plan and not terminal and not prelaunch_failure:
                 _safe_synthesis(config, reason)
                 artifact_reason = _artifact_reason(config)
             if artifact_reason == 'artifact-recovery-required':
@@ -882,6 +1094,8 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
             elif reason in ('hard-limit-exceeded','dispatch-timeout'):
                 code = 124
             else:
+                if protected_plan and provider_return_code and capture_reason == 'capture-attempt-not-successful':
+                    reason = reason or 'provider-exit-nonzero'
                 reason = reason or artifact_reason
                 code = provider_return_code or (1 if reason else 0)
                 if code and not reason:
@@ -912,13 +1126,18 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 outcome['git_progress'] = progress
             if config.execution_mode == 'verify_existing':
                 outcome['verification_handoff'] = verification.handoff_fingerprint(config)
+            if plan_handoff is not None:
+                outcome['plan_handoff'] = plan_handoff
             write_json_atomic(outcome_path(config.state_file),outcome)
         worker_state = ('completed' if status == 'success' else 'interrupted' if status == 'interrupted'
             else 'artifact-recovery-required' if not typed and code == 75 and reason == 'artifact-recovery-required' else 'failed')
         process, _ = _provider_record(config)
+        state_was_terminal = terminal and state.get('state') == worker_state
         state.update(state=worker_state,return_code=code,exit_code=code,reason=reason,
             completed_at=outcome['finished_at'],alive=False,provider_identity=process.get('identity'),
             failure_class=failure_class)
+        if route and failure_class == 'infrastructure' and not state_was_terminal:
+            state.update(agent=route[0], model=route[1])  # resolved route, dispatcher-owned
         write_json_atomic(Path(config.state_file),state)
         if run.done_file:
             fields = {'issue':run.issue,'role':run.role,'agent':run.agent,'model':run.model,
@@ -934,72 +1153,186 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         return WorkerResult(worker_state,code,Path(config.state_file),reason,process.get('identity'))
 
 
+def _admitted_worker(state_file):
+    config = WorkerConfig.from_record(load_json(Path(str(state_file)+'.config.json')))
+    if (canonical_path(config.state_file) != canonical_path(state_file) or
+            (config.agent_run.state_file is not None and
+             canonical_path(config.agent_run.state_file) != canonical_path(state_file))):
+        raise ValueError('worker-config-state-binding-mismatch')
+    return config
+
+
+def _dispatcher_record(config, supervisor):
+    run = config.agent_run
+    wrapper = _optional(Path(str(config.state_file)+'.dispatcher.process.json'))
+    if not isinstance(wrapper, dict):
+        raise ValueError('invalid-dispatcher-process-record')
+    if not wrapper.get('identity'):
+        raw = supervisor.lookup_attempt(run.run_id+'-dispatcher',run.attempt_id)
+        if raw is not None:
+            return {**raw,'record_directory':str(supervisor.directory)}
+    return wrapper
+
+
+def _owner_result(config, state, reason, identity=None):
+    return WorkerResult('running' if state == 'alive' else 'unknown',
+        0 if state == 'alive' else 3, config.state_file, reason, identity)
+
+
+def _inspect_dispatcher(config, wrapper):
+    if not wrapper.get('identity'):
+        return _owner_result(config, 'unknown', 'dispatcher-launch-identity-unknown')
+    identity = ProcessIdentity(**wrapper['identity'])
+    run = config.agent_run
+    if (identity.run_id, identity.attempt_id) != (run.run_id+'-dispatcher', run.attempt_id):
+        raise ValueError('dispatcher identity binding mismatch')
+    owner = ProcessSupervisor(Path(wrapper['record_directory'])).inspect(identity)
+    if owner.state != 'dead':
+        return _owner_result(config, owner.state, 'dispatcher-finalizing')
+    return None
+
+
+def _inspect_adoption(config, state, *, strict=False) -> WorkerResult | int | None:
+    """Return a hold, or the durable provider exit code (None for prelaunch)."""
+    journal = _read_bound_outcome(config)
+    if strict and journal is None:
+        raise ValueError('worker-outcome-missing')
+    _bound_stop_intent(config,state)
+    process, supervisor = _provider_record(config)
+    wrapper = _dispatcher_record(config, supervisor)
+    if strict and not wrapper:
+        launcher = _launcher_state(state)
+        if launcher != 'dead':
+            return _owner_result(config, launcher, 'launcher-ownership-'+launcher, process.get('identity'))
+        # Admission could publish a dispatcher after the first lookup.
+        wrapper = _dispatcher_record(config, supervisor)
+    if wrapper:
+        hold = _inspect_dispatcher(config, wrapper)
+        if hold:
+            return replace(hold, identity=process.get('identity'))
+    if wrapper or strict:
+        # The dispatcher may have admitted a provider just before it died.
+        process, supervisor = _provider_record(config)
+    if not process.get('identity'):
+        return _inspect_prelaunch(config, state, process, wrapper, journal, strict=strict)
+    identity = ProcessIdentity(**process['identity'])
+    liveness = supervisor.inspect(identity)
+    if liveness.state != 'dead':
+        return _owner_result(config, liveness.state, liveness.reason, process['identity'])
+    if strict and config.detach and not wrapper:
+        return _owner_result(config, 'unknown', 'dispatcher-launch-identity-unknown')
+    if not strict and not wrapper and (journal is None or journal['status']=='pending'):
+        launcher = _launcher_state(state)
+        if launcher != 'dead':
+            return _owner_result(config, launcher, 'launcher-ownership-'+launcher, process['identity'])
+    code = supervisor.return_code(identity)
+    if not strict:
+        deadline = time.monotonic()+.5
+        while code is None and time.monotonic()<deadline:
+            time.sleep(.02)
+            code = supervisor.return_code(identity)
+    if code is None:
+        return _owner_result(config, 'unknown', 'provider-exit-status-unknown', process['identity'])
+    return code
+
+
+def _inspect_prelaunch(config, state, process, wrapper, journal, *, strict):
+    if process or (strict and state.get('provider_identity') is not None):
+        return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
+    if not wrapper and not strict:
+        launcher = _launcher_state(state)
+        if launcher != 'dead':
+            return _owner_result(config, launcher, 'launcher-ownership-'+launcher)
+    claim_state = state.get('state')
+    launching = claim_state in ('launching', 'starting')
+    if strict:
+        if journal['status'] == 'pending':
+            released = launching
+        else:
+            # A bound terminal journal with no provider exit supports prelaunch finalization.
+            # The claim may still be in bootstrap if publication stopped after the journal.
+            finalized = claim_state in ('failed', 'interrupted', 'artifact-recovery-required', 'completed')
+            released = journal['provider_return_code'] is None and (launching or finalized)
+    else:
+        released = wrapper or launching or state.get('reason') in (
+            'dispatch-bootstrap-failed', 'missing-command', 'cli-unsupported')
+    if released:
+        return None
+    return _owner_result(config, 'unknown', 'provider-launch-identity-unknown')
+
+
+def _adopt_released(config, state, code):
+    name, model, agy_stream = _resolved_route(config)
+    route = (name, model)
+    if code is None:
+        return _finalize_attempt(config,provider_return_code=None,
+            reason=state.get('reason') or '', failure_class=state.get('failure_class','capability'),
+            prelaunch_failure=True, route=route)
+    process, supervisor = _provider_record(config)
+    reason = process.get('unavailable_reason', '')
+    if not reason:
+        if agy_stream:
+            raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+            reason = _agy_adoption_diagnostic(config, model, process, raw, provider_code=code)
+        elif code:
+            reason = _availability_reason(config, provider_code=code)
+    return _finalize_attempt(config,provider_return_code=code,reason=reason,
+        failure_class='infrastructure' if reason else 'capability', route=route)
+
+
 def adopt_worker(state_file) -> WorkerResult:
     """Reconcile only after provider and dispatcher death; never launch work."""
     state_file = Path(state_file)
-    config = WorkerConfig.from_record(load_json(Path(str(state_file)+'.config.json')))
-    if canonical_path(config.state_file) != canonical_path(state_file) or (config.agent_run.state_file is not None and canonical_path(config.agent_run.state_file) != canonical_path(state_file)):
-        return WorkerResult('unknown',3,state_file,'worker-config-state-binding-mismatch')
-    state = load_json(state_file)
     try:
-        journal = _read_bound_outcome(config)
-        _bound_stop_intent(config,state)
-        process, supervisor = _provider_record(config)
-        run = config.agent_run
-        wrapper = _optional(Path(str(state_file)+'.dispatcher.process.json'))
-        if not wrapper.get('identity'):
-            raw = supervisor.lookup_attempt(run.run_id+'-dispatcher',run.attempt_id)
-            if raw is not None:
-                wrapper = {**raw,'record_directory':str(supervisor.directory)}
-        if wrapper:
-            if not wrapper.get('identity'):
-                return WorkerResult('unknown',3,state_file,'dispatcher-launch-identity-unknown')
-            identity = ProcessIdentity(**wrapper['identity'])
-            if identity.run_id != run.run_id+'-dispatcher' or identity.attempt_id != run.attempt_id:
-                raise ValueError('dispatcher identity binding mismatch')
-            owner = ProcessSupervisor(Path(wrapper['record_directory'])).inspect(identity)
-            if owner.state != 'dead':
-                return WorkerResult('running' if owner.state=='alive' else 'unknown',
-                    0 if owner.state=='alive' else 3,state_file,'dispatcher-finalizing',process.get('identity'))
-        if not process.get('identity'):
-            if process:
-                return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
-            if not wrapper:
-                launcher = _launcher_state(state)
-                if launcher != 'dead':
-                    return WorkerResult('running' if launcher=='alive' else 'unknown',
-                        0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher)
-                if state.get('state') not in ('launching','starting') and state.get('reason') not in ('dispatch-bootstrap-failed','missing-command','cli-unsupported'):
-                    return WorkerResult('unknown',3,state_file,'provider-launch-identity-unknown')
-            # State can lag the journal if terminal publication was interrupted.
-            # Let the finalizer reuse the journal reason before defaulting it.
-            return _finalize_attempt(config,provider_return_code=None,
-                reason=state.get('reason') or '',
-                failure_class=state.get('failure_class','capability'),prelaunch_failure=True)
-        identity = ProcessIdentity(**process['identity'])
-        liveness = supervisor.inspect(identity)
-        if liveness.state != 'dead':
-            return WorkerResult('running' if liveness.state=='alive' else 'unknown',
-                0 if liveness.state=='alive' else 3,state_file,liveness.reason,process['identity'])
-        if not wrapper and (journal is None or journal['status']=='pending'):
-            launcher = _launcher_state(state)
-            if launcher != 'dead':
-                return WorkerResult('running' if launcher=='alive' else 'unknown',
-                    0 if launcher=='alive' else 3,state_file,'launcher-ownership-'+launcher,process['identity'])
-        code = supervisor.return_code(identity)
-        exit_deadline = time.monotonic()+.5
-        while code is None and time.monotonic()<exit_deadline:
-            time.sleep(.02)
-            code = supervisor.return_code(identity)
-        if code is None:
-            return WorkerResult('unknown',3,state_file,'provider-exit-status-unknown',process['identity'])
-        reason = process.get('unavailable_reason', '')
-        if not reason and code:
-            reason = _availability_reason(config)
-        return _finalize_attempt(config,provider_return_code=code,reason=reason,
-            failure_class='infrastructure' if reason else 'capability')
-    except (ValueError,TypeError,KeyError) as error:
+        config = _admitted_worker(state_file)
+        state = load_json(state_file)
+        inspected = _inspect_adoption(config, state)
+        if isinstance(inspected, WorkerResult):
+            return inspected
+        return _adopt_released(config, state, inspected)
+    except (ValueError, TypeError, KeyError) as error:
         return WorkerResult('unknown',3,state_file,str(error))
+
+
+def _bind_recovery_child(config, state, snapshot, issue, issue_dir):
+    run = config.agent_run
+    if str(run.issue) != str(issue) or run.role != snapshot.get('role'):
+        raise ValueError('child-issue-or-role-binding-mismatch')
+    if not run.issue_dir or canonical_path(run.issue_dir) != canonical_path(issue_dir):
+        raise ValueError('child-issue-directory-binding-mismatch')
+    for key in ('done_file', 'result_file'):
+        path, recorded = getattr(run, key), snapshot.get(key)
+        if not path or not isinstance(recorded, str) or not recorded or canonical_path(path) != canonical_path(recorded):
+            raise ValueError('child-artifact-path-binding-mismatch')
+    for key in ('run_id', 'attempt_id'):
+        expected = getattr(run, key)
+        if not expected or state.get(key) != expected or (key in snapshot and snapshot[key] != expected):
+            raise ValueError('child-attempt-binding-mismatch')
+    if run.cycle and snapshot.get('cycle') is not None:
+        if verification.capture_cycle(run.cycle) != verification.capture_cycle(snapshot['cycle']):
+            raise ValueError('child-cycle-binding-mismatch')
+
+
+def inspect_recovery_child(issue, issue_dir, child, *, reconcile=False):
+    """Inspect the exact ledger child, optionally adopting its released handoff."""
+    recorded = child.get('state_file')
+    if not isinstance(recorded, str) or not recorded:
+        return WorkerResult('unknown', 3, Path(), 'child-state-path-missing')
+    state_file = Path(recorded)
+    try:
+        config = _admitted_worker(state_file)
+        state = load_json(state_file)
+        if not isinstance(state, dict):
+            raise ValueError('invalid-child-claim')
+        _bind_recovery_child(config, state, child, issue, issue_dir)
+        inspected = _inspect_adoption(config, state, strict=True)
+        if isinstance(inspected, WorkerResult):
+            return inspected
+        if reconcile:
+            return _adopt_released(config, state, inspected)
+        return WorkerResult('released', 0, state_file, 'child-ownership-released')
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+        return WorkerResult('unknown', 3, state_file, str(error))
 
 
 def _detached(path):
@@ -1381,7 +1714,12 @@ def main(argv=None):
             return 0
         if args.dry_run or args.validate_only:
             run = replace(config.agent_run, final_response_file=None, result_capture_context=None)
-            spec=build_invocation(run,load_registry(run.registry_file))
+            registry = load_registry(run.registry_file)
+            managed = replace(run, dispatcher_managed=True)
+            if managed_agy_plan(managed, registry):
+                require_agy_plan_profile(registry)
+                run = _bind_agy_plan_capture(replace(config, agent_run=managed), registry, run).agent_run
+            spec = build_invocation(run, registry)
             print(json.dumps(list(spec.argv)) if args.dry_run else 'STATUS|type=dispatch-ready')
             return 0
         result=dispatch_worker(config)

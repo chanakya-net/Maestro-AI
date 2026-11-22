@@ -102,11 +102,38 @@ def test_plan_success_requires_issue_directory_and_nonempty_markdown(tmp_path):
     with pytest.raises(ValueError,match='issue_dir'):
         dispatch_worker(replace(config,agent_run=config.agent_run.replace(role='plan')))
     assert not (tmp_path/'provider-invoked').exists()
-    plan={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Build','complexity_level':'easy','slices':[{'id':1}]}
+    plan={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Build','complexity_level':'easy','complexity_rationale':'Single-file change along an existing seam.','slices':[{'id':1}]}
     config.agent_run.result_file.write_text(json.dumps(plan))
     (tmp_path/'plan.md').write_text('')
     snapshot=inspect_worker(replace(config,agent_run=config.agent_run.replace(role='plan',issue_dir=tmp_path)))
     assert snapshot.artifact_reason=='missing-plan-file-artifact'
+
+
+@pytest.mark.parametrize('variant', ['stock', 'alias', 'forged'])
+def test_managed_agy_plan_rejects_unverified_profile(tmp_path, monkeypatch, variant):
+    from ai_skills import dispatch, runner
+
+    config = worker_config(tmp_path, '')
+    run = config.agent_run.replace(agent='agy-cli' if variant == 'alias' else 'agy',
+        registry_file=None, role='plan', issue_dir=tmp_path, dispatcher_managed=False)
+    if variant == 'forged':
+        registry = runner.load_registry()
+        registry['agents']['agy']['permission_modes']['read_only'] = '--pretend-read-only'
+        run = run.replace(registry_file=config.agent_run.registry_file, permission_mode='safe',
+            unattended=True, environment={**os.environ, 'AGY_READ_ONLY_VERIFIED': '1'})
+        run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('unverified AGY must be refused before invocation or provider start')
+
+    monkeypatch.setattr(dispatch, 'build_invocation', unexpected)
+    monkeypatch.setattr(runner, 'build_invocation', unexpected)
+    monkeypatch.setattr(runner.ProcessSupervisor, 'start', unexpected)
+    with pytest.raises(ValueError, match='agy-plan-read-only-unavailable'):
+        dispatch_worker(replace(config, agent_run=run))
+    with pytest.raises(ValueError, match='agy-plan-read-only-unavailable'):
+        runner.run_agent(run.replace(dispatcher_managed=True))
+    assert not config.state_file.exists()
 
 
 def test_review_aliases_are_authoritatively_bound_before_provider(tmp_path):
@@ -253,6 +280,92 @@ def test_from_sources_cli_over_environment_and_forwarded_fields(tmp_path):
     assert config.agent_run.effort == 'xhigh'
     assert config.agent_run.events_log == str(tmp_path/'events')
     assert config.hard_limit_seconds == 42
+
+
+@pytest.mark.parametrize(('role', 'hard_limit'), [('impl', 7200), ('sub-coord', 0), ('merge-recovery', 0)])
+def test_role_defaults_and_explicit_recorded_deadlines(tmp_path, role, hard_limit):
+    config = worker_config(tmp_path, 'from pathlib import Path;Path("result.json").write_text("{}")')
+    config = replace(config, agent_run=config.agent_run.replace(role=role), hard_limit_seconds=None)
+    assert config.timeout_seconds == 0
+    assert config.hard_limit_seconds == hard_limit
+    assert (config.quiet_seconds, config.stall_seconds) == (900, 1200)
+
+    restored = WorkerConfig.from_record({**config.to_record(), 'timeout_seconds': 3600, 'hard_limit_seconds': 7200})
+    assert restored.timeout_seconds == 3600
+    assert restored.hard_limit_seconds == 7200
+
+
+def test_persisted_explicit_deadline_record_is_enforced_after_reload(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ai_skills import dispatch
+    from pool_support import SimulatedClock
+
+    config = worker_config(tmp_path, 'import time; time.sleep(5)')
+    config = replace(config, agent_run=config.agent_run.replace(role='sub-coord'), hard_limit_seconds=None)
+    persisted = {**config.to_record(), 'timeout_seconds': 3600, 'hard_limit_seconds': 7200}
+    reloaded = WorkerConfig.from_record(persisted)
+    clock = SimulatedClock(600, reloaded.state_file)
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(monotonic=clock.monotonic, sleep=time.sleep, time=time.time))
+    result = dispatch_worker(reloaded)
+    assert result.reason == 'dispatch-timeout'
+    assert result.return_code == 124
+    assert inspect_worker(reloaded).liveness == 'dead'
+
+
+@pytest.mark.parametrize('role', ['sub-coord', 'merge-recovery'])
+def test_coordinator_dispatch_survives_both_former_deadlines(tmp_path, monkeypatch, role):
+    from types import SimpleNamespace
+    from ai_skills import dispatch
+
+    release = tmp_path / 'release'
+    source = (
+        'import json, os, time\n'
+        'from pathlib import Path\n'
+        f'release = Path({str(release)!r})\n'
+        'end = time.monotonic() + 10\n'
+        'while not release.exists() and time.monotonic() < end:\n'
+        '    time.sleep(.02)\n'
+        "Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(\n"
+        "    json.dumps({'outcome': 'completed', 'summary': 'fixture complete'}), encoding='utf-8')\n"
+    )
+    config = worker_config(tmp_path, source)
+    config = replace(config, agent_run=config.agent_run.replace(role=role), hard_limit_seconds=None)
+    real_time = time
+    elapsed = [0]
+
+    def simulated_monotonic():
+        elapsed[0] += 600
+        if elapsed[0] > 7200 and not release.exists():
+            release.write_text('go', encoding='utf-8')
+        return elapsed[0]
+
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(
+        monotonic=simulated_monotonic, sleep=real_time.sleep, time=real_time.time))
+    assert dispatch.dispatch_worker(config).state == 'completed'
+    assert elapsed[0] > 7200
+
+
+@pytest.mark.parametrize(('limit', 'expected'), [('timeout_seconds', 3600), ('hard_limit_seconds', 7200)])
+def test_explicit_coordinator_deadline_still_stops_owned_provider(tmp_path, monkeypatch, limit, expected):
+    from types import SimpleNamespace
+    from ai_skills import dispatch
+
+    source = "import os,time,json; from pathlib import Path; time.sleep(2); Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({'outcome':'completed','summary':'fixture complete'}))"
+    config = worker_config(tmp_path, source)
+    config = replace(config, agent_run=config.agent_run.replace(role='sub-coord'), hard_limit_seconds=None)
+    config = replace(config, **{limit: expected})
+    real_time = time
+    elapsed = [0]
+
+    def simulated_monotonic():
+        elapsed[0] += 600
+        return elapsed[0]
+
+    monkeypatch.setattr(dispatch, 'time', SimpleNamespace(
+        monotonic=simulated_monotonic, sleep=real_time.sleep, time=real_time.time))
+    result = dispatch.dispatch_worker(config)
+    assert result.reason == ('dispatch-timeout' if limit == 'timeout_seconds' else 'hard-limit-exceeded')
+    assert elapsed[0] >= expected
 
 
 def test_wrapper_exit_waits_for_descendant_cleanup(tmp_path):
@@ -1072,6 +1185,7 @@ def interrupt_publication(monkeypatch, config, boundary):
     write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
     state_file = config.state_file.resolve()
     done_file = config.agent_run.done_file.resolve()
+    result_file = config.agent_run.result_file.resolve()
 
     def publish_json(path, value):
         if boundary == 'outcome' and Path(path).resolve() == dispatch.outcome_path(state_file) and value['status'] != 'pending':
@@ -1081,7 +1195,8 @@ def interrupt_publication(monkeypatch, config, boundary):
         return write_json(path, value)
 
     def publish_text(path, value, *, exclusive=False):
-        if (boundary == 'result' and exclusive) or (boundary == 'done' and Path(path).resolve() == done_file):
+        if ((boundary == 'result' and exclusive and Path(path).resolve() == result_file) or
+                (boundary == 'done' and Path(path).resolve() == done_file)):
             raise OSError('injected publication failure')
         return write_text(path, value, exclusive=exclusive)
 
@@ -2048,7 +2163,7 @@ result_path.write_text(json.dumps(dict(report, summary='Direct blocked report.')
 STREAM_SOURCES = {'claude': 'claude-json', 'agy': 'agy-stream-json', 'opencode': 'opencode-json-v1.16.2'}
 
 
-def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2', build=None, **modify_options):
+def stream_capture_worker(tmp_path, monkeypatch, agent, body, *, role='impl', help_text=None, version='1.16.2', build=None, model='', **modify_options):
     from ai_skills import runner
 
     invocation = {
@@ -2091,7 +2206,7 @@ if '--help' in sys.argv:
         return resolve(argv, environment)
 
     monkeypatch.setattr(runner, 'resolve_executable', fake_executable)
-    return replace(config, agent_run=config.agent_run.replace(agent=agent))
+    return replace(config, agent_run=config.agent_run.replace(agent=agent, model=model))
 
 
 CLAUDE_CAPTURE = """
@@ -2261,6 +2376,223 @@ def test_stream_capture_preserves_direct_result_file(tmp_path, monkeypatch, dire
     else:
         assert result.state != 'completed'
         assert raw == b''
+
+
+GEMINI_4 = 'gemini-4-neon-high'
+AGY_MODEL_ASSERTION = ("assert args.count('--model') == 1\n"
+                       f"assert args[args.index('--model') + 1] == {GEMINI_4!r}\n")
+AGY_STEPS_ONLY = AGY_CAPTURE.split("    {'event': 'result'", 1)[0] + "]:\n    print(json.dumps(event))\n"
+AGY_MALFORMED_TERMINAL = AGY_CAPTURE.replace("'response': json.dumps(envelope)", "'response': '{'")
+AGY_UNVERIFIED = BUILD_CAPTURE.replace("'passed': True, 'evidence': 'observed exit 0'",
+                                       "'passed': False, 'evidence': 'observed exit 1'")
+
+
+def agy_gemini_worker(tmp_path, monkeypatch, wire, build=None, *, role='impl', **options):
+    return stream_capture_worker(tmp_path, monkeypatch, 'agy', AGY_MODEL_ASSERTION + wire,
+                                 build=build, model=GEMINI_4, role=role, **options)
+
+
+def fresh_modify_attempt(config, directory, *, cycle=4, head=None):
+    directory.mkdir()
+    run = config.agent_run.replace(cycle=cycle, result_file=directory / 'result.json',
+        done_file=directory / 'worker.done', log_file=directory / 'worker.log',
+        run_id='', attempt_id='')
+    return replace(config, agent_run=run, state_file=directory / 'worker.state.json',
+                   pre_spawn_head=head or config.pre_spawn_head)
+
+
+def test_agy_gemini_4_modify_retries_missing_terminal_in_same_cycle(tmp_path, monkeypatch):
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_STEPS_ONLY,
+                               build=build_modify_capture(no_op=True), role='modify')
+    first = dispatch_worker(config)
+    assert first.state == 'failed'
+    assert not config.agent_run.result_file.exists()
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    raw = Path(saved['agent_run']['stream_directory']) / 'stdout'
+    outcome = Path(str(config.state_file) + '.outcome.json')
+    originals = [p.read_bytes() for p in (raw, outcome)]
+    assert json.loads(originals[1])['status'] == 'failed'
+    assert 'reason=capture-response-invalid' in config.agent_run.events_log.read_text()
+    script = config.agent_run.repo_root / 'exec'
+    script.write_text(script.read_text().replace(AGY_STEPS_ONLY, AGY_CAPTURE))
+    retry = fresh_modify_attempt(config, tmp_path / 'retry')
+    result = dispatch_worker(retry)
+    assert result.state == 'completed', result.reason
+    retry_saved = json.loads(Path(str(retry.state_file) + '.config.json').read_bytes())
+    assert retry_saved['agent_run']['attempt_id'] != saved['agent_run']['attempt_id']
+    assert retry_saved['agent_run']['cycle'] == saved['agent_run']['cycle'] == 4
+    report = json.loads(retry.agent_run.result_file.read_bytes())
+    assert [item['id'] for item in report['review_comment_closure']] == MODIFY_IDS
+    assert [p.read_bytes() for p in (raw, outcome)] == originals
+
+
+@pytest.mark.parametrize('replay', ['prior-stream', 'prior-cycle'])
+def test_agy_gemini_4_modify_rejects_previous_cycle_capture(tmp_path, monkeypatch, replay):
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE, role='modify')
+    assert dispatch_worker(config).state == 'completed'
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    raw = Path(saved['agent_run']['stream_directory']) / 'stdout'
+    paths = [config.agent_run.result_file, raw, Path(str(config.state_file) + '.outcome.json')]
+    originals = [path.read_bytes() for path in paths]
+    script = config.agent_run.repo_root / 'exec'
+    source = script.read_text()
+    # Current attempt starts at the committed prior result, without additional Git progress.
+    start = source.index('contract = metadata[\'result_capture\']')
+    noop = build_modify_capture(no_op=True).replace(
+        "capture = Path(args[-2])\nassert args[-3:] == ['--output-last-message', str(capture), '-']",
+        "assert args[-4:] == ['--input-format', 'stream-json', '--output-format', 'stream-json']")
+    noop = noop.replace("== 'implemented'", "== 'implemented and reviewed'")
+    head = json.loads(originals[0])['commit_sha']
+    if replay == 'prior-cycle':
+        script.write_text(source[:start] + AGY_MODEL_ASSERTION + noop + AGY_CAPTURE)
+        valid = fresh_modify_attempt(config, tmp_path / 'valid', cycle=5, head=head)
+        assert dispatch_worker(valid).state == 'completed'
+        valid_report = json.loads(valid.agent_run.result_file.read_bytes())
+        assert valid_report['no_op'] and valid_report['verification']['commit_sha'] == head
+    wire = (f"print({originals[1].decode()!r}, end='')\n" if replay == 'prior-stream' else
+            noop + "envelope['cycle'] = '4'\n" + AGY_CAPTURE)
+    script.write_text(source[:start] + AGY_MODEL_ASSERTION + wire)
+    current = fresh_modify_attempt(config, tmp_path / 'current', cycle=5, head=head)
+    result = dispatch_worker(current)
+    assert result.state != 'completed'
+    assert not current.agent_run.result_file.exists()
+    current_saved = json.loads(Path(str(current.state_file) + '.config.json').read_bytes())
+    events = current.agent_run.events_log.read_text().splitlines()
+    assert any('reason=capture-identity-mismatch' in line and
+               f"attempt_id={current_saved['agent_run']['attempt_id']}" in line for line in events)
+    assert json.loads(Path(str(current.state_file) + '.outcome.json').read_bytes())['status'] == 'failed'
+    assert [path.read_bytes() for path in paths] == originals
+
+
+def test_agy_gemini_4_impl_publishes_verified_success(tmp_path, monkeypatch):
+    from ai_skills.git import current_head
+
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE)
+    root = str(config.agent_run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['commit_sha'] == current_head(root) != config.issue_base_sha
+    assert report['verification']['commands'] == CAPTURE_CHECKS['required_checks']
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    assert (saved['agent_run']['agent'], saved['agent_run']['model']) == ('agy', GEMINI_4)
+    assert saved['agent_run']['result_capture_context']['source'] == 'agy-stream-json'
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['status'] == 'success' and outcome['git_progress']['head'] == report['commit_sha']
+    done = config.agent_run.done_file.read_text(encoding='utf-8')
+    assert f'|model={GEMINI_4}|' in done and '|status=success|source=dispatcher|' in done
+    assert f'model={GEMINI_4}' in config.agent_run.events_log.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_agy_gemini_4_publishes_result_before_outcome_and_done(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    order = []
+    for name in ('write_json_atomic', 'write_text_atomic'):
+        def record(path, *args, _original=getattr(dispatch, name), **kwargs):
+            order.append(Path(path).name)
+            return _original(path, *args, **kwargs)
+        monkeypatch.setattr(dispatch, name, record)
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE)
+    assert dispatch_worker(config).state == 'completed'
+    # The admission journal is pending; only terminal journaling follows the published result.
+    terminal = order[order.index('result.json'):]
+    assert terminal.index('worker.state.json.outcome.json') < terminal.index('worker.done')
+
+
+@pytest.mark.parametrize(('wire', 'build', 'diagnostic'), [
+    (AGY_STEPS_ONLY, None, 'capture-response-invalid'),
+    (AGY_MALFORMED_TERMINAL, None, 'capture-invalid-json'),
+    (AGY_CAPTURE, AGY_UNVERIFIED, 'verification-check-not-passed'),
+])
+def test_agy_gemini_4_impl_failure_retains_raw_capture_and_recovers(tmp_path, monkeypatch, wire, build, diagnostic):
+    from ai_skills.git import current_head
+
+    config = agy_gemini_worker(tmp_path, monkeypatch, wire, build=build)
+    root = str(config.agent_run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'artifact-recovery-required', result.reason
+    salvage = json.loads(config.agent_run.result_file.read_bytes())
+    assert salvage['status'] == 'artifact_recovery_required' and salvage['verification']['passed'] is False
+    outcome = json.loads(Path(str(config.state_file) + '.outcome.json').read_bytes())
+    assert outcome['status'] == 'failed' and outcome['reason'] == 'artifact-recovery-required'
+    assert outcome['git_progress']['head'] == current_head(root)
+    saved = json.loads(Path(str(config.state_file) + '.config.json').read_bytes())
+    raw = Path(saved['agent_run']['stream_directory'], 'stdout').read_bytes()
+    assert b'"event": "init"' in raw and saved['agent_run']['model'] == GEMINI_4
+    assert 'reason=' + diagnostic in config.agent_run.events_log.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize('direct', ['invalid', 'valid'])
+def test_agy_gemini_4_preserves_direct_result_file(tmp_path, monkeypatch, direct):
+    write = "result_path.write_bytes(b'')" if direct == 'invalid' else (
+        "result_path.write_text(json.dumps({**report, 'publication': 'direct'}), encoding='utf-8')")
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_CAPTURE + write + '\n')
+    result = dispatch_worker(config)
+    raw = config.agent_run.result_file.read_bytes()
+    if direct == 'valid':
+        assert result.state == 'completed'
+        assert json.loads(raw)['publication'] == 'direct'
+        assert f'|model={GEMINI_4}|' in config.agent_run.done_file.read_text(encoding='utf-8')
+    else:
+        assert result.state != 'completed'
+        assert raw == b''
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def agy_managed_role_worker(tmp_path, role, result, *, instructions=None):
+    script = f'''import json, os, sys
+from pathlib import Path
+assert sys.argv[1:3] == ['--model', {('gemini-4-hydrogen-high' if role == 'complexity' else GEMINI_4)!r}]
+result = Path(os.environ['RUN_WITH_IT_RESULT_FILE'])
+result.write_text(json.dumps({result!r}), encoding='utf-8')
+if {role!r} == 'review':
+    Path(os.environ['REVIEWER_INSTRUCTIONS_FILE']).write_text(
+        json.dumps({instructions!r}), encoding='utf-8')
+'''
+    config = worker_config(tmp_path, script)
+    registry = json.loads(config.agent_run.registry_file.read_text(encoding='utf-8'))
+    registry['agents']['agy'] = registry['agents'].pop('fake')
+    registry['agents']['agy']['model'] = {'flag_template': '--model {{model}}'}
+    registry['agents']['agy']['invocation']['args_template'] = [
+        str(tmp_path / 'provider.py'), '{{model_flag}}', '{{prompt}}']
+    config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    result_file = tmp_path / ('review-cycle-1-status.json' if role == 'review' else 'result.json')
+    return replace(config, agent_run=config.agent_run.replace(
+        agent='agy', model='gemini-4-hydrogen-high' if role == 'complexity' else GEMINI_4,
+        role=role, result_file=result_file))
+
+
+@pytest.mark.parametrize(('role', 'result', 'instructions', 'valid', 'model'), [
+    ('complexity', {'total': 9, 'level': 'quite-easy', 'scores': {key: 1 for key in
+     ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
+      'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
+      'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+     'rationale': {key: 'reason' for key in ('dependency_complexity', 'ownership_overlap_risk',
+      'architecture_risk', 'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
+      'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+     'files_inspected': ['src/example.py']},
+     None, True, 'gemini-4-hydrogen-high'),
+    ('complexity', {'total': 9}, None, False, 'gemini-4-hydrogen-high'),
+    ('review', {'verdict': 'approve', 'comment_count': 0, 'nitpick_only': False},
+     {'verdict': 'approve', 'summary': 'No findings.', 'comments': [], 'blocking_reasons': []}, True, GEMINI_4),
+    ('review', {'verdict': 'approve', 'comment_count': 1, 'nitpick_only': False},
+     {'verdict': 'approve', 'summary': 'No findings.', 'comments': [], 'blocking_reasons': []}, False, GEMINI_4),
+    ('artifact-recovery', {'status': 'success', 'artifact_recovered': True}, None, True, GEMINI_4),
+    ('artifact-recovery', ['malformed'], None, False, GEMINI_4),
+])
+def test_managed_agy_phase_dispatch_validates_role_artifacts_and_emits_model(
+        tmp_path, monkeypatch, role, result, instructions, valid, model):
+    config = agy_managed_role_worker(tmp_path, role, result, instructions=instructions)
+    outcome = dispatch_worker(config)
+    assert (outcome.state == 'completed') is valid
+    events = config.agent_run.events_log.read_text(encoding='utf-8')
+    expected = 'dispatch-complete' if valid else 'dispatch-failed'
+    assert expected in events
+    assert f'agent=agy' in events and f'model={model}' in events
+    assert f'role={role}' in events
 
 
 @pytest.mark.parametrize(('agent', 'options'), [
@@ -2593,3 +2925,387 @@ def test_saved_raw_effort_config_rejected_before_provider(tmp_path, validate):
     assert dispatch_main(['--config', str(path)] + (['--validate-only'] if validate else [])) == 2
     assert not (tmp_path / 'observed.json').exists()
     assert not config.state_file.exists()
+
+
+PLAN_RESULT = {'schema_version': 1, 'issue': '7', 'role': 'plan', 'status': 'success',
+               'approach': 'Preserve the canary', 'complexity_level': 'complex',
+               'complexity_rationale': 'Cross-module protocol change with read-only capture invariants.',
+               'slices': [{'id': 1}]}
+PLAN_MARKDOWN = '# Preserve the canary\n\n- Read source and preserve café labels.\n'
+PLAN_INVOCATION = ['--fixture-read-only', '--model', GEMINI_4,
+                   '--input-format', 'stream-json', '--output-format', 'stream-json']
+PLAN_BODY = f"""
+assert args == {PLAN_INVOCATION!r}
+root = Path.cwd()
+assert (root / 'canary').read_text() == 'original'
+
+def reject_fixture_mutations(event, operands):
+    if event == 'subprocess.Popen' or (
+            event == 'open' and operands[2] & (os.O_WRONLY | os.O_RDWR)):
+        raise PermissionError('fixture read-only enforcement')
+
+sys.addaudithook(reject_fixture_mutations)
+for mutation in (lambda: (root / 'canary').write_text('changed'),
+                 lambda: subprocess.run(['git', 'commit', '--allow-empty', '-m', 'unexpected'])):
+    try:
+        mutation()
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError('fixture mutation was allowed')
+envelope = {{**metadata['result_capture']['envelope'],
+            'result': {PLAN_RESULT!r}, 'plan_markdown': {PLAN_MARKDOWN!r}}}
+"""
+
+
+def protected_agy_plan_worker(tmp_path, monkeypatch, *, mutation='', wire=AGY_CAPTURE):
+    from ai_skills import git, runner
+
+    config = capture_worker(tmp_path, PLAN_BODY + mutation + '\n' + wire)
+    run = config.agent_run
+    root = run.repo_root
+    script = tmp_path / 'provider.py'
+    (root / 'exec').replace(script)
+    source = script.read_text(encoding='utf-8').replace(
+        "metadata = json.loads(prompt.decode",
+        "prompt = json.loads(prompt)['message']['content'].encode('utf-8')\nmetadata = json.loads(prompt.decode")
+    script.write_text(source, encoding='utf-8')
+    (root / 'canary').write_text('original', encoding='utf-8')
+    git.git_output(str(root), 'add', 'canary')
+    git.git_output(str(root), 'commit', '-qm', 'Canary')
+    registry = runner.load_registry()
+    agy = registry['agents']['agy']
+    agy['permission_modes']['read_only'] = '--fixture-read-only'
+    agy['invocation']['command'] = sys.executable
+    agy['invocation']['args_template'].insert(0, str(script))
+    run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    expected_argv = (sys.executable, str(script), *PLAN_INVOCATION)
+
+    def verify(plan_run, spec):
+        return (spec.argv == expected_argv and spec.cwd == root and
+                plan_run.environment == run.environment and spec.env.get('REPO_ROOT') == str(root))
+
+    monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda registry: verify)
+    return replace(config, agent_run=run.replace(agent='agy-cli', role='plan', model=GEMINI_4))
+
+
+def plan_git_snapshot(root):
+    from ai_skills.git import git_output
+
+    queries = [('rev-parse', 'HEAD'), ('symbolic-ref', 'HEAD'), ('diff', '--binary'),
+               ('diff', '--cached', '--binary'), ('ls-files', '--others', '--exclude-standard')]
+    return [(root / 'canary').read_bytes(), *(git_output(str(root), *args) for args in queries)]
+
+
+def test_protected_agy_plan_publishes_both_artifacts(tmp_path, monkeypatch):
+    from ai_skills import runner
+    from ai_skills.outcomes import outcome_path
+
+    def unexpected_probe(*args, **kwargs):
+        pytest.fail('a protected launch must not run a separate provider capability probe')
+
+    monkeypatch.setattr(runner, '_check_cli_capabilities', unexpected_probe)
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    before = plan_git_snapshot(run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'completed'
+    assert json.loads(run.result_file.read_bytes()) == PLAN_RESULT
+    assert (run.issue_dir / 'plan.md').read_text(encoding='utf-8') == PLAN_MARKDOWN
+    assert plan_git_snapshot(run.repo_root) == before
+    assert json.loads(outcome_path(config.state_file).read_bytes())['status'] == 'success'
+    assert 'status=success|source=dispatcher' in run.done_file.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize(('mutation', 'wire', 'reason'), [
+    ("envelope['plan_markdown'] = '  '", AGY_CAPTURE, 'missing-plan-file-artifact'),
+    ("envelope['result']['complexity_level'] = 'unknown'", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['result']['complexity_level'] = []", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['result']['issue'] = '8'", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['result']['commit_sha'] = 'unwanted'", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['attempt_id'] = 'previous'", AGY_CAPTURE, 'capture-identity-mismatch'),
+    ("del envelope['plan_markdown']", AGY_CAPTURE, 'capture-identity-mismatch'),
+    ('', AGY_STEPS_ONLY, 'capture-response-invalid'),
+    ('', AGY_CAPTURE + 'raise SystemExit(9)\n', 'provider-exit-nonzero'),
+])
+def test_protected_agy_plan_finalization_rejects_incomplete_capture(tmp_path, monkeypatch, mutation, wire, reason):
+    config = protected_agy_plan_worker(tmp_path, monkeypatch, mutation=mutation, wire=wire)
+    result = dispatch_worker(config)
+    assert result.state == 'failed'
+    assert result.reason == reason
+    assert not config.agent_run.result_file.exists()
+    assert not (config.agent_run.issue_dir / 'plan.md').exists()
+
+
+@pytest.mark.parametrize('kind', ['occupied', 'symlink', 'hard-link', 'pair-alias', 'source', 'git', 'source-state', 'state-lock'])
+def test_protected_agy_plan_rejects_unsafe_paths_before_launch(tmp_path, monkeypatch, kind):
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    run.issue_dir.mkdir()
+    plan = run.issue_dir / 'plan.md'
+    if kind == 'occupied':
+        plan.write_text('previous plan', encoding='utf-8')
+    elif kind == 'symlink':
+        plan.symlink_to(tmp_path / 'missing')
+    elif kind == 'hard-link':
+        os.link(run.repo_root / 'canary', plan)
+    elif kind == 'pair-alias':
+        config = replace(config, agent_run=run.replace(result_file=plan))
+    elif kind == 'source':
+        config = replace(config, agent_run=run.replace(result_file=run.repo_root / 'plan.json'))
+    elif kind == 'git':
+        config = replace(config, agent_run=run.replace(issue_dir=run.repo_root / '.git' / 'objects'))
+    elif kind == 'source-state':
+        config = replace(config, state_file=run.repo_root / 'unexpected' / 'worker.state.json')
+    else:
+        Path(str(config.state_file) + '.lock').symlink_to(run.repo_root, target_is_directory=True)
+
+    with pytest.raises((ValueError, RuntimeError), match='occupied|unsafe|collision|outside'):
+        dispatch_worker(config)
+    assert not (tmp_path / 'calls').exists()
+    assert not config.state_file.exists()
+    assert not (run.repo_root / 'unexpected').exists()
+
+
+@pytest.mark.parametrize('boundary', ['result', 'outcome', 'state', 'done'])
+def test_protected_agy_plan_adopts_partial_publication(tmp_path, monkeypatch, boundary):
+    from ai_skills import dispatch
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    interrupt_foreground_dispatch(monkeypatch, config, boundary)
+    assert_publication_boundary(config, boundary, 'success')
+    plan = run.issue_dir / 'plan.md'
+    assert plan.read_bytes() == PLAN_MARKDOWN.encode()
+    plan_identity = plan.stat().st_ino
+    mark_launcher_dead(config)
+    assert dispatch.adopt_worker(config.state_file).state == 'completed'
+    assert dispatch.adopt_worker(config.state_file).state == 'completed'
+    assert json.loads(run.result_file.read_bytes()) == PLAN_RESULT
+    assert plan.stat().st_ino == plan_identity
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_protected_agy_plan_adoption_rejects_changed_journaled_companion(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    interrupt_foreground_dispatch(monkeypatch, config, 'done')
+    plan = run.issue_dir / 'plan.md'
+    plan.write_text('foreign Markdown from another attempt', encoding='utf-8')
+    mark_launcher_dead(config)
+    result = dispatch.adopt_worker(config.state_file)
+    assert (result.state, result.reason) == ('unknown', 'capture-plan-handoff-changed')
+    assert not run.done_file.exists()
+    admitted = dispatch._admitted_worker(config.state_file)
+    assert not inspect_worker(admitted).artifact_valid
+
+
+@pytest.mark.parametrize('kind', ['stray', 'conflict', 'stop', 'typed'])
+def test_protected_agy_plan_trusts_only_the_bound_capture(tmp_path, monkeypatch, kind):
+    from ai_skills import dispatch
+
+    typed = """
+del envelope['plan_markdown']
+result = {key: envelope[key] for key in ('schema_version', 'run_id', 'attempt_id', 'issue', 'role')}
+envelope['result'] = {**result, 'artifact_kind': 'role_failure', 'status': 'blocked',
+                      'reason': 'plan-context-unavailable', 'summary': 'Missing input evidence'}
+""" if kind == 'typed' else ''
+    config = protected_agy_plan_worker(tmp_path, monkeypatch, mutation=typed,
+        wire=AGY_STEPS_ONLY if kind == 'stray' else AGY_CAPTURE)
+    run = config.agent_run
+    plan = run.issue_dir / 'plan.md'
+    publish = dispatch._publish_captured_result
+
+    def before_capture(admitted, *, eligible):
+        if kind in ('stray', 'conflict'):
+            plan.parent.mkdir(exist_ok=True)
+            plan.write_text('stray', encoding='utf-8')
+        if kind == 'stray':
+            run.result_file.write_text(json.dumps(PLAN_RESULT), encoding='utf-8')
+        return publish(admitted, eligible=eligible)
+
+    if kind == 'stop':
+        interrupt_foreground_dispatch(monkeypatch, config, 'result')
+        admitted = dispatch._admitted_worker(config.state_file)
+        dispatch._record_stop_intent(admitted, 'interrupted')
+        mark_launcher_dead(config)
+        result = dispatch.adopt_worker(config.state_file)
+        assert (result.state, result.reason, result.return_code) == ('interrupted', 'interrupted', 130)
+        assert not run.result_file.exists()
+        return
+
+    monkeypatch.setattr(dispatch, '_publish_captured_result', before_capture)
+    result = dispatch_worker(config)
+    assert result.state == 'failed'
+    assert not inspect_worker(dispatch._admitted_worker(config.state_file)).artifact_valid
+    if kind == 'typed':
+        assert result.reason == 'plan-context-unavailable'
+        assert json.loads(run.result_file.read_bytes())['status'] == 'blocked'
+        assert not plan.exists()
+    else:
+        reason = 'capture-response-invalid' if kind == 'stray' else 'capture-plan-artifact-conflict'
+        assert result.reason == reason
+        assert run.result_file.exists() == (kind == 'stray')
+        assert plan.read_text(encoding='utf-8') == 'stray'
+
+
+@pytest.mark.parametrize('change', ['agent', 'argv', 'permission', 'env', 'capture', 'profile', 'prompt'])
+def test_protected_agy_plan_refuses_changed_runner_binding(tmp_path, monkeypatch, change):
+    from ai_skills import dispatch, runner
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    actual_run_agent = runner.run_agent
+
+    def changed_run(run):
+        changes = {'agent': {'agent': 'codex'}, 'argv': {'extra_args': ('--override',)},
+            'permission': {'permission_mode': '--dangerously-skip-permissions'},
+            'env': {'environment': {**run.environment, 'EXTRA_PROVIDER_SETTING': 'unverified'}},
+            'capture': {'result_capture_context': None}, 'profile': {}, 'prompt': {}}
+        if change == 'profile':
+            monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda registry: None)
+        if change == 'prompt':
+            run.prompt_file.write_text('changed after admission', encoding='utf-8')
+        with pytest.raises(ValueError, match='agy-plan-read-only-unavailable'):
+            actual_run_agent(run.replace(**changes[change]))
+        return runner.AgentRunResult(1, 'agy', GEMINI_4)
+
+    monkeypatch.setattr(dispatch, 'run_agent', changed_run)
+    assert dispatch_worker(config).state == 'failed'
+    assert not (tmp_path / 'calls').exists()
+
+
+def test_managed_non_agy_plan_still_accepts_direct_artifacts(tmp_path):
+    config = worker_config(tmp_path, f"""
+import json, os
+from pathlib import Path
+
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({PLAN_RESULT!r}), encoding='utf-8')
+Path(os.environ['RUN_WITH_IT_ISSUE_DIR'], 'plan.md').write_text({PLAN_MARKDOWN!r}, encoding='utf-8')
+""")
+    run = config.agent_run.replace(role='plan', issue_dir=tmp_path, cycle=1)
+    config = replace(config, agent_run=run)
+    assert dispatch_worker(config).state == 'completed'
+    assert inspect_worker(config).artifact_valid
+
+
+def test_agy_adoption_classifies_only_structured_diagnostics_and_records_canonical_route(tmp_path, monkeypatch):
+    import socket
+    from ai_skills import dispatch, routing
+    from ai_skills.outcomes import outcome_path, pending_outcome
+    from ai_skills.processes import Liveness, ProcessIdentity, ProcessSupervisor
+    from ai_skills.storage import load_json, write_json_atomic
+
+    def prepare_agy_adoption(case_dir, *, agent_name, stdout_bytes, stderr_bytes, exit_code):
+        case_dir.mkdir(parents=True, exist_ok=True)
+        config = agy_gemini_worker(case_dir, monkeypatch, AGY_CAPTURE)
+        registry = json.loads(config.agent_run.registry_file.read_text(encoding='utf-8'))
+        registry.setdefault('aliases', {})['antigravity'] = 'agy'
+        config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+        stream_dir = case_dir / 'streams'
+        stream_dir.mkdir()
+        stdout_file = stream_dir / 'stdout'
+        stderr_file = stream_dir / 'stderr'
+        stdout_file.write_bytes(stdout_bytes)
+        stderr_file.write_bytes(stderr_bytes)
+        run_id, attempt_id = 'agy-adopt-run', 'agy-adopt-attempt'
+        rec_dir = case_dir / 'processes'
+        run = config.agent_run.replace(
+            agent=agent_name, model=GEMINI_4, dispatcher_managed=True,
+            state_file=config.state_file, stream_directory=stream_dir,
+            process_state_file=Path(str(config.state_file) + '.process.json'),
+            record_directory=rec_dir, run_id=run_id, attempt_id=attempt_id,
+        )
+        config = replace(config, agent_run=run)
+        write_json_atomic(Path(str(config.state_file) + '.config.json'), config.to_record())
+        write_json_atomic(outcome_path(config.state_file), pending_outcome(
+            run_id=run_id, attempt_id=attempt_id, issue=str(run.issue), role=run.role,
+            state_file=config.state_file, expected_artifacts=dispatch.expected_artifact_paths(config)))
+        identity = ProcessIdentity(pid=99999, created_at=1234.0, host=socket.gethostname(),
+                                   run_id=run_id, attempt_id=attempt_id)
+        write_json_atomic(run.process_state_file, {
+            'schema_version': 1, 'identity': identity.__dict__,
+            'record_directory': str(rec_dir), 'state': 'alive',
+            'stdout_file': str(stdout_file), 'stderr_file': str(stderr_file),
+        })
+        write_json_atomic(config.state_file, {
+            'schema_version': 1, 'state': 'running', 'run_id': run_id, 'attempt_id': attempt_id,
+            'provider_identity': identity.__dict__,
+            'launcher_identity': {'pid': 99998, 'created_at': 1.0, 'host': socket.gethostname()},
+        })
+        monkeypatch.setattr(ProcessSupervisor, 'inspect', lambda self, ident: Liveness('dead', 'exited'))
+        monkeypatch.setattr(ProcessSupervisor, 'return_code', lambda self, ident: exit_code)
+        return config
+
+    # 1. Model-controlled stdout containing "quota" / "rate limit" must NOT classify as infrastructure.
+    spoof_stdout = (json.dumps({'event': 'step_update', 'step_update': {'text': 'quota exceeded rate limit'}}) + '\n').encode()
+    spoof_cfg = prepare_agy_adoption(tmp_path / 'spoof', agent_name='agy',
+                                     stdout_bytes=spoof_stdout, stderr_bytes=b'', exit_code=1)
+    spoof_res = dispatch.adopt_worker(spoof_cfg.state_file)
+    assert spoof_res.state == 'failed'
+    spoof_state = load_json(spoof_cfg.state_file)
+    assert spoof_state['failure_class'] == 'capability'
+    assert routing.failed_attempt_routes([spoof_cfg.state_file]) == []
+
+    # 2. Structured AGY terminal ProviderError + aliased agent classifies via agy_diagnostics and records canonical route.
+    err_stdout = (
+        json.dumps({'event': 'init', 'conversation_id': 'c1', 'init': {'model': GEMINI_4}}) + '\n' +
+        json.dumps({'event': 'step_update', 'step_update': {'conversation_id': 'c1', 'step_index': 0,
+                                                            'step_type': 'user_input', 'state': 'DONE'}}) + '\n' +
+        json.dumps({'event': 'result', 'result': {'conversation_id': 'c1', 'status': 'ERROR',
+                                                  'error': f'Not entitled to {GEMINI_4}'}}) + '\n'
+    ).encode()
+    err_cfg = prepare_agy_adoption(tmp_path / 'entitlement', agent_name='antigravity',
+                                   stdout_bytes=err_stdout, stderr_bytes=b'', exit_code=0)
+    err_res = dispatch.adopt_worker(err_cfg.state_file)
+    assert err_res.state == 'failed'
+    assert err_res.reason == 'model-unsupported'
+    err_state = load_json(err_cfg.state_file)
+    assert (err_state['failure_class'], err_state['agent'], err_state['model']) == ('infrastructure', 'agy', GEMINI_4)
+    avail = routing.availability_from_failed_attempts([err_cfg.state_file])
+    assert avail['pairs'] == {('agy', GEMINI_4)} and not avail['agents']
+
+
+def test_publish_protected_plan_rolls_back_plan_markdown_on_result_conflict(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    plan, result = dispatch._plan_paths(config.agent_run)
+    original_write = dispatch.write_text_atomic
+
+    def fail_on_result(path, text, *, exclusive=False):
+        if Path(path) == result:
+            raise FileExistsError(str(path))
+        return original_write(path, text, exclusive=exclusive)
+
+    monkeypatch.setattr(dispatch, 'write_text_atomic', fail_on_result)
+    reason, proof = dispatch._publish_protected_plan(config, PLAN_RESULT, PLAN_MARKDOWN)
+    assert (reason, proof) == ('capture-plan-artifact-conflict', None)
+    assert not plan.exists()
+    assert not result.exists()
+
+
+def test_dispatch_waits_briefly_for_delayed_provider_return_code(tmp_path, monkeypatch):
+    from ai_skills.processes import ProcessSupervisor
+
+    config = worker_config(
+        tmp_path,
+        "import json, os; from pathlib import Path; "
+        "Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({'ok': True}), encoding='utf-8')",
+    )
+    original = ProcessSupervisor.return_code
+    calls = [0]
+
+    def delayed_return_code(self, identity):
+        calls[0] += 1
+        if calls[0] < 3:
+            return None
+        return original(self, identity)
+
+    monkeypatch.setattr(ProcessSupervisor, 'return_code', delayed_return_code)
+    result = dispatch_worker(config)
+    assert result.state == 'completed'
+    assert result.return_code == 0
+    assert calls[0] >= 3

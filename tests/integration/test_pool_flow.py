@@ -25,6 +25,40 @@ def test_slots_refill_and_dependencies_only_admit_after_completion(tmp_path,monk
     events=config.resolved().events_log.read_text()
     assert 'type=run-board' in events and 'type=pool-empty' in events and 'type=pool-heartbeat' in events
 
+def test_live_child_keeps_slot_past_hour_until_terminal_artifact(tmp_path,monkeypatch):
+    import ai_skills.pool as pool
+    from ai_skills.storage import write_json_atomic
+    config=pool_fixture(tmp_path,{1:{}},parallel=1)
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+    supervisor=PoolSupervisor(config);assert supervisor.initialize() is None
+    coordinator=supervisor.worker('1')
+    issue_dir=Path(coordinator.agent_run.issue_dir);issue_dir.mkdir(parents=True,exist_ok=True)
+    child_state=issue_dir/'child.state.json'
+    child_result=issue_dir/'child-result.json'
+    child_done=issue_dir/'child.done'
+    child={'role':'impl','cycle':1,'state_file':str(child_state),
+           'result_file':str(child_result),'done_file':str(child_done)}
+    child_state.write_text(json.dumps({'state':'running','updated_at':'1970-01-01T02:46:39Z'}))
+    (issue_dir/'sub-state.json').write_text(json.dumps({'phase':'impl','in_flight_agents':[child]}))
+    supervisor._intent('1',coordinator)
+    supervisor.store.transaction(lambda state:state['issue_registry']['1'].update(worker_wait_since=6399))
+    supervisor.active['1']=coordinator
+    monkeypatch.setattr(pool.time,'time',lambda:10000)
+    monkeypatch.setattr(pool.state_policy,'path_mtime',lambda path:None)
+
+    supervisor.recover('1',coordinator)
+    assert supervisor.active['1'] is coordinator
+    assert driver.started==[]
+
+    child_state.write_text(json.dumps({'state':'completed','updated_at':'1970-01-01T02:46:39Z','done':True}))
+    write_json_atomic(child_result,{'outcome':'completed','summary':'late child result'})
+    child_done.write_text('completed')
+    supervisor.recover('1',coordinator)
+    assert len(driver.started)==1
+    recovery=driver.started[0]
+    assert recovery.agent_run.role=='sub-coord'
+    assert 'SUB_COORD_RECOVERY_MODE=1' in Path(recovery.agent_run.context_file).read_text()
+
 def test_scope_overlap_and_exclusive_issue_never_coschedule(tmp_path,monkeypatch):
     config=pool_fixture(tmp_path,{1:{'parallel_safe':True,'ownership_scope':['src/a']},2:{'parallel_safe':True,'ownership_scope':['src/a/child']},3:{'parallel_safe':False,'ownership_scope':['src/c']}},parallel=3,strict=True)
     driver=FakePoolDriver(delays={'1':2,'2':1});install_fake(monkeypatch,driver)
@@ -83,6 +117,81 @@ def test_merge_recovery_uses_same_owned_pool_slot(tmp_path,monkeypatch):
     assert state['issue_registry']['1']['status']=='completed'
     assert state['issue_registry']['2']['status']=='completed'
 
+
+@pytest.mark.parametrize(('mode','roles'),[
+    ('completed',['sub-coord']),
+    ('crash',['sub-coord','sub-coord']),
+    ('merge_failed',['sub-coord','merge-recovery']),
+])
+def test_agy_coordinator_selection_stays_independent_from_worker_overrides(tmp_path,monkeypatch,mode,roles):
+    from dataclasses import replace
+    from pathlib import Path
+
+    config=pool_fixture(tmp_path,{1:{}})
+    config=replace(config,sub_coord_agent='agy',sub_coord_model='gemini-4-neon-medium',
+        forced_agent='claude',forced_model='claude-sonnet-5-5',
+        registry_file=Path(__file__).parents[2]/'assets'/'agent-registry.json')
+    driver=FakePoolDriver(outcomes={'1':[mode,'completed']});install_fake(monkeypatch,driver)
+
+    assert run_pool(config).state=='pool-empty'
+    assert [item.agent_run.role for item in driver.started]==roles
+    for item in driver.started:
+        assert (item.agent_run.agent,item.agent_run.model)==('agy','gemini-4-neon-medium')
+        assert item.agent_run.environment['FORCED_AGENT']=='claude'
+        assert item.agent_run.environment['FORCED_MODEL']=='claude-sonnet-5-5'
+        assert item.agent_run.environment.get('AGENT') is None
+        assert item.agent_run.environment.get('MODEL') is None
+
+
+def test_invalid_agy_coordinator_pair_is_rejected_before_dispatch(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from pathlib import Path
+
+    config=pool_fixture(tmp_path,{1:{}})
+    config=replace(config,sub_coord_agent='agy',sub_coord_model='unknown-model',
+        registry_file=Path(__file__).parents[2]/'assets'/'agent-registry.json')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+
+    with pytest.raises(ValueError,match='unsupported coordinator model.*unknown-model.*AGY'):
+        run_pool(config)
+    assert driver.started==[]
+
+
+def _custom_agy_registry(tmp_path,models):
+    registry=tmp_path/'custom-registry.json'
+    registry.write_text(json.dumps({'agents':{'agy':{'model':{'known_models':list(models)}}}}))
+    return registry
+
+
+def test_agent_registry_override_validates_and_forwards_the_same_registry(tmp_path,monkeypatch):
+    from dataclasses import replace
+    from ai_skills.registry import load_registry
+    from ai_skills.routing import load_run_registry
+    registry=_custom_agy_registry(tmp_path,['custom-agy-model'])
+    monkeypatch.setenv('AGENT_REGISTRY_FILE',str(registry))
+    config=replace(pool_fixture(tmp_path,{1:{}}),sub_coord_agent='agy',sub_coord_model='custom-agy-model')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+
+    assert run_pool(config).state=='pool-empty'
+    run=driver.started[0].agent_run
+    assert (run.agent,run.model)==('agy','custom-agy-model')
+    assert Path(run.registry_file)==registry
+    assert run.environment['AGENT_REGISTRY_FILE']==str(registry)
+    assert load_run_registry('',tmp_path/'main-state.json')==load_registry(registry)
+
+
+def test_model_absent_from_agent_registry_override_is_rejected_before_inference(tmp_path,monkeypatch):
+    from dataclasses import replace
+    registry=_custom_agy_registry(tmp_path,['custom-agy-model'])
+    monkeypatch.setenv('AGENT_REGISTRY_FILE',str(registry))
+    # Valid in the packaged registry, but the operator's override does not list it.
+    config=replace(pool_fixture(tmp_path,{1:{}}),sub_coord_agent='agy',sub_coord_model='gemini-4-neon-medium')
+    driver=FakePoolDriver();install_fake(monkeypatch,driver)
+
+    with pytest.raises(ValueError,match='unsupported coordinator model.*gemini-4-neon-medium.*AGY'):
+        run_pool(config)
+    assert driver.started==[]
+
 def test_dry_run_does_not_create_worker_launch_intent(tmp_path,monkeypatch,capsys):
     from dataclasses import replace
     config=replace(pool_fixture(tmp_path,{1:{}}),dry_run=True)
@@ -91,6 +200,55 @@ def test_dry_run_does_not_create_worker_launch_intent(tmp_path,monkeypatch,capsy
     assert not driver.started
     assert not json.loads(Path(config.state_file).read_text())['pool_attempts']
     assert 'worker_config' not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('kind', ['sub-coord', 'merge-recovery'])
+def test_pool_coordinator_configs_have_no_default_deadline(tmp_path, kind):
+    config = pool_fixture(tmp_path, {1:{}})
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    worker = supervisor.worker('1', kind=kind)
+    assert worker.timeout_seconds == worker.hard_limit_seconds == 0
+    assert (worker.quiet_seconds, worker.stall_seconds) == (900, 1200)
+
+def test_pool_recovery_wait_defaults_unbounded_and_allows_positive_override(tmp_path):
+    default=PoolConfig(state_file=tmp_path/'state.json')
+    override=PoolConfig.from_sources({'max_worker_wait_seconds':3600},{})
+    assert (default.sub_coord_agent,default.sub_coord_model)==('codex','gpt-6.2-sol')
+    assert default.max_worker_wait_seconds==0
+    assert override.max_worker_wait_seconds==3600
+    assert default.worker_stale_seconds==1200
+
+
+@pytest.mark.parametrize('mode', ['completed', 'crash', 'merge_failed'])
+def test_native_pool_coordinator_attempts_use_unbounded_defaults(tmp_path, monkeypatch, mode):
+    from dataclasses import replace
+    from pool_support import real_pool_fixture
+
+    monkeypatch.setenv('RUN_WITH_IT_GITHUB_UPDATES', '0')
+    config = replace(real_pool_fixture(tmp_path, delay=.2, mode=mode), timeout_seconds=0, hard_limit_seconds=0)
+    assert run_pool(config).state == 'pool-empty'
+    attempts = json.loads(Path(config.state_file).read_text())['pool_attempts']['1']
+    assert attempts['worker_config']['timeout_seconds'] == 0
+    assert attempts['worker_config']['hard_limit_seconds'] == 0
+
+@pytest.mark.parametrize(('mode','labels'),[
+    ('completed',[('normal','sub-coord')]),
+    ('crash',[('recovering','sub-coord')]),
+    ('merge_failed',[('normal','sub-coord'),('merge-recovery','merge-recovery')]),
+])
+def test_default_pool_coordinator_attempts_outlive_both_former_limits(tmp_path,monkeypatch,mode,labels):
+    from pool_support import install_simulated_dispatch,real_pool_fixture
+    records=install_simulated_dispatch(monkeypatch)
+    config=real_pool_fixture(tmp_path,delay=1,mode=mode,limits={})
+    assert (config.timeout_seconds,config.hard_limit_seconds)==(0,0)
+    assert run_pool(config).state=='pool-empty'
+    completed=[item for item in records if item.result.state=='completed']
+    assert [item.config.agent_run.role for item in completed]==[role for _,role in labels]
+    for item,(label,_) in zip(completed,labels):
+        assert item.config.timeout_seconds==item.config.hard_limit_seconds==0,label
+        assert item.simulated_seconds>7200,label
+        assert ('SUB_COORD_RECOVERY_MODE=1' in Path(item.config.agent_run.context_file).read_text())==(label=='recovering')
 
 @pytest.mark.parametrize('mode',['completed','crash','compaction','merge_failed'])
 def test_real_dispatcher_pool_flows_with_only_python_fixture_provider(tmp_path,monkeypatch,mode):
@@ -283,3 +441,212 @@ def test_policy_report_storage_failure_never_overwrites_provider_bytes(tmp_path,
         supervisor.tick()
     assert Path(worker.agent_run.result_file).read_bytes()==original
     assert len(driver.started)==1
+
+
+def test_recovery_wait_expiry_is_visible(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ai_skills import pool, state
+    from ai_skills.storage import write_json_atomic
+    from pool_support import recovery_child
+
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    config = replace(pool_fixture(tmp_path, {1:{}, 2:{}}, parallel=1), max_worker_wait_seconds=60)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    worker = supervisor.worker('1')
+    supervisor._intent('1', worker)
+    supervisor.active['1'] = worker
+    issue_dir = worker.agent_run.issue_dir
+    _, ledger, ownership = recovery_child(issue_dir, monkeypatch)
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+
+    for elapsed in (0, 59, 60, 61, 90):
+        clock.now = 1000 + elapsed
+        supervisor.recover('1', worker)
+        supervisor.board()
+        saved = supervisor.read()['issue_registry']['1']
+        assert saved['worker_wait_since'] == 1000
+        assert saved.get('sub_coord_recovery_attempts', 0) == 0
+        assert supervisor.active == {'1':worker}
+        stage = state.issue_stage(saved, set())
+        if elapsed >= 60:
+            assert stage == 'recovery-wait-expired(complexity cycle 1, live, 60s limit)'
+            assert saved['worker_wait']['elapsed_seconds'] == 60
+        else:
+            assert 'recovery-wait-expired' not in stage
+    assert not driver.started
+    events = config.resolved().events_log.read_text().splitlines()
+    expired, = [line for line in events if 'type=sub-coord-recovery-wait-expired' in line]
+    for field in ('elapsed_seconds=60', 'max_wait_seconds=60', 'ownership=live', 'worker_attempt=child-attempt'):
+        assert field in expired
+    assert any('type=run-board' in line and 'recovery-wait-expired' in line for line in events)
+
+    ownership['wrapper'] = 'unknown'
+    supervisor.recover('1', worker)
+    assert not driver.started
+    assert supervisor.read()['issue_registry']['1']['worker_wait']['ownership'] == 'unknown'
+    assert config.resolved().events_log.read_text().count('type=sub-coord-recovery-wait-expired') == 1
+
+
+@pytest.mark.parametrize(('handoff','compaction','exhausted'), [
+    ('valid',False,False), ('valid',True,False), ('invalid',False,False),
+    ('missing',False,False), ('invalid',True,False),
+    ('valid',False,True), ('valid',True,True),
+])
+def test_expired_wait_release_resumes_with_applicable_budget(tmp_path, monkeypatch, handoff, compaction, exhausted):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ai_skills import pool
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child, valid_complexity_result
+
+    budgets = {'sub_coord_recovery_attempts':int(not compaction and exhausted),
+               'sub_coord_compaction_handoffs':int(compaction and exhausted)}
+    config = replace(pool_fixture(tmp_path,{1:budgets}), max_worker_wait_seconds=60,
+                     max_recovery_attempts=1, max_compaction_handoffs=1)
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    predecessor = supervisor.worker('1')
+    supervisor._intent('1', predecessor)
+    supervisor.active['1'] = predecessor
+    issue_dir = predecessor.agent_run.issue_dir
+    child, ledger, ownership = recovery_child(issue_dir, monkeypatch)
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger],
+                                                  'compaction_requested':compaction})
+    write_json_atomic(issue_dir/'report.json', {'outcome':'completed','summary':'unbound coordinator result'})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+    supervisor.recover('1', predecessor)
+
+    ownership['wrapper'] = 'dead'
+    clock.now = 1060
+    result_path = child.agent_run.result_file
+    if handoff != 'missing':
+        payload = valid_complexity_result() if handoff == 'valid' else {'outcome':'completed'}
+        write_json_atomic(result_path, payload)
+    supervisor.recover('1', predecessor)
+    events = config.resolved().events_log.read_text()
+    assert 'type=sub-coord-recovery-wait-expired' in events and 'ownership=released' in events
+    journal = load_json(outcome_path(child.state_file))
+    assert journal['status'] == ('success' if handoff == 'valid' else 'failed')
+    assert child.agent_run.done_file.is_file()
+    if handoff != 'missing':
+        assert load_json(result_path) == payload
+
+    entry = supervisor.read()['issue_registry']['1']
+    counter = 'sub_coord_compaction_handoffs' if compaction else 'sub_coord_recovery_attempts'
+    if exhausted:
+        assert not driver.started
+        assert entry['status'] == 'blocked'
+        assert entry[counter] == 1
+        return
+    assert len(driver.started) == 1
+    assert entry[counter] == 1 and sum(entry[key] for key in budgets) == 1
+    assert 'worker_wait_since' not in entry and 'worker_wait' not in entry
+    context = driver.started[0].agent_run.context_file.read_text()
+    reason = 'finished' if handoff == 'valid' else 'failed'
+    assert f'SUB_COORD_RECOVERY_REASON=in-flight-worker-{reason}' in context
+    assert 'Never rerun a phase that already has a valid result artifact.' in context
+    assert events.index('type=sub-coord-recovery-wait-expired') < events.index('type=sub-coord-spawn')
+    supervisor.recover('1', predecessor)
+    assert len(driver.started) == 1
+
+
+def test_expired_wait_recovers_once_after_prelaunch_finalization(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from ai_skills import pool
+    from ai_skills.outcomes import outcome_path
+    from ai_skills.storage import write_json_atomic
+    from pool_support import finalize_prelaunch_child, recovery_child
+
+    config = replace(pool_fixture(tmp_path, {1:{}}), max_worker_wait_seconds=60, max_recovery_attempts=1)
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    predecessor = supervisor.worker('1')
+    supervisor._intent('1', predecessor)
+    supervisor.active['1'] = predecessor
+    issue_dir = predecessor.agent_run.issue_dir
+    child, ledger, ownership = recovery_child(issue_dir, monkeypatch, provider='missing')
+    write_json_atomic(issue_dir/'sub-state.json', {'phase':'complexity','in_flight_agents':[ledger]})
+    clock = SimpleNamespace(now=1000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda:clock.now, monotonic=lambda:1))
+    supervisor.recover('1', predecessor)
+
+    clock.now += 60
+    supervisor.recover('1', predecessor)
+    entry = supervisor.read()['issue_registry']['1']
+    assert entry['worker_wait']['expired'] and entry['worker_wait']['holding']
+    assert not driver.started
+    assert entry.get('sub_coord_recovery_attempts', 0) == 0
+
+    child.agent_run.result_file.write_text('{"outcome":"completed"}\n')
+    finalize_prelaunch_child(child, 'rate-limited')
+    artifacts = {path:path.read_bytes() for path in (child.state_file, outcome_path(child.state_file),
+        child.agent_run.result_file, child.agent_run.done_file)}
+    ownership['wrapper'] = 'dead'
+    supervisor.recover('1', predecessor)
+    supervisor.recover('1', predecessor)
+
+    assert len(driver.started) == 1
+    entry = supervisor.read()['issue_registry']['1']
+    assert entry['sub_coord_recovery_attempts'] == 1
+    assert entry.get('sub_coord_compaction_handoffs', 0) == 0
+    context = driver.started[0].agent_run.context_file.read_text()
+    assert 'SUB_COORD_RECOVERY_REASON=in-flight-worker-failed' in context
+    assert all(path.read_bytes() == old for path, old in artifacts.items())
+
+
+def test_default_wait_holds_live_native_child_and_reconciles_on_release(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ai_skills import pool
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child
+
+    config = pool_fixture(tmp_path, {1: {}})
+    assert config.max_worker_wait_seconds == 0
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    predecessor = supervisor.worker('1')
+    supervisor._intent('1', predecessor)
+    supervisor.active['1'] = predecessor
+    issue_dir = predecessor.agent_run.issue_dir
+    child, ledger, ownership = recovery_child(issue_dir, monkeypatch, wrapper='dead', provider='alive', exit_code=0)
+    write_json_atomic(child.state_file, {**load_json(child.state_file), 'updated_at': '1970-01-01T00:00:00Z'})
+    write_json_atomic(issue_dir / 'sub-state.json', {'phase': 'complexity', 'in_flight_agents': [ledger]})
+    clock = SimpleNamespace(now=100000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda: clock.now, monotonic=lambda: 1))
+
+    supervisor.recover('1', predecessor)
+    assert not driver.started
+    entry = supervisor.read()['issue_registry']['1']
+    assert entry['worker_wait']['holding'] is True
+    assert entry['worker_wait']['expired'] is False
+    assert entry['worker_wait']['ownership'] == 'live'
+    events = config.resolved().events_log.read_text(encoding='utf-8')
+    assert 'sub-coord-recovery-wait-expired' not in events
+
+    write_json_atomic(child.agent_run.result_file, {'total': 9, 'level': 'quite-easy', 'scores': {
+        key: 1 for key in ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
+                           'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
+                           'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+        'rationale': {key: 'ok' for key in ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
+                                            'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
+                                            'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+        'files_inspected': ['src/example.py']})
+    ownership['provider'] = 'dead'
+    supervisor.recover('1', predecessor)
+    assert len(driver.started) == 1
+    assert load_json(child.state_file)['state'] == 'completed'
+    assert 'SUB_COORD_RECOVERY_REASON=in-flight-worker-finished' in driver.started[0].agent_run.context_file.read_text()

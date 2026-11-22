@@ -22,11 +22,13 @@ import psutil
 
 from ai_skills import state as state_policy, artifacts
 from ai_skills.outcomes import outcome_path, outcome_reason, role_artifact_paths
-from ai_skills.dispatch import WorkerConfig, WorkerResult, adopt_worker, dispatch_worker
+from ai_skills.dispatch import (DEFAULT_QUIET_SECONDS, DEFAULT_STALL_SECONDS, WorkerConfig,
+    WorkerResult, adopt_worker, dispatch_worker)
 from ai_skills.events import EventBus
 from ai_skills.github import GitHubUpdateRequest, update_github
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor
 from ai_skills.resources import resource_path
+from ai_skills.registry import load_registry
 from ai_skills.runner import AgentRunConfig
 from ai_skills.storage import DirectoryLock, LockTimeoutError, StateStore, load_json, write_json_atomic
 
@@ -69,6 +71,27 @@ def select_ready(state: dict, *, limit: int) -> AdmissionDecision:
     return AdmissionDecision(tuple(issue for issue, _ in selected), deferrals, tuple(missing))
 
 
+def check_agy_coordinator(agent, model, registry_file):
+    """Reject an AGY coordinator model absent from the registry the run binds to."""
+    registry = load_registry(registry_file)
+    agent = registry.get('aliases', {}).get(agent, agent)
+    if agent != 'agy':
+        return
+    definition = registry.get('agents', {}).get(agent)
+    models = definition.get('model', {}).get('known_models', []) if isinstance(definition, dict) else []
+    if model not in models:
+        raise ValueError(
+            f'unsupported coordinator model {model!r} for AGY; '
+            f'choose an AGY model from the pinned registry'
+        )
+
+
+def check_worker_selection(worker):
+    """Validate the coordinator pair the dispatched run will actually use."""
+    run = worker.agent_run
+    check_agy_coordinator(run.agent, run.model, run.registry_file)
+
+
 @dataclass(frozen=True)
 class PoolConfig:
     state_file: Path
@@ -86,15 +109,15 @@ class PoolConfig:
     gui_mode: str = '0'
     poll_seconds: float = 10
     heartbeat_seconds: float = 60
-    timeout_seconds: float = 3600
-    hard_limit_seconds: float = 7200
-    quiet_seconds: float = 120
-    stall_seconds: float = 600
+    timeout_seconds: float = 0
+    hard_limit_seconds: float = 0
+    quiet_seconds: float = DEFAULT_QUIET_SECONDS
+    stall_seconds: float = DEFAULT_STALL_SECONDS
     bootstrap_seconds: float = 10
     max_recovery_attempts: int = 2
     max_compaction_handoffs: int = 6
-    max_worker_wait_seconds: int = 3600
-    worker_stale_seconds: int = 600
+    max_worker_wait_seconds: int = 0
+    worker_stale_seconds: int = state_policy.DEFAULT_WORKER_STALE_SECONDS
     max_bootstrap_attempts: int = 3
     status_file: Path | None = None
     events_log: Path | None = None
@@ -129,7 +152,10 @@ class PoolConfig:
         root = Path(self.run_root).absolute() if self.run_root else (state_file.parent.parent if state_file.parent.name == '.run-with-it' else state_file.parent)
         directory = root / '.run-with-it'
         env=self.environment if self.environment is not None else os.environ
+        # An explicit pool registry wins; otherwise the operator's documented override applies.
+        registry = self.registry_file if self.registry_file is not None else env.get('AGENT_REGISTRY_FILE') or None
         return replace(self, state_file=state_file, run_root=root,
+            registry_file=Path(registry).absolute() if registry else None,
             forced_agent=self.forced_agent if self.forced_agent is not None else env.get('FORCED_AGENT') or None,
             forced_model=self.forced_model if self.forced_model is not None else env.get('FORCED_MODEL') or None,
             pool_state_file=Path(self.pool_state_file).absolute() if self.pool_state_file else directory/'main'/'pool.state.json',
@@ -137,6 +163,9 @@ class PoolConfig:
             events_log=Path(self.events_log).absolute() if self.events_log else directory/'status'/'events.log',
             main_log=Path(self.main_log).absolute() if self.main_log else directory/'main'/'main.log',
             record_directory=Path(self.record_directory).absolute() if self.record_directory else directory/'processes')
+
+    def validate_coordinator_selection(self):
+        check_agy_coordinator(self.sub_coord_agent, self.sub_coord_model, self.registry_file)
 
     def to_record(self):
         value = asdict(self)
@@ -338,6 +367,7 @@ class PoolSupervisor:
         return environment
 
     def worker(self, issue, *, kind='sub-coord', context=None):
+        self.config.validate_coordinator_selection()
         state = self.read(); entry = state['issue_registry'][str(issue)]
         directory = Path(entry.get('issue_dir') or self.config.run_root/'.run-with-it'/'issues'/str(issue)).absolute()
         attempt = uuid.uuid4().hex
@@ -359,22 +389,38 @@ class PoolSupervisor:
             stall_seconds=self.config.stall_seconds,timeout_seconds=self.config.timeout_seconds,
             hard_limit_seconds=self.config.hard_limit_seconds,bootstrap_seconds=self.config.bootstrap_seconds)
 
-    def _intent(self, issue, worker):
+    def _intent(self, issue, worker, *, recovery=None):
+        issue = str(issue)
+        run = worker.agent_run
+
         def update(value):
-            old = value.setdefault('pool_attempts', {}).get(str(issue))
-            if old and old.get('attempt_id') != worker.agent_run.attempt_id:
+            attempts = value.setdefault('pool_attempts', {})
+            old = attempts.get(issue)
+            if old and old.get('attempt_id') == run.attempt_id:
+                return True
+            entry = value['issue_registry'][issue]
+            if recovery:
+                predecessor, decision = recovery
+                if not self._is_current(value, issue, predecessor):
+                    return False
+                state_policy.record_sub_coord_recovery(entry, context_file=str(run.context_file),
+                    attempt=decision['recovery_attempt'], reason=decision['reason'],
+                    budget=decision['recovery_budget'])
+            if old:
                 value.setdefault('pool_attempt_history', []).append(old)
-            value['pool_attempts'][str(issue)] = {
-                'engine':'python','engine_version':ENGINE_VERSION,'status':'launch-intent',
-                'run_id':worker.agent_run.run_id,'attempt_id':worker.agent_run.attempt_id,
+            attempts[issue] = {'engine':'python','engine_version':ENGINE_VERSION,'status':'launch-intent',
+                'run_id':run.run_id,'attempt_id':run.attempt_id,
                 'worker_config':worker.to_record(),'created_at':time.time()}
-            entry = value['issue_registry'][str(issue)]
-            entry.update(status='in_progress',issue_dir=str(worker.agent_run.issue_dir),
-                report_file=str(worker.agent_run.result_file),context_file=str(worker.agent_run.context_file),
+            for key in ('worker_wait_since', 'worker_wait_signature', 'worker_wait'):
+                entry.pop(key, None)
+            entry.update(status='in_progress',issue_dir=str(run.issue_dir),
+                report_file=str(run.result_file),context_file=str(run.context_file),
                 sub_coord_state_file=str(worker.state_file))
-            if str(issue) not in [str(item) for item in value.setdefault('active_pool_issues', [])]:
-                value['active_pool_issues'].append(str(issue))
-        self.store.transaction(update)
+            if issue not in [str(item) for item in value.setdefault('active_pool_issues', [])]:
+                value['active_pool_issues'].append(issue)
+            return True
+
+        return self.store.transaction(update)
 
     def _registered(self, issue, worker, result):
         run = worker.agent_run
@@ -419,13 +465,15 @@ class PoolSupervisor:
             self.finalize(issue,worker)
         return None
 
-    def launch(self, issue, worker=None):
+    def launch(self, issue, worker=None, *, recovery=None):
         if self.stop_requested():
             return None
         worker = worker or self.worker(issue)
+        check_worker_selection(worker)
         # The new intent must own shared paths before old evidence is archived.
         # If publication fails, the previous current attempt remains adoptable.
-        self._intent(issue, worker)
+        if not self._intent(issue, worker, recovery=recovery):
+            return None
         directory = str(worker.agent_run.issue_dir)
         if worker.agent_run.role == 'merge-recovery':
             state_policy.quarantine_artifacts(directory,[str(worker.agent_run.result_file)],'merge-predispatch-'+uuid.uuid4().hex)
@@ -512,37 +560,95 @@ class PoolSupervisor:
         state_policy.write_merge_recovery_context(SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),context_file=str(context),recovery_report_file=str(directory/'merge-recovery-report.json')))
         self.launch(issue,self.worker(issue,kind='merge-recovery',context=context))
 
+    def _recovery_wait_entry(self, issue, worker):
+        def initialize_wait(value):
+            if not self._is_current(value, issue, worker):
+                return None
+            entry = value['issue_registry'][issue]
+            entry.setdefault('worker_wait_since', time.time())
+            return entry
+
+        value = self.read()
+        if not self._is_current(value, issue, worker):
+            return None
+        entry = value['issue_registry'][issue]
+        return entry if 'worker_wait_since' in entry else self.store.transaction(initialize_wait)
+
+    @staticmethod
+    def _is_current(value, issue, worker):
+        intent = value.get('pool_attempts', {}).get(issue, {})
+        return (intent.get('status') != 'finalized' and
+                intent.get('attempt_id') == worker.agent_run.attempt_id)
+
+    def _publish_recovery_wait(self, issue, worker, entry, decision):
+        holding = decision['action'] == 'wait_worker'
+        expired = decision['wait_expired']
+        if not (holding or expired):
+            return
+        fields = dict(reason=decision['reason'], role=decision['worker_role'],
+            cycle=decision['worker_cycle'], worker_attempt=decision['worker_attempt_id'],
+            worker_state_file=decision['worker_state_file'], ownership=decision['worker_ownership'],
+            ownership_reason=decision['worker_liveness'],
+            elapsed_seconds=decision['wait_elapsed_seconds'], max_wait_seconds=decision['max_wait_seconds'])
+        signature = [holding, expired, decision['worker_state'], *(fields[key] for key in
+            ('reason', 'role', 'cycle', 'worker_attempt', 'worker_state_file', 'ownership',
+             'ownership_reason', 'max_wait_seconds'))]
+        if signature == entry.get('worker_wait_signature'):
+            return
+        scope = dict(issue=issue, attempt=worker.agent_run.attempt_id)
+        if holding and decision['check_worker_ownership']:
+            self.emit('sub-coord-recovery-wait', **scope, **fields)
+        elif holding:
+            self.emit('sub-coord-recovery-wait', issue=issue, reason=fields['reason'], role=fields['role'])
+        if expired and not entry.get('worker_wait', {}).get('expired'):
+            self.emit('sub-coord-recovery-wait-expired', **scope,
+                **{**fields, 'reason':'in-flight-worker-wait-timeout'})
+
+        def store_wait(value):
+            if self._is_current(value, issue, worker):
+                value['issue_registry'][issue].update(worker_wait_signature=signature,
+                    worker_wait={**fields, 'holding':holding, 'expired':expired})
+
+        self.store.transaction(store_wait)
+
     def recover(self, issue, worker):
-        entry=self.read()['issue_registry'][str(issue)]
-        wait_since=entry.get('worker_wait_since') or time.time()
-        self.store.transaction(lambda value:value['issue_registry'][str(issue)].setdefault('worker_wait_since',wait_since))
-        args=SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),report_file=str(worker.agent_run.result_file),
+        issue = str(issue)
+        entry = self._recovery_wait_entry(issue, worker)
+        if entry is None:
+            return
+        args=SimpleNamespace(state_file=str(self.config.state_file),issue=issue,report_file=str(worker.agent_run.result_file),
             accept_terminal_report=False,
             max_attempts=self.config.max_recovery_attempts,max_compaction_handoffs=self.config.max_compaction_handoffs,
             worker_stale_seconds=self.config.worker_stale_seconds,worker_dead_pid_grace_seconds=60,
-            wait_elapsed_seconds=int(time.time()-wait_since),max_wait_seconds=self.config.max_worker_wait_seconds)
+            wait_elapsed_seconds=int(time.time()-entry['worker_wait_since']),max_wait_seconds=self.config.max_worker_wait_seconds)
         decision=state_policy.sub_coord_recovery_decision(args)
+        self._publish_recovery_wait(issue, worker, entry, decision)
+        if decision['check_worker_ownership'] and decision['action'] != 'wait_worker':
+            args.reconcile_children = True
+            decision = state_policy.sub_coord_recovery_decision(args)
+            if decision['action'] == 'wait_worker':
+                entry = self.read()['issue_registry'][issue]
+                self._publish_recovery_wait(issue, worker, entry, decision)
         action,reason=decision['action'],decision['reason']
         if action=='wait_worker':
-            signature=(reason,decision.get('worker_state'))
-            if entry.get('worker_wait_signature')!=list(signature):
-                self.emit('sub-coord-recovery-wait',issue=issue,reason=reason,role=decision.get('worker_role'))
-                self.store.transaction(lambda value:value['issue_registry'][str(issue)].update(worker_wait_signature=list(signature)))
             return
         if action=='finalize': self.finalize(issue,worker);return
         if action=='spawn_recovery':
-            attempt=decision['recovery_attempt'];directory=Path(worker.agent_run.issue_dir)
-            context=directory/f'sub-coordinator-recovery-{attempt}-context.md'
-            state_policy.write_sub_coord_recovery_context(SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),context_file=str(context),attempt=attempt,reason=reason))
-            state_policy.mark_sub_coord_recovery_started(SimpleNamespace(state_file=str(self.config.state_file),issue=str(issue),context_file=str(context),attempt=attempt,reason=reason))
-            self.store.transaction(lambda value:value['issue_registry'][str(issue)].pop('worker_wait_since',None))
-            self.launch(issue,self.worker(issue,context=context))
+            self._launch_recovery(issue, worker, decision)
             return
         report_file = self.write_policy_report(worker,{'outcome':'blocked',
             'summary':'Sub-coordinator recovery could not continue','blocking_reasons':[reason]})
         args.report_file = str(report_file)
         state_policy.mark_sub_coord_recovery_dispatch_failed(args)
         self.finalize(issue,worker,report_file=report_file)
+
+    def _launch_recovery(self, issue, predecessor, decision):
+        run = predecessor.agent_run
+        attempt = decision['recovery_attempt']
+        context = Path(run.issue_dir)/f'sub-coordinator-recovery-{attempt}-{run.attempt_id}-context.md'
+        state_policy.write_sub_coord_recovery_context(SimpleNamespace(state_file=str(self.config.state_file),
+            issue=issue, context_file=str(context), attempt=attempt, reason=decision['reason']))
+        self.launch(issue, self.worker(issue, context=context), recovery=(predecessor, decision))
 
     def board(self):
         state=self.read();completed=state_policy.completed_issue_numbers(state)
@@ -577,11 +683,17 @@ class PoolSupervisor:
         for issue in [*result.active,*result.finished]:
             worker=WorkerConfig.from_record(state['pool_attempts'][issue]['worker_config'])
             self._registered(issue,worker,(result.active|result.finished)[issue])
-        for issue in result.launchable:
-            worker=WorkerConfig.from_record(state['pool_attempts'][issue]['worker_config'])
-            worker=replace(worker,agent_run=replace(worker.agent_run,environment=self.worker_environment()))
-            self.launch(issue,worker)
+        launches=[(issue,self._replayed_worker(state,issue)) for issue in result.launchable]
+        # Validate every persisted pair before the first launch so one bad intent starts nothing.
+        for _,worker in launches: check_worker_selection(worker)
+        for issue,worker in launches: self.launch(issue,worker)
         return None
+
+    def _replayed_worker(self, state, issue):
+        worker=WorkerConfig.from_record(state['pool_attempts'][issue]['worker_config'])
+        # Replays bind the current environment and registry, matching what the child sees.
+        return replace(worker,agent_run=replace(worker.agent_run,environment=self.worker_environment(),
+            registry_file=self.config.registry_file))
 
     def tick(self):
         if self.stop_requested():

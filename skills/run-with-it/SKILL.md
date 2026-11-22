@@ -5,10 +5,10 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 
 <!-- NATIVE_AUTHORITY_START: keep this compaction-safe authority block synchronized in all four coordinator documents. -->
 - **Authority after compaction:** re-read maintained rules, main/issue state, exact worker identities and role artifacts from disk; never reconstruct a paid attempt from memory or logs.
-- **Independent selectors:** `SUB_COORD_AGENT` / `SUB_COORD_MODEL` select only the Sub-Coordinator. `FORCED_AGENT` / `FORCED_MODEL` select routed workers only when explicitly requested; ambient aliases never cross that boundary.
+- **Independent selectors:** Set `SUB_COORD_AGENT=agy` and an exact `SUB_COORD_MODEL` from the run's pinned registry to select AGY for every Sub-Coordinator and merge-recovery launch. The pool validates this pair before dispatch. `FORCED_AGENT` / `FORCED_MODEL` independently select routed workers only when explicitly requested; coordinator settings never replace worker overrides, and ambient aliases never cross that boundary. The default remains `codex` / `gpt-6.2-sol`.
 - **Verification and artifacts:** consume the validated outcome bound to the exact attempt, never raw process success. Managed DONE is dispatcher-owned after shutdown and report validation. Success requires role-valid artifacts and passing verification; failed/blocked/interrupted attempts publish failure even without a commit via the shared `artifact-protocol.md`. Negative coordinator issue outcomes are valid handoffs and never satisfy dependencies.
 - **Check-in ownership:** implementation/modification workers commit only in their assigned issue worktree; Sub-Coordinators coordinate and own normal merge attempts; Main owns intake/state/GitHub; merge recovery owns conflict resolution.
-- **Availability and review:** keep cumulative unavailable-route exclusions and separate infrastructure/capability budgets. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
+- **Availability and review:** keep cumulative structured exclusions at their declared scope (`agent` for an unavailable harness, `agent-model` for an unavailable model pair) and separate infrastructure/capability counters; availability reroutes are still bounded by `MAX_AGENT_FALLBACKS`. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
 - **Identity and recovery:** a live or unknown owned attempt is never relaunched. Persist in-flight identities before compaction handoff; stop pool admission and verify every owned tree is dead before destructive cleanup.
 <!-- NATIVE_AUTHORITY_END -->
 
@@ -36,7 +36,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Stay attached until every issue is terminal.** The Main Orchestrator session must keep running the watch loop, and after each watch window print a one-line user-facing progress update from the newest `run-board` / `pool-heartbeat` lines (e.g. `Pool alive — 2 running, 3 pending, 4 completed, 1 blocked`). Never end the turn, go silent, or declare the run finished while any issue is still `pending`, `in_progress`, or `merge_recovery`. `pool-empty` with pending issues remaining means GOTO Step A, not done.
 - **GitHub operations (close, comment, e.g., gh issue close) are the Main Orchestrator control plane's sole responsibility.** Sub-Coordinators never touch GitHub. The pool runner performs the per-issue terminal comment/close immediately after reading a terminal compact report.
 - **Never inspect, infer, or act on a Sub-Coordinator's internal routing decisions.** Once a Sub-Coordinator is spawned, the agent and model it selects for its child workers are entirely its own responsibility — the Main Orchestrator has no visibility into, and no authority over, those internal choices. Do not read log files to determine which worker agent or model is running.
-- **Never kill, cancel, or restart a Sub-Coordinator mid-run.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report, or (b) alert the user after `SUB_COORD_TIMEOUT_SECONDS` and wait for a 'continue' or 'skip' instruction. **Sole exception:** a user-confirmed `discard`, which terminates the entire run — supervisor, dispatchers, and runners — through the native stop operation (`ai-skills run stop`) per the Cleanup Discard flow. Never hand-roll kills even then.
+- **Never kill, cancel, or restart a Sub-Coordinator mid-run.** If a Sub-Coordinator appears to be using a different agent or model than expected, that is correct behavior — it is applying its own complexity-based routing. Do not intervene. The only valid responses to a running Sub-Coordinator are: (a) wait for it to complete and write its compact report — by default there is no execution deadline (`SUB_COORD_TIMEOUT_SECONDS=0`); or (b) when an operator sets a positive `SUB_COORD_TIMEOUT_SECONDS`, the dispatcher itself stops the owned attempt at that limit and its typed outcome flows through normal recovery. Do not alert-and-wait for continue/skip. **Sole exception:** a user-confirmed `discard`, which terminates the entire run — supervisor, dispatchers, and runners — through the native stop operation (`ai-skills run stop`) per the Cleanup Discard flow. Never hand-roll kills even then.
 - **Never inject worker-routing overrides into a Sub-Coordinator that has already been spawned.** Canonical worker overrides (`FORCED_AGENT`, `FORCED_MODEL`, `COMPLEXITY_LEVEL`, `COMPLEXITY_SCORE`) may only be set before spawning, as part of the context file assembled in Step C. After the native dispatcher calls `ai-skills agent run`, those values are locked and the Main Orchestrator must not attempt to change them.
 - **Run the native pool runner (`ai-skills run pool`) as the single rolling-pool supervisor.** The pool runner spawns Sub-Coordinator dispatch processes, captures each dispatcher PID, and persists `issue`, `pid`, `started_at`, `context_file`, `log_file`, `done_file`, and `report_file` before monitoring.
 - **Use the native worker snapshot (`ai-skills worker inspect`) inside the dispatcher for Sub-Coordinator liveness checks during pool monitoring.** Pass the durable dispatcher `--state-file`; the inspector reconstructs its recorded configuration and validates process identity. Treat PID liveness as diagnostic only. Completion requires a known dead owned tree, its durable exit status and validated compact report artifacts; the done sentinel is advisory.
@@ -90,7 +90,7 @@ Preferred upstream flow:
 - Reads the issue worktree **read-only** with a strong model and writes a concrete approach plan to `.run-with-it/issues/<n>/plan.md` plus a machine-readable `plan.json` under `workers/plan/`
 - Never edits or commits — it runs before the baseline SHA so it cannot corrupt the implementer's diff
 - Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
-- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues skip planning and route weak regardless
+- Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues (`quite-easy`, `easy`) skip planning and route weak regardless
 - The implementer, reviewer, and modifier all consume `plan.md` via `RUN_WITH_IT_PLAN_FILE`
 
 **Artifact Recovery Worker** (spawned via `artifact-recovery-prompt.md`, runs only after exhausted impl/modify artifact failures):
@@ -134,10 +134,10 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `COMMITS_LIMIT` | `5` | Recent commits included in Sub-Coordinator context |
 | `MAX_ITERATIONS` | `20` | Deprecated / no effect — the review/modify loop cap is hardcoded to 8 cycles in `sub-coordinator-prompt.md` (Appendix B); still forwarded in context files for backward compatibility but not consulted |
 | `RUN_WITH_IT_PLAN_ENABLED` | `1` | Master switch for the pre-implementation plan phase; `0` disables it (every issue skips planning) |
-| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium-hard` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
+| `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
 | `SUB_COORD_MODEL` | `gpt-6.2-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
-| `SUB_COORD_TIMEOUT_SECONDS` | `3600` | Seconds before stall alert for a non-completing Sub-Coordinator |
+| `SUB_COORD_TIMEOUT_SECONDS` | `0` | Optional Sub-Coordinator execution deadline in seconds; `0` disables the deadline |
 | `STATUS_POLL_SECONDS` | `10` | Native polling cadence for status line output |
 | `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `ai-skills run watch` call in Step D |
 | `LOG_TAIL_POLL_SECONDS` | `120` | Native polling cadence for sub-coordinator log tail |
@@ -162,8 +162,8 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `PARALLEL_JOBS` | `4` | Rolling pool size. Freed slots fill immediately. Set to `1` for sequential. |
 | `POOL_HEARTBEAT_SECONDS` | `60` | Cadence of the pool runner's `STATUS|type=pool-heartbeat` liveness line (per-status counts + active pool size) |
 | `MAX_SPAWN_BOOTSTRAP_ATTEMPTS` | `3` | Consecutive failed spawn attempts before the pool runner finalizes an issue as terminal instead of retrying |
-| `RUN_WITH_IT_WORKER_STALE_SECONDS` | `600` | A worker state file untouched this long is treated as an orphaned snapshot, not a running worker. A live dispatcher rewrites it every poll (~20s), so silence this long means the dispatcher died. Floored at 60. |
-| `MAX_WORKER_WAIT_SECONDS` | `3600` | Ceiling on waiting for one in-flight worker after its Sub-Coordinator exits, even while the worker still looks alive. `0` disables the ceiling — the staleness bound is then the only backstop. |
+| `RUN_WITH_IT_WORKER_STALE_SECONDS` | `1200` | During recovery, activity from the worker state and log is considered stale after this many seconds. Minimum 60 seconds. |
+| `MAX_WORKER_WAIT_SECONDS` | `0` | A positive value reports recovery wait expiry in seconds after the Sub-Coordinator exits. The issue slot stays held while any listed child has live or unknown ownership. Replacement requires confirmed release of every listed child. `0` disables the expiry notification. |
 | `MAX_SUB_COORD_COMPACTION_HANDOFFS` | `6` | Context-budget handoffs allowed per issue. Budgeted apart from `MAX_SUB_COORD_RECOVERY_ATTEMPTS` because a compaction stop is a contracted handoff, not a failure. |
 | `WAIT_STATUS_INTERVAL_SECONDS` | `300` | Minimum gap between repeats of an unchanged `sub-coord-recovery-wait` line. Changes in worker/role/reason always emit. |
 
@@ -283,8 +283,8 @@ The JSON keys below are accepted by `PoolConfig.from_record`; paths must be abso
   "main_log": "/absolute/run/.run-with-it/main/main.log",
   "pool_state_file": "/absolute/run/.run-with-it/main/pool.state.json",
   "poll_seconds": 10,
-  "timeout_seconds": 3600,
-  "hard_limit_seconds": 7200,
+  "timeout_seconds": 0,
+  "hard_limit_seconds": 0,
   "detach": true
 }
 ```
@@ -321,8 +321,8 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "gui_mode": "0",
   "unattended": true,
   "poll_seconds": 20,
-  "quiet_seconds": 120,
-  "stall_seconds": 600,
+  "quiet_seconds": 900,
+  "stall_seconds": 1200,
   "hard_limit_seconds": 7200,
   "detach": true
 }
@@ -509,6 +509,7 @@ Emit parseable one-line status messages:
 - pool admission deferred: `STATUS|type=pool-admission-deferred|count=<n>|deferrals=<issue:reason,...>`
 - pool unreachable: `STATUS|type=pool-unreachable|count=<n>|unreachable=<issue:root,root;...>` — issues that can never become ready because a dependency ended terminal-but-not-completed. `root` names the terminal issue to blame, attributed transitively. Repeated with `|final=1` when the pool drains, so a run that ends early always says which failures stranded what.
 - sub-coordinator recovery wait: `STATUS|type=sub-coord-recovery-wait|issue=<n>|role=<role>|worker_state=<state>|state_file=<path>|reason=in-flight-worker-running|waited_seconds=<n>|worker_age_seconds=<n>|max_wait_seconds=<n>` — throttled to `WAIT_STATUS_INTERVAL_SECONDS`; `worker_age_seconds` is how long since any of that worker's artifacts moved
+- sub-coordinator recovery wait expired — `STATUS|type=sub-coord-recovery-wait-expired` includes the child attempt, ownership, elapsed seconds, and configured limit. The run board shows `recovery-wait-expired` while any listed child still has live or unknown ownership.
 - pool empty: `STATUS|type=pool-empty|pending_remaining=<n>`
 - merge recovery queued: `STATUS|type=merge-recovery|issue=<n>|report_file=<path>|state=<started|completed|failed-merge|blocked>`
 - memory refresh: `STATUS|type=memory-refresh|state_file=.run-with-it/main-state.json|tasks_loaded=<n>|completed=<n>|pending=<n>|failed=<n>`

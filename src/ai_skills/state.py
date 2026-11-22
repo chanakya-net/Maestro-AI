@@ -37,6 +37,7 @@ def state_transaction(func):
 TERMINAL_OUTCOMES = {"completed", "failed-review", "blocked", "merge_failed", "failed-merge"}
 LIVE_WORKER_STATES = {"ready", "starting", "running", "quiet", "stalled"}
 FINISHED_WORKER_STATES = {"completed", "failed", "artifact-recovery-required"}
+DEFAULT_WORKER_STALE_SECONDS = 1200
 
 
 def load_json(path: str) -> dict[str, Any]:
@@ -801,33 +802,79 @@ def finalize_issue(args: argparse.Namespace) -> int:
     return 0
 
 
+def _has_native_child_evidence(items) -> bool:
+    if not isinstance(items, list):
+        return True
+    for item in items:
+        if not isinstance(item, dict):
+            return True
+        if item.get("run_id") or item.get("attempt_id"):
+            return True
+        state_file = item.get("state_file")
+        if isinstance(state_file, str) and state_file:
+            config_path = Path(state_file + ".config.json")
+            if config_path.exists() or config_path.is_symlink():
+                return True
+            snapshot = load_optional_json(state_file)
+            if any(snapshot.get(key) for key in ("run_id", "attempt_id", "launcher_identity", "provider_identity")):
+                return True
+    return False
+
+
+def _recovery_workers(sub_state, issue, issue_dir, args, *, check_ownership):
+    items = sub_state.get("in_flight_agents", [])
+    if not isinstance(items, list):
+        items = [None] if check_ownership else []
+    now = time.time()
+    for item in items:
+        if not isinstance(item, dict) and not check_ownership:
+            continue
+        worker = item if isinstance(item, dict) else {}
+        snapshot = load_optional_json(worker.get("state_file") if isinstance(worker.get("state_file"), str) else "")
+        if check_ownership:
+            liveness = _child_recovery_evidence(issue, issue_dir, worker, snapshot, args)
+            yield worker, snapshot, False, False, liveness
+            continue
+        done = file_nonempty(worker.get("done_file")) or snapshot.get("done") is True
+        result = file_has_json(worker.get("result_file")) or snapshot.get("result_present") is True
+        liveness = worker_liveness(worker, snapshot, now=now,
+            stale_seconds=max(int(getattr(args, "worker_stale_seconds", DEFAULT_WORKER_STALE_SECONDS) or 0), 60),
+            dead_pid_grace_seconds=max(int(getattr(args, "worker_dead_pid_grace_seconds", 60) or 0), 0))
+        yield worker, snapshot, done, result, liveness
+
+
+def _child_recovery_evidence(issue, issue_dir, worker, snapshot, args):
+    from ai_skills.dispatch import inspect_recovery_child
+
+    result = inspect_recovery_child(issue, issue_dir, worker,
+        reconcile=getattr(args, "reconcile_children", False))
+    ownership = "live" if result.state == "running" else "unknown"
+    if result.state in ("released", "completed", "failed", "interrupted", "artifact-recovery-required"):
+        ownership = "released"
+    return {"ownership": ownership, "reason": result.reason,
+        "attempt_id": worker.get("attempt_id") or snapshot.get("attempt_id"),
+        "handoff_state": result.state if ownership == "released" else None}
+
+
 def sub_coord_recovery_decision(args: argparse.Namespace) -> dict:
     from ai_skills.recovery import RecoveryEvidence, RecoveryPolicy, decide_recovery
+
     state = load_json(args.state_file)
     report = load_report(args.report_file) if getattr(args, "accept_terminal_report", True) else {}
     entry = state.get("issue_registry", {}).get(str(args.issue), {})
     issue_dir = issue_dir_for_report(state, args.issue, args.report_file)
     sub_state_file = str(Path(issue_dir) / "sub-state.json") if issue_dir else ""
     sub_state = load_optional_json(sub_state_file)
-    now = time.time()
-    workers = []
-    for item in sub_state.get("in_flight_agents", []) if isinstance(sub_state.get("in_flight_agents"), list) else []:
-        if not isinstance(item, dict):
-            continue
-        snapshot = load_optional_json(item.get("state_file") if isinstance(item.get("state_file"), str) else "")
-        done = file_nonempty(item.get("done_file")) or snapshot.get("done") is True
-        result = file_has_json(item.get("result_file")) or snapshot.get("result_present") is True
-        liveness = worker_liveness(item, snapshot, now=now,
-            stale_seconds=max(int(getattr(args, "worker_stale_seconds", 600) or 0), 60),
-            dead_pid_grace_seconds=max(int(getattr(args, "worker_dead_pid_grace_seconds", 60) or 0), 0))
-        workers.append((item, snapshot, done, result, liveness))
-    evidence = RecoveryEvidence(issue=str(args.issue), issue_dir=issue_dir, sub_state_file=sub_state_file,
-        report=report, sub_state=sub_state, recovery_attempts=recovery_attempt(entry),
-        compaction_handoffs=compaction_handoffs(entry), workers=tuple(workers),
-        wait_elapsed_seconds=max(int(getattr(args, "wait_elapsed_seconds", 0) or 0), 0))
     policy = RecoveryPolicy(max_attempts=recovery_max_attempts(args),
         max_compaction_handoffs=max(int(getattr(args, "max_compaction_handoffs", 6) or 0), 0),
-        max_wait_seconds=max(int(getattr(args, "max_wait_seconds", 3600) or 0), 0))
+        max_wait_seconds=max(int(getattr(args, "max_wait_seconds", 0) or 0), 0))
+    check_ownership = policy.max_wait_seconds > 0 or _has_native_child_evidence(sub_state.get("in_flight_agents", []))
+    workers = tuple(_recovery_workers(sub_state, str(args.issue), issue_dir, args,
+        check_ownership=check_ownership))
+    evidence = RecoveryEvidence(issue=str(args.issue), issue_dir=issue_dir, sub_state_file=sub_state_file,
+        report=report, sub_state=sub_state, recovery_attempts=recovery_attempt(entry),
+        compaction_handoffs=compaction_handoffs(entry), workers=workers,
+        wait_elapsed_seconds=max(int(getattr(args, "wait_elapsed_seconds", 0) or 0), 0))
     return decide_recovery(evidence, policy).details
 
 
@@ -890,23 +937,23 @@ def write_sub_coord_recovery_context(args: argparse.Namespace) -> int:
     return 0
 
 
+def record_sub_coord_recovery(entry, *, context_file, attempt, reason, budget):
+    if not entry.get("sub_coord_original_context_file"):
+        original_context = entry.get("context_file") or entry.get("sub_coord_context_file")
+        if original_context:
+            entry["sub_coord_original_context_file"] = original_context
+    entry[budget] = int(attempt)
+    entry["sub_coord_recovery_last_reason"] = reason
+    entry["sub_coord_recovery_context_file"] = context_file
+
+
 @state_transaction
 def mark_sub_coord_recovery_started(args: argparse.Namespace) -> int:
     state = load_json(args.state_file)
-    entry = issue_entry(state, args.issue)
-    if not entry.get("sub_coord_original_context_file"):
-        original_context = entry.get("context_file") or entry.get("sub_coord_context_file") or ""
-        if original_context:
-            entry["sub_coord_original_context_file"] = original_context
-    # A compaction handoff spends the handoff budget, not the failure budget —
-    # the analyzer derives the attempt number from whichever counter applies, so
-    # the write has to land on the same one.
-    if args.reason == "sub-coordinator-context-exhausted":
-        entry["sub_coord_compaction_handoffs"] = int(args.attempt)
-    else:
-        entry["sub_coord_recovery_attempts"] = int(args.attempt)
-    entry["sub_coord_recovery_last_reason"] = args.reason
-    entry["sub_coord_recovery_context_file"] = args.context_file
+    budget = ("sub_coord_compaction_handoffs" if args.reason == "sub-coordinator-context-exhausted"
+              else "sub_coord_recovery_attempts")
+    record_sub_coord_recovery(issue_entry(state, args.issue), context_file=args.context_file,
+        attempt=args.attempt, reason=args.reason, budget=budget)
     save_json(args.state_file, state)
     return 0
 
@@ -1088,6 +1135,12 @@ def issue_stage(entry: dict[str, Any], completed: set[int]) -> str:
             return "blocked:" + ",".join(pending) if pending else "queued"
         return "ready"
     if status == "in_progress":
+        wait = entry.get("worker_wait")
+        if isinstance(wait, dict) and wait.get("holding") and wait.get("expired"):
+            role = wait.get("role") or "worker"
+            cycle = f" cycle {wait['cycle']}" if wait.get("cycle") is not None else ""
+            return (f"recovery-wait-expired({role}{cycle}, {wait['ownership']}, "
+                    f"{wait['max_wait_seconds']}s limit)")
         # Pool registration may point at dispatcher liveness rather than the
         # coordinator's semantic state. Prefer explicit stage evidence, then
         # consult the canonical coordinator state without changing ownership.
@@ -1250,10 +1303,10 @@ def build_parser() -> argparse.ArgumentParser:
     # A live dispatcher rewrites its worker state file every poll (~20s), so
     # silence beyond this means the dispatcher itself is gone and the file's
     # "running" is stale. Floor of 60s inside the analyzer.
-    sub_analysis.add_argument("--worker-stale-seconds", type=int, default=600)
+    sub_analysis.add_argument("--worker-stale-seconds", type=int, default=DEFAULT_WORKER_STALE_SECONDS)
     sub_analysis.add_argument("--worker-dead-pid-grace-seconds", type=int, default=60)
     sub_analysis.add_argument("--wait-elapsed-seconds", type=int, default=0)
-    sub_analysis.add_argument("--max-wait-seconds", type=int, default=3600)
+    sub_analysis.add_argument("--max-wait-seconds", type=int, default=0)
     sub_analysis.set_defaults(func=analyze_sub_coord_failure)
 
     sub_recovery_context = subparsers.add_parser("write-sub-coord-recovery-context")

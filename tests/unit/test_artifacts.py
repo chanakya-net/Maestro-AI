@@ -206,12 +206,83 @@ def test_atomic_artifact_cli_preserves_destination_on_invalid_payload(tmp_path):
     ({},True,''),({},False,'missing-plan-file-artifact'),
     ({'status':'failed'},True,'invalid-plan-result-artifact'),
     ({'issue':'8'},True,'invalid-plan-result-artifact'),
+    ({'schema_version':True},True,'invalid-plan-result-artifact'),
     ({'complexity_level':'unknown'},True,'invalid-plan-result-artifact'),
+    ({'complexity_rationale':''},True,'invalid-plan-result-artifact'),
+    ({'complexity_rationale':'   '},True,'invalid-plan-result-artifact'),
+    ({'complexity_rationale':None},True,'invalid-plan-result-artifact'),
 ])
 def test_planning_stage_requires_successful_matching_plan_and_markdown(patch,present,reason):
-    payload={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Implement the slice','complexity_level':'easy','slices':[{'id':1}]}
+    payload={'schema_version':1,'issue':'7','role':'plan','status':'success','approach':'Implement the slice',
+             'complexity_level':'easy','complexity_rationale':'One small slice in a single existing module.','slices':[{'id':1}]}
     payload.update(patch)
     assert validate_artifact('plan',payload,GitEvidence(issue='7',plan_file_present=present)).reason==reason
+
+
+def _complexity_payload(score_overrides=None, **patch):
+    scores = {key: 1 for key in artifacts.COMPLEXITY_SCORE_KEYS}
+    if score_overrides:
+        scores.update(score_overrides)
+    payload = {
+        'total': sum(scores.values()),
+        'level': artifacts.expected_complexity_level(scores),
+        'scores': scores,
+        'rationale': {key: f'Grounded rationale for {key}.' for key in artifacts.COMPLEXITY_SCORE_KEYS},
+        'files_inspected': ['src/ai_skills/artifacts.py'],
+    }
+    payload.update(patch)
+    return payload
+
+
+@pytest.mark.parametrize(('overrides', 'expected_total', 'expected_level'), [
+    ({}, 9, 'quite-easy'),
+    ({'dependency_complexity': 2, 'architecture_risk': 2, 'verification_risk': 2}, 12, 'quite-easy'),
+    ({'dependency_complexity': 2, 'architecture_risk': 2, 'verification_risk': 2, 'blast_radius': 2}, 13, 'easy'),
+    ({k: 2 for k in list(sorted(artifacts.COMPLEXITY_SCORE_KEYS))[:8]}, 17, 'easy'),
+    ({k: 2 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 18, 'medium'),
+    ({'dependency_complexity': 3, 'architecture_risk': 3, 'verification_risk': 3, 'blast_radius': 3,
+      'ownership_overlap_risk': 2, 'orchestration_burden': 2, 'ambiguity_of_requirements': 2,
+      'integration_surface_breadth': 2, 'rollback_recovery_risk': 2}, 22, 'medium'),
+    ({'dependency_complexity': 3, 'architecture_risk': 3, 'verification_risk': 3, 'blast_radius': 3,
+      'ownership_overlap_risk': 3, 'orchestration_burden': 2, 'ambiguity_of_requirements': 2,
+      'integration_surface_breadth': 2, 'rollback_recovery_risk': 2}, 23, 'medium-hard'),
+    ({'architecture_risk': 4}, 12, 'medium-hard'),
+    ({'architecture_risk': 5}, 13, 'complex'),
+    ({'architecture_risk': 5, 'orchestration_burden': 4}, 16, 'complex'),
+    ({k: 4 for k in list(sorted(artifacts.COMPLEXITY_SCORE_KEYS))[:6]} |
+     {k: 3 for k in list(sorted(artifacts.COMPLEXITY_SCORE_KEYS))[6:]}, 33, 'holy-fuck'),
+    ({k: 5 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 45, 'holy-fuck'),
+])
+def test_expected_complexity_level_enforces_bands_and_peak_dimension_floor(overrides, expected_total, expected_level):
+    payload = _complexity_payload(overrides)
+    assert payload['total'] == expected_total
+    assert payload['level'] == expected_level
+    assert artifacts.valid_complexity_payload(payload) is True
+
+
+def test_complexity_validator_accepts_empty_files_inspected_for_greenfield_tasks():
+    assert artifacts.valid_complexity_payload(_complexity_payload(files_inspected=[])) is True
+
+
+@pytest.mark.parametrize('payload', [
+    _complexity_payload(total=10),  # arithmetic mismatch (sum is 9)
+    _complexity_payload(level='easy'),  # band mismatch (9 -> quite-easy)
+    _complexity_payload({'architecture_risk': 5}, level='easy'),  # ignores peak-5 floor
+    _complexity_payload({'architecture_risk': 4}, level='quite-easy'),  # ignores peak-4 floor
+    _complexity_payload(total=True),  # bool-as-int in total
+    {**_complexity_payload(), 'scores': {**_complexity_payload()['scores'], 'architecture_risk': True}},  # bool-as-int in score
+    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'architecture_risk': ''}},
+    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'architecture_risk': '   '}},
+    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'architecture_risk': 42}},
+    {k: v for k, v in _complexity_payload().items() if k != 'files_inspected'},
+    _complexity_payload(files_inspected='src/a.py'),
+    _complexity_payload(files_inspected=['']),
+    _complexity_payload(files_inspected=['src/a.py', '   ']),
+    _complexity_payload(files_inspected=[123]),
+])
+def test_complexity_validator_rejects_inconsistent_or_ungrounded_payloads(payload):
+    assert artifacts.valid_complexity_payload(payload) is False
+    assert validate_artifact('complexity', payload, GitEvidence(issue='7')).reason == 'invalid-complexity-result-artifact'
 
 
 @pytest.mark.parametrize('role', ['sub-coord', 'merge-recovery'])

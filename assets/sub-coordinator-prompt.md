@@ -4,10 +4,10 @@ For dispatcher-managed attempts, follow the appended `artifact-protocol.md`: pub
 
 <!-- NATIVE_AUTHORITY_START: keep this compaction-safe authority block synchronized in all four coordinator documents. -->
 - **Authority after compaction:** re-read maintained rules, main/issue state, exact worker identities and role artifacts from disk; never reconstruct a paid attempt from memory or logs.
-- **Independent selectors:** `SUB_COORD_AGENT` / `SUB_COORD_MODEL` select only the Sub-Coordinator. `FORCED_AGENT` / `FORCED_MODEL` select routed workers only when explicitly requested; ambient aliases never cross that boundary.
+- **Independent selectors:** Set `SUB_COORD_AGENT=agy` and an exact `SUB_COORD_MODEL` from the run's pinned registry to select AGY for every Sub-Coordinator and merge-recovery launch. The pool validates this pair before dispatch. `FORCED_AGENT` / `FORCED_MODEL` independently select routed workers only when explicitly requested; coordinator settings never replace worker overrides, and ambient aliases never cross that boundary. The default remains `codex` / `gpt-6.2-sol`.
 - **Verification and artifacts:** consume the validated outcome bound to the exact attempt, never raw process success. Managed DONE is dispatcher-owned after shutdown and report validation. Success requires role-valid artifacts and passing verification; failed/blocked/interrupted attempts publish failure even without a commit via the shared `artifact-protocol.md`. Negative coordinator issue outcomes are valid handoffs and never satisfy dependencies.
 - **Check-in ownership:** implementation/modification workers commit only in their assigned issue worktree; Sub-Coordinators coordinate and own normal merge attempts; Main owns intake/state/GitHub; merge recovery owns conflict resolution.
-- **Availability and review:** keep cumulative unavailable-route exclusions and separate infrastructure/capability budgets. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
+- **Availability and review:** keep cumulative structured exclusions at their declared scope (`agent` for an unavailable harness, `agent-model` for an unavailable model pair) and separate infrastructure/capability counters; availability reroutes are still bounded by `MAX_AGENT_FALLBACKS`. Keep the sticky reviewer across a valid cycle; artifact retries never erase valid feedback or spend product-review verdict cycles.
 - **Identity and recovery:** a live or unknown owned attempt is never relaunched. Persist in-flight identities before compaction handoff; stop pool admission and verify every owned tree is dead before destructive cleanup.
 <!-- NATIVE_AUTHORITY_END -->
 
@@ -142,8 +142,8 @@ For ordinary managed implementation on any supported enabled route, include `res
   "gui_mode": "0",
   "unattended": true,
   "poll_seconds": 20,
-  "quiet_seconds": 120,
-  "stall_seconds": 600,
+  "quiet_seconds": 900,
+  "stall_seconds": 1200,
   "hard_limit_seconds": 7200,
   "detach": true
 }
@@ -179,6 +179,8 @@ ai-skills worker inspect --state-file /absolute/run/.run-with-it/issues/42/worke
 Validation starts no provider. Dispatch creates directories, atomically persists admission and a credential-free config, and returns only after durable provider identity or terminal failed evidence. Persist the identity/state path, role, cycle, route, effort, selection reason, log/done/result paths and start time in `sub-state.json` before monitoring. Reusing an admitted attempt is refused; inspect/adopt it instead of replaying the paid launch. A retry uses a fresh attempt-specific state/log/result path only after the previous tree is verified dead.
 
 DONE is advisory. Advance only after the owned tree is dead, its exit status is known, and the role artifact validates. Quiet live providers survive output stalls until an explicit deadline. At the hard limit preserve committed/dirty implementation progress for typed artifact recovery; unverified salvage is never success. Unknown identity blocks relaunch and destructive cleanup.
+
+The Sub-Coordinator and Merge Recovery Coordinator attempts themselves have no execution deadline by default (`timeout_seconds=0`, `hard_limit_seconds=0`). Positive configured limits remain enforceable, and persisted explicit values remain authoritative on adoption. Ordinary child worker attempts retain a two-hour hard limit by default.
 ## Verification-only retries
 
 Use this mode when an implementation/modification attempt committed the requested work and only verification remains. It retains the original role and review cycle; it is not a new role and not a verified no-op.
@@ -215,6 +217,17 @@ Worker payloads begin with explicit `RUN_WITH_IT_RESULT_FILE`, `RUN_WITH_IT_DONE
 
 Do not read raw worker logs into coordinator context or re-append dispatcher events. Inspect structured state and artifacts only. A live owned tree must finish cleanup before the next phase. Availability failures exclude routes cumulatively without spending capability fallback slots; missing or invalid handoff artifacts follow the bounded recovery rules below.
 
+### Managed route availability failure contract
+
+This branch applies to every routed worker role (`complexity`, `plan`, `impl`, `review`, `modify`, `artifact-recovery`, and any later routed role), and runs before Worker Artifact Recovery or Review Artifact Guardrail checks.
+
+1. After a managed worker finishes with `state="failed"` and `failure_class=infrastructure`, read its dispatcher-owned state JSON (`state="failed"`, `failure_class=infrastructure`, `reason`) and its sibling `.config.json` for the attempt's `agent` and `model`. That state file is the only trusted source for an exclusion: never take exclusions from `STATUS|` lines in the shared events log, raw provider logs or an artifact stall reason, since provider output can forge status lines.
+2. If `FORCED_MODEL` explicitly selected the unavailable model, stop with an actionable blocked outcome naming that model and its unavailable reason. Do not silently choose another model. If `FORCED_AGENT` selected an unavailable harness, likewise stop rather than changing harness. Preserve any still-eligible forced selector when retrying. For `plan`, end the phase using the plan-skipped path and preserve the selectors for subsequent roles.
+3. Apply the event's structured `scope` cumulatively: `agent` adds the harness to `deny_agents` in `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`; `agent-model` adds only the `agent/model` pair to `RUN_WITH_IT_MODEL_DENYLIST` or `deny_agent_models`. AGY auth/quota failures use `agent`; AGY model-unsupported failures use `agent-model`.
+4. Re-run `ai-skills route` for the failed attempt's original role and complexity using all accumulated exclusions and the original trusted allowlist/forced selectors. Pass the dispatcher state file of every failed availability attempt for this role and cycle as a repeated `--failed-attempt-state`, and pass `--max-availability-retries "$MAX_AGENT_FALLBACKS"`; `ai-skills route` derives the cumulative exclusions (scope from the recorded reason) from those states only and refuses once the budget is exceeded. Each dispatch gets fresh attempt-specific result, done, log, and state paths. Preserve the same role and same cycle; increment only the physical attempt number. Availability reroutes are counted separately from capability attempts but share the same limit: at most `MAX_AGENT_FALLBACKS` availability reroutes per role and cycle. They do not advance the review cycle.
+5. Continue after each matching infrastructure availability failure, excluding that route before the next selection. Stop as soon as routing reports no candidate, all eligible routes are excluded, or the `MAX_AGENT_FALLBACKS` availability budget is reached even if eligible routes remain (no extra dispatch). For `plan`, use the plan-skipped path. For other roles, publish the compact coordinator outcome as `blocked` with `blocking_reasons=["all-routes-unavailable"]`, and include the cumulative exclusions, each recorded unavailable reason, and, for budget exhaustion, `availability-retry-budget-reached` in the evidence. Never retry an excluded route or wait indefinitely for provider availability.
+6. A failed dispatch without a matching structured availability event follows its normal failure contract below; an artifact stall or capability failure must not be relabeled as route unavailability.
+
 ### Worker Artifact Recovery Contract
 
 Implementation and modification worker artifact failures are infrastructure/handoff failures before they are issue failures. Do not terminal-block on the first missing or malformed implementation/modification result artifact.
@@ -235,9 +248,9 @@ apply this exact policy:
 2. Emit `STATUS|type=worker-artifact-failed|issue=<n>|role=<impl|modify>|cycle=<n>|attempt=<n>|reason=<stall_reason>|action=retry`.
 3. If `git -C "$ISSUE_WORKTREE_PATH" status --short` is non-empty, preserve the dirty work before retrying:
    Capture `git diff --binary` and `git diff --cached --binary` from the assigned issue worktree into attempt-specific recovery patch files using file tools; copy each untracked file into the sibling recovery directory preserving relative paths. Record these paths and dirty-file facts in state before the retry. Never reset or discard this work.
-4. Retry the same role and same review/implementation cycle up to `MAX_AGENT_FALLBACKS` attempts. Re-run routing with the failed model in `EXCLUDE_MODEL` when possible and add failed account/model pairs to `RUN_WITH_IT_MODEL_DENYLIST` or `RUN_WITH_IT_MODEL_AVAILABILITY_FILE` so retries do not select known-unavailable routes. If the runner emits `STATUS|type=agent-unavailable`, treat that line as structured evidence for the denylist. A different model on the same agent is acceptable only when the failed pair is excluded. Use attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-result.json`, `.done`, `.log`, and `.state.json` so stale partial artifacts cannot satisfy the retry.
-   - **Failure-class budget rule.** A failed attempt consumes a `MAX_AGENT_FALLBACKS` slot only when it is a *capability* failure — the dispatcher reports `failure_class=capability` on its `dispatch-failed` line (and `"failure_class": "capability"` in the dispatcher state JSON), meaning a runner started and then produced a missing or invalid artifact. An attempt the dispatcher marks `failure_class=infrastructure` (the runner emitted `STATUS|type=agent-unavailable` for auth/quota/model-unsupported) is a route-availability exclusion: denylist the route and re-route to a different agent/model **without** consuming a fallback attempt. This mirrors the pre-`runner_pid` bootstrap-loss exemption above. Infrastructure re-routes are naturally bounded — each one denylists one route from a finite agent set.
-   - **Termination guard.** If availability exclusions leave no eligible agent/model for the role (the router returns no candidate, or every route in the allowlist is denylisted), stop retrying and write the compact report with `outcome="blocked"` and `blocking_reasons=["all-routes-unavailable"]`, including the denylisted routes and the last `agent-unavailable` reasons in the evidence. Never loop indefinitely waiting for a provider to come back.
+4. Retry the same role and same review/implementation cycle up to `MAX_AGENT_FALLBACKS` capability attempts. For a dispatcher-recorded infrastructure failure, apply the scope implied by its reason: `agent` excludes the whole harness (record it under `deny_agents` in `RUN_WITH_IT_MODEL_AVAILABILITY_FILE`); `agent-model` excludes only that pair (record it as `agent/model` in `RUN_WITH_IT_MODEL_DENYLIST` or under `deny_agent_models` in the availability file). For AGY, auth/quota excludes the harness and model-unsupported excludes only the requested pair. Keep exclusions cumulative and re-run routing after each availability failure, bounded by `MAX_AGENT_FALLBACKS` availability reroutes. Preserve explicit `FORCED_AGENT`/`FORCED_MODEL` selections as actionable failures; do not silently switch their requested model. Use fresh attempt-specific artifact paths such as `cycle-${CYCLE}-attempt-${ATTEMPT}-result.json`, `.done`, `.log`, and `.state.json`, and keep the original role and cycle so stale artifacts cannot satisfy a retry.
+   - **Failure-class budget rule.** A failed attempt consumes a `MAX_AGENT_FALLBACKS` slot only when it is a *capability* failure — the dispatcher reports `failure_class=capability` on its `dispatch-failed` line (and `"failure_class": "capability"` in the dispatcher state JSON), meaning a runner started and then produced a missing or invalid artifact. An attempt the dispatcher marks `failure_class=infrastructure` (the runner emitted `STATUS|type=agent-unavailable` for auth/quota/model-unsupported) is a route-availability exclusion: denylist the scoped route and re-route to a different eligible agent/model without consuming a capability attempt, but never beyond `MAX_AGENT_FALLBACKS` availability reroutes for that role and cycle (tracked separately, same limit).
+   - **Termination guard.** If availability exclusions leave no eligible agent/model for the role (the router returns no candidate, or every route in the allowlist is denylisted) or the availability budget is reached, stop retrying and write the compact report with `outcome="blocked"` and `blocking_reasons=["all-routes-unavailable"]`, including the denylisted routes and the last `agent-unavailable` reasons in the evidence. Never loop indefinitely waiting for a provider to come back.
 5. When retrying after a dirty-worktree failure, tell the next worker that uncommitted partial work exists, include the full original issue scope, acceptance criteria, required verification commands, failed state/result paths, and recovery patch/status paths in its context payload, and instruct it to inspect the current worktree before deciding whether to salvage or replace the partial changes. Do not compress the retry context down to a short summary.
 6. Do not increment the review cycle counter for artifact retries. They are infrastructure retries, not implementation/review verdicts.
 7. If a retry produces a valid result artifact and commit, continue normal commit verification, review, or next-cycle routing.
@@ -305,7 +318,7 @@ Override handling:
 
 Sub-agent selection for complexity:
 1. Use `ai-skills route` with `ROUTE_ROLE=complexity` and `ROUTE_COMPLEXITY_LEVEL=${COMPLEXITY_LEVEL:-medium}`.
-2. The helper restricts the candidate pool to easy-medium band models, excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
+2. The helper restricts the candidate pool to the configured complexity-scoring models (`complexity_bands`), excludes `exclude_from_complexity=true`, applies provider routing, and records the decision in `.run-with-it/usage-ledger.json`.
 3. Pass both selected `AGENT` and selected `MODEL` explicitly to the sub-agent runner.
 
 Before spawning the complexity sub-agent, create a dedicated sanitized payload file:
@@ -342,16 +355,15 @@ Native invocation (use only the current tool's documented permission mechanism i
 Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
 
 Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `WORKER_PID`, `role=complexity`, `cycle=1`, selected `AGENT`, selected `MODEL`, selected route `selection_reason`, `COMPLEXITY_LOG_FILE`, `COMPLEXITY_DONE_FILE`, `COMPLEXITY_RESULT_FILE`, and `COMPLEXITY_STATE_FILE`. Monitor `COMPLEXITY_STATE_FILE`; complexity is complete only after the owned tree is dead, its exit status is known, and the machine-readable score JSON validates; record its matching `COMPLEXITY|` event without using logs as completion authority.
-Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
 
 Sub-agent output handling:
 - Parse the `COMPLEXITY|` line for the run log.
-- Parse the JSON blob for per-dimension scores and route-report population.
+- Parse the JSON blob for per-dimension scores, `files_inspected`, and route-report population.
 - Persist the normalized score/rationale and its artifact path in `sub-state.json`; retain the validated artifact for restart-safe reuse. Delete only redundant temporary scoring payloads, never the sole completion evidence.
 
 Fallback chain:
-1. Attempt the selected easy-medium model.
-2. On failure, retry with a different model from the same band.
+1. Attempt the selected complexity-scoring model.
+2. On failure, retry with a different eligible complexity-scoring model.
 3. On the second failure, default to `medium-hard` (`score=25`), emit:
    `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
 
@@ -365,7 +377,7 @@ Use this section only when `ai-skills route` is unavailable or exits non-zero. T
 
 Read version 2 registries through `ai_skills.registry.load_registry(path)` so model memberships, aliases, CLI defaults, and usage defaults are expanded. The editable model entries live in `agent-registry.json`; CLI definitions live in its sibling `agent-definitions.json`. Version 1 registries remain self-contained.
 
-Map the complexity score using `model_routing.score_to_weight`: 8–12 is `quite-easy`, 13–17 `easy`, 18–22 `medium`, 23–27 `medium-hard`, 28–32 `complex`, and 33–40 `holy-fuck`; scores above 40 also map to `holy-fuck`. Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
+Map the complexity score using `model_routing.score_to_weight`: 9–12 is `quite-easy`, 13–17 `easy`, 18–22 `medium`, 23–27 `medium-hard`, 28–32 `complex`, and 33–45 `holy-fuck`; scores above 45 also map to `holy-fuck`. When routing from a validated complexity artifact, use its `level` (which already applies the peak-dimension floor: any dimension scored `5` floors at `complex`; any dimension scored `4` floors at `medium-hard`). Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
 
 #### Step 2 — Build Eligible Agent/Model Pairs
 
@@ -376,6 +388,7 @@ If manual fallback is necessary:
 2. For implementation, review, modification, planning, and recovery, use `model_routing.non_complexity_band_policy[effective_band].models` plus its provider additions. These lists are expanded from model `work_bands`; do not substitute a weight-filtered pool.
 3. For the complexity-scoring worker, preserve the router's separate scoring policy: exclude explicit-only and `exclude_from_complexity` models; honor model `routing_bands` (expanded from `complexity_bands`) when present, otherwise use weight 1–6 and `min_band`. Include eligible models in `model_routing.band_required_models[effective_band]` (expanded from `required_bands`). Only when this model candidate list is empty, expand the weight maximum by one, up to three times, retaining the existing restrictions.
 4. Keep compatible pairs using agent `model.known_models` (expanded from model `agents` membership), detected CLIs, allow/deny lists, disabled agents/models, and runtime availability exclusions. Google models may execute only through `agy`. GitHub Copilot remains blocked, including forced requests.
+   For `plan`, AGY eligibility requires a verified enforced read-only profile from the runtime. If the runtime router cannot establish eligibility, exclude AGY from manual plan selection, including forced requests. Registry flags and CLI support for streaming do not establish enforcement.
 5. If no compatible pair remains, report the filter diagnostics; do not invent an unavailable route.
 
 #### Step 3 — Select Deterministically Using Current Usage
@@ -399,7 +412,7 @@ After complexity is scored (and before the baseline SHA is captured), optionally
 **Gate (reads the BLIND complexity level only).** The gate decides whether a plan is worth its cost. Refinement does not exist until a plan runs, so it can never feed back into its own gate.
 
 - `RUN_WITH_IT_PLAN_ENABLED` (default `1`) — master switch. When `0`, skip the phase entirely.
-- `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium-hard`) — run a plan only when the blind complexity level is at or above this band.
+- `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`) — run a plan only when the blind complexity level is at or above this band.
 
 Resolve `EFFECTIVE_COMPLEXITY` once, right after this phase. It is the routing band for the `impl` spawn and **every later `modify` spawn**:
 - plan ran and `plan.json` has a valid `complexity_level` → `EFFECTIVE_COMPLEXITY = <plan complexity_level>` (the grounded re-score).
@@ -407,13 +420,14 @@ Resolve `EFFECTIVE_COMPLEXITY` once, right after this phase. It is the routing b
 
 Emit `STATUS|type=complexity-refined|issue=<n>|from=<blind>|to=<plan>` only when the override actually changes the band, so the routing decision is auditable.
 
-**Plan failure is non-blocking.** If the plan worker cannot produce a valid `plan.json` after the normal bounded artifact retries, treat the plan as skipped: emit `STATUS|type=plan-skipped|issue=<n>|reason=failed|...`, proceed to implementation with `EFFECTIVE_COMPLEXITY = <blind>` and no `RUN_WITH_IT_PLAN_FILE`. The plan is additive and gated — a failed or absent plan must never block the issue or degrade it below today's behavior. Do **not** spawn the Artifact Recovery Worker for a failed plan (it never commits, so there is no dirty work to salvage).
+**Plan failure is non-blocking.** If routing or bounded retries cannot produce a completed plan, emit `STATUS|type=plan-skipped|issue=<n>|reason=failed|...`, proceed to implementation with `EFFECTIVE_COMPLEXITY = <blind>` and no `RUN_WITH_IT_PLAN_FILE`. Do **not** spawn the Artifact Recovery Worker for a failed plan.
 Write a fresh attempt-specific `worker.json` using the Native Worker Configuration, then run `ai-skills worker dispatch --config worker.json`. Keep the selected route, exact role-specific artifact paths and context together; inspect the persisted state before any retry.
 
 **Plan dispatch rules** (differences from the impl spawn):
 - Pass `--repo-root "$ISSUE_WORKTREE_PATH"` so the planner can read real code. The plan is **not** an implementation role, so the dispatcher gives it read access without commit/check-in handling.
 - Do **not** set `CHECKIN_OWNER` / `CHECKIN_TARGET` in the payload — the plan worker never commits.
 - Pass `RUN_WITH_IT_PLAN_FILE` and `RUN_WITH_IT_PLAN_RESULT_FILE` into the context payload (the dispatcher also sets `RUN_WITH_IT_RESULT_FILE` from `--result-file`, which equals `PLAN_RESULT_FILE`).
+- For an eligible AGY planner, set `permission_mode` to `safe`, `gui_mode` to `0` (a string), and supply an explicit cycle. The dispatcher verifies the actual invocation and publishes both artifacts from its terminal response. If admission returns `agy-plan-read-only-unavailable`, reroute with AGY in the current plan request's denylist within the existing retry budget. Preserve forced selectors and use plan-skipped if no eligible route remains. Keep this exclusion scoped to planning.
 
 After the plan worker tree exits successfully and a valid `plan.json` plus its Markdown companion are present (see *Worker Done Files* for plan completeness):
 1. Read `complexity_level` from `plan.json`. If `plan.json` is valid and its `complexity_level` is one of the router's bands, set `EFFECTIVE_COMPLEXITY` to it; otherwise keep `EFFECTIVE_COMPLEXITY = BLIND_COMPLEXITY_LEVEL`.
@@ -808,7 +822,7 @@ Every worker-agent invocation must set `RUN_WITH_IT_DONE_FILE` to a role-specifi
 The dispatcher alone writes managed DONE after report validation and confirmed owned-tree shutdown. The worker never writes it. Consume the bound validated outcome and required success artifacts before a successful phase transition:
 
 - complexity: the required machine-readable score JSON validates; logs are diagnostic only
-- plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `ai-skills artifact failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
+- plan: the worker result JSON (`plan.json`) exists, parses as valid JSON, has `status="success"`, and includes `schema_version`, `issue`, `role`, `approach`, `complexity_level`, `complexity_rationale`, and `slices` (no `commit_sha` — the plan never commits); the human-readable `plan.md` (`RUN_WITH_IT_PLAN_FILE`, at `$RUN_WITH_IT_ISSUE_DIR/plan.md`) exists and is non-empty; **and** the plan done file exists. Both artifacts are required — a `plan.json` without a non-empty `plan.md` is incomplete (downstream workers consume `plan.md`), so treat it as a failed plan. `complexity_level` must be one of the router's accepted bands; if it is missing or invalid, the plan is still usable for its approach/slices but does **not** refine routing — fall back to the blind complexity score for `impl`/`modify` (per *Plan Sub-Agent Delegation*) rather than failing the whole plan. The dispatcher enforces this same shape via `ai-skills artifact failure-reason --role plan` (`invalid-plan-result-artifact` for a bad/failed `plan.json`, `missing-plan-file-artifact` for a missing/empty `plan.md`).
 - impl/modify: the worker result JSON exists, parses as valid JSON, includes `schema_version`, `issue`, `role`, `status`, `commit_sha`, `files_committed`, and `verification`, and either the worker's mandatory commit was made in the issue worktree (captured SHA differs from the pre-spawn baseline and matches the issue worktree `HEAD`) **or** the dispatcher validates an admitted `verify_existing` contract for the preserved commit, **or** the result is a verified no-op (`"no_op": true` with `verification.passed=true`), which the dispatcher validates via `ai-skills artifact`
 - review: both `REVIEWER_STATUS_FILE` and `REVIEWER_INSTRUCTIONS_FILE` exist and parse as valid JSON; dispatcher-synthesized review status is acceptable only when derived from a valid instructions JSON, and dispatcher-synthesized review instructions are acceptable only when the status verdict is `approve`
 

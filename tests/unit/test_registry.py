@@ -149,24 +149,15 @@ def test_malformed_nested_configuration_reports_a_validation_error(registry_file
 def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_explicit():
     catalog = json.loads(SOURCE_REGISTRY.read_text())["model_catalog"]
     assert {
-        model: {
-            "agents": catalog[model]["agents"],
-            "work_bands": catalog[model]["work_bands"],
-            "complexity_weight": catalog[model]["complexity_weight"],
-            "exclude_from_complexity": catalog[model].get("exclude_from_complexity"),
-        }
-        for model in ("gemini-3.8-flash-low", "gemini-3.8-flash-medium")
+        "agents": catalog["gemini-4-neon-medium"]["agents"],
+        "work_bands": catalog["gemini-4-neon-medium"]["work_bands"],
+        "complexity_weight": catalog["gemini-4-neon-medium"]["complexity_weight"],
+        "exclude_from_complexity": catalog["gemini-4-neon-medium"].get("exclude_from_complexity"),
     } == {
-        "gemini-3.8-flash-low": {
-            "agents": ["agy"], "work_bands": ["quite-easy"],
-            "complexity_weight": 3, "exclude_from_complexity": True,
-        },
-        "gemini-3.8-flash-medium": {
-            "agents": ["agy"], "work_bands": ["easy"],
-            "complexity_weight": 4, "exclude_from_complexity": None,
-        },
+        "agents": ["agy"], "work_bands": ["quite-easy", "easy"],
+        "complexity_weight": 5, "exclude_from_complexity": True,
     }
-    assert catalog["gemini-3.8-flash-medium"]["complexity_bands"] == [
+    assert catalog["gemini-4-hydrogen-high"]["complexity_bands"] == [
         "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
     ]
 
@@ -179,7 +170,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     )
     expected_agy_models = [
         *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
-        *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
+        *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen", "carbon") for effort in ("low", "medium", "high", "xhigh")),
         *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
         *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
         "gpt-oss-120b-medium",
@@ -187,22 +178,30 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     assert agy_models == sorted(expected_agy_models)
     assert not set(agy_models) & {
         "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
-        "gemini-3.5-flash-medium", "gpt-0ss-120b-medium",
+        "gemini-3.5-flash-medium", "gemini-3.8-flash-low", "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high", "gpt-0ss-120b-medium",
     }
     catalog = source["model_catalog"]
-    explicit_only = set(expected_agy_models) - {"gemini-3.8-flash-low", "gemini-3.8-flash-medium"}
+    explicit_only = set(expected_agy_models) - {"gemini-4-hydrogen-high"}
+    designated_work_bands = {
+        "gemini-4-neon-medium": ["quite-easy", "easy"],
+        "gemini-4-neon-high": ["medium", "medium-hard", "complex"],
+        "gemini-4-neon-xhigh": ["complex"],
+        "gemini-4-carbon-high": ["holy-fuck"],
+        "gemini-4-carbon-xhigh": ["holy-fuck"],
+    }
     for model in explicit_only:
         assert catalog[model]["agents"] == ["agy"]
         assert catalog[model]["explicit_only"] is True
         assert catalog[model]["exclude_from_complexity"] is True
-        assert "work_bands" not in catalog[model]
+        assert catalog[model].get("work_bands") == designated_work_bands.get(model)
         assert "context_window" not in catalog[model]
-    assert "gemini-3.8-flash-high" in explicit_only
+    assert "gemini-4-neon-high" in explicit_only
     definitions = json.loads(SOURCE_REGISTRY.with_name("agent-definitions.json").read_text())
     expanded = load_registry(SOURCE_REGISTRY)
     direct_baseline = {
         "claude": ("claude-haiku-5-5", "claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5"),
-        "codex": ("gpt-6.2-astra", "gpt-6-luna", "gpt-6.1-terra", "gpt-6.2-sol"),
+        "codex": ("gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.2-sol"),
     }
     for agent, expected_default in (("claude", "claude-sonnet-5-5"), ("codex", "gpt-6.2-sol")):
         expected_models = list(direct_baseline[agent])
@@ -211,9 +210,9 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
                 if agent in entry.get("agents", [])] == expected_models
         assert definitions["agents"][agent]["model"]["default"] == expected_default
     assert source["model_routing"]["usage_distribution"] == {
-        "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
+        "default_target_percent": {"agy": 38, "codex": 37, "claude": 25},
         "role_target_percent": {
-            "complexity": {"agy": 50, "codex": 25, "claude": 25},
+            "complexity": {"codex": 33, "claude": 33, "agy": 33},
             "impl": {"codex": 65, "claude": 30, "agy": 5},
             "review": {"claude": 60, "codex": 35, "agy": 5},
             "modify": {"codex": 65, "claude": 30, "agy": 5},
@@ -222,15 +221,16 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
             "plan": {"claude": 70, "codex": 30, "agy": 0},
         },
         "non_complexity_band_target_percent": {
-            "default": {"codex": 70, "claude": 30, "agy": 0},
-            "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
-            "easy": {"codex": 55, "claude": 40, "agy": 5},
-            "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
+            "default": {"codex": 38, "agy": 38, "claude": 24},
+            "quite-easy": {"codex": 33, "claude": 33, "agy": 33},
+            "easy": {"codex": 33, "claude": 33, "agy": 33},
+            "medium": {"agy": 40, "codex": 35, "claude": 25},
+            "medium-hard": {"agy": 40, "codex": 35, "claude": 25},
+            "holy-fuck": {"codex": 38, "agy": 38, "claude": 24},
         },
         "role_band_target_percent": {
             "complexity": {
-                "default": {"agy": 50, "codex": 25, "claude": 25},
-                "quite-easy": {"codex": 40, "claude": 35, "agy": 25},
+                "default": {"codex": 33, "claude": 33, "agy": 33},
             }
         },
         "role_agent_preference": {

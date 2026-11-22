@@ -8,10 +8,12 @@ to their node entrypoint, preserving every argument through native argv.
 from __future__ import annotations
 
 import argparse
+from base64 import b64decode, b64encode
 import codecs
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -25,11 +27,13 @@ import tempfile
 import time
 import uuid
 
+from ai_skills import agy_diagnostics
 from ai_skills.effort import raw_effort_overrides, resolve_effort
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessSpec, ProcessSupervisor
 from ai_skills.provider_capture import (
-    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, ProviderError, agy_result_response, extract_response,
+    AGY, CLAUDE, CODEX, OPENCODE, OPENCODE_VERSION, STREAM_SOURCES, MissingAgyTerminal, ProviderError,
+    agy_narrative_response, extract_response,
 )
 from ai_skills.resources import resource_path
 from ai_skills.registry import load_registry
@@ -150,7 +154,8 @@ def _payload(config):
         if config.verification_context is not None:
             metadata['verification_contract'] = config.verification_context
         if config.result_capture_context is not None:
-            metadata['result_capture'] = config.result_capture_context
+            metadata['result_capture'] = {key: value for key, value in config.result_capture_context.items()
+                                          if key != 'invocation_digest'}
         protocol = resource_path('artifact-protocol.md').read_text(encoding='utf-8')
         payload += '\n\n' + protocol.rstrip('\n') + '\n\nAuthoritative attempt metadata:\n'
         payload += json.dumps(metadata, ensure_ascii=False, sort_keys=True) + '\n\n'
@@ -173,12 +178,189 @@ _CAPTURE_ROUTES = {'codex': (CODEX, 'stdin'), 'claude': (CLAUDE, 'stdin'),
                    'agy': (AGY, 'agy-stream-json'), 'opencode': (OPENCODE, 'stdin')}
 
 
+def resolve_agy_plan_profile(registry):
+    """Return a trusted verifier of the resolved, enforced streaming invocation.
+
+    A profile must verify the exact launcher, its environment and stream
+    transport, and enforce read-only access to source, Git metadata and the
+    designated artifacts for the provider and its descendants. A registry
+    token alone cannot supply that proof. For pair discussions the verifier
+    also exposes allows(model, role) for admission before round artifacts exist.
+    No production profile is verified.
+    """
+    return None
+
+
+def managed_agy_plan(config, registry):
+    return (config.dispatcher_managed and config.role == 'plan' and
+            _agent(registry, config.agent)[0] == 'agy')
+
+
+def require_agy_plan_profile(registry):
+    profile = resolve_agy_plan_profile(registry)
+    if profile is None:
+        raise ValueError('agy-plan-read-only-unavailable: no verified enforcement profile')
+    return profile
+
+
+def agy_plan_invocation(config, registry):
+    """Bind the exact invocation the supervisor will launch to verified enforcement."""
+    profile = require_agy_plan_profile(registry)
+    if (config.permission_mode != 'safe' or config.extra_args or config.gui_mode != '0' or
+            capture_source(config, 'agy') != AGY):
+        raise ValueError('agy-plan-read-only-unavailable: unsafe invocation settings')
+    try:
+        spec = build_invocation(config, registry)
+        if not spec.stdin or capture_candidate(config, registry, spec) != AGY:
+            raise ValueError('protected planning requires AGY stream capture')
+        # Bind the owner environment as well as the removals applied before
+        # starting the provider.
+        env = {**os.environ, **spec.env}
+        bound = replace(spec, argv=resolve_executable(spec.argv, env), env=env)
+    except (OSError, ValueError) as error:
+        raise ValueError(f'agy-plan-read-only-unavailable: {error}') from error
+    if not profile(config, bound):
+        raise ValueError('agy-plan-read-only-unavailable: invocation is outside the verified profile')
+    runtime_paths = (config.record_directory, config.stream_directory, config.process_state_file)
+    encoded = json.dumps((str(bound.cwd), bound.argv, bound.env, bound.unset_env,
+                          [str(path) for path in runtime_paths], hashlib.sha256(bound.stdin).hexdigest()), sort_keys=True)
+    return bound, hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+@dataclass(frozen=True)
+class ProtectedLaunch:
+    """One verified AGY launch: the exact spec, config and registry snapshot."""
+    config: AgentRunConfig
+    registry: dict
+    name: str
+    spec: ProcessSpec
+    digest: str
+
+    def worker_input(self):
+        """Carry the admitted spec over the supervisor's private stdin transport."""
+        spec = self.spec
+        data = {'argv': spec.argv, 'cwd': str(spec.cwd), 'stdout': str(spec.stdout),
+                'stderr': str(spec.stderr), 'unset_env': spec.unset_env,
+                'stdin': None if spec.stdin is None else b64encode(spec.stdin).decode('ascii')}
+        # The worker inherits spec.env separately. Keep it out of the stdin file.
+        return json.dumps(data).encode('utf-8')
+
+    @classmethod
+    def from_worker_input(cls, config, registry, data, expected_digest):
+        # The private handoff carries the invocation, but cannot enable AGY
+        # when the trusted runtime does not have an applicable profile.
+        require_agy_pair_profile(registry, config.model, config.role)
+        spec = json.loads(data)
+        bound = ProcessSpec(tuple(spec['argv']), Path(spec['cwd']), dict(os.environ),
+                            stdout=Path(spec['stdout']), stderr=Path(spec['stderr']),
+                            unset_env=tuple(spec['unset_env']),
+                            stdin=None if spec['stdin'] is None else b64decode(spec['stdin'], validate=True))
+        return cls(_protected_config(config, registry), registry, 'agy', bound, expected_digest)
+
+
+def _spec_digest(config, spec, registry):
+    spec_fields = {**asdict(spec), 'stdin': None if spec.stdin is None else hashlib.sha256(spec.stdin).hexdigest()}
+    encoded = json.dumps((asdict(config), spec_fields, registry), sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+def _protected_config(config, registry):
+    if not config.stream_directory or not config.run_id or not config.attempt_id:
+        raise ValueError('protected launch requires a stream directory and attempt identity')
+    paths = {name: Path(getattr(config, name)).resolve() for name in (
+        'repo_root', 'prompt_file', 'context_file', 'registry_file', 'stream_directory',
+        'record_directory', 'process_state_file') if getattr(config, name) is not None}
+    paths.setdefault('record_directory', (paths['repo_root'] / '.ai-skills' / 'processes').resolve())
+    return effective_config(config, registry).replace(**paths)
+
+
+def _protected_captures(directory):
+    paths = (directory / 'stdout', directory / 'stderr')
+    if any(path != path.resolve() for path in paths):
+        raise ValueError('protected capture paths must remain resolved')
+    return paths
+
+
+def _passes_model(argv, agent, model):
+    template = _template_tokens(agent.get('model', {}).get('flag_template', ''), {})
+    if template not in (('--model', '{{model}}'), ('--model={{model}}',)) or model.startswith('-'):
+        return False
+    args = argv[1:]
+    if any(arg.startswith('-') and not arg.startswith('--') and 'm' in arg.split('=', 1)[0] for arg in args):
+        return False
+    selectors = [i for i, arg in enumerate(args) if arg.partition('=')[0] == '--model']
+    if len(selectors) != 1:
+        return False
+    index = selectors[0]
+    flag = _template_tokens(template, {'model': model})
+    return '--' not in args[:index] and args[index:index + len(flag)] == flag
+
+
+def require_agy_pair_profile(registry, model, role):
+    profile = resolve_agy_plan_profile(registry)
+    if profile is None:
+        raise ValueError('agy-read-only-unavailable: no verified enforcement profile is available')
+    allows = getattr(profile, 'allows', None)
+    if not callable(allows) or not allows(model, role):
+        raise ValueError('agy-read-only-unavailable: the verified profile does not admit this model and purpose')
+    return profile
+
+
+def bind_agy_launch(config, registry, *, worker_environment=None):
+    """Resolve, verify and freeze the unmanaged AGY invocation once.
+
+    Reuses the trusted profile contract of protected planning. The returned
+    binding is the only input run_agent launches; nothing is rebuilt or probed.
+    """
+    registry = json.loads(json.dumps(registry))
+    profile = require_agy_pair_profile(registry, config.model, config.role)
+    try:
+        name, agent = _agent(registry, config.agent)
+        if name != 'agy':
+            raise ValueError('provider is not AGY')
+        if config.dispatcher_managed or config.permission_mode != 'safe' or config.extra_args or config.gui_mode != '0':
+            raise ValueError('unsafe invocation settings')
+        config = _protected_config(config, registry)
+        model = config.model
+        if model not in agent.get('model', {}).get('known_models', []):
+            raise ValueError(f'model {model} is not registered')
+        invocation_config = config if worker_environment is None else config.replace(environment=worker_environment)
+        spec = build_invocation(invocation_config, registry)
+        if not _passes_model(spec.argv, agent, model):
+            raise ValueError(f'model {model} is not explicitly selected by the invocation')
+        env = {**os.environ, **spec.env}
+        argv = resolve_executable(spec.argv, env)
+        argv = (os.path.abspath(argv[0]), *argv[1:])
+        stdout, stderr = _protected_captures(config.stream_directory)
+        bound = replace(spec, argv=argv, env=env, stdout=stdout, stderr=stderr)
+        digest = _spec_digest(config, bound, registry)
+    except (OSError, ValueError) as error:
+        raise ValueError(f'agy-read-only-unavailable: {error}') from error
+    if not profile(config, bound):
+        raise ValueError('agy-read-only-unavailable: invocation is outside the verified profile')
+    if _spec_digest(config, bound, registry) != digest:
+        raise ValueError('agy-read-only-unavailable: verifier changed the invocation')
+    return ProtectedLaunch(config, registry, name, bound, digest)
+
+
+def _check_protected(protected, config):
+    name, _ = _agent(protected.registry, config.agent)
+    spec = protected.spec
+    if (name != protected.name or _protected_config(config, protected.registry) != protected.config or
+            _spec_digest(protected.config, spec, protected.registry) != protected.digest or
+            (spec.stdout, spec.stderr) != _protected_captures(protected.config.stream_directory) or
+            {**os.environ, **spec.env} != spec.env):
+        raise ValueError('agy-read-only-unavailable: admitted invocation changed')
+
+
 def capture_source(config, name=None):
-    if (not config.dispatcher_managed or config.role not in ('impl', 'modify') or
+    if (not config.dispatcher_managed or config.role not in ('impl', 'modify', 'plan') or
             config.verification_context is not None or config.result_capture_context is None):
         return None
     source = config.result_capture_context.get('source', CODEX)
     if not isinstance(source, str) or (name is not None and source != _CAPTURE_ROUTES.get(name, (None, None))[0]):
+        return None
+    if config.role == 'plan' and source != AGY:
         return None
     if source == CODEX and config.final_response_file is not None:
         return source
@@ -202,12 +384,12 @@ def effective_config(config: AgentRunConfig, registry: dict) -> AgentRunConfig:
     model = config.model or agent.get('model', {}).get('default', '')
     configured = registry.get('model_catalog', {}).get(model, {}).get('reasoning_effort', '')
     if config.effort:
-        resolution = resolve_effort(name, config.effort, config.role)
+        resolution = resolve_effort(name, config.effort, config.role, registry, model=model)
         requested = config.requested_effort or resolution.requested
     else:
-        resolution = resolve_effort(name, configured, config.role)
+        resolution = resolve_effort(name, configured, config.role, registry, model=model)
         if name == 'claude' and config.role == 'plan':
-            resolution = resolve_effort(name, '', config.role)
+            resolution = resolve_effort(name, '', config.role, registry, model=model)
         requested = config.requested_effort
     return config.replace(effort=resolution.effective, requested_effort=requested)
 
@@ -438,19 +620,10 @@ def read_provider_output(path, *, transport='argv'):
     AGY step deltas can repeat final text and include tool output. Only the
     terminal result is authoritative, including when the wrapper died early.
     """
-    if transport != 'agy-stream-json':
+    if transport != AGY:
         return Path(path).read_text(encoding='utf-8', errors='replace')
-    result = None
-    with Path(path).open(encoding='utf-8') as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            event = json.loads(line)
-            if isinstance(event, dict) and event.get('event') == 'result':
-                if result is not None:
-                    raise ValueError('AGY returned multiple results for a single prompt')
-                result = event.get('result')
-    return agy_result_response(result)
+    with Path(path).open('rb') as stream:
+        return agy_narrative_response(stream)
 
 
 class _RawTail(_Tail):
@@ -466,8 +639,7 @@ class _AgyTail(_RawTail):
         super().__init__(path, channel, bus)
         self.path = path
 
-    def finish(self):
-        response = read_provider_output(self.path, transport='agy-stream-json')
+    def publish(self, response):
         for line in response.splitlines(keepends=True):
             self.bus.forward(line.rstrip('\r\n'), 'stdout', newline=line.endswith('\n'),
                              record_status=len(line) <= 65536)
@@ -486,15 +658,19 @@ def _check_cli_capabilities(argv, spec, invocation):
             help_output = help_result.stdout + help_result.stderr
         except (subprocess.TimeoutExpired, OSError) as error:
             raise _CLIUnsupported(f'Cannot verify provider stdin capabilities; upgrade the CLI: {error}') from error
-        missing = [flag for flag in required if not _help_option(help_output, flag.encode())]
-        if help_result.returncode or missing:
-            details = {
-                '--model': 'exact model selection',
-                '--input-format': 'stream-json input',
-                '--output-format': 'stream-json output',
-            }
-            capabilities = ', '.join(f'{flag} ({details.get(flag, "required capability")})' for flag in missing)
-            reason = f'required capabilities are missing: {capabilities}' if missing else 'capabilities could not be verified'
+        options = {flag: _help_option(help_output, flag.encode()) for flag in required}
+        missing = [flag for flag, option in options.items() if not option]
+        incompatible = [flag for flag in ('--input-format', '--output-format')
+                        if not agy_diagnostics.supports_stream_json(options.get(flag, b''))]
+        if help_result.returncode or missing or incompatible:
+            reason = 'capabilities could not be verified'
+            if missing:
+                details = {'--model': 'exact model selection', '--input-format': 'stream-json input',
+                           '--output-format': 'stream-json output'}
+                capabilities = ', '.join(f'{flag} ({details.get(flag, "required capability")})' for flag in missing)
+                reason = 'required capabilities are missing: ' + capabilities
+            elif incompatible:
+                reason = 'stream-json is unavailable for ' + ', '.join(incompatible)
             raise _CLIUnsupported('Upgrade AGY CLI: ' + reason + '; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
 
 
@@ -520,15 +696,107 @@ def _stream_unavailability(source, tail):
     return ''
 
 
-def run_agent(config: AgentRunConfig) -> AgentRunResult:
-    registry = load_registry(config.registry_file)
+def _classify_agy(text, model):
+    reason = classify_unavailable(text)
+    return reason if reason in ('auth', 'quota') else agy_diagnostics.classify(text, model)
+
+
+def _unavailability_scope(reason):
+    """Choose whether retry routing should exclude a harness or one model pair."""
+    if reason in ('auth', 'quota', 'missing-command', 'cli-unsupported'):
+        return 'agent'
+    return 'agent-model'
+
+
+def _agy_terminal(tail, managed):
+    if not managed:
+        return read_provider_output(tail.path, transport='agy-stream-json')
+    tail.stream.seek(0)
+    return extract_response(AGY, tail.stream).decode('utf-8')
+
+
+def _report_agy_stderr(tail, retained_path):
+    """Report the standalone diagnostics path without forwarding provider text."""
+    if not tail.recent:
+        return
+    if retained_path is None:
+        try:
+            with tempfile.NamedTemporaryFile(prefix='ai-skills-agy-stderr-', suffix='.log', delete=False) as stderr:
+                tail.stream.seek(0)
+                shutil.copyfileobj(tail.stream, stderr)
+                retained_path = stderr.name
+        except OSError:
+            print('Could not save AGY stderr.', file=sys.stderr)
+            return
+    print(f'AGY stderr saved to {retained_path}', file=sys.stderr, flush=True)
+
+
+def _finish_agy(tails, code, model, bus, *, managed):
+    """Classify the structured terminal result before any stderr diagnostic.
+
+    Raw stdout is model-controlled, so only the terminal error and stderr can
+    identify unavailability. Managed capture keeps raw provider text in its
+    stream file and leaves unrecognized failures to the dispatcher.
+    """
+    output, errors = tails
+    try:
+        response = _agy_terminal(output, managed)
+    except ProviderError as error:
+        reason = _classify_agy(str(error), model) or _classify_agy(errors.recent, model)
+        if reason or not managed:
+            bus.forward(agy_diagnostics.failure_message(model, reason))
+            code = code or 1
+        return code, reason
+    except (ValueError, RecursionError) as error:
+        reason = _classify_agy(errors.recent, model) if code else ''
+        if reason:
+            bus.forward(agy_diagnostics.failure_message(model, reason))
+        elif not managed:
+            if code and isinstance(error, MissingAgyTerminal):
+                bus.forward(f'AGY failed for requested model {model} with exit code {code} without a terminal result.')
+            else:
+                bus.forward(agy_diagnostics.malformed_message(model, error))
+            code = code or 1
+        return code, reason
+    reason = _classify_agy(errors.recent, model) if code else ''
+    if reason:
+        bus.forward(agy_diagnostics.failure_message(model, reason))
+    elif not managed:
+        if code:
+            bus.forward(f'AGY failed for requested model {model} with exit code {code}; no result was accepted.')
+        else:
+            output.publish(response)
+    return code, reason
+
+
+def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None, *,
+              registry: dict | None = None) -> AgentRunResult:
+    if protected:
+        _check_protected(protected, config)
+        registry = protected.registry
+    elif registry is None:
+        registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
-    config = effective_config(config, registry)
+    protected_plan = managed_agy_plan(config, registry)
+    if protected_plan:
+        require_agy_plan_profile(registry)
+        if capture_source(config, name) != AGY:
+            raise ValueError('agy-plan-read-only-unavailable: missing protected capture binding')
+    elif config.role == 'plan' and capture_source(config) == AGY:
+        raise ValueError('agy-plan-read-only-unavailable: admitted agent changed')
+    config = protected.config if protected else effective_config(config, registry)
     source = capture_source(config, name)
     stream_capture = source in STREAM_SOURCES
     invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
-    spec = build_invocation(config, registry)
+    if protected:
+        spec = protected.spec
+    elif protected_plan:
+        spec, digest = agy_plan_invocation(config, registry)
+        if digest != config.result_capture_context.get('invocation_digest'):
+            raise ValueError('agy-plan-read-only-unavailable: admitted invocation changed')
+    else:
+        spec = build_invocation(config, registry)
     if not math.isfinite(config.heartbeat_seconds) or config.heartbeat_seconds < 0:
         raise ValueError('heartbeat_seconds must be nonnegative and finite')
     bus = EventBus(status_file=config.status_file, events_log=config.events_log, log_file=config.log_file)
@@ -552,19 +820,27 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
                     capture.exists() or capture.is_symlink()):
                 raise ValueError('unsafe or occupied Codex capture path')
         directory.mkdir(parents=True, exist_ok=True)
-        output, errors = directory/'stdout', directory/'stderr'
+        output, errors = (spec.stdout, spec.stderr) if protected else (directory/'stdout', directory/'stderr')
         with output.open('xb') as stdout, errors.open('xb'):
             stdout_info = os.fstat(stdout.fileno())
-        output_tail = _AgyTail if invocation.get('prompt_transport') == 'agy-stream-json' else _Tail
+        agy_stream = invocation.get('prompt_transport') == AGY or source == AGY
+        output_tail = _AgyTail if agy_stream else _Tail
         if stream_capture:
             output_tail = _RawTail
-        tails = [output_tail(output, 'stdout', bus), _Tail(errors, 'stderr', bus)]
+        # AGY can repeat terminal errors on stderr. Keep both raw streams out
+        # of routing-visible diagnostics and emit wrapper guidance instead.
+        error_tail = _RawTail if agy_stream else _Tail
+        tails = [output_tail(output, 'stdout', bus), error_tail(errors, 'stderr', bus)]
         owned = None
         try:
-            argv = resolve_executable(spec.argv, spec.env)
-            _check_cli_capabilities(argv, spec, invocation)
+            argv = spec.argv if (protected_plan or protected) else resolve_executable(spec.argv, spec.env)
+            if not (protected_plan or protected):
+                _check_cli_capabilities(argv, spec, invocation)
             supervisor = ProcessSupervisor(config.record_directory or (Path(config.repo_root)/'.ai-skills'/'processes'))
-            owned = supervisor.start(replace(spec, argv=argv, stdout=output, stderr=errors),
+            if protected:
+                _check_protected(protected, config)
+            launch = spec if protected else replace(spec, argv=argv, stdout=output, stderr=errors)
+            owned = supervisor.start(launch,
                                      run_id=config.run_id or 'agent-' + uuid.uuid4().hex,
                                      attempt_id=config.attempt_id or uuid.uuid4().hex)
             state = {'schema_version':1, 'identity':asdict(owned.identity), 'record_directory':str(supervisor.directory), 'state':'alive', 'stdout_file':str(output), 'stderr_file':str(errors)}
@@ -604,22 +880,25 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             for tail in tails:
                 while tail.drain(final=True):
                     pass
-            if code == 0 and isinstance(tails[0], _AgyTail):
-                tails[0].finish()
-            reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
-            if stream_capture:
-                reason = reason or _stream_unavailability(source, tails[0])
-                if reason:
-                    state['unavailable_reason'] = reason
-                    code = code or 1
+            if agy_stream:
+                code, reason = _finish_agy(tails, code, model, bus, managed=stream_capture)
+                if code and not reason and not config.dispatcher_managed:
+                    _report_agy_stderr(tails[1], errors if config.stream_directory else None)
+            else:
+                reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
+                if stream_capture:
+                    reason = reason or _stream_unavailability(source, tails[0])
+                    code = code or (1 if reason else 0)
+            if stream_capture and reason:
+                state['unavailable_reason'] = reason
             if config.process_state_file and (not source or code != 0):
                 write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
         except FileNotFoundError as error:
             code, reason = 127, 'missing-command'
-            bus.forward(str(error))
+            bus.forward(f'{error}; install the {name} CLI or add it to PATH (requested model {model})')
         except _CLIUnsupported as error:
             code, reason = 1, 'cli-unsupported'
-            bus.forward(str(error))
+            bus.forward(f'{error} (requested model {model})')
         except (RuntimeError, ValueError, OSError) as error:
             code = 1
             reason = classify_unavailable(str(error))
@@ -633,7 +912,8 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
                 tail.close()
     status = 'success' if code == 0 else 'failed'
     if reason:
-        bus.emit('agent-unavailable', {**fields, 'reason':reason, 'action':'exclude-route'})
+        bus.emit('agent-unavailable', {**fields, 'reason':reason,
+            'action':'exclude-route', 'scope':_unavailability_scope(reason)})
     if config.dispatcher_managed:
         bus.emit('provider-exit', {**fields, 'return_code':code})
     else:

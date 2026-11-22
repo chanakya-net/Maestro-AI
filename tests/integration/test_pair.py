@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import pytest
 from ai_skills.pair import main
@@ -32,9 +33,10 @@ def pair_fixture(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     script = tmp_path / 'provider.py'
     script.write_text('''import json, os, pathlib, re, sys, time
-payload=sys.argv[-1]
-round_no=int(re.search(r'round (\\d+)', payload, re.I).group(1))
-model=sys.argv[1]
+agy = '--input-format' in sys.argv
+payload = json.load(sys.stdin)['message']['content'] if agy else sys.argv[-1]
+round_no = int(re.search(r'round (\\d+)', payload, re.I).group(1))
+model = sys.argv[sys.argv.index('--model') + 1] if agy and '--model' in sys.argv else sys.argv[1]
 root=pathlib.Path(os.environ['REPO_ROOT'])
 (root / (model + '-argv.json')).write_text(json.dumps(sys.argv[1:]))
 (root / (model + '-role.txt')).write_text(os.environ.get('RUN_WITH_IT_ROLE', ''))
@@ -60,9 +62,12 @@ if mode == 'hang' and model == 'two':
     (root/'grandchild.pid').write_text(str(child.pid))
     time.sleep(60)
 sections=''' + repr(d.AGENT_SECTIONS) + '''
-for section in sections:
-    print('# ' + section + '\\n\\nEvidence MARKER-R' + str(round_no) + ' from ' + model + '.\\n')
-print('DISCUSSION_STATUS: READY')
+response = ''.join('# ' + section + '\\n\\nEvidence MARKER-R' + str(round_no) + ' from ' + model + '.\\n\\n'
+                   for section in sections) + 'DISCUSSION_STATUS: READY'
+if agy:
+    print(json.dumps({'event': 'result', 'result': {'status': 'SUCCESS', 'response': response}}))
+else:
+    print(response)
 ''', encoding='utf-8')
     registry = {'aliases': {'alias': 'fake'}, 'agents': {'fake': {
         'detection': {'command': sys.executable},
@@ -79,6 +84,160 @@ print('DISCUSSION_STATUS: READY')
         assert code == 0, err
         return Path(values['RUN_DIR'])
     return start, tmp_path, registry_file
+
+
+AGY_MODELS = ('agy-model-one', 'agy-model-two')
+
+
+AGY_WORKER_SHIM = """
+from ai_skills import runner
+
+def verify(*args):
+    raise AssertionError('the worker must not verify a second invocation')
+
+verify.allows = lambda model, role: True
+runner.resolve_agy_plan_profile = lambda registry: verify
+"""
+
+
+@pytest.fixture
+def agy_pair(pair_fixture, monkeypatch):
+    """Only the parent fixture can verify an invocation."""
+    import ai_skills
+    from ai_skills import runner
+
+    start, root, registry_file = pair_fixture
+    registry = json.loads(registry_file.read_text())
+    fake = registry['agents']['fake']
+    registry['agents']['agy'] = {
+        **fake,
+        'invocation': {**fake['invocation'], 'prompt_transport': 'agy-stream-json',
+                       'args_template': [fake['invocation']['args_template'][0],
+                                         '{{permission_mode}}', '{{model_flag}}',
+                                         '--input-format', 'stream-json', '--output-format', 'stream-json']},
+        'model': {'known_models': list(AGY_MODELS), 'flag_template': '--model {{model}}'},
+    }
+    registry_file.write_text(json.dumps(registry))
+    shim = root / 'profile-shim'
+    shim.mkdir()
+    (shim / 'sitecustomize.py').write_text(AGY_WORKER_SHIM)
+    src = str(Path(ai_skills.__file__).resolve().parents[1])
+
+    def profile(mode):
+        def check(config, bound):
+            prompt, context = config.prompt_file, config.context_file
+            stream_dir = config.stream_directory
+            assert config.run_id and config.attempt_id
+            assert prompt.parent == context.parent and context.name == 'snapshot.md'
+            assert config.process_state_file.parent == prompt.parent
+            assert config.record_directory == prompt.parents[2] / 'processes'
+            assert (bound.stdout, bound.stderr) == (stream_dir / 'stdout', stream_dir / 'stderr')
+            payload = json.loads(bound.stdin)['message']['content']
+            assert (prompt.read_text(encoding='utf-8').strip() in payload
+                    and context.read_text(encoding='utf-8').strip() in payload)
+            with (root / 'profile-calls.jsonl').open('a') as out:
+                out.write(json.dumps({'prompt': str(prompt), 'role': config.role,
+                                      'run_id': config.run_id, 'attempt_id': config.attempt_id,
+                                      'state': str(config.process_state_file), 'records': str(config.record_directory),
+                                      'stdout': str(bound.stdout), 'stderr': str(bound.stderr)}) + '\n')
+            return (mode != 'reject' and '--read-only' in bound.argv and config.model in bound.argv
+                    and not (mode == 'reject-second' and '-agent-2-' in config.attempt_id))
+
+        check.allows = lambda model, role: True
+        monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda _: check if mode else None)
+        monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(shim), src] if mode else [src]))
+
+    def args(slot, model):
+        other = '2' if slot == '1' else '1'
+        return ['--agent-%s-harness' % slot, 'agy', '--agent-%s-model' % slot, model,
+                '--agent-%s-effort' % slot, 'high'], other
+    return start, root, profile, args
+
+
+@pytest.fixture
+def agy_start_profile(agy_pair, monkeypatch):
+    from ai_skills import runner
+
+    start, root, _, args = agy_pair
+
+    def admit(*, model, role):
+        def verify(*_):
+            pytest.fail('start must not verify placeholder invocation inputs')
+
+        verify.allows = lambda candidate, purpose: (candidate, purpose) != (model, role)
+        monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda _: verify)
+
+    return start, root, admit, args
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+def test_agy_slot_runs_with_fixture_profile_and_exact_model(agy_pair, capsys, slot, purpose):
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, other = args(slot, AGY_MODELS[0])
+    run = start('--purpose', purpose, *extra)
+    config = json.loads((run / 'config.json').read_text())
+    assert config['agents'][slot]['harness'] == 'agy' and config['agents'][slot]['model'] == AGY_MODELS[0]
+    assert config['agents'][slot]['safety_profile'] == 'agy-verified-profile'
+    code, _, err = invoke(capsys, 'run-round', '--run-dir', str(run)); assert code == 0, err
+    argv = json.loads((root / (AGY_MODELS[0] + '-argv.json')).read_text())
+    assert argv[argv.index('--model') + 1] == AGY_MODELS[0] and '--read-only' in argv
+    record = json.loads(next((run / 'rounds/round-01').glob(f'agent-{slot}-attempt-*-run.json')).read_text())
+    assert record['agent']['model'] == AGY_MODELS[0] and record['purpose'] == purpose
+    assert config['timeout_seconds'] == 3600
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+@pytest.mark.parametrize('unverified', ['0', '1'])
+def test_stock_agy_pair_rejected_without_bypass(agy_pair, capsys, monkeypatch, slot, purpose, unverified):
+    _, root, profile, args = agy_pair
+    profile(None)
+    monkeypatch.setenv('PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE', unverified)
+    extra, _ = args(slot, AGY_MODELS[0])
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *extra)
+    assert code == 2 and 'verified read-only' in error and AGY_MODELS[0] in error and 'agent ' + slot in error
+    assert not (root / '.pair-colleague').exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+@pytest.mark.parametrize('unverified', ['0', '1'])
+def test_packaged_agy_admission_fails_closed(tmp_path, monkeypatch, capsys, slot, purpose, unverified):
+    from ai_skills.processes import ProcessSupervisor
+    from ai_skills.registry import load_registry
+    monkeypatch.chdir(tmp_path)
+    for key in ('AGENT_REGISTRY_FILE', 'PAIR_COLLEAGUE_ASSETS_DIR', 'PAIR_COLLEAGUE_RUN_ROOT'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE', unverified)
+    monkeypatch.setattr('ai_skills.pair.shutil.which', lambda *args, **kwargs: '/fixture/executable')
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail('admission launched a child')
+    monkeypatch.setattr(ProcessSupervisor, 'start', unexpected_launch)
+    registry = load_registry()
+    model = registry['agents']['agy']['model']['known_models'][0]
+    codex_model = registry['agents']['codex']['model']['known_models'][0]
+    for number in ('1', '2'):
+        for key, value in {'HARNESS': 'agy' if number == slot else 'codex',
+                           'MODEL': model if number == slot else codex_model, 'EFFORT': 'high'}.items():
+            monkeypatch.setenv(f'AGENT_{number}_{key}', value)
+    task = tmp_path / 'task.md'; task.write_text('Discuss storage.')
+    code, _, error = invoke(capsys, 'start', str(task), '--purpose', purpose)
+    assert code == 2 and 'verified read-only' in error and model in error and f'agent {slot}' in error
+    assert not (tmp_path / '.pair-colleague').exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_unsupported_agy_invocation_rejected_before_launch(agy_pair, capsys, purpose):
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args('1', AGY_MODELS[0])
+    run = start('--purpose', purpose, *extra)
+    profile('reject')
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and 'verified read-only' in error
+    assert not list(root.glob('*-r1.count'))
 
 
 def decision_file(root, action):
@@ -226,10 +385,10 @@ def test_pair_resolves_direct_harness_effort_before_freezing_inputs(
     ('agy', 'maximum', 'max'), ('agy', 'xhigh', 'xhigh'),
 ])
 def test_non_target_harness_effort_keeps_semantics_without_provenance(
-        pair_fixture, capsys, harness, requested, effective, purpose):
+        pair_fixture, agy_pair, capsys, harness, requested, effective, purpose):
     start, root, registry_file = pair_fixture
+    agy_pair[2]('accept')  # fixture profile only; AGY is otherwise refused
     registry = json.loads(registry_file.read_text())
-    registry['agents']['agy'] = {**registry['agents']['fake']}
     model = 'claude-opus-5-5-low' if harness == 'agy' else 'one'
     registry['agents'][harness]['model'] = {**registry['agents'][harness]['model'], 'known_models': [model, 'two']}
     registry_file.write_text(json.dumps(registry))
@@ -239,7 +398,8 @@ def test_non_target_harness_effort_keeps_semantics_without_provenance(
     assert agent['effort'] == effective
     assert agent.get('requested_effort', '') == ''
     assert invoke(capsys, 'run-round', '--run-dir', str(run))[0] == 0
-    assert json.loads((root / f'{model}-argv.json').read_text())[0] == model
+    argv = json.loads((root / f'{model}-argv.json').read_text())
+    assert argv[argv.index('--model') + 1 if harness == 'agy' else 0] == model
 
 
 @pytest.mark.parametrize('purpose', ['general', 'plan'])
@@ -547,3 +707,63 @@ def test_pair_attempt_invalid_effort_does_not_restart_provider(pair_fixture, cap
     assert _attempt(spec_path) == 2
     assert 'unknown effort' in json.loads(Path(spec['record']).read_text())['error']
     assert not marker.exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_preflight_binds_real_prompt_and_artifact_paths(agy_pair, capsys, purpose):
+    """Fixture-only: the round preflight and the launch see the same real paths."""
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args('1', AGY_MODELS[0])
+    run = start('--purpose', purpose, *extra)
+    assert not (root / 'profile-calls.jsonl').exists()
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run)); assert code == 0, error
+    call, = map(json.loads, (root / 'profile-calls.jsonl').read_text().splitlines())
+    prefix = run / 'rounds/round-01/agent-1-attempt-01'
+    record = json.loads(Path(str(prefix) + '-run.json').read_text())
+    provider = json.loads(Path(record['provider_state']).read_text())
+    assert call == {
+        'prompt': record['prompt'], 'role': 'plan' if purpose == 'plan' else 'agent',
+        'run_id': provider['identity']['run_id'], 'attempt_id': provider['identity']['attempt_id'],
+        'state': record['provider_state'], 'records': provider['record_directory'],
+        'stdout': provider['stdout_file'], 'stderr': provider['stderr_file'],
+    }
+    assert call['prompt'].endswith('agent-1-prompt.md')
+
+
+@pytest.mark.parametrize(('purpose', 'model'), [
+    ('plan', AGY_MODELS[0]),
+    ('general', AGY_MODELS[1]),
+])
+def test_profile_declining_selection_refuses_before_any_launch(agy_start_profile, capsys, purpose, model):
+    start, root, admit, args = agy_start_profile
+    admit(model=model, role='plan' if purpose == 'plan' else 'agent')
+    extra, _ = args('1', model)
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *extra)
+    assert code == 2 and 'verified read-only' in error and model in error and 'agent 1' in error
+    assert not (root / '.pair-colleague').exists()
+    assert not (root / 'profile-calls.jsonl').exists()
+    allowed, _ = args('1', AGY_MODELS[0])
+    assert start('--purpose', 'general', *allowed).is_dir()
+    assert not list(root.glob('*-r1.count'))
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_round_admits_both_bindings_before_either_worker_starts(agy_pair, capsys, purpose):
+    start, root, profile, args = agy_pair
+    profile('accept')
+    first, _ = args('1', AGY_MODELS[0])
+    second, _ = args('2', AGY_MODELS[1])
+    run = start('--purpose', purpose, *first, *second)
+    profile('reject-second')
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code == 2 and 'agent 2' in error and 'verified read-only' in error
+    assert not list(root.glob('*-r1.count'))
+    assert not list((run / 'workers').glob('*.json'))
+    assert not list((run / 'processes').glob('*.json'))
+    calls = [json.loads(line) for line in (root / 'profile-calls.jsonl').read_text().splitlines()]
+    assert [call['attempt_id'] for call in calls] == ['round-1-agent-1-attempt-1', 'round-1-agent-2-attempt-1']
+    profile('accept')
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code == 0, error
+    assert [(root / f'{model}-r1.count').read_text() for model in AGY_MODELS] == ['1', '1']

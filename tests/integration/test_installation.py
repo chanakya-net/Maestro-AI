@@ -2544,3 +2544,197 @@ def test_update_cli_reports_unchanged_installation_for_prefetch_failures(officia
     assert 'Traceback' not in captured.err
     after = {p: p.read_bytes() for root in (assets, home) for p in root.rglob('*') if p.is_file()}
     assert after == before
+
+
+PINNED_PROVIDER = 'pinned-fixture'
+PINNED_MODEL = 'pinned-fixture-model'
+PINNED_PROMPT = 'Issue 232 fixture prompt from install A'
+
+
+def _replay_command(work, *argv, assets=None):
+    platform_keys = {'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'TMPDIR'}
+    env = {key: value for key, value in os.environ.items() if key.upper() in platform_keys}
+    env.update(HOME=str(work), USERPROFILE=str(work), PATH=os.defpath, PYTHONNOUSERSITE='1',
+               ASSETS_DEST=str(assets or work / 'absent-assets'), RUN_AGENT_BOOTSTRAP_PATH='0',
+               RUN_WITH_IT_GITHUB_UPDATES='0', PIP_CONFIG_FILE=os.devnull)
+    result = subprocess.run([str(arg) for arg in argv], env=env, cwd=work, capture_output=True,
+                            text=True, encoding='utf-8', timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
+
+
+def _build_replay_wheel(work, source, output):
+    _replay_command(work, sys.executable, '-I', '-m', 'build', '--no-isolation',
+                    '--wheel', '--outdir', output, source)
+    wheel, = output.glob('*.whl')
+    return wheel
+
+
+def _copy_native_dependencies(prefix):
+    """Install the test interpreter's actual native modules without network access."""
+    from importlib.metadata import distribution
+
+    site_packages = Path(sysconfig.get_path('purelib', 'venv',
+                        vars={'base': str(prefix), 'platbase': str(prefix)}))
+    for name in ('psutil', 'pywin32') if sys.platform == 'win32' else ('psutil',):
+        dependency = distribution(name)
+        for entry in dependency.files:
+            source = Path(dependency.locate_file(entry))
+            if '..' in entry.parts or not source.is_file():
+                continue
+            target = site_packages / entry
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+
+def _activate_replay_wheel(wheel, tmp_path, work):
+    def install(plan):
+        venv.EnvBuilder(with_pip=True).create(plan.prefix)
+        _copy_native_dependencies(plan.prefix)
+        _replay_command(work, plan.python, '-I', '-m', 'pip', 'install',
+                        '--no-index', '--no-deps', wheel)
+        _replay_command(work, plan.python, '-I', '-m', 'pip', 'check')
+        root = _replay_command(work, plan.python, '-I', '-c',
+                               'import ai_skills; from pathlib import Path; print(Path(ai_skills.__file__).parent)')
+        return Path(root.strip())
+
+    plan = plan_install(make_config(wheel, tmp_path))
+    return plan, apply_install(plan, package_installer=install)
+
+
+def _build_prior_replay_wheel(source, tmp_path, work):
+    for file in ('README.md', 'LICENSE'):
+        shutil.copy2(Path(__file__).resolve().parents[2] / file, source / file)
+    project = source / 'pyproject.toml'
+    project.write_text(re.sub(r'(?m)^version = ".*"$', 'version = "0.0.0.dev232"',
+                              project.read_text(encoding='utf-8')), encoding='utf-8')
+    resources = source / 'assets'
+    (resources / 'sub-coordinator-prompt.md').write_text(PINNED_PROMPT, encoding='utf-8')
+    provider = tmp_path / 'pinned_provider.py'
+    provider.write_text(PINNED_PROVIDER_SCRIPT, encoding='utf-8')
+    definitions_file = resources / 'agent-definitions.json'
+    definitions = json.loads(definitions_file.read_text(encoding='utf-8'))
+    definitions['agents'][PINNED_PROVIDER] = {
+        'invocation': {'command': sys.executable, 'args_template': [str(provider), '{{model_flag}}'],
+                       'prompt_transport': 'stdin'},
+        'model': {'default': PINNED_MODEL},
+    }
+    write_json_atomic(definitions_file, definitions)
+    registry_file = resources / 'agent-registry.json'
+    registry = json.loads(registry_file.read_text(encoding='utf-8'))
+    registry['model_catalog'][PINNED_MODEL] = {'agents': [PINNED_PROVIDER, 'codex'], 'explicit_only': True}
+    write_json_atomic(registry_file, registry)
+    return _build_replay_wheel(work, source, tmp_path / 'wheel-a')
+
+
+PINNED_PROVIDER_SCRIPT = """
+import json
+import os
+from pathlib import Path
+import sys
+
+payload = sys.stdin.read()
+result = Path(os.environ['RUN_WITH_IT_RESULT_FILE'])
+with (Path.cwd() / 'launches.jsonl').open('a', encoding='utf-8') as stream:
+    stream.write(json.dumps({
+        'run_id': os.environ['RUN_WITH_IT_RUN_ID'], 'attempt_id': os.environ['RUN_WITH_IT_ATTEMPT_ID'],
+        'resource_root': os.environ['ASSET_ROOT'], 'argv': sys.argv[1:], 'payload': payload,
+    }) + '\\n')
+result.write_text(json.dumps({'outcome': 'completed', 'summary': 'Pinned install fixture',
+                              'verification': {'passed': True}}), encoding='utf-8')
+"""
+
+
+SEED_PINNED_REPLAY = """
+import json
+from pathlib import Path
+import sys
+
+from ai_skills.pool import PoolConfig, PoolSupervisor
+
+path = Path(sys.argv[1])
+resume = json.loads(path.read_text(encoding='utf-8'))
+config = PoolConfig.from_record(dict(resume, timeout_seconds=3600, hard_limit_seconds=5400))
+pool = PoolSupervisor(config.resolved())
+assert pool.initialize() is None
+assert pool._intent('1', pool.worker('1'))
+"""
+
+
+def _read_replay_record(path):
+    return json.loads(path.read_text(encoding='utf-8'))
+
+
+def _seed_installed_replay(first, tmp_path, work):
+    from pool_support import pool_fixture
+
+    root = tmp_path / 'saved-run'
+    root.mkdir()
+    setup = pool_fixture(root, {1: {}}, parallel=1)
+    config = root / 'pool.json'
+    write_json_atomic(config, {
+        'schema_version': 1, 'state_file': str(setup.state_file), 'run_root': str(root),
+        'sub_coord_agent': PINNED_PROVIDER, 'sub_coord_model': PINNED_MODEL,
+        'max_worker_wait_seconds': 123, 'max_recovery_attempts': 0, 'poll_seconds': 0.05,
+    })
+    _replay_command(work, first.python, '-I', '-c', SEED_PINNED_REPLAY, config, assets=first.assets_dest)
+    intent = _read_replay_record(setup.state_file)['pool_attempts']['1']
+    write_json_atomic(root / 'seeded-attempt.json', intent)
+    worker = intent['worker_config']
+    assert intent['status'] == 'launch-intent' and not Path(worker['state_file']).exists()
+    assert (worker['timeout_seconds'], worker['hard_limit_seconds']) == (3600, 5400)
+    return config, intent
+
+
+def _assert_installed_replay(config, intent, first, manifest):
+    run = config.parent
+    saved = intent['worker_config']
+    agent = saved['agent_run']
+    worker_state = Path(saved['state_file'])
+    dispatched = _read_replay_record(Path(f'{worker_state}.config.json'))
+    outcome = _read_replay_record(Path(f'{worker_state}.outcome.json'))
+    terminal = _read_replay_record(Path(agent['result_file']))
+    launch, = map(json.loads, (run / 'launches.jsonl').read_text(encoding='utf-8').splitlines())
+    for evidence in (dispatched['agent_run'], outcome, launch):
+        assert (evidence['run_id'], evidence['attempt_id']) == (intent['run_id'], intent['attempt_id'])
+    assert (dispatched['timeout_seconds'], dispatched['hard_limit_seconds']) == (3600, 5400)
+    run_dir = run / '.run-with-it'
+    assert _read_replay_record(run_dir / 'engine.json')['python'] == str(first.python)
+    lease = _read_replay_record(run_dir / 'main/pool.state.json')
+    assert lease['state'] == 'pool-empty'
+    assert lease['config']['max_worker_wait_seconds'] == 123
+    assert (lease['config']['timeout_seconds'], lease['config']['hard_limit_seconds']) == (0, 0)
+    resources = Path(manifest['resources'])
+    assert resources.is_relative_to(first.prefix)
+    assert Path(dispatched['agent_run']['prompt_file']).parent == resources
+    assert Path(launch['resource_root']) == resources
+    assert (dispatched['agent_run']['agent'], dispatched['agent_run']['model']) == (PINNED_PROVIDER, PINNED_MODEL)
+    assert launch['argv'] == ['--model', PINNED_MODEL]
+    assert PINNED_PROMPT in launch['payload']
+    assert (outcome['status'], outcome['provider_return_code'], outcome['issue_outcome']) == ('success', 0, 'completed')
+    assert terminal['summary'] == 'Pinned install fixture'
+    assert _read_replay_record(run_dir / 'main-state.json')['issue_registry']['1']['status'] == 'completed'
+
+
+def test_installed_pool_replays_pinned_explicit_attempt_after_update(source_tree, tmp_path):
+    work = tmp_path / 'outside-checkout'
+    work.mkdir()
+    assert not any((parent / '.run-with-it').exists() for parent in (work, *work.parents))
+    product = _build_replay_wheel(work, Path(__file__).resolve().parents[2], tmp_path / 'wheel-b')
+    prior = _build_prior_replay_wheel(source_tree, tmp_path, work)
+    first, manifest = _activate_replay_wheel(prior, tmp_path, work)
+    first_maestro = first.python.with_name('maestro.exe' if os.name == 'nt' else 'maestro')
+    prior_models = _replay_command(work, first_maestro, 'agent', 'models', 'codex', assets=first.assets_dest)
+    assert PINNED_MODEL in prior_models.splitlines()
+    config, intent = _seed_installed_replay(first, tmp_path, work)
+
+    second, active = _activate_replay_wheel(product, tmp_path, work)
+    assert first.prefix != second.prefix and first.version != second.version
+    assert active['python'] == str(second.python)
+    second_maestro = second.python.with_name(first_maestro.name)
+    # Even A's entry point now selects B for a command in a fresh directory.
+    fresh_models = _replay_command(work, first_maestro, 'agent', 'models', 'codex', assets=second.assets_dest)
+    assert fresh_models.splitlines() and PINNED_MODEL not in fresh_models.splitlines()
+    (work / 'active-catalog.txt').write_text(fresh_models, encoding='utf-8')
+    _replay_command(work, second_maestro, 'run', 'pool', '--config', config, assets=second.assets_dest)
+    _assert_installed_replay(config, intent, first, manifest)
