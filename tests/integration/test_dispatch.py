@@ -317,7 +317,17 @@ def test_coordinator_dispatch_survives_both_former_deadlines(tmp_path, monkeypat
     from types import SimpleNamespace
     from ai_skills import dispatch
 
-    source = "import os,time,json; from pathlib import Path; time.sleep(.2); Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({'outcome':'completed','summary':'fixture complete'}))"
+    release = tmp_path / 'release'
+    source = (
+        'import json, os, time\n'
+        'from pathlib import Path\n'
+        f'release = Path({str(release)!r})\n'
+        'end = time.monotonic() + 10\n'
+        'while not release.exists() and time.monotonic() < end:\n'
+        '    time.sleep(.02)\n'
+        "Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(\n"
+        "    json.dumps({'outcome': 'completed', 'summary': 'fixture complete'}), encoding='utf-8')\n"
+    )
     config = worker_config(tmp_path, source)
     config = replace(config, agent_run=config.agent_run.replace(role=role), hard_limit_seconds=None)
     real_time = time
@@ -325,6 +335,8 @@ def test_coordinator_dispatch_survives_both_former_deadlines(tmp_path, monkeypat
 
     def simulated_monotonic():
         elapsed[0] += 600
+        if elapsed[0] > 7200 and not release.exists():
+            release.write_text('go', encoding='utf-8')
         return elapsed[0]
 
     monkeypatch.setattr(dispatch, 'time', SimpleNamespace(
