@@ -224,6 +224,66 @@ def agy_plan_invocation(config, registry):
     return bound, hashlib.sha256(encoded.encode('utf-8')).hexdigest()
 
 
+@dataclass(frozen=True)
+class ProtectedLaunch:
+    """One verified AGY launch: the exact spec, config and registry snapshot."""
+    config: AgentRunConfig
+    registry: dict
+    name: str
+    spec: ProcessSpec
+    digest: str
+
+
+def _spec_digest(config, spec):
+    runtime_paths = (config.record_directory, config.stream_directory, config.process_state_file)
+    encoded = json.dumps((str(spec.cwd), spec.argv, spec.env, spec.unset_env, [str(path) for path in runtime_paths],
+                          hashlib.sha256(spec.stdin or b'').hexdigest()), sort_keys=True)
+    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+def _passes_model(argv, agent, model):
+    flag = _template_tokens(agent.get('model', {}).get('flag_template', ''), {'model': model})
+    width = len(flag)
+    return bool(width) and any(tuple(argv[i:i + width]) == tuple(flag) for i in range(len(argv) - width + 1))
+
+
+def bind_agy_launch(config, registry):
+    """Resolve, verify and freeze the unmanaged AGY invocation once.
+
+    Reuses the trusted profile contract of protected planning. The returned
+    binding is the only input run_agent launches; nothing is rebuilt or probed.
+    """
+    registry = json.loads(json.dumps(registry))
+    profile = require_agy_plan_profile(registry)
+    try:
+        name, agent = _agent(registry, config.agent)
+        if name != 'agy':
+            raise ValueError('provider is not AGY')
+        if config.permission_mode != 'safe' or config.extra_args or config.gui_mode != '0':
+            raise ValueError('unsafe invocation settings')
+        config = effective_config(config, registry)
+        model = config.model or agent.get('model', {}).get('default', '')
+        if model not in agent.get('model', {}).get('known_models', []):
+            raise ValueError(f'model {model} is not registered')
+        spec = build_invocation(config, registry)
+        if not _passes_model(spec.argv, agent, model):
+            raise ValueError(f'model {model} is not explicitly selected by the invocation')
+        env = {**os.environ, **spec.env}
+        bound = replace(spec, argv=resolve_executable(spec.argv, env), env=env)
+    except (OSError, ValueError) as error:
+        raise ValueError(f'agy-read-only-unavailable: {error}') from error
+    if not profile(config, bound):
+        raise ValueError('agy-read-only-unavailable: invocation is outside the verified profile')
+    return ProtectedLaunch(config, registry, name, bound, _spec_digest(config, bound))
+
+
+def _check_protected(protected, config):
+    name, _ = _agent(protected.registry, config.agent)
+    if (name != protected.name or effective_config(config, protected.registry) != protected.config or
+            _spec_digest(protected.config, protected.spec) != protected.digest):
+        raise ValueError('agy-read-only-unavailable: admitted invocation changed')
+
+
 def capture_source(config, name=None):
     if (not config.dispatcher_managed or config.role not in ('impl', 'modify', 'plan') or
             config.verification_context is not None or config.result_capture_context is None):
@@ -640,8 +700,10 @@ def _finish_agy(tails, code, model, bus, *, managed):
     return code, reason
 
 
-def run_agent(config: AgentRunConfig) -> AgentRunResult:
-    registry = load_registry(config.registry_file)
+def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None) -> AgentRunResult:
+    registry = protected.registry if protected else load_registry(config.registry_file)
+    if protected:
+        _check_protected(protected, config)
     name, agent = _agent(registry, config.agent)
     protected_plan = managed_agy_plan(config, registry)
     if protected_plan:
@@ -655,7 +717,9 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
     stream_capture = source in STREAM_SOURCES
     invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
-    if protected_plan:
+    if protected:
+        spec = protected.spec
+    elif protected_plan:
         spec, digest = agy_plan_invocation(config, registry)
         if digest != config.result_capture_context.get('invocation_digest'):
             raise ValueError('agy-plan-read-only-unavailable: admitted invocation changed')
@@ -697,8 +761,8 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         tails = [output_tail(output, 'stdout', bus), error_tail(errors, 'stderr', bus)]
         owned = None
         try:
-            argv = spec.argv if protected_plan else resolve_executable(spec.argv, spec.env)
-            if not protected_plan:
+            argv = spec.argv if (protected_plan or protected) else resolve_executable(spec.argv, spec.env)
+            if not (protected_plan or protected):
                 _check_cli_capabilities(argv, spec, invocation)
             supervisor = ProcessSupervisor(config.record_directory or (Path(config.repo_root)/'.ai-skills'/'processes'))
             owned = supervisor.start(replace(spec, argv=argv, stdout=output, stderr=errors),

@@ -514,3 +514,30 @@ def test_agy_resume_keeps_provenance_and_rejects_lost_profile(agy_pair, capsys, 
     record = json.loads(next((run / 'rounds/round-01').glob(f'agent-{slot}-attempt-*-run.json')).read_text())
     assert record['agent']['model'] == AGY_MODELS[1] and record['purpose'] == purpose
     assert (root / (AGY_MODELS[1] + '-r1.count')).read_text() == '1'
+
+
+def test_resume_rejects_provider_identity_drift(pair_fixture, capsys):
+    start, root, registry_file = pair_fixture
+    run = start()
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy'] = dict(registry['agents']['fake'])
+    registry['aliases']['fake'] = 'agy'
+    registry_file.write_text(json.dumps(registry))
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and 'provider' in error and 'changed' in error
+    assert not list(root.glob('*-r1.count'))
+
+
+def test_agy_resume_rejects_removed_saved_model(agy_pair, pair_fixture, capsys):
+    from test_pair import AGY_MODELS
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args('1', AGY_MODELS[1])
+    run = start(*extra)
+    registry_file = pair_fixture[2]
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy']['model']['known_models'].remove(AGY_MODELS[1])
+    registry_file.write_text(json.dumps(registry))
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and AGY_MODELS[1] in error and 'model' in error
+    assert not list(root.glob('*-r1.count'))

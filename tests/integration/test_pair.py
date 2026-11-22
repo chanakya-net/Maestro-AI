@@ -82,14 +82,22 @@ print('DISCUSSION_STATUS: READY')
     return start, tmp_path, registry_file
 
 
-SHIM = """import os
+SHIM = """import json, os
 mode = os.environ.get('FIXTURE_AGY_PROFILE', '')
 if mode:
     from ai_skills import runner
     def _resolve(registry):
-        if mode == 'reject':
-            return lambda config, bound: False
-        return lambda config, bound: '--read-only' in bound.argv and config.model in bound.argv
+        def _profile(config, bound):
+            log = os.environ.get('FIXTURE_AGY_LOG')
+            if log:
+                with open(log, 'a') as out:
+                    out.write(json.dumps({'where': 'child', 'prompt': str(config.prompt_file), 'role': config.role,
+                                          'run_id': config.run_id, 'attempt_id': config.attempt_id,
+                                          'state': str(config.process_state_file), 'streams': str(config.stream_directory)}) + '\\n')
+            if mode == 'reject' or (mode == 'decline-plan' and config.role == 'plan'):
+                return False
+            return '--read-only' in bound.argv and config.model in bound.argv
+        return _profile
     runner.resolve_agy_plan_profile = _resolve
 """
 AGY_MODELS = ('agy-model-one', 'agy-model-two')
@@ -111,14 +119,23 @@ def agy_pair(pair_fixture, monkeypatch):
     monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(shim), src]))
 
     def profile(mode):
-        if mode:
-            monkeypatch.setenv('FIXTURE_AGY_PROFILE', mode)
-            monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda r: (
-                (lambda config, bound: False) if mode == 'reject' else
-                (lambda config, bound: '--read-only' in bound.argv and config.model in bound.argv)))
-        else:
+        if not mode:
             monkeypatch.delenv('FIXTURE_AGY_PROFILE', raising=False)
             monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda r: None)
+            return
+        monkeypatch.setenv('FIXTURE_AGY_PROFILE', mode)
+        monkeypatch.setenv('FIXTURE_AGY_LOG', str(root / 'profile-calls.jsonl'))
+        def resolve(registry):
+            def check(config, bound):
+                with open(root / 'profile-calls.jsonl', 'a') as out:
+                    out.write(json.dumps({'where': 'parent', 'prompt': str(config.prompt_file), 'role': config.role,
+                                          'run_id': config.run_id, 'attempt_id': config.attempt_id,
+                                          'state': str(config.process_state_file), 'streams': str(config.stream_directory)}) + '\n')
+                if mode == 'reject' or (mode == 'decline-plan' and config.role == 'plan'):
+                    return False
+                return '--read-only' in bound.argv and config.model in bound.argv
+            return check
+        monkeypatch.setattr(runner, 'resolve_agy_plan_profile', resolve)
 
     def args(slot, model):
         other = '2' if slot == '1' else '1'
@@ -156,6 +173,33 @@ def test_stock_agy_pair_rejected_without_bypass(agy_pair, capsys, monkeypatch, s
     code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *extra)
     assert code == 2 and 'verified read-only' in error and AGY_MODELS[0] in error and 'agent ' + slot in error
     assert not (root / '.pair-colleague').exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+@pytest.mark.parametrize('unverified', ['0', '1'])
+def test_packaged_agy_admission_fails_closed(tmp_path, monkeypatch, capsys, slot, purpose, unverified):
+    from ai_skills.processes import ProcessSupervisor
+    from ai_skills.registry import load_registry
+    monkeypatch.chdir(tmp_path)
+    for key in ('AGENT_REGISTRY_FILE', 'PAIR_COLLEAGUE_ASSETS_DIR', 'PAIR_COLLEAGUE_RUN_ROOT'):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv('PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE', unverified)
+    monkeypatch.setattr('ai_skills.pair.shutil.which', lambda *args, **kwargs: '/fixture/executable')
+    def unexpected_launch(*args, **kwargs):
+        pytest.fail('admission launched a child')
+    monkeypatch.setattr(ProcessSupervisor, 'start', unexpected_launch)
+    registry = load_registry()
+    model = registry['agents']['agy']['model']['known_models'][0]
+    codex_model = registry['agents']['codex']['model']['known_models'][0]
+    for number in ('1', '2'):
+        for key, value in {'HARNESS': 'agy' if number == slot else 'codex',
+                           'MODEL': model if number == slot else codex_model, 'EFFORT': 'high'}.items():
+            monkeypatch.setenv(f'AGENT_{number}_{key}', value)
+    task = tmp_path / 'task.md'; task.write_text('Discuss storage.')
+    code, _, error = invoke(capsys, 'start', str(task), '--purpose', purpose)
+    assert code == 2 and 'verified read-only' in error and model in error and f'agent {slot}' in error
+    assert not (tmp_path / '.pair-colleague').exists()
 
 
 @pytest.mark.parametrize('purpose', ['general', 'plan'])
@@ -637,3 +681,32 @@ def test_pair_attempt_invalid_effort_does_not_restart_provider(pair_fixture, cap
     assert _attempt(spec_path) == 2
     assert 'unknown effort' in json.loads(Path(spec['record']).read_text())['error']
     assert not marker.exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_preflight_binds_real_prompt_and_artifact_paths(agy_pair, capsys, purpose):
+    """Fixture-only: the round preflight and the launch see the same real paths."""
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args('1', AGY_MODELS[0])
+    run = start('--purpose', purpose, *extra)
+    (root / 'profile-calls.jsonl').unlink(missing_ok=True)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run)); assert code == 0, error
+    calls = [json.loads(line) for line in (root / 'profile-calls.jsonl').read_text().splitlines()]
+    parent = next(c for c in calls if c['where'] == 'parent')
+    child = next(c for c in calls if c['where'] == 'child')
+    assert parent['prompt'].endswith('agent-1-prompt.md') and parent['prompt'] != str(run / 'task.md')
+    assert parent == {**child, 'where': 'parent'} and parent['attempt_id'] and parent['run_id']
+    assert parent['role'] == ('plan' if purpose == 'plan' else 'agent')
+
+
+def test_profile_declining_purpose_refuses_before_any_launch(agy_pair, capsys):
+    """Fixture-only: a profile that exists but declines plan admission."""
+    start, root, profile, args = agy_pair
+    profile('decline-plan')
+    extra, _ = args('1', AGY_MODELS[0])
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', 'plan', *extra)
+    assert code == 2 and 'verified read-only' in error and AGY_MODELS[0] in error and 'agent 1' in error
+    assert not (root / '.pair-colleague').exists()
+    run = start('--purpose', 'general', *extra)
+    assert run.is_dir()

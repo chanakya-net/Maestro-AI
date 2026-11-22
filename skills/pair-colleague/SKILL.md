@@ -99,10 +99,13 @@ profile for the exact AGY invocation. A registry `read_only` token and
 runtime has no verified AGY profile yet (issue #229), so `start` fails before any
 run directory is created with `pair-colleague: error: agent N harness "agy" model
 "<model>" cannot join a read-only pair discussion ...`; pick another harness for
-that colleague. `run-round` re-checks the profile against the exact invocation
-before any slot launches, so a run resumed after the profile is lost or rejects the
-invocation fails the same way with no provider launched and its saved model
-and purpose unchanged. The independent pair timeout and other harness policies
+that colleague. `start` also asks the profile to accept the selected model and purpose.
+`run-round` re-resolves each saved slot from the current registry and refuses a
+changed provider identity, a saved model that is no longer registered or no longer
+passed explicitly to the provider, or a profile that is lost or rejects the real
+prompt and attempt paths. These refusals happen before any slot launches, with no
+provider started and the saved model and purpose unchanged. The worker then
+launches exactly the invocation the profile accepted, with no rebuild or probe. The independent pair timeout and other harness policies
 are unaffected.
 
 Pair inputs still require explicit effort for both colleagues. Direct Claude/Codex
