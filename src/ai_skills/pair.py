@@ -65,6 +65,41 @@ class PairResult:
     values: dict
 
 
+AGY_PROFILE = 'agy-verified-profile'
+
+
+def _agy_refusal(slot, agent, reason):
+    return PairError(
+        f'agent {slot} harness "{agent.get("harness_requested", agent["harness"])}" model "{agent["model"]}" cannot join a '
+        f'read-only pair discussion: {reason}. AGY needs a verified read-only enforcement profile; a registry '
+        'read_only token or PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE is not proof. Choose another harness for this '
+        'colleague until a verified AGY profile is available.')
+
+
+def _agy_profile(slot, agent, registry):
+    """Return the runner's verified AGY profile, failing closed when none exists."""
+    from ai_skills import runner
+    profile = runner.resolve_agy_plan_profile(registry)
+    if profile is None:
+        raise _agy_refusal(slot, agent, 'no verified read-only enforcement profile is available')
+    return profile
+
+
+def _bind_agy(slot, agent, registry, config):
+    """Require the verified profile to accept the exact invocation about to launch."""
+    import dataclasses
+    from ai_skills import runner
+    profile = _agy_profile(slot, agent, registry)
+    try:
+        spec = runner.build_invocation(config, registry)
+        env = {**os.environ, **spec.env}
+        bound = dataclasses.replace(spec, argv=runner.resolve_executable(spec.argv, env), env=env)
+    except (OSError, ValueError) as error:
+        raise _agy_refusal(slot, agent, f'invocation cannot be bound ({error})') from error
+    if not profile(config, bound):
+        raise _agy_refusal(slot, agent, 'the invocation is outside the verified read-only profile')
+
+
 def _object(path):
     value = load_json(path)
     if not isinstance(value, dict):
@@ -183,6 +218,10 @@ class PairRun:
             if user_config.get('requires_user_model_config') and user_config.get('skip_when_unconfigured'):
                 if not _configured(entry, environment, Path(options.workspace_root or Path.cwd())):
                     raise PairError(f'agent {slot} harness "{requested}" is not configured')
+            if a['harness'] == 'agy':
+                _agy_profile(slot, a, registry)
+                a['safety_profile'] = AGY_PROFILE
+                continue
             profile = entry.get('permission_modes', {}).get('read_only')
             if not profile and not options.allow_unverified_safe:
                 raise PairError(f'agent {slot} harness "{requested}" has no registered read-only profile')
@@ -450,6 +489,26 @@ class PairRun:
             agent['effort'] = 'max'
         return agent
 
+    def agent_run_config(self, agent, purpose, workspace, prompt, **extra):
+        from ai_skills.runner import AgentRunConfig
+        registry_file = self.config.get('registry_file') or None
+        return AgentRunConfig(agent=agent['harness'], model=agent['model'], effort=agent['effort'],
+                              role=_purpose_role(purpose), requested_effort=agent.get('requested_effort', ''),
+                              context_file=self.round_dir / 'snapshot.md', prompt_file=Path(prompt),
+                              repo_root=Path(workspace), unattended=True, gui_mode='0', permission_mode='safe',
+                              registry_file=Path(registry_file) if registry_file else None, **extra)
+
+    def guard_agy(self, pending, purpose, workspace):
+        """Reject unverifiable AGY slots before any slot launches, including on resume."""
+        from ai_skills.runner import load_registry
+        registry = load_registry(self.config.get('registry_file') or None)
+        for slot in pending:
+            agent = self.config['agents'][slot]
+            if agent['harness'] != 'agy':
+                continue
+            config = self.agent_run_config(self.attempt_agent(slot, purpose), purpose, workspace, self.path / 'task.md')
+            _bind_agy(slot, agent, registry, config)
+
     def render_prompt(self, slot, agent):
         output = self.round_dir / f'agent-{slot}-prompt.md'
         if output.exists():
@@ -486,6 +545,7 @@ class PairRun:
         if any(self.current['agents'][s]['attempts'] >= cap for s in pending):
             self.state.update(phase='blocked', completion_reason='blocked'); self.save()
             return PairResult(3, self.values())
+        self.guard_agy(pending, purpose, workspace)
         supervisor = self.supervisor('workers')
         for slot in pending:
             a = self.current['agents'][slot]
@@ -681,6 +741,9 @@ def _attempt(spec_path):
                                 process_state_file=Path(record['provider_state']), run_id=record['run_id'],
                                 attempt_id=record['attempt_id'], record_directory=Path(spec['record_directory']),
                                 stream_directory=Path(str(path).removesuffix('-run.json') + '-streams'))
+        if a['harness'] == 'agy':
+            from ai_skills.runner import load_registry
+            _bind_agy(record['slot'], a, load_registry(config.registry_file), config)
         result = run_agent(config)
         record.update(exit_code=result.return_code, state='finished')
     except BaseException as error:

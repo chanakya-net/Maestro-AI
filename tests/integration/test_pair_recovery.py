@@ -16,7 +16,7 @@ import psutil
 
 from ai_skills.pair import PairConfig, PairRun
 from ai_skills.storage import write_json_atomic
-from test_pair import pair_fixture, invoke, decision_file, _use_direct_harness_registry, _direct_args
+from test_pair import pair_fixture, agy_pair, invoke, decision_file, _use_direct_harness_registry, _direct_args
 
 
 def background(run):
@@ -492,3 +492,25 @@ def test_live_legacy_metadata_is_adopted_without_policy_relaunch(pair_fixture, m
         (root / 'providers.release').touch()
         if process.poll() is None: process.kill(); process.wait()
         invoke(capsys, 'reap', '--run-dir', str(run), '--force')
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+def test_agy_resume_keeps_provenance_and_rejects_lost_profile(agy_pair, capsys, slot, purpose):
+    from test_pair import AGY_MODELS
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args(slot, AGY_MODELS[1])
+    run = start('--purpose', purpose, *extra)
+    before = (run / 'config.json').read_text()
+    profile(None)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and 'verified read-only' in error and AGY_MODELS[1] in error
+    assert not list(root.glob('*-r1.count'))
+    assert json.loads((run / 'state.json').read_text())['phase'] == 'awaiting-agents'
+    profile('accept')
+    code, _, err = invoke(capsys, 'run-round', '--run-dir', str(run)); assert code == 0, err
+    assert (run / 'config.json').read_text() == before
+    record = json.loads(next((run / 'rounds/round-01').glob(f'agent-{slot}-attempt-*-run.json')).read_text())
+    assert record['agent']['model'] == AGY_MODELS[1] and record['purpose'] == purpose
+    assert (root / (AGY_MODELS[1] + '-r1.count')).read_text() == '1'

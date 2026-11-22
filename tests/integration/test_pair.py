@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import pytest
 from ai_skills.pair import main
@@ -79,6 +80,94 @@ print('DISCUSSION_STATUS: READY')
         assert code == 0, err
         return Path(values['RUN_DIR'])
     return start, tmp_path, registry_file
+
+
+SHIM = """import os
+mode = os.environ.get('FIXTURE_AGY_PROFILE', '')
+if mode:
+    from ai_skills import runner
+    def _resolve(registry):
+        if mode == 'reject':
+            return lambda config, bound: False
+        return lambda config, bound: '--read-only' in bound.argv and config.model in bound.argv
+    runner.resolve_agy_plan_profile = _resolve
+"""
+AGY_MODELS = ('agy-model-one', 'agy-model-two')
+
+
+@pytest.fixture
+def agy_pair(pair_fixture, monkeypatch):
+    """Isolated FIXTURE profile; the shipped runtime still has none."""
+    import ai_skills
+    from ai_skills import runner
+    start, root, registry_file = pair_fixture
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy'] = {**registry['agents']['fake'], 'model': {
+        **registry['agents']['fake']['model'], 'known_models': list(AGY_MODELS)}}
+    registry_file.write_text(json.dumps(registry))
+    shim = root / 'profile-shim'; shim.mkdir()
+    (shim / 'sitecustomize.py').write_text(SHIM)
+    src = str(Path(ai_skills.__file__).resolve().parents[1])
+    monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(shim), src]))
+
+    def profile(mode):
+        if mode:
+            monkeypatch.setenv('FIXTURE_AGY_PROFILE', mode)
+            monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda r: (
+                (lambda config, bound: False) if mode == 'reject' else
+                (lambda config, bound: '--read-only' in bound.argv and config.model in bound.argv)))
+        else:
+            monkeypatch.delenv('FIXTURE_AGY_PROFILE', raising=False)
+            monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda r: None)
+
+    def args(slot, model):
+        other = '2' if slot == '1' else '1'
+        return ['--agent-%s-harness' % slot, 'agy', '--agent-%s-model' % slot, model,
+                '--agent-%s-effort' % slot, 'high'], other
+    return start, root, profile, args
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+def test_agy_slot_runs_with_fixture_profile_and_exact_model(agy_pair, capsys, slot, purpose):
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, other = args(slot, AGY_MODELS[0])
+    run = start('--purpose', purpose, *extra)
+    config = json.loads((run / 'config.json').read_text())
+    assert config['agents'][slot]['harness'] == 'agy' and config['agents'][slot]['model'] == AGY_MODELS[0]
+    assert config['agents'][slot]['safety_profile'] == 'agy-verified-profile'
+    code, _, err = invoke(capsys, 'run-round', '--run-dir', str(run)); assert code == 0, err
+    argv = json.loads((root / (AGY_MODELS[0] + '-argv.json')).read_text())
+    assert argv[0] == AGY_MODELS[0] and '--read-only' in argv
+    record = json.loads(next((run / 'rounds/round-01').glob(f'agent-{slot}-attempt-*-run.json')).read_text())
+    assert record['agent']['model'] == AGY_MODELS[0] and record['purpose'] == purpose
+    assert config['timeout_seconds'] == 3600
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+@pytest.mark.parametrize('unverified', ['0', '1'])
+def test_stock_agy_pair_rejected_without_bypass(agy_pair, capsys, monkeypatch, slot, purpose, unverified):
+    _, root, profile, args = agy_pair
+    profile(None)
+    monkeypatch.setenv('PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE', unverified)
+    extra, _ = args(slot, AGY_MODELS[0])
+    code, _, error = invoke(capsys, 'start', str(root / 'task.md'), '--purpose', purpose, *extra)
+    assert code == 2 and 'verified read-only' in error and AGY_MODELS[0] in error and 'agent ' + slot in error
+    assert not (root / '.pair-colleague').exists()
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+def test_unsupported_agy_invocation_rejected_before_launch(agy_pair, capsys, purpose):
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args('1', AGY_MODELS[0])
+    run = start('--purpose', purpose, *extra)
+    profile('reject')
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and 'verified read-only' in error
+    assert not list(root.glob('*-r1.count'))
 
 
 def decision_file(root, action):
@@ -226,8 +315,9 @@ def test_pair_resolves_direct_harness_effort_before_freezing_inputs(
     ('agy', 'maximum', 'max'), ('agy', 'xhigh', 'xhigh'),
 ])
 def test_non_target_harness_effort_keeps_semantics_without_provenance(
-        pair_fixture, capsys, harness, requested, effective, purpose):
+        pair_fixture, agy_pair, capsys, harness, requested, effective, purpose):
     start, root, registry_file = pair_fixture
+    agy_pair[2]('accept')  # fixture profile only; AGY is otherwise refused
     registry = json.loads(registry_file.read_text())
     registry['agents']['agy'] = {**registry['agents']['fake']}
     model = 'claude-opus-5-5-low' if harness == 'agy' else 'one'

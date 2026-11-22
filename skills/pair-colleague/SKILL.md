@@ -91,6 +91,20 @@ request; Claude preserves explicit `low`/`medium`/`high`/`xhigh` and maps
 `max`/`maximum` to `xhigh`. Thus explicit lower Claude planning requests remain lower.
 Both colleagues use the saved purpose across rounds, retries, and resume;
 task wording, difficulty, and inherited planning variables never change purpose.
+AGY colleagues (either slot, `general` or `plan`) use an exact standalone model
+registered for AGY, for example `--agent-1-harness agy --agent-1-model <exact-model>`,
+and are admitted only when the runtime provides a verified read-only enforcement
+profile for the exact AGY invocation. A registry `read_only` token and
+`PAIR_COLLEAGUE_ALLOW_UNVERIFIED_SAFE=1` are never proof for AGY. The shipped
+runtime has no verified AGY profile yet (issue #229), so `start` fails before any
+run directory is created with `pair-colleague: error: agent N harness "agy" model
+"<model>" cannot join a read-only pair discussion ...`; pick another harness for
+that colleague. `run-round` re-checks the profile against the exact invocation
+before any slot launches, so a run resumed after the profile is lost or rejects the
+invocation fails the same way with no provider launched and its saved model
+and purpose unchanged. The independent pair timeout and other harness policies
+are unaffected.
+
 Pair inputs still require explicit effort for both colleagues. Direct Claude/Codex
 arguments never emit `max` or `maximum`.
 
