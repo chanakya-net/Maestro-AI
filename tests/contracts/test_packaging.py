@@ -178,8 +178,8 @@ assert definitions['agents']['agy']['model']['flag_template'] == '--model {{mode
 matrix = {
     'quite-easy': {'gemini-4-neon-medium'},
     'easy': {'gemini-4-neon-medium'},
-    'medium': {'gemini-4-hydrogen-medium'},
-    'medium-hard': {'gemini-4-argon-high', 'gemini-4-hydrogen-high'},
+    'medium': {'gemini-4-neon-high'},
+    'medium-hard': {'gemini-4-neon-high'},
     'complex': {'gemini-4-neon-high'},
     'holy-fuck': {'gemini-4-neon-high'},
 }
@@ -191,11 +191,8 @@ for band, candidates in matrix.items():
     scorer = select_route(RouteRequest('complexity', band, agy), registry, {})
     assert (scorer.agent, scorer.model) == ('agy', 'gemini-4-hydrogen-high')
     assert {c['model'] for c in scorer.selection['evaluated_candidates']} == {'gemini-4-hydrogen-high'}
-positive_target = select_route(RouteRequest('impl', 'medium', agy | {'codex', 'claude'}), registry, {})
+positive_target = select_route(RouteRequest('impl', 'complex', agy | {'codex', 'claude'}), registry, {})
 assert positive_target.agent in {'codex', 'claude'} and positive_target.target_percent > 0
-sibling = select_route(RouteRequest('impl', 'medium-hard', agy,
-    exclude_models={'gemini-4-argon-high'}), registry, {})
-assert sibling.model == 'gemini-4-hydrogen-high'
 carbon = select_route(RouteRequest('impl', 'medium', agy,
     forced_model='gemini-4-carbon-medium'), registry, {})
 assert (carbon.agent, carbon.model) == ('agy', 'gemini-4-carbon-medium')

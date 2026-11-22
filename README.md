@@ -423,38 +423,36 @@ All 21 IDs are registered for AGY only.
 | GPT-OSS | `gpt-oss-120b-medium` |
 
 Automatic non-scoring AGY work follows the approved band matrix. Only Neon Medium
-(`gemini-4-neon-medium`) serves `quite-easy` and `easy`. Hydrogen Medium
-(`gemini-4-hydrogen-medium`) serves `medium`, Argon High
-(`gemini-4-argon-high`) and Hydrogen High (`gemini-4-hydrogen-high`) serve
-`medium-hard`, and Neon High (`gemini-4-neon-high`) serves `complex` and
+(`gemini-4-neon-medium`) serves `quite-easy` and `easy`, and Neon High
+(`gemini-4-neon-high`) serves `medium`, `medium-hard`, `complex`, and
 `holy-fuck`. Hydrogen High (`gemini-4-hydrogen-high`) is the sole AGY
 complexity-scoring model and is eligible at all six scoring bands. AGY models
 outside Hydrogen High carry `explicit_only`. The Gemini 4 work models above
-also carry `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select Carbon by
-exact ID with an entitled account. Listing the model or selecting a route
-performs no authenticated inference or entitlement check. A direct AGY run
+also carry `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select
+Carbon by exact ID with an entitled account. Listing the model or selecting a
+route performs no authenticated inference or entitlement check. A direct AGY run
 without an explicit model uses `gemini-4-neon-high`.
 
 | Effective worker band | Codex | Claude | AGY |
 | --- | ---: | ---: | ---: |
 | `quite-easy`, `easy` | 33% | 33% | 33% |
-| `medium`, `medium-hard`, `complex` | 70% | 30% | 0% |
+| `medium`, `medium-hard` | 35% | 25% | 40% |
+| `complex` | 70% | 30% | 0% |
 | `holy-fuck` | 60% | 40% | 0% |
 
 During automatic selection, a 0% AGY route is a fallback when eligible
-positive-target candidates are exhausted. At `medium-hard`, Hydrogen High can
-take over when Argon High is excluded. Explicit agent or model overrides still
+positive-target candidates are exhausted. Explicit agent or model overrides still
 observe compatibility and availability checks. A sticky reviewer preference can
 retain an eligible model across cycles. Review raises the effective band by one
 and planning by two, capped at the highest. Usage counts against AGY for every
 model selected through that harness.
 
-List the installed catalog and preview the `medium` fallback with only AGY
+List the installed catalog and preview the `complex` fallback with only AGY
 available. The route preview uses an empty ledger if the path is absent.
 
 ```text
 python -m ai_skills agent models agy
-python -m ai_skills route --role impl --complexity-level medium --detected-agents agy --ledger-file preview-ledger.json
+python -m ai_skills route --role impl --complexity-level complex --detected-agents agy --ledger-file preview-ledger.json
 ```
 
 Managed planning and pair read-only eligibility for `general` and `plan`

@@ -55,12 +55,12 @@ def test_plan_band_bump_removes_agy_from_simple_worker_pool():
 AGY_WORK_MATRIX = {
     "quite-easy": {"gemini-4-neon-medium"},
     "easy": {"gemini-4-neon-medium"},
-    "medium": {"gemini-4-hydrogen-medium"},
-    "medium-hard": {"gemini-4-argon-high", "gemini-4-hydrogen-high"},
+    "medium": {"gemini-4-neon-high"},
+    "medium-hard": {"gemini-4-neon-high"},
     "complex": {"gemini-4-neon-high"},
     "holy-fuck": {"gemini-4-neon-high"},
 }
-NON_AGY_BANDS = ("medium", "medium-hard", "complex", "holy-fuck")
+NON_AGY_BANDS = ("complex", "holy-fuck")
 
 
 @pytest.mark.parametrize("band", BANDS)
@@ -110,28 +110,27 @@ def test_unavailable_designated_agy_model_falls_back_to_sibling_at_band():
         RouteRequest(
             role="impl",
             complexity_level="medium-hard",
-            forced_agent="agy",
-            availability={"models": {"gemini-4-argon-high"}},
+            availability={"models": {"gemini-4-neon-high"}},
         ),
         load_registry(SOURCE_REGISTRY),
         {},
     ).selection
-    assert selection["model"] == "gemini-4-hydrogen-high"
+    assert selection["agent"] in {"codex", "claude"}
 
 
 def test_routing_availability_excludes_model_pair_without_disabling_agy(tmp_path):
     path = tmp_path / "availability.json"
-    path.write_text(json.dumps({"unavailable": [{"agent": "agy", "model": "gemini-4-argon-high"}]}))
+    path.write_text(json.dumps({"unavailable": [{"agent": "agy", "model": "gemini-4-neon-high"}]}))
     availability = routing.routing_availability(load_registry(SOURCE_REGISTRY), "", str(path))
     selection = select_route(
-        RouteRequest(role="impl", complexity_level="medium-hard", forced_agent="agy", availability=availability),
+        RouteRequest(role="impl", complexity_level="easy", forced_agent="agy", availability=availability),
         load_registry(SOURCE_REGISTRY),
         {},
     ).selection
 
-    assert selection["model"] == "gemini-4-hydrogen-high"
+    assert selection["model"] == "gemini-4-neon-medium"
     assert availability["agents"] == {"github-copilot"}
-    assert availability["pairs"] == {("agy", "gemini-4-argon-high")}
+    assert availability["pairs"] == {("agy", "gemini-4-neon-high")}
 
 
 def test_routing_availability_excludes_unavailable_agy_harness(tmp_path):
@@ -427,7 +426,7 @@ def test_distribution_and_sticky_reviewer():
         selection=select_route(RouteRequest(role="impl",complexity_level="medium"),registry,ledger).selection
         routing.append_decision(ledger,selection)
     counts=ledger["totals"]["agents"]
-    assert counts == {"codex":78,"claude":42}  # Captured legacy policy; medium AGY (0%) is fallback-only.
+    assert counts == {"agy":48,"codex":42,"claude":30}  # Matches 40% AGY / 35% Codex / 25% Claude on medium.
     base=select_route(RouteRequest(role="review",complexity_level="medium"),registry,ledger)
     preferred=base.selection["evaluated_candidates"][-1]["model"]
     sticky=select_route(RouteRequest(role="review",complexity_level="medium",prefer_model=preferred),registry,ledger)
@@ -474,7 +473,7 @@ def test_nonobject_ledger_rejected(payload):
 @pytest.mark.parametrize("band, model, effort", [
     ("quite-easy", "claude-haiku-5-5", "high"),
     ("easy", "claude-haiku-5-5", "high"),
-    ("medium", "claude-sonnet-5-5", "medium"),
+    ("medium", "claude-opus-5-5", "high"),
     ("medium-hard", "claude-opus-5-5", "high"),
     ("complex", "claude-opus-5-5", "high"),
     ("holy-fuck", "claude-fable-5-2", "high"),
@@ -503,7 +502,7 @@ def test_retired_claude_models_cannot_be_routed(model):
 @pytest.mark.parametrize("band, model, effort", [
     ("quite-easy", "gpt-6.1-terra", "high"),
     ("easy", "gpt-6.1-terra", "high"),
-    ("medium", "gpt-6.1-terra", "high"),
+    ("medium", "gpt-6.2-sol", "high"),
     ("medium-hard", "gpt-6.2-sol", "high"),
     ("complex", "gpt-6.2-sol", "high"),
     ("holy-fuck", "gpt-6.2-astra", "high"),
@@ -749,3 +748,25 @@ def test_complexity_scoring_uses_only_terra_sonnet_and_hydrogen_high_equally(ban
         ("agy", "gemini-4-hydrogen-high"),
     }
     assert routing.target_policy(registry, "complexity", band) == {"codex": 33, "claude": 33, "agy": 33}
+
+
+@pytest.mark.parametrize("band", ("medium", "medium-hard"))
+def test_medium_and_medium_hard_use_sol_opus_and_neon_high_with_requested_targets(band):
+    registry = load_registry(SOURCE_REGISTRY)
+    availability = routing.routing_availability(registry, "", "")
+    pairs = routing.candidate_pairs(
+        registry, "impl", band, {"codex", "claude", "agy"}, set(), set(), availability, None, None, set()
+    )
+    assert {(pair["agent"], pair["model"]) for pair in pairs} == {
+        ("codex", "gpt-6.2-sol"),
+        ("claude", "claude-opus-5-5"),
+        ("agy", "gemini-4-neon-high"),
+    }
+    for agent, model, expected_effort in (
+        ("codex", "gpt-6.2-sol", "high"),
+        ("claude", "claude-opus-5-5", "high"),
+        ("agy", "gemini-4-neon-high", ""),
+    ):
+        decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent=agent), registry, {})
+        assert (decision.agent, decision.model, decision.effort) == (agent, model, expected_effort)
+    assert routing.target_policy(registry, "impl", band) == {"agy": 40, "codex": 35, "claude": 25}

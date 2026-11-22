@@ -10,9 +10,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "quite-easy",
       "complexity_level": "quite-easy",
@@ -62,9 +62,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -114,9 +114,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
       "complexity_level": "medium",
@@ -166,9 +166,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium-hard",
@@ -218,9 +218,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
       "complexity_level": "complex",
@@ -270,9 +270,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-hydrogen-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
       "complexity_level": "holy-fuck",
@@ -322,9 +322,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "quite-easy",
       "complexity_level": "quite-easy",
@@ -374,9 +374,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -426,9 +426,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
       "complexity_level": "medium",
@@ -448,39 +448,39 @@
       "complexity_level": "medium",
       "detected_agents": [
         "codex"
-      ]
-    },
-    "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
-      "selection_reason": "usage-share-debt",
-      "routing_level": "medium",
-      "complexity_level": "medium",
-      "model_exclusions": [],
-      "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
-        "models": [],
-        "agent_models": []
-      }
-    }
-  },
-  {
-    "request": {
-      "role": "impl",
-      "complexity_level": "medium-hard",
-      "detected_agents": [
-        "codex",
-        "agy",
-        "claude"
       ]
     },
     "expected": {
       "agent": "codex",
       "model": "gpt-6.2-sol",
       "effort": "high",
+      "selection_reason": "usage-share-debt",
+      "routing_level": "medium",
+      "complexity_level": "medium",
+      "model_exclusions": [],
+      "availability_exclusions": {
+        "agents": [
+          "github-copilot"
+        ],
+        "models": [],
+        "agent_models": []
+      }
+    }
+  },
+  {
+    "request": {
+      "role": "impl",
+      "complexity_level": "medium-hard",
+      "detected_agents": [
+        "codex",
+        "agy",
+        "claude"
+      ]
+    },
+    "expected": {
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium-hard",
@@ -634,9 +634,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "quite-easy",
@@ -686,9 +686,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
       "complexity_level": "easy",
@@ -712,7 +712,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6.2-sol",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -738,9 +738,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-sol",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium",
@@ -946,9 +946,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "quite-easy",
       "complexity_level": "quite-easy",
@@ -998,9 +998,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -1050,9 +1050,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
       "complexity_level": "medium",
@@ -1076,7 +1076,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6.2-sol",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -1102,9 +1102,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-sol",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium-hard",
@@ -1258,9 +1258,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "quite-easy",
       "complexity_level": "quite-easy",
@@ -1310,9 +1310,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -1362,9 +1362,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
       "complexity_level": "medium",
@@ -1388,7 +1388,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6.2-sol",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -1414,9 +1414,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-sol",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium-hard",
@@ -1570,9 +1570,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "quite-easy",
       "complexity_level": "quite-easy",
@@ -1622,9 +1622,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -1674,9 +1674,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.1-terra",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
       "complexity_level": "medium",
@@ -1700,7 +1700,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6.2-sol",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -1726,9 +1726,9 @@
       ]
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-sol",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium-hard",
@@ -1883,7 +1883,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6.2-sol",
       "effort": "xhigh",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -1908,7 +1908,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.1-terra",
+      "model": "gpt-6.2-sol",
       "effort": "xhigh",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -2262,9 +2262,9 @@
       ]
     },
     "expected": {
-      "agent": "claude",
-      "model": "claude-haiku-5-5",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -2310,9 +2310,9 @@
       "prefer_model": "nonexistent"
     },
     "expected": {
-      "agent": "codex",
-      "model": "gpt-6.2-sol",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium",
@@ -2336,9 +2336,9 @@
       ]
     },
     "expected": {
-      "agent": "claude",
-      "model": "claude-opus-5-5",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-high",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
       "complexity_level": "medium",
@@ -2363,9 +2363,9 @@
       ]
     },
     "expected": {
-      "agent": "claude",
-      "model": "claude-haiku-5-5",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -2411,9 +2411,9 @@
       "model_denylist": "codex/gpt-6.1-terra,claude-sonnet-5-5"
     },
     "expected": {
-      "agent": "claude",
-      "model": "claude-haiku-5-5",
-      "effort": "high",
+      "agent": "agy",
+      "model": "gemini-4-neon-medium",
+      "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
       "complexity_level": "easy",
@@ -2498,7 +2498,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-hydrogen-medium",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "medium",
@@ -2521,7 +2521,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-argon-high",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "medium-hard",
@@ -2592,7 +2592,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-argon-high",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
@@ -2616,7 +2616,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-hydrogen-high",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "medium-hard",
@@ -2644,7 +2644,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-hydrogen-high",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "medium-hard",
@@ -2669,7 +2669,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-argon-high",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "medium-hard",
@@ -2738,7 +2738,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-argon-high",
+      "model": "gemini-4-neon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "medium-hard",

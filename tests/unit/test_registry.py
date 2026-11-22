@@ -186,9 +186,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     explicit_only = set(expected_agy_models) - {"gemini-4-hydrogen-high"}
     designated_work_bands = {
         "gemini-4-neon-medium": ["quite-easy", "easy"],
-        "gemini-4-hydrogen-medium": ["medium"],
-        "gemini-4-argon-high": ["medium-hard"],
-        "gemini-4-neon-high": ["complex", "holy-fuck"],
+        "gemini-4-neon-high": ["medium", "medium-hard", "complex", "holy-fuck"],
     }
     for model in explicit_only:
         assert catalog[model]["agents"] == ["agy"]
@@ -210,7 +208,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
                 if agent in entry.get("agents", [])] == expected_models
         assert definitions["agents"][agent]["model"]["default"] == expected_default
     assert source["model_routing"]["usage_distribution"] == {
-        "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
+        "default_target_percent": {"agy": 40, "codex": 35, "claude": 25},
         "role_target_percent": {
             "complexity": {"codex": 33, "claude": 33, "agy": 33},
             "impl": {"codex": 65, "claude": 30, "agy": 5},
@@ -224,6 +222,8 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
             "default": {"codex": 70, "claude": 30, "agy": 0},
             "quite-easy": {"codex": 33, "claude": 33, "agy": 33},
             "easy": {"codex": 33, "claude": 33, "agy": 33},
+            "medium": {"agy": 40, "codex": 35, "claude": 25},
+            "medium-hard": {"agy": 40, "codex": 35, "claude": 25},
             "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
         },
         "role_band_target_percent": {
