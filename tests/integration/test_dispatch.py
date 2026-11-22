@@ -3285,3 +3285,27 @@ def test_publish_protected_plan_rolls_back_plan_markdown_on_result_conflict(tmp_
     assert (reason, proof) == ('capture-plan-artifact-conflict', None)
     assert not plan.exists()
     assert not result.exists()
+
+
+def test_dispatch_waits_briefly_for_delayed_provider_return_code(tmp_path, monkeypatch):
+    from ai_skills.processes import ProcessSupervisor
+
+    config = worker_config(
+        tmp_path,
+        "import json, os; from pathlib import Path; "
+        "Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({'ok': True}), encoding='utf-8')",
+    )
+    original = ProcessSupervisor.return_code
+    calls = [0]
+
+    def delayed_return_code(self, identity):
+        calls[0] += 1
+        if calls[0] < 3:
+            return None
+        return original(self, identity)
+
+    monkeypatch.setattr(ProcessSupervisor, 'return_code', delayed_return_code)
+    result = dispatch_worker(config)
+    assert result.state == 'completed'
+    assert result.return_code == 0
+    assert calls[0] >= 3

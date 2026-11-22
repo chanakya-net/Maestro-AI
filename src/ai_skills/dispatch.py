@@ -429,6 +429,11 @@ def _work(config):
             return _unknown_attempt(config, 'shutdown-identity-unknown', process['identity'])
         code = supervisor.return_code(identity)
         if code is None:
+            deadline = time.monotonic() + 1.5
+            while code is None and time.monotonic() < deadline:
+                time.sleep(.02)
+                code = supervisor.return_code(identity)
+        if code is None:
             return _unknown_attempt(config, 'provider-exit-status-unknown', process['identity'])
         prelaunch = False
     else:
