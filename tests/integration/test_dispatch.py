@@ -109,6 +109,33 @@ def test_plan_success_requires_issue_directory_and_nonempty_markdown(tmp_path):
     assert snapshot.artifact_reason=='missing-plan-file-artifact'
 
 
+@pytest.mark.parametrize('variant', ['stock', 'alias', 'forged'])
+def test_managed_agy_plan_rejects_unverified_profile(tmp_path, monkeypatch, variant):
+    from ai_skills import dispatch, runner
+
+    config = worker_config(tmp_path, '')
+    run = config.agent_run.replace(agent='agy-cli' if variant == 'alias' else 'agy',
+        registry_file=None, role='plan', issue_dir=tmp_path, dispatcher_managed=False)
+    if variant == 'forged':
+        registry = runner.load_registry()
+        registry['agents']['agy']['permission_modes']['read_only'] = '--pretend-read-only'
+        run = run.replace(registry_file=config.agent_run.registry_file, permission_mode='safe',
+            unattended=True, environment={**os.environ, 'AGY_READ_ONLY_VERIFIED': '1'})
+        run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+
+    def unexpected(*args, **kwargs):
+        pytest.fail('unverified AGY must be refused before invocation or provider start')
+
+    monkeypatch.setattr(dispatch, 'build_invocation', unexpected)
+    monkeypatch.setattr(runner, 'build_invocation', unexpected)
+    monkeypatch.setattr(runner.ProcessSupervisor, 'start', unexpected)
+    with pytest.raises(ValueError, match='agy-plan-read-only-unavailable'):
+        dispatch_worker(replace(config, agent_run=run))
+    with pytest.raises(ValueError, match='agy-plan-read-only-unavailable'):
+        runner.run_agent(run.replace(dispatcher_managed=True))
+    assert not config.state_file.exists()
+
+
 def test_review_aliases_are_authoritatively_bound_before_provider(tmp_path):
     config=worker_config(tmp_path,'''import os,json
 from pathlib import Path
@@ -1146,6 +1173,7 @@ def interrupt_publication(monkeypatch, config, boundary):
     write_json, write_text = dispatch.write_json_atomic, dispatch.write_text_atomic
     state_file = config.state_file.resolve()
     done_file = config.agent_run.done_file.resolve()
+    result_file = config.agent_run.result_file.resolve()
 
     def publish_json(path, value):
         if boundary == 'outcome' and Path(path).resolve() == dispatch.outcome_path(state_file) and value['status'] != 'pending':
@@ -1155,7 +1183,8 @@ def interrupt_publication(monkeypatch, config, boundary):
         return write_json(path, value)
 
     def publish_text(path, value, *, exclusive=False):
-        if (boundary == 'result' and exclusive) or (boundary == 'done' and Path(path).resolve() == done_file):
+        if ((boundary == 'result' and exclusive and Path(path).resolve() == result_file) or
+                (boundary == 'done' and Path(path).resolve() == done_file)):
             raise OSError('injected publication failure')
         return write_text(path, value, exclusive=exclusive)
 
@@ -2883,3 +2912,265 @@ def test_saved_raw_effort_config_rejected_before_provider(tmp_path, validate):
     assert dispatch_main(['--config', str(path)] + (['--validate-only'] if validate else [])) == 2
     assert not (tmp_path / 'observed.json').exists()
     assert not config.state_file.exists()
+
+
+PLAN_RESULT = {'schema_version': 1, 'issue': '7', 'role': 'plan', 'status': 'success',
+               'approach': 'Preserve the canary', 'complexity_level': 'complex', 'slices': [{'id': 1}]}
+PLAN_MARKDOWN = '# Preserve the canary\n\n- Read source and preserve café labels.\n'
+PLAN_INVOCATION = ['--fixture-read-only', '--model', GEMINI_4,
+                   '--input-format', 'stream-json', '--output-format', 'stream-json']
+PLAN_BODY = f"""
+assert args == {PLAN_INVOCATION!r}
+root = Path.cwd()
+assert (root / 'canary').read_text() == 'original'
+
+def reject_fixture_mutations(event, operands):
+    if event == 'subprocess.Popen' or (
+            event == 'open' and operands[2] & (os.O_WRONLY | os.O_RDWR)):
+        raise PermissionError('fixture read-only enforcement')
+
+sys.addaudithook(reject_fixture_mutations)
+for mutation in (lambda: (root / 'canary').write_text('changed'),
+                 lambda: subprocess.run(['git', 'commit', '--allow-empty', '-m', 'unexpected'])):
+    try:
+        mutation()
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError('fixture mutation was allowed')
+envelope = {{**metadata['result_capture']['envelope'],
+            'result': {PLAN_RESULT!r}, 'plan_markdown': {PLAN_MARKDOWN!r}}}
+"""
+
+
+def protected_agy_plan_worker(tmp_path, monkeypatch, *, mutation='', wire=AGY_CAPTURE):
+    from ai_skills import git, runner
+
+    config = capture_worker(tmp_path, PLAN_BODY + mutation + '\n' + wire)
+    run = config.agent_run
+    root = run.repo_root
+    script = tmp_path / 'provider.py'
+    (root / 'exec').replace(script)
+    source = script.read_text(encoding='utf-8').replace(
+        "metadata = json.loads(prompt.decode",
+        "prompt = json.loads(prompt)['message']['content'].encode('utf-8')\nmetadata = json.loads(prompt.decode")
+    script.write_text(source, encoding='utf-8')
+    (root / 'canary').write_text('original', encoding='utf-8')
+    git.git_output(str(root), 'add', 'canary')
+    git.git_output(str(root), 'commit', '-qm', 'Canary')
+    registry = runner.load_registry()
+    agy = registry['agents']['agy']
+    agy['permission_modes']['read_only'] = '--fixture-read-only'
+    agy['invocation']['command'] = sys.executable
+    agy['invocation']['args_template'].insert(0, str(script))
+    run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+    expected_argv = (sys.executable, str(script), *PLAN_INVOCATION)
+
+    def verify(plan_run, spec):
+        return (spec.argv == expected_argv and spec.cwd == root and
+                plan_run.environment == run.environment and spec.env.get('REPO_ROOT') == str(root))
+
+    monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda registry: verify)
+    return replace(config, agent_run=run.replace(agent='agy-cli', role='plan', model=GEMINI_4))
+
+
+def plan_git_snapshot(root):
+    from ai_skills.git import git_output
+
+    queries = [('rev-parse', 'HEAD'), ('symbolic-ref', 'HEAD'), ('diff', '--binary'),
+               ('diff', '--cached', '--binary'), ('ls-files', '--others', '--exclude-standard')]
+    return [(root / 'canary').read_bytes(), *(git_output(str(root), *args) for args in queries)]
+
+
+def test_protected_agy_plan_publishes_both_artifacts(tmp_path, monkeypatch):
+    from ai_skills import runner
+    from ai_skills.outcomes import outcome_path
+
+    def unexpected_probe(*args, **kwargs):
+        pytest.fail('a protected launch must not run a separate provider capability probe')
+
+    monkeypatch.setattr(runner, '_check_cli_capabilities', unexpected_probe)
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    before = plan_git_snapshot(run.repo_root)
+    result = dispatch_worker(config)
+    assert result.state == 'completed'
+    assert json.loads(run.result_file.read_bytes()) == PLAN_RESULT
+    assert (run.issue_dir / 'plan.md').read_text(encoding='utf-8') == PLAN_MARKDOWN
+    assert plan_git_snapshot(run.repo_root) == before
+    assert json.loads(outcome_path(config.state_file).read_bytes())['status'] == 'success'
+    assert 'status=success|source=dispatcher' in run.done_file.read_text(encoding='utf-8')
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+@pytest.mark.parametrize(('mutation', 'wire', 'reason'), [
+    ("envelope['plan_markdown'] = '  '", AGY_CAPTURE, 'missing-plan-file-artifact'),
+    ("envelope['result']['complexity_level'] = 'unknown'", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['result']['complexity_level'] = []", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['result']['issue'] = '8'", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['result']['commit_sha'] = 'unwanted'", AGY_CAPTURE, 'invalid-plan-result-artifact'),
+    ("envelope['attempt_id'] = 'previous'", AGY_CAPTURE, 'capture-identity-mismatch'),
+    ("del envelope['plan_markdown']", AGY_CAPTURE, 'capture-identity-mismatch'),
+    ('', AGY_STEPS_ONLY, 'capture-response-invalid'),
+    ('', AGY_CAPTURE + 'raise SystemExit(9)\n', 'provider-exit-nonzero'),
+])
+def test_protected_agy_plan_finalization_rejects_incomplete_capture(tmp_path, monkeypatch, mutation, wire, reason):
+    config = protected_agy_plan_worker(tmp_path, monkeypatch, mutation=mutation, wire=wire)
+    result = dispatch_worker(config)
+    assert result.state == 'failed'
+    assert result.reason == reason
+    assert not config.agent_run.result_file.exists()
+    assert not (config.agent_run.issue_dir / 'plan.md').exists()
+
+
+@pytest.mark.parametrize('kind', ['occupied', 'symlink', 'hard-link', 'pair-alias', 'source', 'git', 'source-state', 'state-lock'])
+def test_protected_agy_plan_rejects_unsafe_paths_before_launch(tmp_path, monkeypatch, kind):
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    run.issue_dir.mkdir()
+    plan = run.issue_dir / 'plan.md'
+    if kind == 'occupied':
+        plan.write_text('previous plan', encoding='utf-8')
+    elif kind == 'symlink':
+        plan.symlink_to(tmp_path / 'missing')
+    elif kind == 'hard-link':
+        os.link(run.repo_root / 'canary', plan)
+    elif kind == 'pair-alias':
+        config = replace(config, agent_run=run.replace(result_file=plan))
+    elif kind == 'source':
+        config = replace(config, agent_run=run.replace(result_file=run.repo_root / 'plan.json'))
+    elif kind == 'git':
+        config = replace(config, agent_run=run.replace(issue_dir=run.repo_root / '.git' / 'objects'))
+    elif kind == 'source-state':
+        config = replace(config, state_file=run.repo_root / 'unexpected' / 'worker.state.json')
+    else:
+        Path(str(config.state_file) + '.lock').symlink_to(run.repo_root, target_is_directory=True)
+
+    with pytest.raises((ValueError, RuntimeError), match='occupied|unsafe|collision|outside'):
+        dispatch_worker(config)
+    assert not (tmp_path / 'calls').exists()
+    assert not config.state_file.exists()
+    assert not (run.repo_root / 'unexpected').exists()
+
+
+@pytest.mark.parametrize('boundary', ['result', 'outcome', 'state', 'done'])
+def test_protected_agy_plan_adopts_partial_publication(tmp_path, monkeypatch, boundary):
+    from ai_skills import dispatch
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    interrupt_foreground_dispatch(monkeypatch, config, boundary)
+    assert_publication_boundary(config, boundary, 'success')
+    plan = run.issue_dir / 'plan.md'
+    assert plan.read_bytes() == PLAN_MARKDOWN.encode()
+    plan_identity = plan.stat().st_ino
+    mark_launcher_dead(config)
+    assert dispatch.adopt_worker(config.state_file).state == 'completed'
+    assert dispatch.adopt_worker(config.state_file).state == 'completed'
+    assert json.loads(run.result_file.read_bytes()) == PLAN_RESULT
+    assert plan.stat().st_ino == plan_identity
+    assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_protected_agy_plan_adoption_rejects_changed_journaled_companion(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    run = config.agent_run
+    interrupt_foreground_dispatch(monkeypatch, config, 'done')
+    plan = run.issue_dir / 'plan.md'
+    plan.write_text('foreign Markdown from another attempt', encoding='utf-8')
+    mark_launcher_dead(config)
+    result = dispatch.adopt_worker(config.state_file)
+    assert (result.state, result.reason) == ('unknown', 'capture-plan-handoff-changed')
+    assert not run.done_file.exists()
+    admitted = dispatch._admitted_worker(config.state_file)
+    assert not inspect_worker(admitted).artifact_valid
+
+
+@pytest.mark.parametrize('kind', ['stray', 'conflict', 'stop', 'typed'])
+def test_protected_agy_plan_trusts_only_the_bound_capture(tmp_path, monkeypatch, kind):
+    from ai_skills import dispatch
+
+    typed = """
+del envelope['plan_markdown']
+result = {key: envelope[key] for key in ('schema_version', 'run_id', 'attempt_id', 'issue', 'role')}
+envelope['result'] = {**result, 'artifact_kind': 'role_failure', 'status': 'blocked',
+                      'reason': 'plan-context-unavailable', 'summary': 'Missing input evidence'}
+""" if kind == 'typed' else ''
+    config = protected_agy_plan_worker(tmp_path, monkeypatch, mutation=typed,
+        wire=AGY_STEPS_ONLY if kind == 'stray' else AGY_CAPTURE)
+    run = config.agent_run
+    plan = run.issue_dir / 'plan.md'
+    publish = dispatch._publish_captured_result
+
+    def before_capture(admitted, *, eligible):
+        if kind in ('stray', 'conflict'):
+            plan.parent.mkdir(exist_ok=True)
+            plan.write_text('stray', encoding='utf-8')
+        if kind == 'stray':
+            run.result_file.write_text(json.dumps(PLAN_RESULT), encoding='utf-8')
+        return publish(admitted, eligible=eligible)
+
+    if kind == 'stop':
+        interrupt_foreground_dispatch(monkeypatch, config, 'result')
+        admitted = dispatch._admitted_worker(config.state_file)
+        dispatch._record_stop_intent(admitted, 'interrupted')
+        mark_launcher_dead(config)
+        result = dispatch.adopt_worker(config.state_file)
+        assert (result.state, result.reason, result.return_code) == ('interrupted', 'interrupted', 130)
+        assert not run.result_file.exists()
+        return
+
+    monkeypatch.setattr(dispatch, '_publish_captured_result', before_capture)
+    result = dispatch_worker(config)
+    assert result.state == 'failed'
+    assert not inspect_worker(dispatch._admitted_worker(config.state_file)).artifact_valid
+    if kind == 'typed':
+        assert result.reason == 'plan-context-unavailable'
+        assert json.loads(run.result_file.read_bytes())['status'] == 'blocked'
+        assert not plan.exists()
+    else:
+        reason = 'capture-response-invalid' if kind == 'stray' else 'capture-plan-artifact-conflict'
+        assert result.reason == reason
+        assert run.result_file.exists() == (kind == 'stray')
+        assert plan.read_text(encoding='utf-8') == 'stray'
+
+
+@pytest.mark.parametrize('change', ['agent', 'argv', 'permission', 'env', 'capture', 'profile', 'prompt'])
+def test_protected_agy_plan_refuses_changed_runner_binding(tmp_path, monkeypatch, change):
+    from ai_skills import dispatch, runner
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    actual_run_agent = runner.run_agent
+
+    def changed_run(run):
+        changes = {'agent': {'agent': 'codex'}, 'argv': {'extra_args': ('--override',)},
+            'permission': {'permission_mode': '--dangerously-skip-permissions'},
+            'env': {'environment': {**run.environment, 'EXTRA_PROVIDER_SETTING': 'unverified'}},
+            'capture': {'result_capture_context': None}, 'profile': {}, 'prompt': {}}
+        if change == 'profile':
+            monkeypatch.setattr(runner, 'resolve_agy_plan_profile', lambda registry: None)
+        if change == 'prompt':
+            run.prompt_file.write_text('changed after admission', encoding='utf-8')
+        with pytest.raises(ValueError, match='agy-plan-read-only-unavailable'):
+            actual_run_agent(run.replace(**changes[change]))
+        return runner.AgentRunResult(1, 'agy', GEMINI_4)
+
+    monkeypatch.setattr(dispatch, 'run_agent', changed_run)
+    assert dispatch_worker(config).state == 'failed'
+    assert not (tmp_path / 'calls').exists()
+
+
+def test_managed_non_agy_plan_still_accepts_direct_artifacts(tmp_path):
+    config = worker_config(tmp_path, f"""
+import json, os
+from pathlib import Path
+
+Path(os.environ['RUN_WITH_IT_RESULT_FILE']).write_text(json.dumps({PLAN_RESULT!r}), encoding='utf-8')
+Path(os.environ['RUN_WITH_IT_ISSUE_DIR'], 'plan.md').write_text({PLAN_MARKDOWN!r}, encoding='utf-8')
+""")
+    run = config.agent_run.replace(role='plan', issue_dir=tmp_path, cycle=1)
+    config = replace(config, agent_run=run)
+    assert dispatch_worker(config).state == 'completed'
+    assert inspect_worker(config).artifact_valid

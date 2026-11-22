@@ -16,6 +16,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ai_skills import runner
+
 
 BAND_ORDER = ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
 REVIEW_BUMP = {
@@ -41,9 +43,6 @@ PLAN_BUMP = {
     "holy-fuck": "holy-fuck",
 }
 DEFAULT_AGENTS = ["codex", "agy", "claude"]
-# AGY planning (automatic or forced, agent or model) stays closed until source
-# protection is verified separately; other roles keep AGY as a fallback.
-GATED_AGENTS_BY_ROLE = {"plan": frozenset({"agy"})}
 PERMANENTLY_BLOCKED_AGENTS = {"github-copilot"}
 GLOBAL_DEBT_WEIGHT = 1.5
 
@@ -532,6 +531,8 @@ def candidate_pairs(
     forced_model: str | None,
     exclude_models: set[str],
 ) -> list[dict[str, Any]]:
+    if role == "plan" and runner.resolve_agy_plan_profile(registry) is None:
+        availability = merge_availability(availability, {"agents": {"agy"}})
     catalog = registry.get("model_catalog", {})
     model_ids = candidate_model_ids(registry, role, level, forced_model, exclude_models)
     pairs: list[dict[str, Any]] = []
@@ -545,8 +546,6 @@ def candidate_pairs(
             availability,
             forced_agent,
         ):
-            if agent_id in GATED_AGENTS_BY_ROLE.get(role, ()):
-                continue
             entry = catalog[model_id]
             pairs.append(
                 {
