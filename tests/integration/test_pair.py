@@ -133,7 +133,8 @@ def agy_pair(pair_fixture, monkeypatch):
             assert config.record_directory == prompt.parents[2] / 'processes'
             assert (bound.stdout, bound.stderr) == (stream_dir / 'stdout', stream_dir / 'stderr')
             payload = json.loads(bound.stdin)['message']['content']
-            assert prompt.read_text().strip() in payload and context.read_text().strip() in payload
+            assert (prompt.read_text(encoding='utf-8').strip() in payload
+                    and context.read_text(encoding='utf-8').strip() in payload)
             with (root / 'profile-calls.jsonl').open('a') as out:
                 out.write(json.dumps({'prompt': str(prompt), 'role': config.role,
                                       'run_id': config.run_id, 'attempt_id': config.attempt_id,

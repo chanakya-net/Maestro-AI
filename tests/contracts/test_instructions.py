@@ -362,6 +362,7 @@ def test_readme_installed_catalog_and_pool_examples(tmp_path, monkeypatch, capsy
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(os, 'environ', {'ASSETS_DEST': str(tmp_path / 'absent-assets'),
                                         'PATH': '', 'RUN_WITH_IT_GITHUB_UPDATES': '0'})
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: (_ for _ in ()).throw(RuntimeError('Could not determine home directory.'))))
 
     def invoke(command):
         assert main(command) == 0

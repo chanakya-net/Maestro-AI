@@ -44,7 +44,8 @@ def _absolute(path):
 
 
 def default_assets_dest():
-    return _absolute(os.environ.get('ASSETS_DEST', str(Path.home() / '.ai-skill-collections/assets')))
+    configured = os.environ.get('ASSETS_DEST')
+    return _absolute(configured or Path.home() / '.ai-skill-collections/assets')
 
 
 def _python(prefix):
