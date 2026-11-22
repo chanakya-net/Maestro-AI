@@ -155,9 +155,9 @@ def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_e
         "exclude_from_complexity": catalog["gemini-4-neon-medium"].get("exclude_from_complexity"),
     } == {
         "agents": ["agy"], "work_bands": ["quite-easy", "easy"],
-        "complexity_weight": 5, "exclude_from_complexity": None,
+        "complexity_weight": 5, "exclude_from_complexity": True,
     }
-    assert catalog["gemini-4-neon-medium"]["complexity_bands"] == [
+    assert catalog["gemini-4-hydrogen-high"]["complexity_bands"] == [
         "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
     ]
 
@@ -183,11 +183,11 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         "gemini-3.8-flash-high", "gpt-0ss-120b-medium",
     }
     catalog = source["model_catalog"]
-    explicit_only = set(expected_agy_models) - {"gemini-4-neon-medium"}
+    explicit_only = set(expected_agy_models) - {"gemini-4-hydrogen-high"}
     designated_work_bands = {
+        "gemini-4-neon-medium": ["quite-easy", "easy"],
         "gemini-4-hydrogen-medium": ["medium"],
         "gemini-4-argon-high": ["medium-hard"],
-        "gemini-4-hydrogen-high": ["medium-hard"],
         "gemini-4-neon-high": ["complex", "holy-fuck"],
     }
     for model in explicit_only:

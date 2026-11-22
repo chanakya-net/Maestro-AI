@@ -170,7 +170,7 @@ assert sum(model.startswith('gemini-4-') for model in expected) == 14
 catalog = bundled['model_catalog']
 assert {name for name, model in catalog.items() if 'agy' in model.get('agents', [])} == expected
 assert catalog['gemini-4-neon-medium']['work_bands'] == ['quite-easy', 'easy']
-assert catalog['gemini-4-neon-medium']['complexity_bands'] == [
+assert catalog['gemini-4-hydrogen-high']['complexity_bands'] == [
     'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
 assert sum(model.get('explicit_only') is True for model in catalog.values()) == 20
 assert definitions['agents']['agy']['model']['default'] == 'gemini-4-neon-high'
@@ -189,8 +189,8 @@ for band, candidates in matrix.items():
     assert route.agent == 'agy' and route.model in candidates
     assert {c['model'] for c in route.selection['evaluated_candidates']} == candidates
     scorer = select_route(RouteRequest('complexity', band, agy), registry, {})
-    assert (scorer.agent, scorer.model) == ('agy', 'gemini-4-neon-medium')
-    assert {c['model'] for c in scorer.selection['evaluated_candidates']} == {'gemini-4-neon-medium'}
+    assert (scorer.agent, scorer.model) == ('agy', 'gemini-4-hydrogen-high')
+    assert {c['model'] for c in scorer.selection['evaluated_candidates']} == {'gemini-4-hydrogen-high'}
 positive_target = select_route(RouteRequest('impl', 'medium', agy | {'codex', 'claude'}), registry, {})
 assert positive_target.agent in {'codex', 'claude'} and positive_target.target_percent > 0
 sibling = select_route(RouteRequest('impl', 'medium-hard', agy,

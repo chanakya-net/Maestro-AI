@@ -357,15 +357,15 @@ def test_restricted_designated_flash_keeps_forced_agy_no_candidate_error(restric
 
 
 @pytest.mark.parametrize("band", BANDS)
-def test_agy_complexity_scoring_uses_only_flash_medium_at_every_band(band):
+def test_agy_complexity_scoring_uses_only_hydrogen_high_at_every_band(band):
     selection = select_route(
         RouteRequest(role="complexity", complexity_level=band, forced_agent="agy"),
         load_registry(SOURCE_REGISTRY),
         {},
     ).selection
-    assert (selection["agent"], selection["model"]) == ("agy", "gemini-4-neon-medium")
+    assert (selection["agent"], selection["model"]) == ("agy", "gemini-4-hydrogen-high")
     assert [candidate["model"] for candidate in selection["evaluated_candidates"]] == [
-        "gemini-4-neon-medium"
+        "gemini-4-hydrogen-high"
     ]
 
 
@@ -375,7 +375,7 @@ def test_scoring_candidate_expansion_does_not_reintroduce_other_agy_models(band)
     candidates = routing.candidate_model_ids(registry, "complexity", band, None, None)
     agy_models = set(registry["agents"]["agy"]["model"]["known_models"])
     agy_candidates = [model for model in candidates if model in agy_models]
-    assert agy_candidates == ["gemini-4-neon-medium"]
+    assert agy_candidates == ["gemini-4-hydrogen-high"]
 
 
 @pytest.mark.parametrize("restriction", ["excluded", "unavailable"])
@@ -385,21 +385,21 @@ def test_scoring_medium_restriction_falls_back_or_errors_without_other_agy(restr
         role="complexity",
         complexity_level="medium",
         detected_agents=frozenset({"agy", "codex", "claude"}),
-        **({"exclude_models": frozenset({"gemini-4-neon-medium"})} if restriction == "excluded" else {
-            "availability": {"models": {"gemini-4-neon-medium"}}
+        **({"exclude_models": frozenset({"gemini-4-hydrogen-high"})} if restriction == "excluded" else {
+            "availability": {"models": {"gemini-4-hydrogen-high"}}
         }),
     )
     selection = select_route(request, registry, {}).selection
     assert selection["agent"] != "agy"
-    assert selection["model"] != "gemini-4-neon-medium"
+    assert selection["model"] != "gemini-4-hydrogen-high"
     with pytest.raises(SystemExit) as exc:
         select_route(
             RouteRequest(
                 role="complexity",
                 complexity_level="medium",
                 forced_agent="agy",
-                **({"exclude_models": frozenset({"gemini-4-neon-medium"})} if restriction == "excluded" else {
-                    "availability": {"models": {"gemini-4-neon-medium"}}
+                **({"exclude_models": frozenset({"gemini-4-hydrogen-high"})} if restriction == "excluded" else {
+                    "availability": {"models": {"gemini-4-hydrogen-high"}}
                 }),
             ),
             registry,
@@ -737,7 +737,7 @@ def test_route_cli_deduplicates_failed_attempt_states_and_canonicalizes_aliases(
 
 
 @pytest.mark.parametrize("band", routing.BAND_ORDER)
-def test_complexity_scoring_uses_only_terra_sonnet_and_neon_equally(band):
+def test_complexity_scoring_uses_only_terra_sonnet_and_hydrogen_high_equally(band):
     registry = load_registry(SOURCE_REGISTRY)
     availability = routing.routing_availability(registry, "", "")
     pairs = routing.candidate_pairs(
@@ -746,6 +746,6 @@ def test_complexity_scoring_uses_only_terra_sonnet_and_neon_equally(band):
     assert {(pair["agent"], pair["model"]) for pair in pairs} == {
         ("codex", "gpt-6.1-terra"),
         ("claude", "claude-sonnet-5-5"),
-        ("agy", "gemini-4-neon-medium"),
+        ("agy", "gemini-4-hydrogen-high"),
     }
     assert routing.target_policy(registry, "complexity", band) == {"codex": 33, "claude": 33, "agy": 33}

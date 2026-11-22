@@ -427,10 +427,10 @@ Automatic non-scoring AGY work follows the approved band matrix. Only Neon Mediu
 (`gemini-4-hydrogen-medium`) serves `medium`, Argon High
 (`gemini-4-argon-high`) and Hydrogen High (`gemini-4-hydrogen-high`) serve
 `medium-hard`, and Neon High (`gemini-4-neon-high`) serves `complex` and
-`holy-fuck`. Neon Medium is the sole AGY complexity-scoring model and is
-eligible at all six scoring bands. AGY models outside Neon Medium carry
-`explicit_only`. The four Gemini 4 work models above also carry
-`work_bands`. The 14 Gemini 4 IDs declare no context limit. Select Carbon by
+`holy-fuck`. Hydrogen High (`gemini-4-hydrogen-high`) is the sole AGY
+complexity-scoring model and is eligible at all six scoring bands. AGY models
+outside Hydrogen High carry `explicit_only`. The Gemini 4 work models above
+also carry `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select Carbon by
 exact ID with an entitled account. Listing the model or selecting a route
 performs no authenticated inference or entitlement check. A direct AGY run
 without an explicit model uses `gemini-4-neon-high`.

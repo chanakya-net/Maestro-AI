@@ -159,9 +159,10 @@
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 5,
+      "exclude_from_complexity": true,
+      "explicit_only": true,
       "agents": ["agy"],
-      "work_bands": ["quite-easy", "easy"],
-      "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
+      "work_bands": ["quite-easy", "easy"]
     },
     "gemini-4-neon-high": {
       "provider": "google",
@@ -201,10 +202,9 @@
       "provider": "google",
       "ability": "frontier",
       "complexity_weight": 7,
-      "exclude_from_complexity": true,
-      "explicit_only": true,
       "agents": ["agy"],
-      "work_bands": ["medium-hard"]
+      "work_bands": ["medium-hard"],
+      "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
     },
     "gemini-4-hydrogen-xhigh": {
       "provider": "google",
