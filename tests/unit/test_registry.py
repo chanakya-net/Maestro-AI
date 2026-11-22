@@ -149,22 +149,13 @@ def test_malformed_nested_configuration_reports_a_validation_error(registry_file
 def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_explicit():
     catalog = json.loads(SOURCE_REGISTRY.read_text())["model_catalog"]
     assert {
-        model: {
-            "agents": catalog[model]["agents"],
-            "work_bands": catalog[model]["work_bands"],
-            "complexity_weight": catalog[model]["complexity_weight"],
-            "exclude_from_complexity": catalog[model].get("exclude_from_complexity"),
-        }
-        for model in ("gemini-4-neon-low", "gemini-4-neon-medium")
+        "agents": catalog["gemini-4-neon-medium"]["agents"],
+        "work_bands": catalog["gemini-4-neon-medium"]["work_bands"],
+        "complexity_weight": catalog["gemini-4-neon-medium"]["complexity_weight"],
+        "exclude_from_complexity": catalog["gemini-4-neon-medium"].get("exclude_from_complexity"),
     } == {
-        "gemini-4-neon-low": {
-            "agents": ["agy"], "work_bands": ["quite-easy"],
-            "complexity_weight": 4, "exclude_from_complexity": True,
-        },
-        "gemini-4-neon-medium": {
-            "agents": ["agy"], "work_bands": ["easy"],
-            "complexity_weight": 5, "exclude_from_complexity": None,
-        },
+        "agents": ["agy"], "work_bands": ["quite-easy", "easy"],
+        "complexity_weight": 5, "exclude_from_complexity": None,
     }
     assert catalog["gemini-4-neon-medium"]["complexity_bands"] == [
         "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
@@ -192,7 +183,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         "gemini-3.8-flash-high", "gpt-0ss-120b-medium",
     }
     catalog = source["model_catalog"]
-    explicit_only = set(expected_agy_models) - {"gemini-4-neon-low", "gemini-4-neon-medium"}
+    explicit_only = set(expected_agy_models) - {"gemini-4-neon-medium"}
     designated_work_bands = {
         "gemini-4-hydrogen-medium": ["medium"],
         "gemini-4-argon-high": ["medium-hard"],
@@ -231,8 +222,8 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         },
         "non_complexity_band_target_percent": {
             "default": {"codex": 70, "claude": 30, "agy": 0},
-            "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
-            "easy": {"codex": 55, "claude": 40, "agy": 5},
+            "quite-easy": {"codex": 33, "claude": 33, "agy": 33},
+            "easy": {"codex": 33, "claude": 33, "agy": 33},
             "holy-fuck": {"codex": 60, "claude": 40, "agy": 0},
         },
         "role_band_target_percent": {

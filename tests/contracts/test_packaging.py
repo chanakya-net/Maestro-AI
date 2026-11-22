@@ -169,15 +169,14 @@ assert set(sys.argv[2:]) == expected
 assert sum(model.startswith('gemini-4-') for model in expected) == 14
 catalog = bundled['model_catalog']
 assert {name for name, model in catalog.items() if 'agy' in model.get('agents', [])} == expected
-assert catalog['gemini-4-neon-low']['work_bands'] == ['quite-easy']
-assert catalog['gemini-4-neon-medium']['work_bands'] == ['easy']
+assert catalog['gemini-4-neon-medium']['work_bands'] == ['quite-easy', 'easy']
 assert catalog['gemini-4-neon-medium']['complexity_bands'] == [
     'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
-assert sum(model.get('explicit_only') is True for model in catalog.values()) == 19
+assert sum(model.get('explicit_only') is True for model in catalog.values()) == 20
 assert definitions['agents']['agy']['model']['default'] == 'gemini-4-neon-high'
 assert definitions['agents']['agy']['model']['flag_template'] == '--model {{model}}'
 matrix = {
-    'quite-easy': {'gemini-4-neon-low'},
+    'quite-easy': {'gemini-4-neon-medium'},
     'easy': {'gemini-4-neon-medium'},
     'medium': {'gemini-4-hydrogen-medium'},
     'medium-hard': {'gemini-4-argon-high', 'gemini-4-hydrogen-high'},

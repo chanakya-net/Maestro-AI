@@ -152,15 +152,15 @@
       "ability": "fast",
       "complexity_weight": 4,
       "exclude_from_complexity": true,
-      "agents": ["agy"],
-      "work_bands": ["quite-easy"]
+      "explicit_only": true,
+      "agents": ["agy"]
     },
     "gemini-4-neon-medium": {
       "provider": "google",
       "ability": "balanced",
       "complexity_weight": 5,
       "agents": ["agy"],
-      "work_bands": ["easy"],
+      "work_bands": ["quite-easy", "easy"],
       "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
     },
     "gemini-4-neon-high": {
@@ -318,8 +318,8 @@
       },
       "non_complexity_band_target_percent": {
         "default": {"codex": 70, "claude": 30, "agy": 0},
-        "quite-easy": {"codex": 55, "claude": 35, "agy": 10},
-        "easy": {"codex": 55, "claude": 40, "agy": 5},
+        "quite-easy": {"codex": 33, "claude": 33, "agy": 33},
+        "easy": {"codex": 33, "claude": 33, "agy": 33},
         "holy-fuck": {"codex": 60, "claude": 40, "agy": 0}
       },
       "role_band_target_percent": {

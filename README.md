@@ -422,15 +422,14 @@ All 21 IDs are registered for AGY only.
 | Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
 | GPT-OSS | `gpt-oss-120b-medium` |
 
-Automatic non-scoring AGY work follows the approved band matrix. Only Neon Low
-(`gemini-4-neon-low`) serves `quite-easy`, and only Neon Medium
-(`gemini-4-neon-medium`) serves `easy`. Hydrogen Medium
+Automatic non-scoring AGY work follows the approved band matrix. Only Neon Medium
+(`gemini-4-neon-medium`) serves `quite-easy` and `easy`. Hydrogen Medium
 (`gemini-4-hydrogen-medium`) serves `medium`, Argon High
 (`gemini-4-argon-high`) and Hydrogen High (`gemini-4-hydrogen-high`) serve
 `medium-hard`, and Neon High (`gemini-4-neon-high`) serves `complex` and
 `holy-fuck`. Neon Medium is the sole AGY complexity-scoring model and is
-eligible at all six scoring bands. AGY models outside Neon Low and Neon
-Medium carry `explicit_only`. The four Gemini 4 work models above also carry
+eligible at all six scoring bands. AGY models outside Neon Medium carry
+`explicit_only`. The four Gemini 4 work models above also carry
 `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select Carbon by
 exact ID with an entitled account. Listing the model or selecting a route
 performs no authenticated inference or entitlement check. A direct AGY run
@@ -438,8 +437,7 @@ without an explicit model uses `gemini-4-neon-high`.
 
 | Effective worker band | Codex | Claude | AGY |
 | --- | ---: | ---: | ---: |
-| `quite-easy` | 55% | 35% | 10% |
-| `easy` | 55% | 40% | 5% |
+| `quite-easy`, `easy` | 33% | 33% | 33% |
 | `medium`, `medium-hard`, `complex` | 70% | 30% | 0% |
 | `holy-fuck` | 60% | 40% | 0% |
 

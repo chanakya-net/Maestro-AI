@@ -20,7 +20,7 @@ def test_role_band_bumps():
 
 
 @pytest.mark.parametrize("band, model", [
-    ("quite-easy", "gemini-4-neon-low"),
+    ("quite-easy", "gemini-4-neon-medium"),
     ("easy", "gemini-4-neon-medium"),
 ])
 def test_forced_agy_uses_only_designated_simple_worker(band, model):
@@ -53,7 +53,7 @@ def test_plan_band_bump_removes_agy_from_simple_worker_pool():
 
 
 AGY_WORK_MATRIX = {
-    "quite-easy": {"gemini-4-neon-low"},
+    "quite-easy": {"gemini-4-neon-medium"},
     "easy": {"gemini-4-neon-medium"},
     "medium": {"gemini-4-hydrogen-medium"},
     "medium-hard": {"gemini-4-argon-high", "gemini-4-hydrogen-high"},
@@ -239,7 +239,7 @@ def test_agy_sticky_reviewer_and_usage_attribution_survive_escalated_band():
 
 
 @pytest.mark.parametrize("model, band", [
-    ("gemini-4-neon-low", "quite-easy"),
+    ("gemini-4-neon-medium", "quite-easy"),
     ("gemini-4-neon-medium", "easy"),
 ])
 def test_flash_worker_pool_follows_catalog_work_band_edits(tmp_path, model, band):
@@ -310,7 +310,7 @@ def test_excluded_or_unavailable_flash_falls_back_without_expanding_agy_pool():
         RouteRequest(
             role="impl",
             complexity_level="quite-easy",
-            exclude_models=frozenset({"gemini-4-neon-low"}),
+            exclude_models=frozenset({"gemini-4-neon-medium"}),
         ),
         registry,
         {},
@@ -326,7 +326,7 @@ def test_excluded_or_unavailable_flash_falls_back_without_expanding_agy_pool():
     )
     assert excluded.agent != "agy"
     assert unavailable.agent != "agy"
-    assert excluded.model != "gemini-4-neon-low"
+    assert excluded.model != "gemini-4-neon-medium"
     assert unavailable.model != "gemini-4-neon-medium"
 
 

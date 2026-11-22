@@ -2452,7 +2452,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-neon-low",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "quite-easy",
