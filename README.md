@@ -409,8 +409,8 @@ edit `model_routing.usage_distribution`:
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
 
-The installed AGY catalog lists 24 exact IDs, including 14 Gemini 4 variants.
-All 24 IDs are registered for AGY only.
+The installed AGY catalog lists 21 exact IDs, including 14 Gemini 4 variants.
+All 21 IDs are registered for AGY only.
 
 | Family | Explicit model IDs |
 | --- | --- |
@@ -418,24 +418,23 @@ All 24 IDs are registered for AGY only.
 | Gemini 4 Neon | `gemini-4-neon-low`, `gemini-4-neon-medium`, `gemini-4-neon-high`, `gemini-4-neon-xhigh` |
 | Gemini 4 Hydrogen | `gemini-4-hydrogen-low`, `gemini-4-hydrogen-medium`, `gemini-4-hydrogen-high`, `gemini-4-hydrogen-xhigh` |
 | Gemini 4 Carbon | `gemini-4-carbon-low`, `gemini-4-carbon-medium`, `gemini-4-carbon-high` |
-| Gemini 3.8 Flash | `gemini-3.8-flash-low`, `gemini-3.8-flash-medium`, `gemini-3.8-flash-high` |
 | Claude Opus 5.5 through AGY | `claude-opus-5-5-low`, `claude-opus-5-5-medium`, `claude-opus-5-5-high` |
 | Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
 | GPT-OSS | `gpt-oss-120b-medium` |
 
-Automatic non-scoring AGY work follows the approved band matrix. Only Flash Low
-(`gemini-3.8-flash-low`) serves `quite-easy`, and only Flash Medium
-(`gemini-3.8-flash-medium`) serves `easy`. Hydrogen Medium
+Automatic non-scoring AGY work follows the approved band matrix. Only Neon Low
+(`gemini-4-neon-low`) serves `quite-easy`, and only Neon Medium
+(`gemini-4-neon-medium`) serves `easy`. Hydrogen Medium
 (`gemini-4-hydrogen-medium`) serves `medium`, Argon High
 (`gemini-4-argon-high`) and Hydrogen High (`gemini-4-hydrogen-high`) serve
 `medium-hard`, and Neon High (`gemini-4-neon-high`) serves `complex` and
-`holy-fuck`. Flash Medium is the sole AGY complexity-scoring model and is
-eligible at all six scoring bands. AGY models outside Flash Low and Flash
+`holy-fuck`. Neon Medium is the sole AGY complexity-scoring model and is
+eligible at all six scoring bands. AGY models outside Neon Low and Neon
 Medium carry `explicit_only`. The four Gemini 4 work models above also carry
 `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select Carbon by
 exact ID with an entitled account. Listing the model or selecting a route
 performs no authenticated inference or entitlement check. A direct AGY run
-without an explicit model uses `gemini-3.8-flash-high`.
+without an explicit model uses `gemini-4-neon-high`.
 
 | Effective worker band | Codex | Claude | AGY |
 | --- | ---: | ---: | ---: |

@@ -155,18 +155,18 @@ def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_e
             "complexity_weight": catalog[model]["complexity_weight"],
             "exclude_from_complexity": catalog[model].get("exclude_from_complexity"),
         }
-        for model in ("gemini-3.8-flash-low", "gemini-3.8-flash-medium")
+        for model in ("gemini-4-neon-low", "gemini-4-neon-medium")
     } == {
-        "gemini-3.8-flash-low": {
+        "gemini-4-neon-low": {
             "agents": ["agy"], "work_bands": ["quite-easy"],
-            "complexity_weight": 3, "exclude_from_complexity": True,
+            "complexity_weight": 4, "exclude_from_complexity": True,
         },
-        "gemini-3.8-flash-medium": {
+        "gemini-4-neon-medium": {
             "agents": ["agy"], "work_bands": ["easy"],
-            "complexity_weight": 4, "exclude_from_complexity": None,
+            "complexity_weight": 5, "exclude_from_complexity": None,
         },
     }
-    assert catalog["gemini-3.8-flash-medium"]["complexity_bands"] == [
+    assert catalog["gemini-4-neon-medium"]["complexity_bands"] == [
         "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
     ]
 
@@ -181,7 +181,6 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
         *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
         *(f"gemini-4-carbon-{effort}" for effort in ("low", "medium", "high")),
-        *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
         *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
         *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
         "gpt-oss-120b-medium",
@@ -189,10 +188,11 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     assert agy_models == sorted(expected_agy_models)
     assert not set(agy_models) & {
         "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
-        "gemini-3.5-flash-medium", "gpt-0ss-120b-medium",
+        "gemini-3.5-flash-medium", "gemini-3.8-flash-low", "gemini-3.8-flash-medium",
+        "gemini-3.8-flash-high", "gpt-0ss-120b-medium",
     }
     catalog = source["model_catalog"]
-    explicit_only = set(expected_agy_models) - {"gemini-3.8-flash-low", "gemini-3.8-flash-medium"}
+    explicit_only = set(expected_agy_models) - {"gemini-4-neon-low", "gemini-4-neon-medium"}
     designated_work_bands = {
         "gemini-4-hydrogen-medium": ["medium"],
         "gemini-4-argon-high": ["medium-hard"],
@@ -205,7 +205,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         assert catalog[model]["exclude_from_complexity"] is True
         assert catalog[model].get("work_bands") == designated_work_bands.get(model)
         assert "context_window" not in catalog[model]
-    assert "gemini-3.8-flash-high" in explicit_only
+    assert "gemini-4-neon-high" in explicit_only
     definitions = json.loads(SOURCE_REGISTRY.with_name("agent-definitions.json").read_text())
     expanded = load_registry(SOURCE_REGISTRY)
     direct_baseline = {

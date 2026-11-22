@@ -2533,7 +2533,7 @@ def test_agy_gemini_4_preserves_direct_result_file(tmp_path, monkeypatch, direct
 def agy_managed_role_worker(tmp_path, role, result, *, instructions=None):
     script = f'''import json, os, sys
 from pathlib import Path
-assert sys.argv[1:3] == ['--model', {('gemini-3.8-flash-medium' if role == 'complexity' else GEMINI_4)!r}]
+assert sys.argv[1:3] == ['--model', {('gemini-4-neon-medium' if role == 'complexity' else GEMINI_4)!r}]
 result = Path(os.environ['RUN_WITH_IT_RESULT_FILE'])
 result.write_text(json.dumps({result!r}), encoding='utf-8')
 if {role!r} == 'review':
@@ -2549,7 +2549,7 @@ if {role!r} == 'review':
     config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
     result_file = tmp_path / ('review-cycle-1-status.json' if role == 'review' else 'result.json')
     return replace(config, agent_run=config.agent_run.replace(
-        agent='agy', model='gemini-3.8-flash-medium' if role == 'complexity' else GEMINI_4,
+        agent='agy', model='gemini-4-neon-medium' if role == 'complexity' else GEMINI_4,
         role=role, result_file=result_file))
 
 
@@ -2561,8 +2561,8 @@ if {role!r} == 'review':
      'rationale': {key: 'reason' for key in ('dependency_complexity', 'ownership_overlap_risk',
       'architecture_risk', 'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
       'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')}},
-     None, True, 'gemini-3.8-flash-medium'),
-    ('complexity', {'total': 9}, None, False, 'gemini-3.8-flash-medium'),
+     None, True, 'gemini-4-neon-medium'),
+    ('complexity', {'total': 9}, None, False, 'gemini-4-neon-medium'),
     ('review', {'verdict': 'approve', 'comment_count': 0, 'nitpick_only': False},
      {'verdict': 'approve', 'summary': 'No findings.', 'comments': [], 'blocking_reasons': []}, True, GEMINI_4),
     ('review', {'verdict': 'approve', 'comment_count': 1, 'nitpick_only': False},

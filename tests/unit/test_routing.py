@@ -20,8 +20,8 @@ def test_role_band_bumps():
 
 
 @pytest.mark.parametrize("band, model", [
-    ("quite-easy", "gemini-3.8-flash-low"),
-    ("easy", "gemini-3.8-flash-medium"),
+    ("quite-easy", "gemini-4-neon-low"),
+    ("easy", "gemini-4-neon-medium"),
 ])
 def test_forced_agy_uses_only_designated_simple_worker(band, model):
     selection = select_route(
@@ -39,7 +39,7 @@ def test_review_band_bump_uses_easy_flash_pool():
         load_registry(SOURCE_REGISTRY),
         {},
     ).selection
-    assert (selection["routing_level"], selection["model"]) == ("easy", "gemini-3.8-flash-medium")
+    assert (selection["routing_level"], selection["model"]) == ("easy", "gemini-4-neon-medium")
 
 
 def test_plan_band_bump_removes_agy_from_simple_worker_pool():
@@ -53,8 +53,8 @@ def test_plan_band_bump_removes_agy_from_simple_worker_pool():
 
 
 AGY_WORK_MATRIX = {
-    "quite-easy": {"gemini-3.8-flash-low"},
-    "easy": {"gemini-3.8-flash-medium"},
+    "quite-easy": {"gemini-4-neon-low"},
+    "easy": {"gemini-4-neon-medium"},
     "medium": {"gemini-4-hydrogen-medium"},
     "medium-hard": {"gemini-4-argon-high", "gemini-4-hydrogen-high"},
     "complex": {"gemini-4-neon-high"},
@@ -239,8 +239,8 @@ def test_agy_sticky_reviewer_and_usage_attribution_survive_escalated_band():
 
 
 @pytest.mark.parametrize("model, band", [
-    ("gemini-3.8-flash-low", "quite-easy"),
-    ("gemini-3.8-flash-medium", "easy"),
+    ("gemini-4-neon-low", "quite-easy"),
+    ("gemini-4-neon-medium", "easy"),
 ])
 def test_flash_worker_pool_follows_catalog_work_band_edits(tmp_path, model, band):
     (tmp_path / "agent-definitions.json").write_text(
@@ -259,19 +259,18 @@ def test_forced_agy_model_keeps_explicit_band_exception():
             role="impl",
             complexity_level="medium",
             forced_agent="agy",
-            forced_model="gemini-3.8-flash-low",
+            forced_model="gemini-4-neon-low",
         ),
         load_registry(SOURCE_REGISTRY),
         {},
     ).selection
-    assert (selection["agent"], selection["model"]) == ("agy", "gemini-3.8-flash-low")
+    assert (selection["agent"], selection["model"]) == ("agy", "gemini-4-neon-low")
 
 
 AGY_EXPLICIT_MODELS = (
     *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
     *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
     *(f"gemini-4-carbon-{effort}" for effort in ("low", "medium", "high")),
-    *(f"gemini-3.8-flash-{effort}" for effort in ("low", "medium", "high")),
     *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
     *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
     "gpt-oss-120b-medium",
@@ -292,7 +291,8 @@ def test_every_agy_model_can_be_explicitly_routed_at_an_ineligible_band(model):
 
 @pytest.mark.parametrize("model", [
     "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
-    "gemini-3.5-flash-medium", "gpt-0ss-120b-medium",
+    "gemini-3.5-flash-medium", "gemini-3.8-flash-low", "gemini-3.8-flash-medium",
+    "gemini-3.8-flash-high", "gpt-0ss-120b-medium",
 ])
 def test_retired_agy_models_fail_instead_of_aliasing(model):
     with pytest.raises(SystemExit) as exc:
@@ -310,7 +310,7 @@ def test_excluded_or_unavailable_flash_falls_back_without_expanding_agy_pool():
         RouteRequest(
             role="impl",
             complexity_level="quite-easy",
-            exclude_models=frozenset({"gemini-3.8-flash-low"}),
+            exclude_models=frozenset({"gemini-4-neon-low"}),
         ),
         registry,
         {},
@@ -319,15 +319,15 @@ def test_excluded_or_unavailable_flash_falls_back_without_expanding_agy_pool():
         RouteRequest(
             role="impl",
             complexity_level="easy",
-            availability={"models": {"gemini-3.8-flash-medium"}},
+            availability={"models": {"gemini-4-neon-medium"}},
         ),
         registry,
         {},
     )
     assert excluded.agent != "agy"
     assert unavailable.agent != "agy"
-    assert excluded.model != "gemini-3.8-flash-low"
-    assert unavailable.model != "gemini-3.8-flash-medium"
+    assert excluded.model != "gemini-4-neon-low"
+    assert unavailable.model != "gemini-4-neon-medium"
 
 
 @pytest.mark.parametrize("restriction", ["unavailable", "excluded"])
@@ -338,14 +338,14 @@ def test_restricted_designated_flash_keeps_forced_agy_no_candidate_error(restric
             role="impl",
             complexity_level="easy",
             forced_agent="agy",
-            availability={"models": {"gemini-3.8-flash-medium"}},
+            availability={"models": {"gemini-4-neon-medium"}},
         )
     else:
         request = RouteRequest(
             role="impl",
             complexity_level="easy",
             forced_agent="agy",
-            exclude_models=frozenset({"gemini-3.8-flash-medium"}),
+            exclude_models=frozenset({"gemini-4-neon-medium"}),
         )
     with pytest.raises(SystemExit) as exc:
         select_route(
@@ -363,9 +363,9 @@ def test_agy_complexity_scoring_uses_only_flash_medium_at_every_band(band):
         load_registry(SOURCE_REGISTRY),
         {},
     ).selection
-    assert (selection["agent"], selection["model"]) == ("agy", "gemini-3.8-flash-medium")
+    assert (selection["agent"], selection["model"]) == ("agy", "gemini-4-neon-medium")
     assert [candidate["model"] for candidate in selection["evaluated_candidates"]] == [
-        "gemini-3.8-flash-medium"
+        "gemini-4-neon-medium"
     ]
 
 
@@ -375,7 +375,7 @@ def test_scoring_candidate_expansion_does_not_reintroduce_other_agy_models(band)
     candidates = routing.candidate_model_ids(registry, "complexity", band, None, None)
     agy_models = set(registry["agents"]["agy"]["model"]["known_models"])
     agy_candidates = [model for model in candidates if model in agy_models]
-    assert agy_candidates == ["gemini-3.8-flash-medium"]
+    assert agy_candidates == ["gemini-4-neon-medium"]
 
 
 @pytest.mark.parametrize("restriction", ["excluded", "unavailable"])
@@ -385,21 +385,21 @@ def test_scoring_medium_restriction_falls_back_or_errors_without_other_agy(restr
         role="complexity",
         complexity_level="medium",
         detected_agents=frozenset({"agy", "codex", "claude"}),
-        **({"exclude_models": frozenset({"gemini-3.8-flash-medium"})} if restriction == "excluded" else {
-            "availability": {"models": {"gemini-3.8-flash-medium"}}
+        **({"exclude_models": frozenset({"gemini-4-neon-medium"})} if restriction == "excluded" else {
+            "availability": {"models": {"gemini-4-neon-medium"}}
         }),
     )
     selection = select_route(request, registry, {}).selection
     assert selection["agent"] != "agy"
-    assert selection["model"] != "gemini-3.8-flash-medium"
+    assert selection["model"] != "gemini-4-neon-medium"
     with pytest.raises(SystemExit) as exc:
         select_route(
             RouteRequest(
                 role="complexity",
                 complexity_level="medium",
                 forced_agent="agy",
-                **({"exclude_models": frozenset({"gemini-3.8-flash-medium"})} if restriction == "excluded" else {
-                    "availability": {"models": {"gemini-3.8-flash-medium"}}
+                **({"exclude_models": frozenset({"gemini-4-neon-medium"})} if restriction == "excluded" else {
+                    "availability": {"models": {"gemini-4-neon-medium"}}
                 }),
             ),
             registry,

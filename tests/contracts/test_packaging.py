@@ -160,26 +160,25 @@ expected = {
     *(f'gemini-4-argon-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'gemini-4-{family}-{effort}' for family in ('neon', 'hydrogen') for effort in ('low', 'medium', 'high', 'xhigh')),
     *(f'gemini-4-carbon-{effort}' for effort in ('low', 'medium', 'high')),
-    *(f'gemini-3.8-flash-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-opus-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     *(f'claude-sonnet-5-5-{effort}' for effort in ('low', 'medium', 'high')),
     'gpt-oss-120b-medium',
 }
-assert len(expected) == len(sys.argv[2:]) == 24
+assert len(expected) == len(sys.argv[2:]) == 21
 assert set(sys.argv[2:]) == expected
 assert sum(model.startswith('gemini-4-') for model in expected) == 14
 catalog = bundled['model_catalog']
 assert {name for name, model in catalog.items() if 'agy' in model.get('agents', [])} == expected
-assert catalog['gemini-3.8-flash-low']['work_bands'] == ['quite-easy']
-assert catalog['gemini-3.8-flash-medium']['work_bands'] == ['easy']
-assert catalog['gemini-3.8-flash-medium']['complexity_bands'] == [
+assert catalog['gemini-4-neon-low']['work_bands'] == ['quite-easy']
+assert catalog['gemini-4-neon-medium']['work_bands'] == ['easy']
+assert catalog['gemini-4-neon-medium']['complexity_bands'] == [
     'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
-assert sum(model.get('explicit_only') is True for model in catalog.values()) == 22
-assert definitions['agents']['agy']['model']['default'] == 'gemini-3.8-flash-high'
+assert sum(model.get('explicit_only') is True for model in catalog.values()) == 19
+assert definitions['agents']['agy']['model']['default'] == 'gemini-4-neon-high'
 assert definitions['agents']['agy']['model']['flag_template'] == '--model {{model}}'
 matrix = {
-    'quite-easy': {'gemini-3.8-flash-low'},
-    'easy': {'gemini-3.8-flash-medium'},
+    'quite-easy': {'gemini-4-neon-low'},
+    'easy': {'gemini-4-neon-medium'},
     'medium': {'gemini-4-hydrogen-medium'},
     'medium-hard': {'gemini-4-argon-high', 'gemini-4-hydrogen-high'},
     'complex': {'gemini-4-neon-high'},
@@ -191,8 +190,8 @@ for band, candidates in matrix.items():
     assert route.agent == 'agy' and route.model in candidates
     assert {c['model'] for c in route.selection['evaluated_candidates']} == candidates
     scorer = select_route(RouteRequest('complexity', band, agy), registry, {})
-    assert (scorer.agent, scorer.model) == ('agy', 'gemini-3.8-flash-medium')
-    assert {c['model'] for c in scorer.selection['evaluated_candidates']} == {'gemini-3.8-flash-medium'}
+    assert (scorer.agent, scorer.model) == ('agy', 'gemini-4-neon-medium')
+    assert {c['model'] for c in scorer.selection['evaluated_candidates']} == {'gemini-4-neon-medium'}
 positive_target = select_route(RouteRequest('impl', 'medium', agy | {'codex', 'claude'}), registry, {})
 assert positive_target.agent in {'codex', 'claude'} and positive_target.target_percent > 0
 sibling = select_route(RouteRequest('impl', 'medium-hard', agy,
@@ -217,7 +216,7 @@ for agent in ('codex', 'claude'):
     assert registry['agents'][agent]['permission_modes']['read_only']
 Path('context.md').write_text('task')
 Path('prompt.md').write_text('instructions')
-for selected, expected_model in (('', 'gemini-3.8-flash-high'),
+for selected, expected_model in (('', 'gemini-4-neon-high'),
                                  ('gemini-4-argon-high', 'gemini-4-argon-high'),
                                  ('gemini-4-carbon-medium', 'gemini-4-carbon-medium')):
     config = AgentRunConfig(agent='agy', model=selected, repo_root=Path.cwd(),

@@ -63,7 +63,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "easy",
@@ -115,7 +115,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium",
@@ -167,7 +167,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "medium-hard",
@@ -219,7 +219,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -271,7 +271,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "holy-fuck",
@@ -2452,7 +2452,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-low",
+      "model": "gemini-4-neon-low",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "quite-easy",
@@ -2475,7 +2475,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-3.8-flash-medium",
+      "model": "gemini-4-neon-medium",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "easy",
