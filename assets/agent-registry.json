@@ -16,22 +16,22 @@
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 9,
+      "exclude_from_complexity": true,
       "min_band": "medium-hard",
       "context_window": 1000000,
       "agents": ["claude"],
       "work_bands": ["medium-hard", "complex", "holy-fuck"],
-      "required_bands": ["holy-fuck"],
       "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
     },
     "claude-fable-5-2": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 10,
+      "exclude_from_complexity": true,
       "min_band": "holy-fuck",
       "context_window": 1000000,
       "agents": ["claude"],
       "work_bands": ["holy-fuck"],
-      "required_bands": ["holy-fuck"],
       "effort_by_band": {"holy-fuck": "high"}
     },
     "claude-sonnet-5-5": {
@@ -41,18 +41,19 @@
       "context_window": 1000000,
       "agents": ["claude"],
       "work_bands": ["quite-easy", "easy", "medium"],
+      "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"],
       "effort_by_band": {"quite-easy": "low", "easy": "medium", "medium": "medium"}
     },
     "gpt-6.2-astra": {
       "provider": "openai",
       "ability": "frontier",
       "complexity_weight": 10,
+      "exclude_from_complexity": true,
       "min_band": "holy-fuck",
       "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
       "work_bands": ["holy-fuck"],
-      "required_bands": ["holy-fuck"],
       "effort_by_band": {"holy-fuck": "high"}
     },
     "gpt-6.1-terra": {
@@ -64,20 +65,19 @@
       "reasoning_effort": "high",
       "agents": ["codex"],
       "work_bands": ["quite-easy", "easy", "medium"],
-      "complexity_bands": ["quite-easy", "easy", "medium"]
+      "complexity_bands": ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
     },
     "gpt-6.2-sol": {
       "provider": "openai",
       "ability": "frontier",
       "complexity_weight": 7,
+      "exclude_from_complexity": true,
       "min_band": "medium-hard",
       "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
       "work_bands": ["medium-hard", "complex", "holy-fuck"],
-      "required_bands": ["holy-fuck"],
-      "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"},
-      "complexity_bands": ["medium-hard", "complex", "holy-fuck"]
+      "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
     },
     "gpt-5.4-mini": {
       "provider": "openai",
@@ -308,7 +308,7 @@
     "usage_distribution": {
       "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
       "role_target_percent": {
-        "complexity": {"agy": 50, "codex": 25, "claude": 25},
+        "complexity": {"codex": 33, "claude": 33, "agy": 33},
         "impl": {"codex": 65, "claude": 30, "agy": 5},
         "review": {"claude": 60, "codex": 35, "agy": 5},
         "modify": {"codex": 65, "claude": 30, "agy": 5},
@@ -324,8 +324,7 @@
       },
       "role_band_target_percent": {
         "complexity": {
-          "default": {"agy": 50, "codex": 25, "claude": 25},
-          "quite-easy": {"codex": 40, "claude": 35, "agy": 25}
+          "default": {"codex": 33, "claude": 33, "agy": 33}
         }
       },
       "role_agent_preference": {

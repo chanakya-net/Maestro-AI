@@ -515,7 +515,7 @@ def test_codex_routes_use_requested_model_families(band, model, effort):
 
 @pytest.mark.parametrize("band, model, effort", [
     ("quite-easy", "gpt-6.1-terra", "high"), ("easy", "gpt-6.1-terra", "high"), ("medium", "gpt-6.1-terra", "high"),
-    ("medium-hard", "gpt-6.2-sol", "high"), ("complex", "gpt-6.2-sol", "high"), ("holy-fuck", "gpt-6.2-sol", "high"),
+    ("medium-hard", "gpt-6.1-terra", "high"), ("complex", "gpt-6.1-terra", "high"), ("holy-fuck", "gpt-6.1-terra", "high"),
 ])
 def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, model, effort):
     decision = select_route(RouteRequest(role="complexity", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -734,3 +734,18 @@ def test_route_cli_deduplicates_failed_attempt_states_and_canonicalizes_aliases(
     assert routing.failed_attempt_routes([aliased, aliased], registry=registry) == [
         ('agy', 'gemini-4-neon-high', 'quota')
     ]
+
+
+@pytest.mark.parametrize("band", routing.BAND_ORDER)
+def test_complexity_scoring_uses_only_terra_sonnet_and_neon_equally(band):
+    registry = load_registry(SOURCE_REGISTRY)
+    availability = routing.routing_availability(registry, "", "")
+    pairs = routing.candidate_pairs(
+        registry, "complexity", band, {"codex", "claude", "agy"}, set(), set(), availability, None, None, set()
+    )
+    assert {(pair["agent"], pair["model"]) for pair in pairs} == {
+        ("codex", "gpt-6.1-terra"),
+        ("claude", "claude-sonnet-5-5"),
+        ("agy", "gemini-4-neon-medium"),
+    }
+    assert routing.target_policy(registry, "complexity", band) == {"codex": 33, "claude": 33, "agy": 33}

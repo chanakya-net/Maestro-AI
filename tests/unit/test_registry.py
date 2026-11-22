@@ -221,7 +221,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     assert source["model_routing"]["usage_distribution"] == {
         "default_target_percent": {"codex": 60, "claude": 35, "agy": 5},
         "role_target_percent": {
-            "complexity": {"agy": 50, "codex": 25, "claude": 25},
+            "complexity": {"codex": 33, "claude": 33, "agy": 33},
             "impl": {"codex": 65, "claude": 30, "agy": 5},
             "review": {"claude": 60, "codex": 35, "agy": 5},
             "modify": {"codex": 65, "claude": 30, "agy": 5},
@@ -237,8 +237,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         },
         "role_band_target_percent": {
             "complexity": {
-                "default": {"agy": 50, "codex": 25, "claude": 25},
-                "quite-easy": {"codex": 40, "claude": 35, "agy": 25},
+                "default": {"codex": 33, "claude": 33, "agy": 33},
             }
         },
         "role_agent_preference": {
