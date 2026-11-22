@@ -5,6 +5,7 @@ def test_native_engine_version_is_distinct_from_legacy():
     assert ENGINE_VERSION == 'ai-skills-pair/1'
 
 import json
+from dataclasses import replace
 import os
 from pathlib import Path
 import socket
@@ -16,7 +17,7 @@ import psutil
 
 from ai_skills.pair import PairConfig, PairRun
 from ai_skills.storage import write_json_atomic
-from test_pair import pair_fixture, invoke, decision_file, _use_direct_harness_registry, _direct_args
+from test_pair import pair_fixture, agy_pair, invoke, decision_file, _use_direct_harness_registry, _direct_args
 
 
 def background(run):
@@ -189,11 +190,6 @@ def test_killed_agent_worker_recovers_provider_output_without_another_launch(pai
         invocation['args_template'].remove('{{prompt}}')
         invocation['args_template'].extend(['--input-format', 'stream-json', '--output-format', 'stream-json'])
         registry_path.write_text(json.dumps(registry))
-        script = root/'provider.py'
-        source = script.read_text().replace('payload=sys.argv[-1]', "payload=json.loads(sys.stdin.buffer.read())['message']['content']")
-        source = source.replace('sections=', 'import io\nsys.stdout=io.StringIO()\nsections=')
-        source += "\nresponse=sys.stdout.getvalue();sys.stdout=sys.__stdout__;print(json.dumps({'event':'result','result':{'status':'SUCCESS','response':response}}))\n"
-        script.write_text(source, encoding='utf-8')
     monkeypatch.setenv('FAKE_MODE', 'gated')
     run = start(); process = background(run)
     try:
@@ -492,3 +488,166 @@ def test_live_legacy_metadata_is_adopted_without_policy_relaunch(pair_fixture, m
         (root / 'providers.release').touch()
         if process.poll() is None: process.kill(); process.wait()
         invoke(capsys, 'reap', '--run-dir', str(run), '--force')
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+def test_agy_resume_keeps_provenance_and_rejects_lost_profile(agy_pair, capsys, slot, purpose):
+    from test_pair import AGY_MODELS
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args(slot, AGY_MODELS[1])
+    run = start('--purpose', purpose, *extra)
+    before = (run / 'config.json').read_text()
+    profile(None)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and 'verified read-only' in error and AGY_MODELS[1] in error
+    assert not list(root.glob('*-r1.count'))
+    assert json.loads((run / 'state.json').read_text())['phase'] == 'awaiting-agents'
+    profile('accept')
+    code, _, err = invoke(capsys, 'run-round', '--run-dir', str(run)); assert code == 0, err
+    assert (run / 'config.json').read_text() == before
+    record = json.loads(next((run / 'rounds/round-01').glob(f'agent-{slot}-attempt-*-run.json')).read_text())
+    assert record['agent']['model'] == AGY_MODELS[1] and record['purpose'] == purpose
+    assert (root / (AGY_MODELS[1] + '-r1.count')).read_text() == '1'
+
+
+def test_resume_rejects_provider_identity_drift(pair_fixture, capsys):
+    start, root, registry_file = pair_fixture
+    run = start()
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy'] = dict(registry['agents']['fake'])
+    registry['aliases']['fake'] = 'agy'
+    registry_file.write_text(json.dumps(registry))
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and 'provider' in error and 'changed' in error
+    assert not list(root.glob('*-r1.count'))
+
+
+@pytest.mark.parametrize('drift', [False, True])
+def test_worker_rechecks_provider_identity_after_round_admission(pair_fixture, monkeypatch, capsys, drift):
+    from ai_skills.processes import ProcessSupervisor
+
+    start, root, registry_file = pair_fixture
+    run = start()
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy'] = dict(registry['agents']['fake'])
+    registry['aliases']['fake'] = 'agy'
+    launch = ProcessSupervisor.start
+    worker_starts = []
+
+    def start_worker(supervisor, spec, **identity):
+        if supervisor.directory == run / 'workers':
+            worker_starts.append(identity['attempt_id'])
+            if drift:
+                write_json_atomic(registry_file, registry)
+        return launch(supervisor, spec, **identity)
+
+    monkeypatch.setattr(ProcessSupervisor, 'start', start_worker)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert len(worker_starts) == 2, error
+    if drift:
+        assert code == 1 and not list(root.glob('*-r1.count'))
+        assert not list((run / 'processes').glob('*.json'))
+        for manifest in (run / 'rounds/round-01').glob('*-run.json'):
+            assert 'provider changed from fake to agy' in json.loads(manifest.read_text())['error']
+    else:
+        assert code == 0, error
+        assert [(root / f'{model}-r1.count').read_text() for model in ('one', 'two')] == ['1', '1']
+
+
+@pytest.mark.parametrize('drift', ['registry', 'environment', 'capture', 'provider'])
+def test_agy_worker_refuses_drift_in_admitted_binding(agy_pair, pair_fixture, monkeypatch, capsys, drift):
+    from ai_skills.processes import ProcessSupervisor
+    from test_pair import AGY_MODELS
+
+    start, root, profile, args = agy_pair
+    profile('accept')
+    first, _ = args('1', AGY_MODELS[0])
+    second, _ = args('2', AGY_MODELS[1])
+    run = start(*first, *second)
+    registry_file = pair_fixture[2]
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy']['invocation']['args_template'].insert(-4, '--other-option')
+    launch = ProcessSupervisor.start
+
+    def start_worker(supervisor, spec, **identity):
+        if supervisor.directory == run / 'workers':
+            if drift == 'registry':
+                write_json_atomic(registry_file, registry)
+            elif drift == 'environment':
+                spec = replace(spec, env={**spec.env, 'WORKER_DRIFT': '1'})
+            elif drift == 'capture':
+                payload = json.loads(spec.stdin)
+                payload['stdout'] = str(root / 'wrong-capture')
+                spec = replace(spec, stdin=json.dumps(payload).encode())
+            else:
+                worker_spec = Path(spec.argv[4])
+                data = json.loads(worker_spec.read_text())
+                record_path = Path(data['record'])
+                record = json.loads(record_path.read_text())
+                data['agent'].update(harness='fake', model='one' if record['slot'] == '1' else 'two')
+                record['agent'] = data['agent']
+                write_json_atomic(worker_spec, data)
+                write_json_atomic(record_path, record)
+        return launch(supervisor, spec, **identity)
+
+    monkeypatch.setattr(ProcessSupervisor, 'start', start_worker)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code == 1, error
+    assert not list(root.glob('*-r1.count'))
+    assert not list((run / 'processes').glob('*.json'))
+    assert not list((run / 'rounds/round-01').glob('*-streams'))
+    manifests = sorted((run / 'rounds/round-01').glob('*-run.json'))
+    assert len(manifests) == 2
+    reason = 'admitted provider changed' if drift == 'provider' else 'admitted invocation changed'
+    assert all(reason in json.loads(p.read_text())['error'] for p in manifests)
+
+
+def test_agy_resume_rejects_removed_saved_model(agy_pair, pair_fixture, capsys):
+    from test_pair import AGY_MODELS
+    start, root, profile, args = agy_pair
+    profile('accept')
+    extra, _ = args('1', AGY_MODELS[1])
+    run = start(*extra)
+    registry_file = pair_fixture[2]
+    registry = json.loads(registry_file.read_text())
+    registry['agents']['agy']['model']['known_models'].remove(AGY_MODELS[1])
+    registry_file.write_text(json.dumps(registry))
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code != 0 and AGY_MODELS[1] in error and 'model' in error
+    assert not list(root.glob('*-r1.count'))
+
+
+@pytest.mark.parametrize('purpose', ['general', 'plan'])
+@pytest.mark.parametrize('slot', ['1', '2'])
+@pytest.mark.parametrize('change', ['fixed-template', 'competing-selector'])
+def test_agy_resume_rejects_wrong_model_binding(agy_pair, pair_fixture, capsys, purpose, slot, change):
+    from test_pair import AGY_MODELS
+
+    start, root, profile, args = agy_pair
+    model = AGY_MODELS[1]
+    profile('accept')
+    extra, _ = args(slot, model)
+    run = start('--purpose', purpose, *extra)
+    registry_file = pair_fixture[2]
+    original = registry_file.read_text()
+    registry = json.loads(original)
+    agy = registry['agents']['agy']
+    if change == 'fixed-template':
+        agy['model']['flag_template'] = f'--model {AGY_MODELS[0]}'
+    else:
+        agy['invocation']['args_template'].insert(-4, f'--model={AGY_MODELS[0]}')
+    write_json_atomic(registry_file, registry)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code == 2 and f'agent {slot}' in error and model in error and 'not explicitly selected' in error
+    assert not list(root.glob('*-r1.count'))
+    assert not list((run / 'workers').glob('*.json'))
+    registry_file.write_text(original)
+    code, _, error = invoke(capsys, 'run-round', '--run-dir', str(run))
+    assert code == 0, error
+    argv = json.loads((root / f'{model}-argv.json').read_text())
+    assert argv[argv.index('--model') + 1] == model and argv.count('--model') == 1
+    record, = (run / 'rounds/round-01').glob(f'agent-{slot}-attempt-*-run.json')
+    result = json.loads(record.read_text())
+    assert result['agent']['model'] == model and result['purpose'] == purpose

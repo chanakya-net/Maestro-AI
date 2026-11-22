@@ -8,6 +8,7 @@ to their node entrypoint, preserving every argument through native argv.
 from __future__ import annotations
 
 import argparse
+from base64 import b64decode, b64encode
 import codecs
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
@@ -183,7 +184,9 @@ def resolve_agy_plan_profile(registry):
     A profile must verify the exact launcher, its environment and stream
     transport, and enforce read-only access to source, Git metadata and the
     designated artifacts for the provider and its descendants. A registry
-    token alone cannot supply that proof. No production profile is verified.
+    token alone cannot supply that proof. For pair discussions the verifier
+    also exposes allows(model, role) for admission before round artifacts exist.
+    No production profile is verified.
     """
     return None
 
@@ -222,6 +225,132 @@ def agy_plan_invocation(config, registry):
     encoded = json.dumps((str(bound.cwd), bound.argv, bound.env, bound.unset_env,
                           [str(path) for path in runtime_paths], hashlib.sha256(bound.stdin).hexdigest()), sort_keys=True)
     return bound, hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+@dataclass(frozen=True)
+class ProtectedLaunch:
+    """One verified AGY launch: the exact spec, config and registry snapshot."""
+    config: AgentRunConfig
+    registry: dict
+    name: str
+    spec: ProcessSpec
+    digest: str
+
+    def worker_input(self):
+        """Carry the admitted spec over the supervisor's private stdin transport."""
+        spec = self.spec
+        data = {'argv': spec.argv, 'cwd': str(spec.cwd), 'stdout': str(spec.stdout),
+                'stderr': str(spec.stderr), 'unset_env': spec.unset_env,
+                'stdin': None if spec.stdin is None else b64encode(spec.stdin).decode('ascii')}
+        # The worker inherits spec.env separately. Keep it out of the stdin file.
+        return json.dumps(data).encode('utf-8')
+
+    @classmethod
+    def from_worker_input(cls, config, registry, data, expected_digest):
+        # The private handoff carries the invocation, but cannot enable AGY
+        # when the trusted runtime does not have an applicable profile.
+        require_agy_pair_profile(registry, config.model, config.role)
+        spec = json.loads(data)
+        bound = ProcessSpec(tuple(spec['argv']), Path(spec['cwd']), dict(os.environ),
+                            stdout=Path(spec['stdout']), stderr=Path(spec['stderr']),
+                            unset_env=tuple(spec['unset_env']),
+                            stdin=None if spec['stdin'] is None else b64decode(spec['stdin'], validate=True))
+        return cls(_protected_config(config, registry), registry, 'agy', bound, expected_digest)
+
+
+def _spec_digest(config, spec, registry):
+    spec_fields = {**asdict(spec), 'stdin': None if spec.stdin is None else hashlib.sha256(spec.stdin).hexdigest()}
+    encoded = json.dumps((asdict(config), spec_fields, registry), sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+def _protected_config(config, registry):
+    if not config.stream_directory or not config.run_id or not config.attempt_id:
+        raise ValueError('protected launch requires a stream directory and attempt identity')
+    paths = {name: Path(getattr(config, name)).resolve() for name in (
+        'repo_root', 'prompt_file', 'context_file', 'registry_file', 'stream_directory',
+        'record_directory', 'process_state_file') if getattr(config, name) is not None}
+    paths.setdefault('record_directory', (paths['repo_root'] / '.ai-skills' / 'processes').resolve())
+    return effective_config(config, registry).replace(**paths)
+
+
+def _protected_captures(directory):
+    paths = (directory / 'stdout', directory / 'stderr')
+    if any(path != path.resolve() for path in paths):
+        raise ValueError('protected capture paths must remain resolved')
+    return paths
+
+
+def _passes_model(argv, agent, model):
+    template = _template_tokens(agent.get('model', {}).get('flag_template', ''), {})
+    if template not in (('--model', '{{model}}'), ('--model={{model}}',)) or model.startswith('-'):
+        return False
+    args = argv[1:]
+    if any(arg.startswith('-') and not arg.startswith('--') and 'm' in arg.split('=', 1)[0] for arg in args):
+        return False
+    selectors = [i for i, arg in enumerate(args) if arg.partition('=')[0] == '--model']
+    if len(selectors) != 1:
+        return False
+    index = selectors[0]
+    flag = _template_tokens(template, {'model': model})
+    return '--' not in args[:index] and args[index:index + len(flag)] == flag
+
+
+def require_agy_pair_profile(registry, model, role):
+    profile = resolve_agy_plan_profile(registry)
+    if profile is None:
+        raise ValueError('agy-read-only-unavailable: no verified enforcement profile is available')
+    allows = getattr(profile, 'allows', None)
+    if not callable(allows) or not allows(model, role):
+        raise ValueError('agy-read-only-unavailable: the verified profile does not admit this model and purpose')
+    return profile
+
+
+def bind_agy_launch(config, registry, *, worker_environment=None):
+    """Resolve, verify and freeze the unmanaged AGY invocation once.
+
+    Reuses the trusted profile contract of protected planning. The returned
+    binding is the only input run_agent launches; nothing is rebuilt or probed.
+    """
+    registry = json.loads(json.dumps(registry))
+    profile = require_agy_pair_profile(registry, config.model, config.role)
+    try:
+        name, agent = _agent(registry, config.agent)
+        if name != 'agy':
+            raise ValueError('provider is not AGY')
+        if config.dispatcher_managed or config.permission_mode != 'safe' or config.extra_args or config.gui_mode != '0':
+            raise ValueError('unsafe invocation settings')
+        config = _protected_config(config, registry)
+        model = config.model
+        if model not in agent.get('model', {}).get('known_models', []):
+            raise ValueError(f'model {model} is not registered')
+        invocation_config = config if worker_environment is None else config.replace(environment=worker_environment)
+        spec = build_invocation(invocation_config, registry)
+        if not _passes_model(spec.argv, agent, model):
+            raise ValueError(f'model {model} is not explicitly selected by the invocation')
+        env = {**os.environ, **spec.env}
+        argv = resolve_executable(spec.argv, env)
+        argv = (os.path.abspath(argv[0]), *argv[1:])
+        stdout, stderr = _protected_captures(config.stream_directory)
+        bound = replace(spec, argv=argv, env=env, stdout=stdout, stderr=stderr)
+        digest = _spec_digest(config, bound, registry)
+    except (OSError, ValueError) as error:
+        raise ValueError(f'agy-read-only-unavailable: {error}') from error
+    if not profile(config, bound):
+        raise ValueError('agy-read-only-unavailable: invocation is outside the verified profile')
+    if _spec_digest(config, bound, registry) != digest:
+        raise ValueError('agy-read-only-unavailable: verifier changed the invocation')
+    return ProtectedLaunch(config, registry, name, bound, digest)
+
+
+def _check_protected(protected, config):
+    name, _ = _agent(protected.registry, config.agent)
+    spec = protected.spec
+    if (name != protected.name or _protected_config(config, protected.registry) != protected.config or
+            _spec_digest(protected.config, spec, protected.registry) != protected.digest or
+            (spec.stdout, spec.stderr) != _protected_captures(protected.config.stream_directory) or
+            {**os.environ, **spec.env} != spec.env):
+        raise ValueError('agy-read-only-unavailable: admitted invocation changed')
 
 
 def capture_source(config, name=None):
@@ -640,8 +769,13 @@ def _finish_agy(tails, code, model, bus, *, managed):
     return code, reason
 
 
-def run_agent(config: AgentRunConfig) -> AgentRunResult:
-    registry = load_registry(config.registry_file)
+def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None, *,
+              registry: dict | None = None) -> AgentRunResult:
+    if protected:
+        _check_protected(protected, config)
+        registry = protected.registry
+    elif registry is None:
+        registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
     protected_plan = managed_agy_plan(config, registry)
     if protected_plan:
@@ -650,12 +784,14 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
             raise ValueError('agy-plan-read-only-unavailable: missing protected capture binding')
     elif config.role == 'plan' and capture_source(config) == AGY:
         raise ValueError('agy-plan-read-only-unavailable: admitted agent changed')
-    config = effective_config(config, registry)
+    config = protected.config if protected else effective_config(config, registry)
     source = capture_source(config, name)
     stream_capture = source in STREAM_SOURCES
     invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
-    if protected_plan:
+    if protected:
+        spec = protected.spec
+    elif protected_plan:
         spec, digest = agy_plan_invocation(config, registry)
         if digest != config.result_capture_context.get('invocation_digest'):
             raise ValueError('agy-plan-read-only-unavailable: admitted invocation changed')
@@ -684,7 +820,7 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
                     capture.exists() or capture.is_symlink()):
                 raise ValueError('unsafe or occupied Codex capture path')
         directory.mkdir(parents=True, exist_ok=True)
-        output, errors = directory/'stdout', directory/'stderr'
+        output, errors = (spec.stdout, spec.stderr) if protected else (directory/'stdout', directory/'stderr')
         with output.open('xb') as stdout, errors.open('xb'):
             stdout_info = os.fstat(stdout.fileno())
         agy_stream = invocation.get('prompt_transport') == AGY or source == AGY
@@ -697,11 +833,14 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         tails = [output_tail(output, 'stdout', bus), error_tail(errors, 'stderr', bus)]
         owned = None
         try:
-            argv = spec.argv if protected_plan else resolve_executable(spec.argv, spec.env)
-            if not protected_plan:
+            argv = spec.argv if (protected_plan or protected) else resolve_executable(spec.argv, spec.env)
+            if not (protected_plan or protected):
                 _check_cli_capabilities(argv, spec, invocation)
             supervisor = ProcessSupervisor(config.record_directory or (Path(config.repo_root)/'.ai-skills'/'processes'))
-            owned = supervisor.start(replace(spec, argv=argv, stdout=output, stderr=errors),
+            if protected:
+                _check_protected(protected, config)
+            launch = spec if protected else replace(spec, argv=argv, stdout=output, stderr=errors)
+            owned = supervisor.start(launch,
                                      run_id=config.run_id or 'agent-' + uuid.uuid4().hex,
                                      attempt_id=config.attempt_id or uuid.uuid4().hex)
             state = {'schema_version':1, 'identity':asdict(owned.identity), 'record_directory':str(supervisor.directory), 'state':'alive', 'stdout_file':str(output), 'stderr_file':str(errors)}
