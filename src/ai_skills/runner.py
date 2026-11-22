@@ -12,6 +12,7 @@ import codecs
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -152,7 +153,8 @@ def _payload(config):
         if config.verification_context is not None:
             metadata['verification_contract'] = config.verification_context
         if config.result_capture_context is not None:
-            metadata['result_capture'] = config.result_capture_context
+            metadata['result_capture'] = {key: value for key, value in config.result_capture_context.items()
+                                          if key != 'invocation_digest'}
         protocol = resource_path('artifact-protocol.md').read_text(encoding='utf-8')
         payload += '\n\n' + protocol.rstrip('\n') + '\n\nAuthoritative attempt metadata:\n'
         payload += json.dumps(metadata, ensure_ascii=False, sort_keys=True) + '\n\n'
@@ -175,12 +177,61 @@ _CAPTURE_ROUTES = {'codex': (CODEX, 'stdin'), 'claude': (CLAUDE, 'stdin'),
                    'agy': (AGY, 'agy-stream-json'), 'opencode': (OPENCODE, 'stdin')}
 
 
+def resolve_agy_plan_profile(registry):
+    """Return a trusted verifier of the resolved, enforced streaming invocation.
+
+    A profile must verify the exact launcher, its environment and stream
+    transport, and enforce read-only access to source, Git metadata and the
+    designated artifacts for the provider and its descendants. A registry
+    token alone cannot supply that proof. No production profile is verified.
+    """
+    return None
+
+
+def managed_agy_plan(config, registry):
+    return (config.dispatcher_managed and config.role == 'plan' and
+            _agent(registry, config.agent)[0] == 'agy')
+
+
+def require_agy_plan_profile(registry):
+    profile = resolve_agy_plan_profile(registry)
+    if profile is None:
+        raise ValueError('agy-plan-read-only-unavailable: no verified enforcement profile')
+    return profile
+
+
+def agy_plan_invocation(config, registry):
+    """Bind the exact invocation the supervisor will launch to verified enforcement."""
+    profile = require_agy_plan_profile(registry)
+    if (config.permission_mode != 'safe' or config.extra_args or config.gui_mode != '0' or
+            capture_source(config, 'agy') != AGY):
+        raise ValueError('agy-plan-read-only-unavailable: unsafe invocation settings')
+    try:
+        spec = build_invocation(config, registry)
+        if not spec.stdin or capture_candidate(config, registry, spec) != AGY:
+            raise ValueError('protected planning requires AGY stream capture')
+        # Bind the owner environment as well as the removals applied before
+        # starting the provider.
+        env = {**os.environ, **spec.env}
+        bound = replace(spec, argv=resolve_executable(spec.argv, env), env=env)
+    except (OSError, ValueError) as error:
+        raise ValueError(f'agy-plan-read-only-unavailable: {error}') from error
+    if not profile(config, bound):
+        raise ValueError('agy-plan-read-only-unavailable: invocation is outside the verified profile')
+    runtime_paths = (config.record_directory, config.stream_directory, config.process_state_file)
+    encoded = json.dumps((str(bound.cwd), bound.argv, bound.env, bound.unset_env,
+                          [str(path) for path in runtime_paths], hashlib.sha256(bound.stdin).hexdigest()), sort_keys=True)
+    return bound, hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
 def capture_source(config, name=None):
-    if (not config.dispatcher_managed or config.role not in ('impl', 'modify') or
+    if (not config.dispatcher_managed or config.role not in ('impl', 'modify', 'plan') or
             config.verification_context is not None or config.result_capture_context is None):
         return None
     source = config.result_capture_context.get('source', CODEX)
     if not isinstance(source, str) or (name is not None and source != _CAPTURE_ROUTES.get(name, (None, None))[0]):
+        return None
+    if config.role == 'plan' and source != AGY:
         return None
     if source == CODEX and config.final_response_file is not None:
         return source
@@ -592,12 +643,24 @@ def _finish_agy(tails, code, model, bus, *, managed):
 def run_agent(config: AgentRunConfig) -> AgentRunResult:
     registry = load_registry(config.registry_file)
     name, agent = _agent(registry, config.agent)
+    protected_plan = managed_agy_plan(config, registry)
+    if protected_plan:
+        require_agy_plan_profile(registry)
+        if capture_source(config, name) != AGY:
+            raise ValueError('agy-plan-read-only-unavailable: missing protected capture binding')
+    elif config.role == 'plan' and capture_source(config) == AGY:
+        raise ValueError('agy-plan-read-only-unavailable: admitted agent changed')
     config = effective_config(config, registry)
     source = capture_source(config, name)
     stream_capture = source in STREAM_SOURCES
     invocation = agent.get('invocation', {})
     model = config.model or agent.get('model', {}).get('default', '')
-    spec = build_invocation(config, registry)
+    if protected_plan:
+        spec, digest = agy_plan_invocation(config, registry)
+        if digest != config.result_capture_context.get('invocation_digest'):
+            raise ValueError('agy-plan-read-only-unavailable: admitted invocation changed')
+    else:
+        spec = build_invocation(config, registry)
     if not math.isfinite(config.heartbeat_seconds) or config.heartbeat_seconds < 0:
         raise ValueError('heartbeat_seconds must be nonnegative and finite')
     bus = EventBus(status_file=config.status_file, events_log=config.events_log, log_file=config.log_file)
@@ -634,8 +697,9 @@ def run_agent(config: AgentRunConfig) -> AgentRunResult:
         tails = [output_tail(output, 'stdout', bus), error_tail(errors, 'stderr', bus)]
         owned = None
         try:
-            argv = resolve_executable(spec.argv, spec.env)
-            _check_cli_capabilities(argv, spec, invocation)
+            argv = spec.argv if protected_plan else resolve_executable(spec.argv, spec.env)
+            if not protected_plan:
+                _check_cli_capabilities(argv, spec, invocation)
             supervisor = ProcessSupervisor(config.record_directory or (Path(config.repo_root)/'.ai-skills'/'processes'))
             owned = supervisor.start(replace(spec, argv=argv, stdout=output, stderr=errors),
                                      run_id=config.run_id or 'agent-' + uuid.uuid4().hex,

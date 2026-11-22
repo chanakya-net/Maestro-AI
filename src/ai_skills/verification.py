@@ -96,45 +96,74 @@ def _capture_commit_ok(root, payload, head, start, no_op):
 
 
 def captured_result_reason(config, response):
-    """Return a bounded rejection reason and the unchanged inner report."""
-    from ai_skills.artifacts import GitEvidence, review_comment_closure_reason, role_failure_reason, validate_artifact
+    """Return a rejection reason, inner report and optional plan companion."""
+    from ai_skills.artifacts import role_failure_reason
 
     try:
         envelope = json.loads(response.decode('utf-8'), object_pairs_hook=_unique_json_object,
             parse_float=_finite_json_number, parse_constant=_finite_json_number)
     except (ValueError, RecursionError):
-        return 'capture-invalid-json', None
+        return 'capture-invalid-json', None, None
     run = config.agent_run
     identity = capture_identity(run)
-    if (not isinstance(envelope, dict) or envelope.keys() != identity.keys() | {'result'} or
+    payload = envelope.get('result') if isinstance(envelope, dict) else None
+    typed_failure = isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure'
+    companion = run.role == 'plan' and not typed_failure
+    keys = identity.keys() | ({'result', 'plan_markdown'} if companion else {'result'})
+    if (not isinstance(envelope, dict) or envelope.keys() != keys or
             type(envelope['schema_version']) is not int or
             any(envelope[key] != value for key, value in identity.items())):
-        return 'capture-identity-mismatch', None
-    payload = envelope['result']
-    if isinstance(payload, dict) and payload.get('artifact_kind') == 'role_failure':
+        return 'capture-identity-mismatch', None, None
+    if typed_failure:
         reason = role_failure_reason(payload, issue=str(run.issue), role=run.role,
             run_id=run.run_id, attempt_id=run.attempt_id)
-        return reason, payload
+        return reason, payload, None
+    if companion:
+        markdown = envelope['plan_markdown']
+        return _captured_plan_reason(run, payload, markdown), payload, markdown
+    return _captured_commit_reason(config, payload), payload, None
+
+
+def _captured_plan_reason(run, payload, markdown):
+    from ai_skills.artifacts import GitEvidence, validate_artifact
+
+    try:
+        present = isinstance(markdown, str) and bool(markdown.strip())
+        if present:
+            markdown.encode('utf-8')
+    except UnicodeError:
+        return 'capture-response-invalid'
+    if isinstance(payload, dict) and ('commit_sha' in payload or type(payload.get('schema_version')) is not int or
+                                     not isinstance(payload.get('complexity_level'), str)):
+        return 'invalid-plan-result-artifact'
+    return validate_artifact('plan', payload,
+        GitEvidence(issue=str(run.issue), plan_file_present=present)).reason
+
+
+def _captured_commit_reason(config, payload):
+    from ai_skills.artifacts import GitEvidence, review_comment_closure_reason, validate_artifact
+
+    run = config.agent_run
     if (not isinstance(payload, dict) or payload.get('status') != 'success' or
             type(payload.get('no_op', False)) is not bool or payload.get('execution_mode', 'implement') != 'implement'):
-        return 'capture-unsupported-result', None
+        return 'capture-unsupported-result'
     no_op = payload.get('no_op', False)
     root, start = str(run.repo_root), config.pre_spawn_head
     try:
         head = git.current_head(root)
         if not _capture_commit_ok(root, payload, head, start, no_op):
-            return 'capture-commit-mismatch', None
+            return 'capture-commit-mismatch'
         if git.git_output(root, 'status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none'):
-            return 'capture-dirty-worktree', None
+            return 'capture-dirty-worktree'
     except (OSError, subprocess.SubprocessError):
-        return 'capture-git-unavailable', None
+        return 'capture-git-unavailable'
     decision = validate_artifact(run.role, payload, GitEvidence(issue=str(run.issue), repo_available=True,
         head=head, canonical_commit=head, pre_spawn_head=start, canonical_pre_spawn_head=start))
     reason = decision.reason or check_evidence_reason(payload.get('verification'), expected_commit=head,
         required_checks=config.result_capture['required_checks'])
     if not reason and run.role == 'modify':
         reason = review_comment_closure_reason(payload, config.result_capture['review_comment_ids'])
-    return reason, payload
+    return reason
 
 
 def _source(config):

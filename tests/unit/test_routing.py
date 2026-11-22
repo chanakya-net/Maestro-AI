@@ -1,4 +1,5 @@
 import copy
+from dataclasses import replace
 import json
 import sys
 from pathlib import Path
@@ -154,7 +155,7 @@ def test_routing_availability_excludes_unavailable_agy_harness(tmp_path):
 
 
 @pytest.mark.parametrize("band", BANDS)
-def test_planning_never_routes_agy_forced_or_automatic(band):
+def test_stock_planning_excludes_agy_forced_or_automatic(band):
     registry = load_registry(SOURCE_REGISTRY)
     with pytest.raises(SystemExit) as exc:
         select_route(RouteRequest(role="plan", complexity_level=band, forced_agent="agy"), registry, {})
@@ -179,6 +180,33 @@ def test_normal_planning_selection_stays_non_agy_at_every_band(band):
     ).selection
     assert selection["agent"] in {"codex", "claude"}
     assert all(candidate["agent"] != "agy" for candidate in selection["evaluated_candidates"])
+
+
+@pytest.mark.parametrize("selectors", [{}, {"forced_agent": "agy"}, {"forced_model": "gemini-4-neon-high"}])
+def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors):
+    from ai_skills import runner
+
+    monkeypatch.setattr(runner, "resolve_agy_plan_profile", lambda registry: lambda config, spec: True)
+    request = RouteRequest(role="plan", complexity_level="medium-hard", detected_agents=frozenset({"agy"}),
+                           **selectors)
+    registry = load_registry(SOURCE_REGISTRY)
+    selected = select_route(request, registry, {})
+    assert (selected.agent, selected.model, selected.routing_level) == ("agy", "gemini-4-neon-high", "holy-fuck")
+
+
+@pytest.mark.parametrize("availability", [
+    {"agents": {"agy"}}, {"models": {"gemini-4-neon-high"}}, {"pairs": {("agy", "gemini-4-neon-high")}},
+])
+def test_verified_agy_plan_preserves_availability_exclusions(monkeypatch, availability):
+    from ai_skills import runner
+
+    monkeypatch.setattr(runner, "resolve_agy_plan_profile", lambda registry: lambda config, spec: True)
+    request = RouteRequest(role="plan", complexity_level="medium-hard", availability=availability)
+    registry = load_registry(SOURCE_REGISTRY)
+    assert select_route(request, registry, {}).agent in {"codex", "claude"}
+    with pytest.raises(SystemExit) as exc:
+        select_route(replace(request, forced_agent="agy"), registry, {})
+    assert exc.value.code == 2
 
 
 def test_explicit_valid_band_override_still_routes_non_agy_planning():
