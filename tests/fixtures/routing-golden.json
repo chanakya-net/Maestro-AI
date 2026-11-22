@@ -531,7 +531,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -556,7 +556,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -791,7 +791,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -816,7 +816,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1155,7 +1155,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1180,7 +1180,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1467,7 +1467,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1492,7 +1492,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1779,7 +1779,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1804,7 +1804,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "high",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -1987,7 +1987,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "xhigh",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -2012,7 +2012,7 @@
     },
     "expected": {
       "agent": "codex",
-      "model": "gpt-6.2-sol",
+      "model": "gpt-6.2-astra",
       "effort": "xhigh",
       "selection_reason": "usage-share-debt",
       "routing_level": "complex",
@@ -2544,7 +2544,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-neon-high",
+      "model": "gemini-4-neon-xhigh",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "complex",
@@ -2692,7 +2692,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-neon-high",
+      "model": "gemini-4-neon-xhigh",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "complex",
@@ -2761,7 +2761,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-neon-high",
+      "model": "gemini-4-neon-xhigh",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "complex",

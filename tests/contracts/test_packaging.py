@@ -180,7 +180,7 @@ matrix = {
     'easy': {'gemini-4-neon-medium'},
     'medium': {'gemini-4-neon-high'},
     'medium-hard': {'gemini-4-neon-high'},
-    'complex': {'gemini-4-neon-high'},
+    'complex': {'gemini-4-neon-xhigh', 'gemini-4-neon-high'},
     'holy-fuck': {'gemini-4-neon-high'},
 }
 agy = frozenset({'agy'})

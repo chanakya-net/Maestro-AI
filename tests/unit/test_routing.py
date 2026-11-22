@@ -57,7 +57,7 @@ AGY_WORK_MATRIX = {
     "easy": {"gemini-4-neon-medium"},
     "medium": {"gemini-4-neon-high"},
     "medium-hard": {"gemini-4-neon-high"},
-    "complex": {"gemini-4-neon-high"},
+    "complex": {"gemini-4-neon-xhigh", "gemini-4-neon-high"},
     "holy-fuck": {"gemini-4-neon-high"},
 }
 NON_AGY_BANDS = ("complex", "holy-fuck")
@@ -225,15 +225,15 @@ def test_agy_sticky_reviewer_and_usage_attribution_survive_escalated_band():
         RouteRequest(role="review", complexity_level="medium-hard", detected_agents=frozenset({"agy"})),
         registry, ledger,
     ).selection
-    assert (first["routing_level"], first["model"]) == ("complex", "gemini-4-neon-high")
+    assert (first["routing_level"], first["model"]) == ("complex", "gemini-4-neon-xhigh")
     routing.append_decision(ledger, first)
     assert ledger["totals"]["agents"]["agy"] == 1
     assert ledger["totals"]["roles"]["review"]["agents"]["agy"] == 1
     sticky = select_route(
-        RouteRequest(role="review", complexity_level="medium-hard", prefer_model="gemini-4-neon-high"),
+        RouteRequest(role="review", complexity_level="medium-hard", prefer_model="gemini-4-neon-xhigh"),
         registry, ledger,
     ).selection
-    assert (sticky["agent"], sticky["model"]) == ("agy", "gemini-4-neon-high")
+    assert (sticky["agent"], sticky["model"]) == ("agy", "gemini-4-neon-xhigh")
     assert sticky["selection_reason"] == "sticky-reviewer-preference"
 
 
@@ -475,7 +475,7 @@ def test_nonobject_ledger_rejected(payload):
     ("easy", "claude-haiku-5-5", "high"),
     ("medium", "claude-opus-5-5", "high"),
     ("medium-hard", "claude-opus-5-5", "high"),
-    ("complex", "claude-opus-5-5", "high"),
+    ("complex", "claude-fable-5-2", "medium"),
     ("holy-fuck", "claude-fable-5-2", "high"),
 ])
 def test_claude_routes_use_current_model_families(band, model, effort):
@@ -504,7 +504,7 @@ def test_retired_claude_models_cannot_be_routed(model):
     ("easy", "gpt-6.1-terra", "high"),
     ("medium", "gpt-6.2-sol", "high"),
     ("medium-hard", "gpt-6.2-sol", "high"),
-    ("complex", "gpt-6.2-sol", "high"),
+    ("complex", "gpt-6.2-astra", "high"),
     ("holy-fuck", "gpt-6.2-astra", "high"),
 ])
 def test_codex_routes_use_requested_model_families(band, model, effort):
@@ -770,3 +770,24 @@ def test_medium_and_medium_hard_use_sol_opus_and_neon_high_with_requested_target
         decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent=agent), registry, {})
         assert (decision.agent, decision.model, decision.effort) == (agent, model, expected_effort)
     assert routing.target_policy(registry, "impl", band) == {"agy": 40, "codex": 35, "claude": 25}
+
+
+def test_complex_uses_astra_high_fable_medium_and_neon_xhigh_with_high_fallback():
+    registry = load_registry(SOURCE_REGISTRY)
+    codex = select_route(RouteRequest(role="impl", complexity_level="complex", forced_agent="codex"), registry, {})
+    assert (codex.agent, codex.model, codex.effort) == ("codex", "gpt-6.2-astra", "high")
+    claude = select_route(RouteRequest(role="impl", complexity_level="complex", forced_agent="claude"), registry, {})
+    assert (claude.agent, claude.model, claude.effort) == ("claude", "claude-fable-5-2", "medium")
+    agy_primary = select_route(RouteRequest(role="impl", complexity_level="complex", forced_agent="agy"), registry, {})
+    assert (agy_primary.agent, agy_primary.model) == ("agy", "gemini-4-neon-xhigh")
+    agy_fallback = select_route(
+        RouteRequest(
+            role="impl",
+            complexity_level="complex",
+            forced_agent="agy",
+            availability={"models": {"gemini-4-neon-xhigh"}},
+        ),
+        registry,
+        {},
+    )
+    assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-neon-high")

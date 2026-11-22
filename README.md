@@ -423,12 +423,13 @@ All 21 IDs are registered for AGY only.
 | GPT-OSS | `gpt-oss-120b-medium` |
 
 Automatic non-scoring AGY work follows the approved band matrix. Only Neon Medium
-(`gemini-4-neon-medium`) serves `quite-easy` and `easy`, and Neon High
-(`gemini-4-neon-high`) serves `medium`, `medium-hard`, `complex`, and
-`holy-fuck`. Hydrogen High (`gemini-4-hydrogen-high`) is the sole AGY
-complexity-scoring model and is eligible at all six scoring bands. AGY models
-outside Hydrogen High carry `explicit_only`. The Gemini 4 work models above
-also carry `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select
+(`gemini-4-neon-medium`) serves `quite-easy` and `easy`, Neon High
+(`gemini-4-neon-high`) serves `medium`, `medium-hard`, `complex` (fallback), and
+`holy-fuck`, and Neon XHigh (`gemini-4-neon-xhigh`) is preferred at `complex`
+when available (falling back to Neon High). Hydrogen High
+(`gemini-4-hydrogen-high`) is the sole AGY complexity-scoring model and is
+eligible at all six scoring bands. AGY models outside Hydrogen High carry
+`explicit_only`. The Gemini 4 work models above also carry `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select
 Carbon by exact ID with an entitled account. Listing the model or selecting a
 route performs no authenticated inference or entitlement check. A direct AGY run
 without an explicit model uses `gemini-4-neon-high`.

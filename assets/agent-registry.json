@@ -20,19 +20,19 @@
       "min_band": "medium",
       "context_window": 1000000,
       "agents": ["claude"],
-      "work_bands": ["medium", "medium-hard", "complex", "holy-fuck"],
-      "effort_by_band": {"medium": "high", "medium-hard": "high", "complex": "high", "holy-fuck": "high"}
+      "work_bands": ["medium", "medium-hard", "holy-fuck"],
+      "effort_by_band": {"medium": "high", "medium-hard": "high", "holy-fuck": "high"}
     },
     "claude-fable-5-2": {
       "provider": "anthropic",
       "ability": "frontier",
       "complexity_weight": 10,
       "exclude_from_complexity": true,
-      "min_band": "holy-fuck",
+      "min_band": "complex",
       "context_window": 1000000,
       "agents": ["claude"],
-      "work_bands": ["holy-fuck"],
-      "effort_by_band": {"holy-fuck": "high"}
+      "work_bands": ["complex", "holy-fuck"],
+      "effort_by_band": {"complex": "medium", "holy-fuck": "high"}
     },
     "claude-sonnet-5-5": {
       "provider": "anthropic",
@@ -49,12 +49,12 @@
       "ability": "frontier",
       "complexity_weight": 10,
       "exclude_from_complexity": true,
-      "min_band": "holy-fuck",
+      "min_band": "complex",
       "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
-      "work_bands": ["holy-fuck"],
-      "effort_by_band": {"holy-fuck": "high"}
+      "work_bands": ["complex", "holy-fuck"],
+      "effort_by_band": {"complex": "high", "holy-fuck": "high"}
     },
     "gpt-6.1-terra": {
       "provider": "openai",
@@ -76,8 +76,8 @@
       "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
-      "work_bands": ["medium", "medium-hard", "complex", "holy-fuck"],
-      "effort_by_band": {"medium": "high", "medium-hard": "high", "complex": "high", "holy-fuck": "high"}
+      "work_bands": ["medium", "medium-hard", "holy-fuck"],
+      "effort_by_band": {"medium": "high", "medium-hard": "high", "holy-fuck": "high"}
     },
     "gpt-5.4-mini": {
       "provider": "openai",
@@ -178,7 +178,8 @@
       "complexity_weight": 8,
       "exclude_from_complexity": true,
       "explicit_only": true,
-      "agents": ["agy"]
+      "agents": ["agy"],
+      "work_bands": ["complex"]
     },
     "gemini-4-hydrogen-low": {
       "provider": "google",

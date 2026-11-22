@@ -187,6 +187,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     designated_work_bands = {
         "gemini-4-neon-medium": ["quite-easy", "easy"],
         "gemini-4-neon-high": ["medium", "medium-hard", "complex", "holy-fuck"],
+        "gemini-4-neon-xhigh": ["complex"],
     }
     for model in explicit_only:
         assert catalog[model]["agents"] == ["agy"]
