@@ -1,7 +1,7 @@
 """Durable two-colleague coordinator, using the shared Python agent runner.
 
-No provider invocation is built here. An owned worker calls run_agent; both the
-worker and provider publish creation-time identities before work can be retried.
+An owned worker calls run_agent with the admitted AGY binding when required.
+Both worker and provider publish creation-time identities before work can be retried.
 Unknown ownership always blocks spending or termination.
 """
 from __future__ import annotations
@@ -76,23 +76,17 @@ def _agy_refusal(slot, agent, reason):
         'colleague until a verified AGY profile is available.')
 
 
-def _agy_profile(slot, agent, registry):
-    """Return the runner's verified AGY profile, failing closed when none exists."""
-    from ai_skills import runner
-    profile = runner.resolve_agy_plan_profile(registry)
-    if profile is None:
-        raise _agy_refusal(slot, agent, 'no verified read-only enforcement profile is available')
-    return profile
-
-
-def _bind_agy(slot, agent, registry, config):
-    """Resolve and verify the one AGY launch binding; refuse on any rejection."""
-    from ai_skills import runner
-    _agy_profile(slot, agent, registry)
+def _check_provider(slot, agent, registry):
+    from ai_skills.runner import _agent
+    saved = agent['harness']
     try:
-        return runner.bind_agy_launch(config, registry)
+        resolved, entry = _agent(registry, saved)
     except ValueError as error:
-        raise _agy_refusal(slot, agent, str(error).removeprefix('agy-read-only-unavailable: ')) from error
+        raise PairError(f'agent {slot} provider changed or is unavailable: {error}') from error
+    if resolved != saved:
+        raise PairError(f'agent {slot} provider changed from {saved} to {resolved}; refusing launch')
+    if entry.get('enabled') is False:
+        raise PairError(f'agent {slot} provider {saved} is unavailable; refusing launch')
 
 
 def _attempt_config(spec, record):
@@ -109,7 +103,8 @@ def _attempt_config(spec, record):
                           registry_file=Path(spec['registry_file']) if spec['registry_file'] else None,
                           process_state_file=Path(record['provider_state']), run_id=record['run_id'],
                           attempt_id=record['attempt_id'], record_directory=Path(spec['record_directory']),
-                          stream_directory=Path(str(path).removesuffix('-run.json') + '-streams'))
+                          stream_directory=Path(str(path).removesuffix('-run.json') + '-streams'),
+                          scrub_ambient_aliases=a['harness'] == 'agy')
 
 
 def _object(path):
@@ -210,7 +205,9 @@ class PairRun:
             if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}', a['name']):
                 raise PairError(f'agent {slot} name must be 1-64 letters, digits, spaces, dot, underscore, or hyphen')
             agents[slot] = a
-        from ai_skills.runner import load_registry, _agent, _configured, runner_environment, AgentRunConfig
+        from ai_skills.runner import (
+            AgentRunConfig, _agent, _configured, load_registry, require_agy_pair_profile, runner_environment,
+        )
         registry = load_registry(options.registry_file)
         for slot, a in agents.items():
             requested = a['harness']
@@ -220,6 +217,11 @@ class PairRun:
                 raise PairError(f'agent {slot} harness "{requested}" is unavailable or not registered')
             if a['model'] not in entry.get('model', {}).get('known_models', []):
                 raise PairError(f'model "{a["model"]}" is not registered for agent {slot}')
+            if a['harness'] == 'agy':
+                try:
+                    require_agy_pair_profile(registry, a['model'], role)
+                except ValueError as error:
+                    raise _agy_refusal(slot, a, str(error).removeprefix('agy-read-only-unavailable: ')) from error
             detection = entry.get('detection', {})
             executable = detection.get('command') or entry.get('invocation', {}).get('command')
             environment = runner_environment(AgentRunConfig(agent=a['harness'], environment=options.environment))
@@ -230,7 +232,6 @@ class PairRun:
                 if not _configured(entry, environment, Path(options.workspace_root or Path.cwd())):
                     raise PairError(f'agent {slot} harness "{requested}" is not configured')
             if a['harness'] == 'agy':
-                _agy_profile(slot, a, registry)
                 a['safety_profile'] = AGY_PROFILE
                 continue
             profile = entry.get('permission_modes', {}).get('read_only')
@@ -255,14 +256,6 @@ class PairRun:
         workspace = Path(options.workspace_root or Path.cwd()).resolve()
         if not workspace.is_dir():
             raise PairError(f'workspace directory not found: {workspace}')
-        for slot, a in agents.items():
-            if a['harness'] == 'agy':
-                provisional = AgentRunConfig(
-                    agent='agy', model=a['model'], effort=a['effort'], role=role,
-                    requested_effort=a.get('requested_effort', ''), context_file=Path(prompt), prompt_file=Path(prompt),
-                    repo_root=workspace, unattended=True, gui_mode='0', permission_mode='safe',
-                    registry_file=Path(options.registry_file) if options.registry_file else None)
-                _bind_agy(slot, a, registry, provisional)
         root = Path(options.run_root or '.pair-colleague/runs').resolve()
         root.mkdir(parents=True, exist_ok=True)
         self.path = root / (datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:12])
@@ -490,12 +483,10 @@ class PairRun:
             self.collect(slot, record)
         return live
 
-    def attempt_agent(self, slot, purpose):
+    def attempt_agent(self, slot, purpose, registry):
         from ai_skills.effort import resolve_effort
-        from ai_skills.runner import load_registry
         agent = dict(self.config['agents'][slot])
         requested = agent.get('requested_effort') or agent['effort']
-        registry = load_registry(self.config.get('registry_file') or None)
         try:
             resolution = resolve_effort(agent['harness'], requested, _purpose_role(purpose), registry)
         except ValueError as error:
@@ -508,55 +499,29 @@ class PairRun:
             agent['effort'] = 'max'
         return agent
 
-    def agent_run_config(self, agent, purpose, workspace, prompt, **extra):
-        from ai_skills.runner import AgentRunConfig
-        registry_file = self.config.get('registry_file') or None
-        return AgentRunConfig(agent=agent['harness'], model=agent['model'], effort=agent['effort'],
-                              role=_purpose_role(purpose), requested_effort=agent.get('requested_effort', ''),
-                              context_file=self.round_dir / 'snapshot.md', prompt_file=Path(prompt),
-                              repo_root=Path(workspace), unattended=True, gui_mode='0', permission_mode='safe',
-                              registry_file=Path(registry_file) if registry_file else None, **extra)
+    def prepare_attempts(self, pending, purpose, workspace, env):
+        """Admit every pending slot before starting either worker."""
+        from ai_skills.runner import bind_agy_launch, load_registry
 
-    def guard_agy(self, pending, purpose, workspace):
-        """Refuse unverifiable or drifted slots before any slot launches, including on resume.
-
-        AGY slots are bound with their real prompt, attempt and runtime paths.
-        """
-        from ai_skills.runner import load_registry, _agent
         registry = load_registry(self.config.get('registry_file') or None)
+        prepared = []
         for slot in pending:
-            agent = self.config['agents'][slot]
-            try:
-                resolved, entry = _agent(registry, agent['harness'])
-            except ValueError as error:
-                raise PairError(f'agent {slot} provider changed or is unavailable: {error}') from error
-            if resolved != agent['harness']:
-                raise PairError(f'agent {slot} provider changed from {agent["harness"]} to {resolved}; refusing launch')
-            if resolved != 'agy':
-                continue
-            if agent['model'] not in entry.get('model', {}).get('known_models', []):
-                raise _agy_refusal(slot, agent, 'saved model is no longer registered')
-            self.preflight_agy(slot, purpose, workspace, registry)
+            agent = self.attempt_agent(slot, purpose, registry)
+            _check_provider(slot, agent, registry)
+            record, spec = self.attempt_documents(slot, agent, purpose, workspace)
+            bound = None
+            if agent['harness'] == 'agy':
+                try:
+                    bound = bind_agy_launch(_attempt_config(spec, record), registry, worker_environment=env)
+                except ValueError as error:
+                    raise _agy_refusal(slot, agent, str(error).removeprefix('agy-read-only-unavailable: ')) from error
+            prepared.append((record, spec, bound))
+        return prepared
 
-    def preflight_agy(self, slot, purpose, workspace, registry):
-        state = self.current['agents'][slot]
-        prompt_path = self.round_dir / f'agent-{slot}-prompt.md'
-        created = not prompt_path.exists()
-        sha = state.get('prompt_sha256')
-        try:
-            record, spec = self.attempt_documents(slot, purpose, workspace, state['attempts'] + 1)
-            _bind_agy(slot, self.config['agents'][slot], registry, _attempt_config(spec, record))
-        finally:
-            if created:
-                prompt_path.unlink(missing_ok=True)
-                state.pop('prompt_sha256', None)
-            elif sha is not None:
-                state['prompt_sha256'] = sha
-
-    def attempt_documents(self, slot, purpose, workspace, attempt):
+    def attempt_documents(self, slot, agent, purpose, workspace):
         """Return the manifest and spawn documents for one prospective attempt."""
-        agent = self.attempt_agent(slot, purpose)
-        prompt = self.render_prompt(slot, agent)
+        attempt = self.current['agents'][slot]['attempts'] + 1
+        prompt = self.render_prompt(slot, agent, attempt)
         prefix = self.prefix(slot, attempt)
         record = {'schema_version': 1, 'engine_version': ENGINE_VERSION, 'state': 'allocated',
                   'host': socket.gethostname(), 'run_id': self.state['run_id'],
@@ -564,14 +529,14 @@ class PairRun:
                   'round': self.state['round'], 'slot': slot, 'attempt': attempt, 'purpose': purpose, 'agent': agent,
                   'prompt': str(prompt), 'prompt_sha256': documents.sha256_file(prompt),
                   'snapshot_sha256': self.current['snapshot_sha256'], 'workspace_root': str(workspace),
-                  'deadline_epoch': time.time() + self.state['timeout_seconds'], 'exit_code': None,
+                  'exit_code': None,
                   'timed_out': False, 'interrupted': False, 'provider_state': str(prefix) + '-provider.json'}
         spec = {'record': str(prefix) + '-run.json', 'purpose': purpose, 'agent': agent,
                 'context': str(self.round_dir / 'snapshot.md'), 'prompt': str(prompt),
                 'registry_file': self.config.get('registry_file', ''), 'record_directory': str(self.path / 'processes')}
         return record, spec
 
-    def render_prompt(self, slot, agent):
+    def render_prompt(self, slot, agent, attempt):
         output = self.round_dir / f'agent-{slot}-prompt.md'
         if output.exists():
             _verify(output, self.current['agents'][slot].get('prompt_sha256'))
@@ -579,7 +544,7 @@ class PairRun:
             # changes the configuration for a subsequent retry.
             if agent['effort'] == self.config['agents'][slot]['effort']:
                 return output
-            output = Path(str(self.prefix(slot)) + '-prompt.md')
+            output = Path(str(self.prefix(slot, attempt)) + '-prompt.md')
         a = agent
         other = self.config['agents']['2' if slot == '1' else '1']
         template = self.path / 'agent-prompt-template.md'
@@ -587,7 +552,31 @@ class PairRun:
         documents.render_template(str(template), str(output), [f'AGENT_NAME={a["name"]}', f'OTHER_AGENT_NAME={other["name"]}', f'ROUND_NUMBER={self.state["round"]}', f'MIN_ROUNDS={self.state["min_rounds"]}', f'MAX_ROUNDS={self.state["max_rounds"]}', f'EFFORT_LEVEL={a["effort"]}'])
         if output.name == f'agent-{slot}-prompt.md':
             self.current['agents'][slot]['prompt_sha256'] = documents.sha256_file(output)
+            self.save()
         return output
+
+    def launch_attempt(self, supervisor, record, spec, bound, env):
+        slot = record['slot']
+        self.current['agents'][slot].update(attempts=record['attempt'], status='running')
+        prefix = self.prefix(slot)
+        record['deadline_epoch'] = time.time() + self.state['timeout_seconds']
+        write_json_atomic(Path(spec['record']), record)
+        spec_file = Path(str(prefix) + '-spec.json')
+        write_json_atomic(spec_file, spec)
+        self.save()
+        root = str(Path(__file__).resolve().parents[1])
+        bootstrap = (
+            'import sys;sys.path.insert(0,sys.argv[1]);from ai_skills.pair import _attempt;'
+            'binding=(sys.stdin.buffer.read(),sys.argv[3]) if len(sys.argv) > 3 else ();'
+            'raise SystemExit(_attempt(sys.argv[2], *binding))')
+        argv = (sys.executable, '-c', bootstrap, root, str(spec_file))
+        if bound:
+            argv += (bound.digest,)
+        # An exact attempt ID allows recovery from crashes during admission.
+        supervisor.start(ProcessSpec(argv, Path(record['workspace_root']), bound.spec.env if bound else env,
+                                     Path(str(prefix) + '-output.md'), Path(str(prefix) + '-stderr.log'),
+                                     stdin=bound.worker_input() if bound else None),
+                         run_id=record['run_id'], attempt_id=record['attempt_id'])
 
     def run_round(self):
         phase = self.state['phase']
@@ -607,26 +596,11 @@ class PairRun:
         if any(self.current['agents'][s]['attempts'] >= cap for s in pending):
             self.state.update(phase='blocked', completion_reason='blocked'); self.save()
             return PairResult(3, self.values())
-        self.guard_agy(pending, purpose, workspace)
+        worker_env = {**os.environ, **env, 'REPO_ROOT': str(workspace)}
+        prepared = self.prepare_attempts(pending, purpose, workspace, worker_env)
         supervisor = self.supervisor('workers')
-        for slot in pending:
-            a = self.current['agents'][slot]
-            a.update(attempts=a['attempts'] + 1, status='running')
-            prefix = self.prefix(slot)
-            attempt_id = f'round-{self.state["round"]}-agent-{slot}-attempt-{a["attempts"]}'
-            record, spec = self.attempt_documents(slot, purpose, workspace, a['attempts'])
-            manifest = self.attempt_record(slot)
-            write_json_atomic(manifest, record)
-            spec_file = Path(str(prefix) + '-spec.json')
-            write_json_atomic(spec_file, spec)
-            self.save()
-            root = str(Path(__file__).resolve().parents[1])
-            bootstrap = 'import sys;sys.path.insert(0,sys.argv[1]);from ai_skills.pair import _attempt;raise SystemExit(_attempt(sys.argv[2]))'
-            # ProcessSupervisor atomically admits this exact attempt ID; a crash
-            # during handshake is recovered from its durable admission record.
-            supervisor.start(ProcessSpec((sys.executable, '-c', bootstrap, root, str(spec_file)), workspace,
-                                         {**env, 'REPO_ROOT': str(workspace)}, Path(str(prefix) + '-output.md'), Path(str(prefix) + '-stderr.log')),
-                             run_id=self.state['run_id'], attempt_id=attempt_id)
+        for record, spec, bound in prepared:
+            self.launch_attempt(supervisor, record, spec, bound, worker_env)
         # Wait without owning provider process handles; a killed coordinator is
         # resumed by reading the exact same durable manifests.
         while pending:
@@ -774,8 +748,8 @@ def pair_command(command: str, config: PairConfig) -> PairResult:
     return PairRun(config).command(command)
 
 
-def _attempt(spec_path):
-    from ai_skills.runner import load_registry, run_agent
+def _attempt(spec_path, protected_input=None, expected_digest=None):
+    from ai_skills.runner import ProtectedLaunch, load_registry, run_agent
     spec = _object(Path(spec_path)); path = Path(spec['record']); record = _object(path)
     a = spec['agent']
     def interrupted(_signum, _frame):
@@ -784,10 +758,22 @@ def _attempt(spec_path):
     signal.signal(signal.SIGINT, interrupted)
     try:
         config = _attempt_config(spec, record)
+        registry = load_registry(config.registry_file)
+        _check_provider(record['slot'], record['agent'], registry)
+        if a['harness'] != record['agent']['harness']:
+            raise PairError('worker invocation changed the recorded provider; refusing launch')
+        if expected_digest is not None and a['harness'] != 'agy':
+            raise PairError('admitted provider changed from AGY; refusing launch')
         bound = None
         if a['harness'] == 'agy':
-            bound = _bind_agy(record['slot'], a, load_registry(config.registry_file), config)
-        result = run_agent(config, bound)
+            if not protected_input:
+                raise _agy_refusal(record['slot'], a, 'the worker has no admitted launch binding')
+            if record['agent']['model'] != config.model or _purpose_role(record['purpose']) != config.role:
+                raise PairError('worker invocation changed the recorded model or purpose; refusing launch')
+            _verify(config.prompt_file, record['prompt_sha256'])
+            _verify(config.context_file, record['snapshot_sha256'])
+            bound = ProtectedLaunch.from_worker_input(config, registry, protected_input, expected_digest)
+        result = run_agent(config, bound, registry=registry)
         record.update(exit_code=result.return_code, state='finished')
     except BaseException as error:
         print(f'pair attempt failed: {type(error).__name__}: {error}', file=sys.stderr)
