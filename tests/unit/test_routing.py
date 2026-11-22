@@ -715,3 +715,22 @@ def test_route_cli_refuses_beyond_availability_retry_budget(tmp_path, capsys):
     with pytest.raises(SystemExit):
         routing.main([*base, '--max-availability-retries', '2', *flags])
     assert 'all-routes-unavailable' in capsys.readouterr().err
+
+
+def test_route_cli_deduplicates_failed_attempt_states_and_canonicalizes_aliases(tmp_path, capsys):
+    aliased = _failed_state(tmp_path, 'aliased', 'agy-cli', 'gemini-4-neon-high', 'quota')
+    base = ['--registry-file', str(resource_path('agent-registry.json')), '--role', 'impl', '--complexity-level', 'medium-hard',
+            '--ledger-file', str(tmp_path / 'ledger.json')]
+    # Passing the same failed state twice counts once against the budget and excludes canonical agy.
+    routing.main([*base, '--max-availability-retries', '1',
+                  '--failed-attempt-state', str(aliased), '--failed-attempt-state', str(aliased)])
+    selected = json.loads(capsys.readouterr().out)
+    assert selected['agent'] != 'agy'
+    with pytest.raises(SystemExit):
+        routing.main([*base, '--detected-agents', 'agy', '--failed-attempt-state', str(aliased)])
+    capsys.readouterr()
+    from ai_skills.registry import load_registry
+    registry = load_registry(resource_path('agent-registry.json'))
+    assert routing.failed_attempt_routes([aliased, aliased], registry=registry) == [
+        ('agy', 'gemini-4-neon-high', 'quota')
+    ]

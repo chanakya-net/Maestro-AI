@@ -109,8 +109,9 @@ def decide_recovery(evidence: RecoveryEvidence, policy: RecoveryPolicy) -> Recov
     attempt = (evidence.compaction_handoffs if compaction else evidence.recovery_attempts) + 1
     maximum = max(policy.max_compaction_handoffs if compaction else policy.max_attempts, 0)
     phase = evidence.sub_state.get("phase")
-    check_ownership = policy.max_wait_seconds > 0 and bool(evidence.workers)
-    expired = check_ownership and evidence.wait_elapsed_seconds >= policy.max_wait_seconds
+    check_ownership = bool(evidence.workers) and (
+        policy.max_wait_seconds > 0 or any("handoff_state" in item[4] for item in evidence.workers))
+    expired = policy.max_wait_seconds > 0 and check_ownership and evidence.wait_elapsed_seconds >= policy.max_wait_seconds
 
     def decision(action, reason, selected=None):
         if selected is None and check_ownership:

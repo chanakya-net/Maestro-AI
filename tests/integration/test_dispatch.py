@@ -3174,3 +3174,99 @@ Path(os.environ['RUN_WITH_IT_ISSUE_DIR'], 'plan.md').write_text({PLAN_MARKDOWN!r
     config = replace(config, agent_run=run)
     assert dispatch_worker(config).state == 'completed'
     assert inspect_worker(config).artifact_valid
+
+
+def test_agy_adoption_classifies_only_structured_diagnostics_and_records_canonical_route(tmp_path, monkeypatch):
+    import socket
+    from ai_skills import dispatch, routing
+    from ai_skills.outcomes import outcome_path, pending_outcome
+    from ai_skills.processes import Liveness, ProcessIdentity, ProcessSupervisor
+    from ai_skills.storage import load_json, write_json_atomic
+
+    def prepare_agy_adoption(case_dir, *, agent_name, stdout_bytes, stderr_bytes, exit_code):
+        case_dir.mkdir(parents=True, exist_ok=True)
+        config = agy_gemini_worker(case_dir, monkeypatch, AGY_CAPTURE)
+        registry = json.loads(config.agent_run.registry_file.read_text(encoding='utf-8'))
+        registry.setdefault('aliases', {})['antigravity'] = 'agy'
+        config.agent_run.registry_file.write_text(json.dumps(registry), encoding='utf-8')
+        stream_dir = case_dir / 'streams'
+        stream_dir.mkdir()
+        stdout_file = stream_dir / 'stdout'
+        stderr_file = stream_dir / 'stderr'
+        stdout_file.write_bytes(stdout_bytes)
+        stderr_file.write_bytes(stderr_bytes)
+        run_id, attempt_id = 'agy-adopt-run', 'agy-adopt-attempt'
+        rec_dir = case_dir / 'processes'
+        run = config.agent_run.replace(
+            agent=agent_name, model=GEMINI_4, dispatcher_managed=True,
+            state_file=config.state_file, stream_directory=stream_dir,
+            process_state_file=Path(str(config.state_file) + '.process.json'),
+            record_directory=rec_dir, run_id=run_id, attempt_id=attempt_id,
+        )
+        config = replace(config, agent_run=run)
+        write_json_atomic(Path(str(config.state_file) + '.config.json'), config.to_record())
+        write_json_atomic(outcome_path(config.state_file), pending_outcome(
+            run_id=run_id, attempt_id=attempt_id, issue=str(run.issue), role=run.role,
+            state_file=config.state_file, expected_artifacts=dispatch.expected_artifact_paths(config)))
+        identity = ProcessIdentity(pid=99999, created_at=1234.0, host=socket.gethostname(),
+                                   run_id=run_id, attempt_id=attempt_id)
+        write_json_atomic(run.process_state_file, {
+            'schema_version': 1, 'identity': identity.__dict__,
+            'record_directory': str(rec_dir), 'state': 'alive',
+            'stdout_file': str(stdout_file), 'stderr_file': str(stderr_file),
+        })
+        write_json_atomic(config.state_file, {
+            'schema_version': 1, 'state': 'running', 'run_id': run_id, 'attempt_id': attempt_id,
+            'provider_identity': identity.__dict__,
+            'launcher_identity': {'pid': 99998, 'created_at': 1.0, 'host': socket.gethostname()},
+        })
+        monkeypatch.setattr(ProcessSupervisor, 'inspect', lambda self, ident: Liveness('dead', 'exited'))
+        monkeypatch.setattr(ProcessSupervisor, 'return_code', lambda self, ident: exit_code)
+        return config
+
+    # 1. Model-controlled stdout containing "quota" / "rate limit" must NOT classify as infrastructure.
+    spoof_stdout = (json.dumps({'event': 'step_update', 'step_update': {'text': 'quota exceeded rate limit'}}) + '\n').encode()
+    spoof_cfg = prepare_agy_adoption(tmp_path / 'spoof', agent_name='agy',
+                                     stdout_bytes=spoof_stdout, stderr_bytes=b'', exit_code=1)
+    spoof_res = dispatch.adopt_worker(spoof_cfg.state_file)
+    assert spoof_res.state == 'failed'
+    spoof_state = load_json(spoof_cfg.state_file)
+    assert spoof_state['failure_class'] == 'capability'
+    assert routing.failed_attempt_routes([spoof_cfg.state_file]) == []
+
+    # 2. Structured AGY terminal ProviderError + aliased agent classifies via agy_diagnostics and records canonical route.
+    err_stdout = (
+        json.dumps({'event': 'init', 'conversation_id': 'c1', 'init': {'model': GEMINI_4}}) + '\n' +
+        json.dumps({'event': 'step_update', 'step_update': {'conversation_id': 'c1', 'step_index': 0,
+                                                            'step_type': 'user_input', 'state': 'DONE'}}) + '\n' +
+        json.dumps({'event': 'result', 'result': {'conversation_id': 'c1', 'status': 'ERROR',
+                                                  'error': f'Not entitled to {GEMINI_4}'}}) + '\n'
+    ).encode()
+    err_cfg = prepare_agy_adoption(tmp_path / 'entitlement', agent_name='antigravity',
+                                   stdout_bytes=err_stdout, stderr_bytes=b'', exit_code=0)
+    err_res = dispatch.adopt_worker(err_cfg.state_file)
+    assert err_res.state == 'failed'
+    assert err_res.reason == 'model-unsupported'
+    err_state = load_json(err_cfg.state_file)
+    assert (err_state['failure_class'], err_state['agent'], err_state['model']) == ('infrastructure', 'agy', GEMINI_4)
+    avail = routing.availability_from_failed_attempts([err_cfg.state_file])
+    assert avail['pairs'] == {('agy', GEMINI_4)} and not avail['agents']
+
+
+def test_publish_protected_plan_rolls_back_plan_markdown_on_result_conflict(tmp_path, monkeypatch):
+    from ai_skills import dispatch
+
+    config = protected_agy_plan_worker(tmp_path, monkeypatch)
+    plan, result = dispatch._plan_paths(config.agent_run)
+    original_write = dispatch.write_text_atomic
+
+    def fail_on_result(path, text, *, exclusive=False):
+        if Path(path) == result:
+            raise FileExistsError(str(path))
+        return original_write(path, text, exclusive=exclusive)
+
+    monkeypatch.setattr(dispatch, 'write_text_atomic', fail_on_result)
+    reason, proof = dispatch._publish_protected_plan(config, PLAN_RESULT, PLAN_MARKDOWN)
+    assert (reason, proof) == ('capture-plan-artifact-conflict', None)
+    assert not plan.exists()
+    assert not result.exists()

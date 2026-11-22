@@ -604,3 +604,48 @@ def test_expired_wait_recovers_once_after_prelaunch_finalization(tmp_path, monke
     context = driver.started[0].agent_run.context_file.read_text()
     assert 'SUB_COORD_RECOVERY_REASON=in-flight-worker-failed' in context
     assert all(path.read_bytes() == old for path, old in artifacts.items())
+
+
+def test_default_wait_holds_live_native_child_and_reconciles_on_release(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from ai_skills import pool
+    from ai_skills.storage import load_json, write_json_atomic
+    from pool_support import recovery_child
+
+    config = pool_fixture(tmp_path, {1: {}})
+    assert config.max_worker_wait_seconds == 0
+    driver = FakePoolDriver()
+    install_fake(monkeypatch, driver)
+    supervisor = PoolSupervisor(config)
+    assert supervisor.initialize() is None
+    predecessor = supervisor.worker('1')
+    supervisor._intent('1', predecessor)
+    supervisor.active['1'] = predecessor
+    issue_dir = predecessor.agent_run.issue_dir
+    child, ledger, ownership = recovery_child(issue_dir, monkeypatch, wrapper='dead', provider='alive', exit_code=0)
+    write_json_atomic(child.state_file, {**load_json(child.state_file), 'updated_at': '1970-01-01T00:00:00Z'})
+    write_json_atomic(issue_dir / 'sub-state.json', {'phase': 'complexity', 'in_flight_agents': [ledger]})
+    clock = SimpleNamespace(now=100000)
+    monkeypatch.setattr(pool, 'time', SimpleNamespace(time=lambda: clock.now, monotonic=lambda: 1))
+
+    supervisor.recover('1', predecessor)
+    assert not driver.started
+    entry = supervisor.read()['issue_registry']['1']
+    assert entry['worker_wait']['holding'] is True
+    assert entry['worker_wait']['expired'] is False
+    assert entry['worker_wait']['ownership'] == 'live'
+    events = config.resolved().events_log.read_text(encoding='utf-8')
+    assert 'sub-coord-recovery-wait-expired' not in events
+
+    write_json_atomic(child.agent_run.result_file, {'total': 5, 'level': 'easy', 'scores': {
+        key: 1 for key in ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
+                           'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
+                           'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+        'rationale': {key: 'ok' for key in ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
+                                            'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
+                                            'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')}})
+    ownership['provider'] = 'dead'
+    supervisor.recover('1', predecessor)
+    assert len(driver.started) == 1
+    assert load_json(child.state_file)['state'] == 'completed'
+    assert 'SUB_COORD_RECOVERY_REASON=in-flight-worker-finished' in driver.started[0].agent_run.context_file.read_text()

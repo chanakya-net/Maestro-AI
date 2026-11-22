@@ -30,11 +30,11 @@ from ai_skills import artifacts, git, verification
 from ai_skills.outcomes import role_artifact_paths
 from ai_skills.events import EventBus, normalize
 from ai_skills.processes import ProcessIdentity, ProcessSpec, ProcessSupervisor, StopResult
-from ai_skills.provider_capture import AGY, CODEX, ProviderError, extract_response
+from ai_skills.provider_capture import AGY, CODEX, ProviderError, agy_narrative_response, extract_response
 from ai_skills.runner import (
-    AgentRunConfig, AgentRunResult, agy_plan_invocation, build_invocation, classify_unavailable, effective_config,
-    capture_candidate, capture_source, load_registry, managed_agy_plan, require_agy_plan_profile,
-    run_agent, supports_final_response_capture,
+    AgentRunConfig, AgentRunResult, _agent, _classify_agy, agy_plan_invocation, build_invocation,
+    classify_unavailable, effective_config, capture_candidate, capture_source, load_registry,
+    managed_agy_plan, require_agy_plan_profile, run_agent, supports_final_response_capture,
 )
 from ai_skills.storage import DirectoryLock, load_json, write_json_atomic, replace_file_atomic
 from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, outcome_reason
@@ -724,16 +724,55 @@ def _safe_synthesis(config, reason):
         artifacts.synthesize_review, artifacts.synthesize_complexity))
 
 
-def _availability_reason(config):
+def _resolved_route(config):
+    run = config.agent_run
+    try:
+        registry = load_registry(run.registry_file)
+        name, agent = _agent(registry, run.agent)
+        model = effective_config(run, registry).model or agent.get('model', {}).get('default', '')
+        agy_stream = agent.get('invocation', {}).get('prompt_transport') == AGY or capture_source(run, name) == AGY
+        return name, model, agy_stream
+    except (OSError, ValueError):
+        return run.agent, run.model, capture_source(run) == AGY
+
+
+def _read_tail_text(path):
+    with Path(path).open('rb') as stream:
+        stream.seek(max(0, Path(path).stat().st_size - 65536))
+        return stream.read().decode('utf-8', errors='replace')
+
+
+def _agy_adoption_diagnostic(config, model, process, raw, *, provider_code):
+    """Classify AGY failure on adoption using only structured terminal errors and stderr."""
+    stdout_path = process.get('stdout_file') or raw.get('spec', {}).get('stdout')
+    stderr_path = process.get('stderr_file') or raw.get('spec', {}).get('stderr')
+    stderr_text = _read_tail_text(stderr_path) if stderr_path and Path(stderr_path).is_file() else ''
+    if stdout_path and Path(stdout_path).is_file():
+        managed = capture_source(config.agent_run) == AGY
+        try:
+            with Path(stdout_path).open('rb') as stream:
+                if managed:
+                    extract_response(AGY, stream)
+                else:
+                    agy_narrative_response(stream)
+        except ProviderError as error:
+            return _classify_agy(str(error), model) or _classify_agy(stderr_text, model)
+        except (ValueError, RecursionError):
+            pass
+    return _classify_agy(stderr_text, model) if provider_code else ''
+
+
+def _availability_reason(config, *, provider_code=1):
     process, supervisor = _provider_record(config)
     raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+    _, model, agy_stream = _resolved_route(config)
+    if agy_stream:
+        return _agy_adoption_diagnostic(config, model, process, raw, provider_code=provider_code)
     text = ''
     for key, stream_key in (('stdout_file','stdout'),('stderr_file','stderr')):
         path = process.get(key) or raw.get('spec',{}).get(stream_key)
-        if path:
-            with Path(path).open('rb') as stream:
-                stream.seek(max(0, Path(path).stat().st_size - 65536))
-                text += stream.read().decode('utf-8', errors='replace')
+        if path and Path(path).is_file():
+            text += _read_tail_text(path)
     return classify_unavailable(text)
 
 
@@ -952,10 +991,14 @@ def _publish_protected_plan(config, payload, markdown):
             return 'capture-plan-artifact-conflict', None
     if plan in missing and result not in missing:
         return 'capture-plan-artifact-conflict', None
+    created = []
     for path in missing:
         try:
             write_text_atomic(path, paths[path], exclusive=True)
+            created.append(path)
         except FileExistsError:
+            for written in reversed(created):
+                written.unlink(missing_ok=True)
             return 'capture-plan-artifact-conflict', None
     proof = _plan_handoff_fingerprint(content.encode('utf-8') if content is not None else None
                                       for content in paths.values())
@@ -1084,10 +1127,11 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         worker_state = ('completed' if status == 'success' else 'interrupted' if status == 'interrupted'
             else 'artifact-recovery-required' if not typed and code == 75 and reason == 'artifact-recovery-required' else 'failed')
         process, _ = _provider_record(config)
+        state_was_terminal = terminal and state.get('state') == worker_state
         state.update(state=worker_state,return_code=code,exit_code=code,reason=reason,
             completed_at=outcome['finished_at'],alive=False,provider_identity=process.get('identity'),
             failure_class=failure_class)
-        if route and failure_class == 'infrastructure':
+        if route and failure_class == 'infrastructure' and not state_was_terminal:
             state.update(agent=route[0], model=route[1])  # resolved route, dispatcher-owned
         write_json_atomic(Path(config.state_file),state)
         if run.done_file:
@@ -1213,14 +1257,22 @@ def _inspect_prelaunch(config, state, process, wrapper, journal, *, strict):
 
 
 def _adopt_released(config, state, code):
+    name, model, agy_stream = _resolved_route(config)
+    route = (name, model)
     if code is None:
         return _finalize_attempt(config,provider_return_code=None,
             reason=state.get('reason') or '', failure_class=state.get('failure_class','capability'),
-            prelaunch_failure=True)
-    process, _ = _provider_record(config)
-    reason = process.get('unavailable_reason', '') or (_availability_reason(config) if code else '')
+            prelaunch_failure=True, route=route)
+    process, supervisor = _provider_record(config)
+    reason = process.get('unavailable_reason', '')
+    if not reason:
+        if agy_stream:
+            raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+            reason = _agy_adoption_diagnostic(config, model, process, raw, provider_code=code)
+        elif code:
+            reason = _availability_reason(config, provider_code=code)
     return _finalize_attempt(config,provider_return_code=code,reason=reason,
-        failure_class='infrastructure' if reason else 'capability')
+        failure_class='infrastructure' if reason else 'capability', route=route)
 
 
 def adopt_worker(state_file) -> WorkerResult:

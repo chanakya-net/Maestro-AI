@@ -802,6 +802,25 @@ def finalize_issue(args: argparse.Namespace) -> int:
     return 0
 
 
+def _has_native_child_evidence(items) -> bool:
+    if not isinstance(items, list):
+        return True
+    for item in items:
+        if not isinstance(item, dict):
+            return True
+        if item.get("run_id") or item.get("attempt_id"):
+            return True
+        state_file = item.get("state_file")
+        if isinstance(state_file, str) and state_file:
+            config_path = Path(state_file + ".config.json")
+            if config_path.exists() or config_path.is_symlink():
+                return True
+            snapshot = load_optional_json(state_file)
+            if any(snapshot.get(key) for key in ("run_id", "attempt_id", "launcher_identity", "provider_identity")):
+                return True
+    return False
+
+
 def _recovery_workers(sub_state, issue, issue_dir, args, *, check_ownership):
     items = sub_state.get("in_flight_agents", [])
     if not isinstance(items, list):
@@ -849,8 +868,9 @@ def sub_coord_recovery_decision(args: argparse.Namespace) -> dict:
     policy = RecoveryPolicy(max_attempts=recovery_max_attempts(args),
         max_compaction_handoffs=max(int(getattr(args, "max_compaction_handoffs", 6) or 0), 0),
         max_wait_seconds=max(int(getattr(args, "max_wait_seconds", 0) or 0), 0))
+    check_ownership = policy.max_wait_seconds > 0 or _has_native_child_evidence(sub_state.get("in_flight_agents", []))
     workers = tuple(_recovery_workers(sub_state, str(args.issue), issue_dir, args,
-        check_ownership=policy.max_wait_seconds > 0))
+        check_ownership=check_ownership))
     evidence = RecoveryEvidence(issue=str(args.issue), issue_dir=issue_dir, sub_state_file=sub_state_file,
         report=report, sub_state=sub_state, recovery_attempts=recovery_attempt(entry),
         compaction_handoffs=compaction_handoffs(entry), workers=workers,

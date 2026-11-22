@@ -235,7 +235,7 @@ def routing_availability(
     return availability
 
 
-def _failed_attempt_route(state_file: Path) -> tuple[str, str, str] | None:
+def _failed_attempt_route(state_file: Path, *, aliases: dict[str, Any] | None = None) -> tuple[str, str, str] | None:
     """Return (agent, model, reason) for a dispatcher-owned infrastructure failure, else None."""
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -254,16 +254,32 @@ def _failed_attempt_route(state_file: Path) -> tuple[str, str, str] | None:
     model = state.get("model") or run.get("model")
     if not isinstance(agent, str) or not agent or not isinstance(model, str):
         return None
+    if isinstance(aliases, dict):
+        agent = str(aliases.get(agent, agent))
     return agent, model, reason
 
 
-def failed_attempt_routes(state_files: Any) -> list[tuple[str, str, str]]:
+def failed_attempt_routes(state_files: Any, *, registry: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
     """Dispatcher-owned infrastructure failures as (agent, model, reason); others are ignored."""
-    routes = (_failed_attempt_route(Path(state_file)) for state_file in state_files)
-    return [route for route in routes if route is not None]
+    aliases = registry.get("aliases", {}) if isinstance(registry, dict) else None
+    seen: set[Path] = set()
+    routes: list[tuple[str, str, str]] = []
+    for state_file in state_files:
+        path = Path(state_file)
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path.absolute()
+        if key in seen:
+            continue
+        seen.add(key)
+        route = _failed_attempt_route(path, aliases=aliases)
+        if route is not None:
+            routes.append(route)
+    return routes
 
 
-def availability_from_failed_attempts(state_files: Any) -> Availability:
+def availability_from_failed_attempts(state_files: Any, *, registry: dict[str, Any] | None = None) -> Availability:
     """Fold dispatcher-owned failed-attempt records into cumulative exclusions.
 
     Only a worker state with ``state=failed`` and ``failure_class=infrastructure`` and its
@@ -274,7 +290,7 @@ def availability_from_failed_attempts(state_files: Any) -> Availability:
     from ai_skills.runner import _unavailability_scope
 
     availability = empty_availability()
-    for agent, model, reason in failed_attempt_routes(state_files):
+    for agent, model, reason in failed_attempt_routes(state_files, registry=registry):
         if _unavailability_scope(reason) == "agent":
             availability["agents"].add(agent)
         elif model:
@@ -871,8 +887,8 @@ def main(argv: list[str] | None = None) -> int:
     }
     prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
-    availability = merge_availability(availability, availability_from_failed_attempts(args.failed_attempt_state))
-    retries = len(failed_attempt_routes(args.failed_attempt_state))
+    availability = merge_availability(availability, availability_from_failed_attempts(args.failed_attempt_state, registry=registry))
+    retries = len(failed_attempt_routes(args.failed_attempt_state, registry=registry))
     if args.max_availability_retries is not None and retries > args.max_availability_retries:
         fail(f"all-routes-unavailable: availability retry budget reached "
              f"({retries} failures > MAX_AGENT_FALLBACKS={args.max_availability_retries})")
