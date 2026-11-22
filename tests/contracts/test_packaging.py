@@ -204,7 +204,7 @@ assert (carbon.agent, carbon.model) == ('agy', 'gemini-4-carbon-medium')
 assert registry['agents']['claude']['model']['known_models'] == [
     'claude-haiku-5-5', 'claude-opus-5-5', 'claude-fable-5-2', 'claude-sonnet-5-5']
 assert registry['agents']['codex']['model']['known_models'] == [
-    'gpt-6.2-astra', 'gpt-6-luna', 'gpt-6.1-terra', 'gpt-6.2-sol']
+    'gpt-6.2-astra', 'gpt-6.1-terra', 'gpt-6.2-sol']
 for token in ('low', 'medium', 'high', 'xhigh', 'max', 'maximum'):
     assert resolve_effort('codex', token, 'impl', registry).effective == 'high'
     assert resolve_effort('codex', token, 'plan', registry).effective == 'xhigh'

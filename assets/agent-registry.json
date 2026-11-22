@@ -55,27 +55,16 @@
       "required_bands": ["holy-fuck"],
       "effort_by_band": {"holy-fuck": "high"}
     },
-    "gpt-6-luna": {
-      "provider": "openai",
-      "ability": "balanced",
-      "complexity_weight": 3,
-      "min_band": "easy",
-      "context_window": 1050000,
-      "reasoning_effort": "high",
-      "agents": ["codex"],
-      "work_bands": ["quite-easy", "easy"],
-      "complexity_bands": ["quite-easy", "easy"]
-    },
     "gpt-6.1-terra": {
       "provider": "openai",
       "ability": "advanced",
       "complexity_weight": 5,
-      "min_band": "medium",
+      "min_band": "quite-easy",
       "context_window": 1050000,
       "reasoning_effort": "high",
       "agents": ["codex"],
-      "work_bands": ["medium"],
-      "complexity_bands": ["medium"]
+      "work_bands": ["quite-easy", "easy", "medium"],
+      "complexity_bands": ["quite-easy", "easy", "medium"]
     },
     "gpt-6.2-sol": {
       "provider": "openai",

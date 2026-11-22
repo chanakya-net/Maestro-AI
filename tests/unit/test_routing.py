@@ -439,8 +439,8 @@ def test_distribution_and_sticky_reviewer():
 def test_cumulative_exclusions_and_read_only_decision():
     registry=load_registry(SOURCE_REGISTRY)
     ledger={}; original=copy.deepcopy(ledger)
-    decision=select_route(RouteRequest(role="impl",complexity_level="easy",exclude_models=frozenset(["gpt-6-luna","gpt-6.1-terra"])),registry,ledger)
-    assert decision.model not in {"gpt-6-luna","gpt-6.1-terra"}
+    decision=select_route(RouteRequest(role="impl",complexity_level="easy",exclude_models=frozenset(["gpt-6.1-terra"])),registry,ledger)
+    assert decision.model != "gpt-6.1-terra"
     assert ledger == original
 
 @pytest.mark.parametrize("payload",["{", "[]"])
@@ -501,8 +501,8 @@ def test_retired_claude_models_cannot_be_routed(model):
 
 
 @pytest.mark.parametrize("band, model, effort", [
-    ("quite-easy", "gpt-6-luna", "high"),
-    ("easy", "gpt-6-luna", "high"),
+    ("quite-easy", "gpt-6.1-terra", "high"),
+    ("easy", "gpt-6.1-terra", "high"),
     ("medium", "gpt-6.1-terra", "high"),
     ("medium-hard", "gpt-6.2-sol", "high"),
     ("complex", "gpt-6.2-sol", "high"),
@@ -514,7 +514,7 @@ def test_codex_routes_use_requested_model_families(band, model, effort):
 
 
 @pytest.mark.parametrize("band, model, effort", [
-    ("quite-easy", "gpt-6-luna", "high"), ("easy", "gpt-6-luna", "high"), ("medium", "gpt-6.1-terra", "high"),
+    ("quite-easy", "gpt-6.1-terra", "high"), ("easy", "gpt-6.1-terra", "high"), ("medium", "gpt-6.1-terra", "high"),
     ("medium-hard", "gpt-6.2-sol", "high"), ("complex", "gpt-6.2-sol", "high"), ("holy-fuck", "gpt-6.2-sol", "high"),
 ])
 def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, model, effort):
@@ -522,13 +522,13 @@ def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, mode
     assert (decision.agent, decision.model, decision.effort) == ("codex", model, effort)
 
 
-@pytest.mark.parametrize("model", ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6-luna"])
+@pytest.mark.parametrize("model", ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra"])
 def test_requested_codex_models_can_be_forced(model):
     decision = select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(SOURCE_REGISTRY), {})
     assert (decision.agent, decision.model) == ("codex", model)
 
 
-@pytest.mark.parametrize("model", ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.5"])
+@pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.5"])
 def test_retired_codex_models_cannot_be_routed_on_codex(model):
     with pytest.raises(SystemExit):
         select_route(RouteRequest(role="impl", forced_agent="codex", forced_model=model), load_registry(SOURCE_REGISTRY), {})
