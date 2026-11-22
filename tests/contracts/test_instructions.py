@@ -347,3 +347,54 @@ def test_modifier_capture_falls_back_to_file_contract_on_ambiguous_ids():
     revise = text.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
     for phrase in ('IDs repeat', 'review-required check cannot be named exactly', 'use the existing file contract', 'dispatcher selects the adapter'):
         assert phrase in revise
+
+
+def test_readme_installed_catalog_and_pool_examples(tmp_path, monkeypatch, capsys):
+    import json
+    import os
+    from ai_skills.cli import main
+    from ai_skills.pool import PoolConfig
+    from ai_skills.registry import load_registry
+    from pool_support import pool_fixture
+
+    readme = (ROOT / 'README.md').read_text(encoding='utf-8')
+    commands = [line.split()[3:] for line in readme.splitlines() if line.startswith('python -m ai_skills ')]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(os, 'environ', {'ASSETS_DEST': str(tmp_path / 'absent-assets'),
+                                        'PATH': '', 'RUN_WITH_IT_GITHUB_UPDATES': '0'})
+
+    def invoke(command):
+        assert main(command) == 0
+        return capsys.readouterr().out
+
+    models = invoke(next(cmd for cmd in commands if cmd[:2] == ['agent', 'models'])).splitlines()
+    inventory = readme.split('| Family | Explicit model IDs |', 1)[1].split('\n\n', 1)[0]
+    registry = load_registry(ROOT / 'assets/agent-registry.json')
+    assert len(models) == 24
+    assert set(re.findall(r'`([\w.-]+)`', inventory)) == set(models)
+    table = readme.split('| Effective worker band | Codex | Claude | AGY |', 1)[1].split('\n\n', 1)[0]
+    targets = {}
+    for row in table.splitlines()[2:]:
+        bands, *shares = row.strip('|').split('|')
+        for band in re.findall(r'`([\w-]+)`', bands):
+            targets[band] = dict(zip(('codex', 'claude', 'agy'), (int(share.strip().rstrip('%')) for share in shares)))
+    assert targets == registry['model_routing']['usage_distribution']['non_complexity_band_target_percent']
+
+    decision = json.loads(invoke(next(cmd for cmd in commands if cmd[0] == 'route')))
+    assert (decision['agent'], decision['model'], decision['routing_level']) == ('agy', 'gemini-4-hydrogen-medium', 'medium')
+    assert decision['target_percent'] == decision['ledger']['total_decisions'] == 0
+
+    setup = pool_fixture(tmp_path, {1: {}}, parallel=1)
+    pool_section = readme.split('a minimal `.run-with-it/pool.json` is:', 1)[1]
+    record = json.loads(re.search(r'```json\n(.*?)\n```', pool_section, re.S)[1])
+    record.update(state_file=str(setup.state_file), run_root=str(tmp_path))
+    config = PoolConfig.from_record(record)
+    assert (config.sub_coord_agent, config.sub_coord_model) == ('codex', 'gpt-6.2-sol')
+    assert config.detach and not config.forced_agent and not config.forced_model
+    assert (config.timeout_seconds, config.hard_limit_seconds, config.max_worker_wait_seconds) == (0, 0, 0)
+    (setup.state_file.parent / 'pool.json').write_text(json.dumps(dict(record, detach=False)), encoding='utf-8')
+    validate, launch = [cmd for cmd in commands if cmd[:2] == ['run', 'pool']]
+    assert validate[-1] == '--validate-only'
+    invoke(validate)
+    (worker,) = (json.loads(line) for line in invoke([*launch, '--dry-run']).splitlines() if line.startswith('{'))
+    assert (worker['agent_run']['agent'], worker['agent_run']['model']) == (config.sub_coord_agent, config.sub_coord_model)
