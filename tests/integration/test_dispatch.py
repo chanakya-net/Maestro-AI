@@ -2383,6 +2383,30 @@ AGY_MODEL_ASSERTION = ("assert args.count('--model') == 1\n"
                        f"assert args[args.index('--model') + 1] == {GEMINI_4!r}\n")
 AGY_STEPS_ONLY = AGY_CAPTURE.split("    {'event': 'result'", 1)[0] + "]:\n    print(json.dumps(event))\n"
 AGY_MALFORMED_TERMINAL = AGY_CAPTURE.replace("'response': json.dumps(envelope)", "'response': '{'")
+# Real AGY streams: progress narration in earlier assistant messages, a recovered
+# tool ERROR step, and result.response concatenating every assistant message.
+AGY_NARRATED_CAPTURE = '''
+narration = 'Running RED tests; waiting for completion.\\n'
+for event in [
+    {'event': 'init', 'conversation_id': 'resumed', 'init': {}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 20,
+        'step_type': 'user_input', 'state': 'DONE'}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 21,
+        'step_type': 'agent_response', 'state': 'DONE', 'text_delta': narration}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 22,
+        'step_type': 'tool', 'state': 'ERROR', 'tool_name': 'read_file'}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 23,
+        'step_type': 'agent_response', 'state': 'ACTIVE', 'text_delta': json.dumps(envelope)}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 23,
+        'step_type': 'agent_response', 'state': 'DONE'}},
+    {'event': 'result', 'result': {'conversation_id': 'resumed', 'status': 'SUCCESS',
+        'num_turns': 7, 'response': narration + json.dumps(envelope)}},
+]:
+    print(json.dumps(event))
+'''
+AGY_NARRATED_FINAL_PROSE = AGY_NARRATED_CAPTURE.replace(
+    "'text_delta': json.dumps(envelope)}", "'text_delta': 'Done. ' + json.dumps(envelope)}").replace(
+    "narration + json.dumps(envelope)", "narration + 'Done. ' + json.dumps(envelope)")
 AGY_UNVERIFIED = BUILD_CAPTURE.replace("'passed': True, 'evidence': 'observed exit 0'",
                                        "'passed': False, 'evidence': 'observed exit 1'")
 
@@ -2483,6 +2507,23 @@ def test_agy_gemini_4_impl_publishes_verified_success(tmp_path, monkeypatch):
     assert f'|model={GEMINI_4}|' in done and '|status=success|source=dispatcher|' in done
     assert f'model={GEMINI_4}' in config.agent_run.events_log.read_text(encoding='utf-8')
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_agy_narrated_turn_publishes_final_message_envelope(tmp_path, monkeypatch):
+    from ai_skills.git import current_head
+
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_NARRATED_CAPTURE)
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['commit_sha'] == current_head(str(config.agent_run.repo_root))
+    assert 'dispatch-capture-rejected' not in config.agent_run.events_log.read_text(encoding='utf-8')
+
+
+def test_agy_final_message_with_prose_is_still_rejected(tmp_path, monkeypatch):
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_NARRATED_FINAL_PROSE)
+    assert dispatch_worker(config).state == 'artifact-recovery-required'
+    assert 'reason=capture-invalid-json' in config.agent_run.events_log.read_text(encoding='utf-8')
 
 
 def test_agy_gemini_4_publishes_result_before_outcome_and_done(tmp_path, monkeypatch):

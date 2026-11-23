@@ -29,6 +29,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 - Changed-file summary when available.
 - Verification evidence when available.
 - `RUN_WITH_IT_PLAN_FILE` — the approach plan (`plan.md`) from the plan phase, when present. It records the intended approach, the ordered slices, and an `out_of_scope` list. Absent for trivial issues (the plan phase is gated by complexity).
+- `PREV_REVIEW_HEAD_SHA` — present on review cycle ≥ 2: the head the previous cycle reviewed. `git diff <PREV_REVIEW_HEAD_SHA>..<REVIEW_HEAD_SHA>` is the modifier's incremental change. Use it to focus closure and regression checks; the review scope is still the full `REVIEW_BASE_SHA..REVIEW_HEAD_SHA` diff.
 - `PRIOR_REVIEW_LEDGER` — present on review cycle ≥ 2: newline-delimited `cycle=<k> instructions=<path> modify_result=<path>` lines pointing at earlier reviewer instructions and the modifier results that addressed them. See **Cross-Cycle Review Continuity**.
 - Required reviewer status output path: `REVIEWER_STATUS_FILE`.
 - Required reviewer instructions output path: `REVIEWER_INSTRUCTIONS_FILE`.
@@ -84,10 +85,19 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 - Every actionable comment must have a stable `id` such as `R001`, `R002`, and so on. IDs must remain unique within the review artifact so the modifier can close each item exactly once.
 - Every actionable comment must include a category, concrete evidence, expected change, and verification guidance.
 
+### Sibling-Callsite & Field-Completeness Sweep
+
+Findings that surface one caller or one field per cycle are the main cause of extra review rounds. When you flag a defect in a shared reader, mapper, validator, hasher, guard, or other helper, finish that area in the same pass:
+
+- Search every caller of the helper (including callers outside the diff that the change now affects) and report each one that has the same defect, in the same comment or as sibling comments.
+- Check every field the helper reads, validates, hashes, or maps — not only the one that triggered the finding — and report each field that is missing or handled inconsistently.
+- For persistence, idempotency, and retry paths, check both first delivery and exact redelivery, and check behavior against the real store rather than only the test doubles in the diff.
+
 ## Cross-Cycle Review Continuity
 
 When `PRIOR_REVIEW_LEDGER` is present (review cycle ≥ 2), read each listed prior `instructions` file and its paired `modify_result` before reviewing the new diff. You are continuing the same review, not starting a new one.
 
+- **Check the fix itself for regressions.** Read the incremental `PREV_REVIEW_HEAD_SHA..REVIEW_HEAD_SHA` diff first. Fixes that narrow a symptom often break a neighboring path: retry versus first delivery, real persistence versus a test double, or a sibling caller of a tightened helper. Apply the sweep above to every helper the fix touched.
 - **Confirm closure first.** For each prior comment, check whether the current diff resolves it. If resolved, do not re-raise it. If genuinely unresolved or incompletely fixed, re-raise it with the same intent and reference the prior `id` in your evidence.
 - **Do not re-litigate settled severity.** A finding a prior cycle accepted as a nitpick or non-blocking must not be promoted to blocking now unless the diff *changed* in a way that newly makes it blocking — state that change explicitly in the evidence. Stable standards across cycles are what let the loop converge.
 - **Drive toward approval.** Each cycle should reduce the open-finding set. Raise genuinely new issues only when they are concrete defects in the current diff — not a fresh stylistic pass over code that already passed earlier cycles. If the prior blocking findings are addressed and no new concrete defect exists, **approve**.

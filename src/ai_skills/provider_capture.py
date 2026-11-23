@@ -94,12 +94,36 @@ def agy_narrative_response(stream):
 
 
 def _agy_step(event, conversation):
+    # A tool step may end in ERROR (for example a read of a missing file); the
+    # model recovers within the same turn, so it does not invalidate the stream.
     step = event.get('step_update')
     if (not isinstance(step, dict) or step.get('conversation_id') != conversation or
             type(step.get('step_index')) is not int or step['step_index'] < 0 or
-            step.get('state') not in ('ACTIVE', 'DONE') or not isinstance(step.get('step_type'), str)):
+            step.get('state') not in ('ACTIVE', 'DONE', 'ERROR') or not isinstance(step.get('step_type'), str)):
         raise ValueError('invalid Agy step')
+    if step['step_type'] == 'user_input' and step['state'] == 'ERROR':
+        raise ValueError('failed Agy user turn')
+    if 'text_delta' in step and not isinstance(step['text_delta'], str):
+        raise ValueError('invalid Agy text delta')
     return step
+
+
+def _agy_final_message(response, messages, last_index):
+    """Return the text of the turn's final assistant message.
+
+    AGY's ``result.response`` concatenates every assistant message of the turn,
+    so progress narration precedes the final answer. When the last step of the
+    turn is an assistant message whose text ends ``result.response``, that
+    message alone is the final response. Otherwise keep ``result.response`` so
+    strict downstream validation still decides.
+    """
+    if not messages:
+        return response
+    final_index = max(messages)
+    text = ''.join(messages[final_index])
+    if final_index != last_index or not text or not response.endswith(text):
+        return response
+    return text
 
 
 def _agy_response(stream):
@@ -111,6 +135,7 @@ def _agy_response(stream):
         raise ValueError('missing Agy conversation initialization')
     user_step = None
     user_done = False
+    messages, last_index = {}, None
     for event in events:
         kind = event.get('event')
         if kind == 'result':
@@ -120,7 +145,7 @@ def _agy_response(stream):
                 raise ValueError('invalid or ambiguous Agy terminal result')
             response = agy_result_response(result)
             if user_done:
-                return response
+                return _agy_final_message(response, messages, last_index)
             break
         if kind != 'step_update':
             raise ValueError('unexpected Agy event')
@@ -131,6 +156,10 @@ def _agy_response(stream):
             user_step, user_done = step['step_index'], step['state'] == 'DONE'
         elif not user_done or step['step_index'] <= user_step:
             raise ValueError('Agy step precedes the submitted turn')
+        else:
+            last_index = max(step['step_index'], last_index or 0)
+            if step['step_type'] == 'agent_response' and 'text_delta' in step:
+                messages.setdefault(step['step_index'], []).append(step['text_delta'])
     raise ValueError('missing complete Agy turn')
 
 

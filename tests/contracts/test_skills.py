@@ -382,3 +382,40 @@ def test_coordinator_stops_on_typed_blocked_before_modifier_success_gates():
     assert '**Actual handoff failure**' in remaining
     assert 'Only verified success reaches this step' in remaining
     assert "if the modification agent's output does not include passing verification results" not in revise
+
+
+def test_modifier_carries_prior_review_invariants_and_redesign_checkpoint():
+    modifier = resource('modifier-prompt.md')
+    inputs = section(modifier, 'Inputs Expected')
+    assert 'PRIOR_REVIEW_LEDGER' in inputs and 'exactly the current cycle' in inputs
+    boundary = section(modifier, 'Invariant & Boundary Check')
+    for phrase in ('First delivery and redelivery', 'Real persistence, not only mocks', 'Every sibling caller',
+                   'Earlier closures stay closed', 'Integration proof at boundaries'):
+        assert phrase in boundary, phrase
+    redesign = section(modifier, 'Redesign Checkpoint')
+    assert 'RUN_WITH_IT_REDESIGN_REQUIRED=1' in redesign and "current cycle's checklist only" in redesign
+    coordinator = resource('sub-coordinator-prompt.md')
+    assert 'On modification cycle ≥ 2 also pass `PRIOR_REVIEW_LEDGER`' in coordinator
+    assert '`review_comment_ids` still lists only the current cycle' in coordinator
+    assert 'STATUS|type=redesign-checkpoint' in coordinator and 'non_approval_count` reaches 3' in coordinator
+
+
+def test_test_fidelity_self_check_is_synced_between_worker_prompts():
+    impl = section(resource('prompt.md'), 'Test-Fidelity Self-Check')
+    modify = section(resource('modifier-prompt.md'), 'Test-Fidelity Self-Check')
+    strip = lambda text: re.sub(r'<!-- SYNC:.*?-->', '', text)
+    assert strip(impl) == strip(modify)
+    for phrase in ('used verbatim', 'Assert terminal state, not absence', 'real readiness signal',
+                   'Fixtures mirror production inputs', 'Size limits apply to tests'):
+        assert phrase in impl, phrase
+
+
+def test_reviewer_sweeps_siblings_and_reads_incremental_fix_diff():
+    review = resource('review-prompt.md')
+    assert '### Sibling-Callsite & Field-Completeness Sweep' in review
+    assert 'Search every caller of the helper' in review and 'Check every field the helper' in review
+    assert 'PREV_REVIEW_HEAD_SHA..REVIEW_HEAD_SHA' in review
+    assert 'the review scope is still the full `REVIEW_BASE_SHA..REVIEW_HEAD_SHA` diff' in review
+    coordinator = resource('sub-coordinator-prompt.md')
+    assert 'PREV_REVIEW_HEAD_SHA=<review_head_sha of the previous review cycle>' in coordinator
+    assert 'paste diff text into any sentence of the payload' in coordinator
