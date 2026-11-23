@@ -99,6 +99,16 @@ Before committing tests you authored or rewrote, check that they prove what they
 
 When `RUN_WITH_IT_REDESIGN_REQUIRED=1` is set, earlier patches on this issue have not converged. Before editing, read every prior `instructions` and `modify_result` in `PRIOR_REVIEW_LEDGER` and name the single contract those findings share (for example "a retained receipt must be validated the same way on first delivery and on replay"). Then fix that contract at its boundary — one coherent design covering every caller and delivery path — instead of patching the previous patch. Record the contract you identified and how the design covers each earlier finding in the closure `action` text (and under key modification decisions when you use file publication). Closure IDs still follow the current cycle's checklist only.
 
+## Path-Scoped Verification
+
+A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. After your handoff commit, ask the runtime which required checks your change may skip:
+
+```text
+ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --to HEAD --required-check "<exact check text>" ...
+```
+
+Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. The dispatcher recomputes the list from Git and rejects any other skip, so an empty list means run everything. `verification.passed` stays `true` only when every check you ran passed.
+
 ## Code Size & Maintainability
 
 <!-- SYNC: intentionally duplicated in assets/prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
@@ -258,7 +268,7 @@ Capture import requires a pending attempt, confirmed owned-tree shutdown, durabl
 
 `result_capture.review_comment_ids` is the finalized current-cycle checklist from `REVIEWER_INSTRUCTIONS_FILE`, which remains the source of the full findings. Include exactly one `review_comment_closure` entry per listed ID, with no missing, extra, duplicate or earlier-cycle IDs. An empty list requires `"review_comment_closure": []`. Each entry keeps `id`, `status`, a concrete `action`, a `files_changed` string list (empty when no file changed) and a nonempty `verification` evidence list. Captured success accepts `addressed` or an evidenced `declined`. A `blocked` comment cannot be reported as success.
 
-For committed success, report the full current commit SHA from the clean worktree. Run every `result_capture.required_checks` entry against that commit and record each command once with passing evidence in `verification.checks`, with `verification.commit_sha` set to the same commit. For a verified no-op, set `commit_sha` to `NONE`, leave `files_committed` empty, keep HEAD unchanged at the attempt's pre-spawn commit, and put that actual HEAD in `verification.commit_sha`. The dispatcher validates against the attempt's pre-spawn HEAD. The review range still starts at the original issue baseline `REVIEW_BASE_SHA`; never substitute either commit for the other.
+For committed success, report the full current commit SHA from the clean worktree. Run every `result_capture.required_checks` entry against that commit and record each command once with passing evidence in `verification.checks`, with `verification.commit_sha` set to the same commit. Path-scoped checks (see **Path-Scoped Verification**) are the only exception: record each once as skipped. For a verified no-op, set `commit_sha` to `NONE`, leave `files_committed` empty, keep HEAD unchanged at the attempt's pre-spawn commit, and put that actual HEAD in `verification.commit_sha`. The dispatcher validates against the attempt's pre-spawn HEAD. The review range still starts at the original issue baseline `REVIEW_BASE_SHA`; never substitute either commit for the other.
 
 When external state or missing information prevents a safe fix, report a typed `blocked` role failure. Put the exact blocker and the smallest next action in `summary`, and concrete observations in `evidence`. You may keep the per-comment closure details. A blocked report needs no commit or passing checks, and it never advances the review cycle. Use typed `failed` for work or verification failures. Replace every illustrative value below with the admitted identity and observed evidence.
 

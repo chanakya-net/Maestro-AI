@@ -820,3 +820,40 @@ sys.exit(main(['write-json','--role','modify','--issue','7','--repo-root',os.get
     assert load_json(Path(str(retry.state_file) + '.config.json'))['issue_base_sha'] == base
     assert adopt_worker(retry.state_file).state == 'completed'
     assert [path.read_bytes() for path in paths] == originals
+
+
+VERIFY_WITH_SKIP = VERIFY.replace(
+    "'checks':[{'command':'feature acceptance','passed':True,'evidence':'feature.txt contains implemented'}]}}",
+    "'checks':[{'command':'feature acceptance','passed':True,'evidence':'feature.txt contains implemented'},"
+    "{'command':'cd web && bun run build','skipped':True,'evidence':'path-scoped: web/** unchanged'}]}}")
+
+
+def scoped_preserved(tmp_path, paths):
+    repo = tmp_path / 'repo'; repo.mkdir()
+    git(repo, 'init', '-q'); git(repo, 'config', 'user.name', 'Test')
+    git(repo, 'config', 'user.email', 'test@example.invalid')
+    (repo / 'feature.txt').write_text('baseline\n')
+    (repo / '.ai-skills-check-scopes.json').write_text(json.dumps({'schema_version': 1, 'scopes': [
+        {'check_prefixes': ['cd web && '], 'paths': paths}]}))
+    git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'Baseline with check scopes')
+    base = git(repo, 'rev-parse', 'HEAD')
+    (repo / 'implementation.txt').write_text('initial implementation\n')
+    git(repo, 'add', '.'); git(repo, 'commit', '-qm', 'Initial implementation')
+    first = attempt(tmp_path, repo, 'first', COMMIT_THEN_BLOCK, 'modify', issue_base_sha=base)
+    assert dispatch_worker(first).state == 'failed'
+    saved = WorkerConfig.from_record(load_json(Path(str(first.state_file) + '.config.json')))
+    contract = {'source_state_file': str(first.state_file), 'source_attempt_id': saved.agent_run.attempt_id,
+        'expected_commit_sha': git(repo, 'rev-parse', 'HEAD'),
+        'required_checks': ['feature acceptance', 'cd web && bun run build']}
+    return attempt(tmp_path, repo, 'retry', VERIFY_WITH_SKIP, 'modify', execution_mode='verify_existing',
+        issue_base_sha=base, retry_contract=contract)
+
+
+@pytest.mark.parametrize(('paths', 'completed'), [(['web/**'], True), (['*.txt'], False)])
+def test_modify_verification_retry_accepts_only_path_scoped_skips(tmp_path, paths, completed):
+    retry = scoped_preserved(tmp_path, paths)
+    result = dispatch_worker(retry)
+    assert (result.state == 'completed') is completed, result.reason
+    if not completed:
+        assert 'verification-check-skip-not-allowed' in (result.reason or '') + \
+            Path(retry.agent_run.log_file).read_text(encoding='utf-8')

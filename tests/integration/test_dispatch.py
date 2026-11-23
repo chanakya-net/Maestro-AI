@@ -1937,6 +1937,48 @@ def modify_worker(tmp_path, body, *, ids=MODIFY_IDS, checks=None, **options):
                    pre_spawn_head=git_output(root, 'rev-parse', 'HEAD'))
 
 
+FRONTEND_CHECK = 'cd web && bun run build'
+SKIP_FRONTEND = """
+for check in report['verification']['checks']:
+    if check['command'] == %r:
+        check.pop('passed')
+        check.update(skipped=True, evidence='path-scoped: no changed file under web/**')
+""" % FRONTEND_CHECK
+
+
+def scoped_modify_worker(tmp_path, body, paths):
+    """Like modify_worker, with a check-scopes map committed in the issue base."""
+    from ai_skills.git import git_output
+
+    contract = {'required_checks': ['feature check', FRONTEND_CHECK], 'review_comment_ids': list(MODIFY_IDS)}
+    config = capture_worker(tmp_path, body, result_capture=contract)
+    root = config.agent_run.repo_root
+    scopes = {'schema_version': 1, 'scopes': [{'check_prefixes': ['cd web && '], 'paths': paths}]}
+    (root / '.ai-skills-check-scopes.json').write_text(json.dumps(scopes), encoding='utf-8')
+    git_output(str(root), 'add', '.ai-skills-check-scopes.json')
+    git_output(str(root), 'commit', '-qm', 'Declare check scopes')
+    base = git_output(str(root), 'rev-parse', 'HEAD')
+    (root / 'feature.txt').write_text('implemented', encoding='utf-8')
+    git_output(str(root), 'add', 'feature.txt')
+    git_output(str(root), 'commit', '-qm', 'Implement feature')
+    return replace(config, agent_run=config.agent_run.replace(role='modify'), issue_base_sha=base,
+                   pre_spawn_head=git_output(str(root), 'rev-parse', 'HEAD'))
+
+
+def test_captured_modifier_may_skip_checks_outside_changed_paths(tmp_path):
+    config = scoped_modify_worker(tmp_path, build_modify_capture() + SKIP_FRONTEND + WRITE_CAPTURE, ['web/**'])
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    checks = json.loads(config.agent_run.result_file.read_bytes())['verification']['checks']
+    assert [check.get('skipped', False) for check in checks] == [False, True]
+
+
+def test_captured_modifier_skip_is_rejected_when_change_touches_scope(tmp_path):
+    config = scoped_modify_worker(tmp_path, build_modify_capture() + SKIP_FRONTEND + WRITE_CAPTURE, ['*.txt'])
+    assert dispatch_worker(config).state != 'completed'
+    assert 'reason=verification-check-skip-not-allowed' in config.agent_run.events_log.read_text(encoding='utf-8')
+
+
 def test_fake_codex_captured_modifier_commit_preserves_closure_and_issue_baseline(tmp_path):
     from ai_skills.dispatch import adopt_worker
     from ai_skills.git import current_head, git_output
