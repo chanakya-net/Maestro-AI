@@ -68,7 +68,7 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 2. Identify every actionable reviewer comment, stable comment `id`, category, verification instruction, and blocking reason.
 3. When `PRIOR_REVIEW_LEDGER` is present, read each listed prior `instructions` file and its `modify_result` so you know which behaviors earlier fixes closed and must keep closed.
 4. Edit the working tree to address all reviewer comments that can be fixed safely, then complete the **Invariant & Boundary Check** and the **Test-Fidelity Self-Check** before verification.
-5. Run the required verification commands supplied by the coordinator.
+5. Run the required verification commands supplied by the coordinator (using **Path-Scoped Verification** when `.ai-skills-check-scopes.json` applies).
 6. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
 7. Re-run verification until all required checks pass.
 8. Produce a verified success report after verification passes; otherwise publish the typed failure report with actual evidence.
@@ -101,13 +101,19 @@ When `RUN_WITH_IT_REDESIGN_REQUIRED=1` is set, earlier patches on this issue hav
 
 ## Path-Scoped Verification
 
-A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. After your handoff commit, ask the runtime which required checks your change may skip:
+A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. Before committing (during step 5 verification), preview which required checks your uncommitted edits and untracked files may skip with `--working-tree`:
+
+```text
+ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --working-tree --required-check "<exact check text>" ...
+```
+
+After your handoff commit (and before emitting a captured handoff or `verify_existing` report), confirm the final committed diff against `--to HEAD` without `--working-tree` — running `--to HEAD` before committing compares `<REVIEW_HEAD_SHA>` to itself and always returns an empty skip list:
 
 ```text
 ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --to HEAD --required-check "<exact check text>" ...
 ```
 
-Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. The dispatcher recomputes the list from Git and rejects any other skip, so an empty list means run everything. `verification.passed` stays `true` only when every check you ran passed.
+Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. The dispatcher always recomputes the allowed skips from Git commits (`from..HEAD`) and the base-commit scope map and rejects any other skip, so an empty list means run everything. `verification.passed` stays `true` only when every check you ran passed.
 
 ## Code Size & Maintainability
 

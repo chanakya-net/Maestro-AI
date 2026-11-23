@@ -273,10 +273,11 @@ A required check whose text starts with one of a scope's `check_prefixes` is dec
 The rules are deliberately strict:
 
 - The map is read from the issue's base commit, so a worker cannot change it to skip its own checks. A commit that edits the map skips nothing.
-- The dispatcher recomputes the allowed skips from Git and rejects any other skip.
+- The dispatcher recomputes the allowed skips from Git commits and rejects any other skip.
 - Initial implementation attempts never skip checks. A missing or invalid map skips nothing.
+- There is no separate pre-merge full-suite rerun after approval: safety holds by induction from the full `impl` run plus each modify commit that touched a scope's declared paths, so include every shared contract or cross-layer dependency in each dependent scope's `paths`.
 
-Workers query the allowed skips with `ai-skills artifact check-scope`.
+Workers query the allowed skips with `ai-skills artifact check-scope` (`--working-tree` to preview before committing, and `--to HEAD` to confirm after committing).
 
 </details>
 

@@ -95,9 +95,27 @@ def changed_paths(root, from_sha, to_sha):
     return [path for path in raw.decode('utf-8').split('\0') if path]
 
 
+def changed_paths_working_tree(root, from_sha):
+    tracked = _git(root, 'diff', '--name-only', '-z', '--no-renames', from_sha, '--')
+    untracked = _git(root, 'ls-files', '--others', '--exclude-standard', '-z')
+    paths = [path for raw in (tracked, untracked) for path in raw.decode('utf-8').split('\0') if path]
+    return list(dict.fromkeys(paths))
+
+
 def _check_globs(check, scopes):
     return [glob for prefixes, globs in scopes if any(check.startswith(prefix) for prefix in prefixes)
             for glob in globs]
+
+
+def _filter_skippable(scopes, paths, required_checks):
+    if not paths or SCOPE_FILE in paths:
+        return []
+    skippable = []
+    for check in required_checks:
+        globs = _check_globs(check, scopes)
+        if globs and not any(path_matches(path, glob) for path in paths for glob in globs):
+            skippable.append(check)
+    return skippable
 
 
 def skippable_checks(root, *, base_sha, from_sha, to_sha, required_checks):
@@ -112,29 +130,52 @@ def skippable_checks(root, *, base_sha, from_sha, to_sha, required_checks):
         paths = changed_paths(root, from_sha, to_sha)
     except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
         return []
-    if not paths or SCOPE_FILE in paths:
+    return _filter_skippable(scopes, paths, required_checks)
+
+
+def skippable_checks_working_tree(root, *, base_sha, from_sha, required_checks):
+    """Preview required checks skippable for uncommitted changes since ``from_sha``."""
+    if not all(isinstance(sha, str) and _SHA.fullmatch(sha) for sha in (base_sha, from_sha)):
         return []
-    skippable = []
-    for check in required_checks:
-        globs = _check_globs(check, scopes)
-        if globs and not any(path_matches(path, glob) for path in paths for glob in globs):
-            skippable.append(check)
-    return skippable
+    try:
+        scopes = load_scopes(root, base_sha)
+        if not scopes:
+            return []
+        paths = changed_paths_working_tree(root, from_sha)
+    except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+        return []
+    return _filter_skippable(scopes, paths, required_checks)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ai-skills artifact check-scope', description=(
-        'Print which required checks the from..to change may record as skipped under the '
-        f'{SCOPE_FILE} map at the issue base commit.'))
+        'Print which required checks the from..to change (or --working-tree preview) may record as '
+        f'skipped under the {SCOPE_FILE} map at the issue base commit.'))
     parser.add_argument('--repo-root', required=True)
     parser.add_argument('--issue-base-sha', required=True)
     parser.add_argument('--from', dest='from_sha', required=True, help='Commit the change starts from (pre-spawn HEAD).')
-    parser.add_argument('--to', dest='to_sha', default='HEAD', help='Commit the change ends at (default HEAD).')
+    parser.add_argument('--to', dest='to_sha', default=None, help='Commit the change ends at (default HEAD).')
+    parser.add_argument('--working-tree', action='store_true', default=False,
+        help='Preview against tracked working-tree changes and untracked files since --from (before committing).')
     parser.add_argument('--required-check', action='append', default=[], dest='checks')
     args = parser.parse_args(argv)
+    if args.working_tree and args.to_sha is not None:
+        print('ai-skills artifact check-scope: --working-tree cannot be combined with --to', file=sys.stderr)
+        return 2
+    if args.working_tree:
+        try:
+            from_sha = _git(args.repo_root, 'rev-parse', '--verify', args.from_sha + '^{commit}').decode().strip()
+        except OSError:
+            print('ai-skills artifact check-scope: unknown --from commit', file=sys.stderr)
+            return 2
+        skippable = skippable_checks_working_tree(args.repo_root, base_sha=args.issue_base_sha,
+            from_sha=from_sha, required_checks=args.checks)
+        print(json.dumps({'working_tree': True, 'skippable_checks': skippable}))
+        return 0
+    to_ref = 'HEAD' if args.to_sha is None else args.to_sha
     try:
         from_sha, to_sha = (_git(args.repo_root, 'rev-parse', '--verify', ref + '^{commit}').decode().strip()
-                            for ref in (args.from_sha, args.to_sha))
+                            for ref in (args.from_sha, to_ref))
     except OSError:
         print('ai-skills artifact check-scope: unknown --from or --to commit', file=sys.stderr)
         return 2

@@ -133,3 +133,36 @@ def test_check_scope_cli_reports_skippable_checks(repo, capsys):
     output = json.loads(capsys.readouterr().out)
     assert output['skippable_checks'] == [BUILD, E2E]
     assert output['to_sha'] == git(root, 'rev-parse', 'HEAD')
+
+
+def test_check_scope_working_tree_previews_uncommitted_and_untracked_changes(repo, capsys):
+    root, base, start = repo
+    from ai_skills.artifacts import main
+    base_args = ['check-scope', '--repo-root', str(root), '--issue-base-sha', base, '--from', start]
+    check_args = [item for check in CHECKS for item in ('--required-check', check)]
+
+    # Clean tree (no uncommitted changes): skips nothing.
+    assert main(base_args + ['--working-tree'] + check_args) == 0
+    assert json.loads(capsys.readouterr().out) == {'working_tree': True, 'skippable_checks': []}
+
+    # Uncommitted backend-only edit: previews frontend skips before committing.
+    (root / 'api/h.cs').write_text('3', encoding='utf-8')
+    assert main(base_args + ['--working-tree'] + check_args) == 0
+    assert json.loads(capsys.readouterr().out) == {'working_tree': True, 'skippable_checks': [BUILD, E2E]}
+
+    # Untracked frontend file: fails closed and keeps frontend checks.
+    untracked = root / 'web/new.ts'
+    untracked.write_text('export const x = 1;', encoding='utf-8')
+    assert main(base_args + ['--working-tree'] + check_args) == 0
+    assert json.loads(capsys.readouterr().out) == {'working_tree': True, 'skippable_checks': []}
+    untracked.unlink()
+
+    # Uncommitted edit to the scope map itself: fails closed and skips nothing.
+    (root / check_scopes.SCOPE_FILE).write_text(json.dumps({**MAP, 'scopes': [
+        {'name': 'frontend', 'check_prefixes': ['dotnet'], 'paths': ['nothing/**']}]}), encoding='utf-8')
+    assert main(base_args + ['--working-tree'] + check_args) == 0
+    assert json.loads(capsys.readouterr().out) == {'working_tree': True, 'skippable_checks': []}
+
+    # Combining --working-tree with --to is rejected.
+    assert main(base_args + ['--working-tree', '--to', 'HEAD'] + check_args) == 2
+    assert 'cannot be combined' in capsys.readouterr().err

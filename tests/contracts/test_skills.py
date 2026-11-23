@@ -424,7 +424,7 @@ def test_reviewer_sweeps_siblings_and_reads_incremental_fix_diff():
 def test_path_scoped_skips_are_documented_and_dispatcher_owned():
     modifier = resource('modifier-prompt.md')
     scoped = section(modifier, 'Path-Scoped Verification')
-    assert 'ai-skills artifact check-scope' in scoped and '"skipped": true' in scoped
+    assert 'ai-skills artifact check-scope' in scoped and '--working-tree' in scoped and '"skipped": true' in scoped
     assert 'do not set `passed` on a skipped entry' in scoped and 'rejects any other skip' in scoped
     assert 'Path-scoped checks (see **Path-Scoped Verification**) are the only exception' in modifier
     protocol = resource('artifact-protocol.md')
@@ -434,3 +434,4 @@ def test_path_scoped_skips_are_documented_and_dispatcher_owned():
     assert 'Implementation attempts never skip checks' in coordinator
     readme = (ROOT / 'README.md').read_text(encoding='utf-8')
     assert '.ai-skills-check-scopes.json' in readme and 'read from the issue\'s base commit' in readme
+    assert '--working-tree' in readme and 'by induction' in readme
