@@ -921,6 +921,8 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--repo-root", default="")
         sub.add_argument("--pre-spawn-head", default="")
         sub.add_argument("--from-stall", action="store_true", default=False)
+    subparsers.add_parser("check-scope", add_help=False,
+        help="Print which required checks a modify change may skip under the repository check-scopes map.")
     writer = subparsers.add_parser("write-json")
     writer.add_argument(
         "--role",
@@ -947,8 +949,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["check-scope"]:
+        from ai_skills.check_scopes import main as check_scope_main
+        return check_scope_main(arguments[1:])
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     if args.command == "failure-reason":
         return failure_reason(args)
     if args.command == "failure-class":

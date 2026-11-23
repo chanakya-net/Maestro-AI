@@ -1937,6 +1937,48 @@ def modify_worker(tmp_path, body, *, ids=MODIFY_IDS, checks=None, **options):
                    pre_spawn_head=git_output(root, 'rev-parse', 'HEAD'))
 
 
+FRONTEND_CHECK = 'cd web && bun run build'
+SKIP_FRONTEND = """
+for check in report['verification']['checks']:
+    if check['command'] == %r:
+        check.pop('passed')
+        check.update(skipped=True, evidence='path-scoped: no changed file under web/**')
+""" % FRONTEND_CHECK
+
+
+def scoped_modify_worker(tmp_path, body, paths):
+    """Like modify_worker, with a check-scopes map committed in the issue base."""
+    from ai_skills.git import git_output
+
+    contract = {'required_checks': ['feature check', FRONTEND_CHECK], 'review_comment_ids': list(MODIFY_IDS)}
+    config = capture_worker(tmp_path, body, result_capture=contract)
+    root = config.agent_run.repo_root
+    scopes = {'schema_version': 1, 'scopes': [{'check_prefixes': ['cd web && '], 'paths': paths}]}
+    (root / '.ai-skills-check-scopes.json').write_text(json.dumps(scopes), encoding='utf-8')
+    git_output(str(root), 'add', '.ai-skills-check-scopes.json')
+    git_output(str(root), 'commit', '-qm', 'Declare check scopes')
+    base = git_output(str(root), 'rev-parse', 'HEAD')
+    (root / 'feature.txt').write_text('implemented', encoding='utf-8')
+    git_output(str(root), 'add', 'feature.txt')
+    git_output(str(root), 'commit', '-qm', 'Implement feature')
+    return replace(config, agent_run=config.agent_run.replace(role='modify'), issue_base_sha=base,
+                   pre_spawn_head=git_output(str(root), 'rev-parse', 'HEAD'))
+
+
+def test_captured_modifier_may_skip_checks_outside_changed_paths(tmp_path):
+    config = scoped_modify_worker(tmp_path, build_modify_capture() + SKIP_FRONTEND + WRITE_CAPTURE, ['web/**'])
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    checks = json.loads(config.agent_run.result_file.read_bytes())['verification']['checks']
+    assert [check.get('skipped', False) for check in checks] == [False, True]
+
+
+def test_captured_modifier_skip_is_rejected_when_change_touches_scope(tmp_path):
+    config = scoped_modify_worker(tmp_path, build_modify_capture() + SKIP_FRONTEND + WRITE_CAPTURE, ['*.txt'])
+    assert dispatch_worker(config).state != 'completed'
+    assert 'reason=verification-check-skip-not-allowed' in config.agent_run.events_log.read_text(encoding='utf-8')
+
+
 def test_fake_codex_captured_modifier_commit_preserves_closure_and_issue_baseline(tmp_path):
     from ai_skills.dispatch import adopt_worker
     from ai_skills.git import current_head, git_output
@@ -2383,6 +2425,30 @@ AGY_MODEL_ASSERTION = ("assert args.count('--model') == 1\n"
                        f"assert args[args.index('--model') + 1] == {GEMINI_4!r}\n")
 AGY_STEPS_ONLY = AGY_CAPTURE.split("    {'event': 'result'", 1)[0] + "]:\n    print(json.dumps(event))\n"
 AGY_MALFORMED_TERMINAL = AGY_CAPTURE.replace("'response': json.dumps(envelope)", "'response': '{'")
+# Real AGY streams: progress narration in earlier assistant messages, a recovered
+# tool ERROR step, and result.response concatenating every assistant message.
+AGY_NARRATED_CAPTURE = '''
+narration = 'Running RED tests; waiting for completion.\\n'
+for event in [
+    {'event': 'init', 'conversation_id': 'resumed', 'init': {}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 20,
+        'step_type': 'user_input', 'state': 'DONE'}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 21,
+        'step_type': 'agent_response', 'state': 'DONE', 'text_delta': narration}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 22,
+        'step_type': 'tool', 'state': 'ERROR', 'tool_name': 'read_file'}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 23,
+        'step_type': 'agent_response', 'state': 'ACTIVE', 'text_delta': json.dumps(envelope)}},
+    {'event': 'step_update', 'step_update': {'conversation_id': 'resumed', 'step_index': 23,
+        'step_type': 'agent_response', 'state': 'DONE'}},
+    {'event': 'result', 'result': {'conversation_id': 'resumed', 'status': 'SUCCESS',
+        'num_turns': 7, 'response': narration + json.dumps(envelope)}},
+]:
+    print(json.dumps(event))
+'''
+AGY_NARRATED_FINAL_PROSE = AGY_NARRATED_CAPTURE.replace(
+    "'text_delta': json.dumps(envelope)}", "'text_delta': 'Done. ' + json.dumps(envelope)}").replace(
+    "narration + json.dumps(envelope)", "narration + 'Done. ' + json.dumps(envelope)")
 AGY_UNVERIFIED = BUILD_CAPTURE.replace("'passed': True, 'evidence': 'observed exit 0'",
                                        "'passed': False, 'evidence': 'observed exit 1'")
 
@@ -2483,6 +2549,23 @@ def test_agy_gemini_4_impl_publishes_verified_success(tmp_path, monkeypatch):
     assert f'|model={GEMINI_4}|' in done and '|status=success|source=dispatcher|' in done
     assert f'model={GEMINI_4}' in config.agent_run.events_log.read_text(encoding='utf-8')
     assert (tmp_path / 'calls').read_text(encoding='utf-8') == 'run\n'
+
+
+def test_agy_narrated_turn_publishes_final_message_envelope(tmp_path, monkeypatch):
+    from ai_skills.git import current_head
+
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_NARRATED_CAPTURE)
+    result = dispatch_worker(config)
+    assert result.state == 'completed', result.reason
+    report = json.loads(config.agent_run.result_file.read_bytes())
+    assert report['commit_sha'] == current_head(str(config.agent_run.repo_root))
+    assert 'dispatch-capture-rejected' not in config.agent_run.events_log.read_text(encoding='utf-8')
+
+
+def test_agy_final_message_with_prose_is_still_rejected(tmp_path, monkeypatch):
+    config = agy_gemini_worker(tmp_path, monkeypatch, AGY_NARRATED_FINAL_PROSE)
+    assert dispatch_worker(config).state == 'artifact-recovery-required'
+    assert 'reason=capture-invalid-json' in config.agent_run.events_log.read_text(encoding='utf-8')
 
 
 def test_agy_gemini_4_publishes_result_before_outcome_and_done(tmp_path, monkeypatch):

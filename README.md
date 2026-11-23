@@ -254,6 +254,33 @@ Failed or interrupted runs retain state and worktrees. Before discarding a run, 
 
 </details>
 
+<details>
+<summary><strong>Skipping unaffected checks during review fixes</strong></summary>
+
+By default every review-fix (modify) round re-runs every required check. To skip checks a fix cannot affect, such as a frontend build after a backend-only fix, commit `.ai-skills-check-scopes.json` to the repository:
+
+```json
+{
+  "schema_version": 1,
+  "scopes": [
+    {"name": "frontend", "check_prefixes": ["cd src/frontend && "], "paths": ["src/frontend/**"]}
+  ]
+}
+```
+
+A required check whose text starts with one of a scope's `check_prefixes` is declared to depend only on files matching that scope's `paths` globs (`*`, `?` and `**`). When a modify commit changes no such file, the worker may record the check as skipped. Only list paths a check truly depends on: if a frontend test calls the real backend, or both sides share contract files, include those paths too.
+
+The rules are deliberately strict:
+
+- The map is read from the issue's base commit, so a worker cannot change it to skip its own checks. A commit that edits the map skips nothing.
+- The dispatcher recomputes the allowed skips from Git commits and rejects any other skip.
+- Initial implementation attempts never skip checks. A missing or invalid map skips nothing.
+- There is no separate pre-merge full-suite rerun after approval: safety holds by induction from the full `impl` run plus each modify commit that touched a scope's declared paths, so include every shared contract or cross-layer dependency in each dependent scope's `paths`.
+
+Workers query the allowed skips with `ai-skills artifact check-scope` (`--working-tree` to preview before committing, and `--to HEAD` to confirm after committing).
+
+</details>
+
 ## Technical reference
 
 Expand the part you need. The [skill instructions](skills/) and maintained runtime code define exact behavior.

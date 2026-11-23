@@ -249,6 +249,7 @@ Splitting heuristics — apply these before presenting the breakdown:
 - Split per entity, endpoint, or screen rather than bundling several behind one slice.
 - Split "wire it up" from "make it robust" (auth, pagination, retries, empty states) — ship the thin path, then harden in a follow-up slice.
 - A scaffolding/skeleton step plus its first real behavior can be one slice; further behaviors are their own slices.
+- Split by independent risk surface. When one behavior needs work in several layers that each carry their own durability or compatibility risk (for example server persistence/reconciliation, client-side storage or service-worker upgrade, and browser end-to-end proof), make each risk surface its own demoable slice. A slice expected to change more than ~800 lines, or to need verification across more than one stack's toolchain, is a split candidate — oversized cross-stack slices produce long review/modify loops.
 
 It is better to produce more slices than to produce slices that are too large. Err toward finer granularity.
 </slice-sizing>

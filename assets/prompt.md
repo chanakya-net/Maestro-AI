@@ -63,6 +63,20 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 3. Respect existing boundaries and dependency direction.
 4. Prefer the smallest compatible extension if a gap is found.
 5. Follow `save-tokens` and `tdd-implementation` as the source of truth for concise communication and test-first workflow.
+6. When you change a shared reader, validator, hasher, or other helper, search every caller and confirm each still gets the behavior it relies on; exercise both first delivery and exact redelivery for idempotent paths.
+7. Complete the **Test-Fidelity Self-Check** before the mandatory commit.
+
+## Test-Fidelity Self-Check
+
+<!-- SYNC: intentionally duplicated in assets/modifier-prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
+
+Before committing tests you authored or rewrote, check that they prove what they claim:
+
+- **Golden or historical fixtures are used verbatim.** Feed the archived bytes/text to the system under test; never re-serialize, re-hash, or rebuild a fixture with current production code and then assert against it.
+- **Assert terminal state, not absence.** An assertion that something is absent (count 0, not visible, not called) must first wait for the terminal state that makes absence meaningful (page/route loaded, request finished, access check completed).
+- **Wait for the real readiness signal.** Before acting on async setup (cache install, worker activation, hydration, migrations), wait on the specific signal for the current version, not a generic flag that a stale or partial state could also satisfy.
+- **Fixtures mirror production inputs.** Seed the same fields the real producer supplies; a missing field that makes production code take a fallback path makes the test prove the fallback, not the behavior.
+- **Size limits apply to tests.** New test functions and fixture helpers follow `Code Size & Maintainability`; split independent scenarios so one failure does not hide the others.
 
 ## Code Size & Maintainability
 

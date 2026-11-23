@@ -327,6 +327,62 @@ def test_extract_response_handles_xhigh_agy_stream():
     assert extract_response('agy-stream-json', io.BytesIO(wire)) == 'neon xhigh 完了'.encode('utf-8')
 
 
+def _agy_wire(steps, response, cid='conv-1'):
+    events = [{'event': 'init', 'conversation_id': cid, 'init': {}}]
+    for index, kind, state, *text in steps:
+        step = {'conversation_id': cid, 'step_index': index, 'state': state, 'step_type': kind}
+        if text:
+            step['text_delta'] = text[0]
+        events.append({'event': 'step_update', 'step_update': step})
+    events.append({'event': 'result', 'result': {'conversation_id': cid, 'status': 'SUCCESS', 'response': response}})
+    return ''.join(json.dumps(e, ensure_ascii=False) + '\n' for e in events).encode('utf-8')
+
+
+AGY_NARRATED_STEPS = [(0, 'user_input', 'DONE'), (1, 'agent_response', 'DONE', 'Waiting for tests.\n'),
+                      (2, 'tool', 'ERROR'), (3, 'agent_response', 'ACTIVE', '{"a":'),
+                      (3, 'agent_response', 'DONE', '1}')]
+
+
+def test_agy_capture_uses_final_assistant_message_and_tolerates_tool_errors():
+    import io
+    from ai_skills.provider_capture import extract_response
+    wire = _agy_wire(AGY_NARRATED_STEPS, 'Waiting for tests.\n{"a":1}')
+    assert extract_response('agy-stream-json', io.BytesIO(wire)) == b'{"a":1}'
+
+
+@pytest.mark.parametrize(('steps', 'response'), [
+    # A later non-message step means the final message is not the turn's end.
+    (AGY_NARRATED_STEPS + [(4, 'tool', 'DONE')], 'Waiting for tests.\n{"a":1}'),
+    # The final message must be what result.response ends with.
+    (AGY_NARRATED_STEPS, 'Waiting for tests.\n{"a":2}'),
+    # No assistant message text: keep result.response.
+    ([(0, 'user_input', 'DONE'), (1, 'tool', 'DONE')], 'Waiting for tests.\n{"a":1}'),
+])
+def test_agy_capture_falls_back_to_full_response(steps, response):
+    import io
+    from ai_skills.provider_capture import extract_response
+    assert extract_response('agy-stream-json', io.BytesIO(_agy_wire(steps, response))) == response.encode('utf-8')
+
+
+@pytest.mark.parametrize('steps', [
+    [(0, 'user_input', 'ERROR')],
+    [(0, 'user_input', 'DONE'), (1, 'tool', 'CANCELLED')],
+])
+def test_agy_capture_rejects_failed_user_turn_and_unknown_states(steps):
+    import io
+    from ai_skills.provider_capture import extract_response
+    with pytest.raises(ValueError):
+        extract_response('agy-stream-json', io.BytesIO(_agy_wire(steps, '{}')))
+
+
+def test_agy_capture_rejects_non_string_text_delta():
+    import io
+    from ai_skills.provider_capture import extract_response
+    wire = _agy_wire([(0, 'user_input', 'DONE'), (1, 'agent_response', 'DONE', 7)], '{}')
+    with pytest.raises(ValueError, match='text delta'):
+        extract_response('agy-stream-json', io.BytesIO(wire))
+
+
 CARBON = 'gemini-4-carbon-high'
 STREAM_FLAGS = ['--input-format', 'stream-json', '--output-format', 'stream-json']
 AGY_FORMAT_HELP = {

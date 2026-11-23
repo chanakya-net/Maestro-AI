@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 
-from ai_skills import git
+from ai_skills import check_scopes, git
 from ai_skills.outcomes import canonical_path, outcome_path, outcome_reason, role_artifact_paths
 from ai_skills.processes import ProcessIdentity, ProcessSupervisor
 from ai_skills.storage import load_json
@@ -159,8 +159,10 @@ def _captured_commit_reason(config, payload):
         return 'capture-git-unavailable'
     decision = validate_artifact(run.role, payload, GitEvidence(issue=str(run.issue), repo_available=True,
         head=head, canonical_commit=head, pre_spawn_head=start, canonical_pre_spawn_head=start))
+    required = config.result_capture['required_checks']
+    skippable = _modify_skippable(config, start, head, required) if run.role == 'modify' and not no_op else ()
     reason = decision.reason or check_evidence_reason(payload.get('verification'), expected_commit=head,
-        required_checks=config.result_capture['required_checks'])
+        required_checks=required, skippable_checks=skippable)
     if not reason and run.role == 'modify':
         reason = review_comment_closure_reason(payload, config.result_capture['review_comment_ids'])
     return reason
@@ -276,11 +278,24 @@ def result_reason(config, payload):
         return 'verification-commit-mismatch'
     if not isinstance(payload.get('files_committed'), list) or not payload['files_committed']:
         return 'invalid-verification-result'
+    skippable = ()
+    if run.role == 'modify':
+        try:
+            source_head = _source(config).pre_spawn_head
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+            source_head = ''
+        skippable = _modify_skippable(config, source_head, expected, contract['required_checks'])
     return check_evidence_reason(payload.get('verification'), expected_commit=expected,
-        required_checks=contract['required_checks'])
+        required_checks=contract['required_checks'], skippable_checks=skippable)
 
 
-def check_evidence_reason(verification, *, expected_commit, required_checks):
+def _modify_skippable(config, from_sha, to_sha, required_checks):
+    """Checks a modify change may skip, recomputed from Git and the base-commit scope map."""
+    return frozenset(check_scopes.skippable_checks(str(config.agent_run.repo_root),
+        base_sha=config.issue_base_sha, from_sha=from_sha, to_sha=to_sha, required_checks=required_checks))
+
+
+def check_evidence_reason(verification, *, expected_commit, required_checks, skippable_checks=()):
     if not isinstance(verification, dict) or verification.get('passed') is not True:
         return 'implementation-verification-failed'
     if verification.get('commit_sha') != expected_commit:
@@ -295,7 +310,16 @@ def check_evidence_reason(verification, *, expected_commit, required_checks):
         command = check.get('command')
         if not isinstance(command, str) or command not in required_checks or command in seen:
             return 'verification-checks-incomplete'
-        if check.get('passed') is not True or not isinstance(check.get('evidence'), str) or not check['evidence'].strip():
+        if not isinstance(check.get('evidence'), str) or not check['evidence'].strip():
+            return 'verification-check-not-passed'
+        skipped = check.get('skipped', False)
+        if type(skipped) is not bool:
+            return 'verification-checks-incomplete'
+        if skipped:
+            # Only the dispatcher's own path-scope recomputation can allow a skip.
+            if command not in skippable_checks or check.get('passed') is True:
+                return 'verification-check-skip-not-allowed'
+        elif check.get('passed') is not True:
             return 'verification-check-not-passed'
         seen.add(command)
     return ''

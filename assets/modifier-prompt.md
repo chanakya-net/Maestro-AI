@@ -38,6 +38,8 @@ Your job is to address reviewer comments on an existing implementation, run veri
 - `REVIEW_HEAD_SHA` — the specific commit SHA of the implementation or last modification under review; do not substitute `HEAD`.
 - Fetch the full accumulated diff for this issue: `git diff <REVIEW_BASE_SHA>..<REVIEW_HEAD_SHA>` — **never** `git diff <SHA>..HEAD`.
 - Complete reviewer JSON for the current review cycle (from `REVIEWER_INSTRUCTIONS_FILE`).
+- `PRIOR_REVIEW_LEDGER` — present on modification cycle ≥ 2: newline-delimited `cycle=<k> instructions=<path> modify_result=<path>` lines for every earlier cycle. Read-only context: it records the invariants earlier fixes established. Do not re-close earlier comment IDs; `review_comment_closure` still covers exactly the current cycle's IDs. See **Invariant & Boundary Check**.
+- `RUN_WITH_IT_REDESIGN_REQUIRED=1` — present when the issue has reached the redesign checkpoint. See **Redesign Checkpoint**.
 - `RUN_WITH_IT_PLAN_FILE` — the original approach plan (`plan.md`) from the plan phase, when present. It carries the original intent (approach, ordered slices, `out_of_scope`) so on later cycles you do not re-derive intent from the diff alone. Absent for trivial issues (the plan phase is gated by complexity).
 - Required verification commands from the coordinator.
 - Check-in target metadata from the coordinator:
@@ -64,11 +66,54 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 
 1. Read the original issue context, latest diff, and complete reviewer JSON. **When `RUN_WITH_IT_PLAN_FILE` is present, read it too** — it carries the original intended approach, ordered slices, and `out_of_scope` list, giving you continuity across cycles instead of re-deriving intent from the diff. Honor that intent while addressing reviewer comments; if a reviewer comment requires departing from the plan, follow the reviewer (their feedback is current) and note the departure in your report.
 2. Identify every actionable reviewer comment, stable comment `id`, category, verification instruction, and blocking reason.
-3. Edit the working tree to address all reviewer comments that can be fixed safely.
-4. Run the required verification commands supplied by the coordinator.
-5. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
-6. Re-run verification until all required checks pass.
-7. Produce a verified success report after verification passes; otherwise publish the typed failure report with actual evidence.
+3. When `PRIOR_REVIEW_LEDGER` is present, read each listed prior `instructions` file and its `modify_result` so you know which behaviors earlier fixes closed and must keep closed.
+4. Edit the working tree to address all reviewer comments that can be fixed safely, then complete the **Invariant & Boundary Check** and the **Test-Fidelity Self-Check** before verification.
+5. Run the required verification commands supplied by the coordinator (using **Path-Scoped Verification** when `.ai-skills-check-scopes.json` applies).
+6. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
+7. Re-run verification until all required checks pass.
+8. Produce a verified success report after verification passes; otherwise publish the typed failure report with actual evidence.
+
+## Invariant & Boundary Check
+
+Fix the contract, not only the symptom in front of you. Before committing a fix that touches persistence, idempotency, retries, caching, shared readers/validators/hashers, or another boundary several callers depend on, check each of these and record the result in the closure `action` or `verification` evidence:
+
+- **First delivery and redelivery.** Exercise both the first call and an exact retry/redelivery of the same input. One successful call never proves idempotency.
+- **Real persistence, not only mocks.** Never decide behavior by object identity (`ReferenceEquals`, `is`, `===` on entities) or by freshly generated IDs when a repository can re-materialize or return an existing row. Where a test double returns the same in-memory object, confirm the real store behaves the same way.
+- **Every sibling caller.** When you tighten or change a shared helper, search all its callers and confirm each still gets the behavior it relied on; when you fix one caller of a helper, check the other callers for the same defect.
+- **Earlier closures stay closed.** When `PRIOR_REVIEW_LEDGER` is present, confirm your change does not reopen any behavior an earlier cycle fixed, and re-run the checks those cycles required.
+- **Integration proof at boundaries.** When the fix changes how a handler and its repository, store, or external service interact, and the repository has an integration-test harness, add or extend an integration test through the real boundary; a unit test against a stub alone is not enough.
+
+## Test-Fidelity Self-Check
+
+<!-- SYNC: intentionally duplicated in assets/prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
+
+Before committing tests you authored or rewrote, check that they prove what they claim:
+
+- **Golden or historical fixtures are used verbatim.** Feed the archived bytes/text to the system under test; never re-serialize, re-hash, or rebuild a fixture with current production code and then assert against it.
+- **Assert terminal state, not absence.** An assertion that something is absent (count 0, not visible, not called) must first wait for the terminal state that makes absence meaningful (page/route loaded, request finished, access check completed).
+- **Wait for the real readiness signal.** Before acting on async setup (cache install, worker activation, hydration, migrations), wait on the specific signal for the current version, not a generic flag that a stale or partial state could also satisfy.
+- **Fixtures mirror production inputs.** Seed the same fields the real producer supplies; a missing field that makes production code take a fallback path makes the test prove the fallback, not the behavior.
+- **Size limits apply to tests.** New test functions and fixture helpers follow `Code Size & Maintainability`; split independent scenarios so one failure does not hide the others.
+
+## Redesign Checkpoint
+
+When `RUN_WITH_IT_REDESIGN_REQUIRED=1` is set, earlier patches on this issue have not converged. Before editing, read every prior `instructions` and `modify_result` in `PRIOR_REVIEW_LEDGER` and name the single contract those findings share (for example "a retained receipt must be validated the same way on first delivery and on replay"). Then fix that contract at its boundary — one coherent design covering every caller and delivery path — instead of patching the previous patch. Record the contract you identified and how the design covers each earlier finding in the closure `action` text (and under key modification decisions when you use file publication). Closure IDs still follow the current cycle's checklist only.
+
+## Path-Scoped Verification
+
+A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. Before committing (during step 5 verification), preview which required checks your uncommitted edits and untracked files may skip with `--working-tree`:
+
+```text
+ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --working-tree --required-check "<exact check text>" ...
+```
+
+After your handoff commit (and before emitting a captured handoff or `verify_existing` report), confirm the final committed diff against `--to HEAD` without `--working-tree` — running `--to HEAD` before committing compares `<REVIEW_HEAD_SHA>` to itself and always returns an empty skip list:
+
+```text
+ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --to HEAD --required-check "<exact check text>" ...
+```
+
+Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. The dispatcher always recomputes the allowed skips from Git commits (`from..HEAD`) and the base-commit scope map and rejects any other skip, so an empty list means run everything. `verification.passed` stays `true` only when every check you ran passed.
 
 ## Code Size & Maintainability
 
@@ -229,7 +274,7 @@ Capture import requires a pending attempt, confirmed owned-tree shutdown, durabl
 
 `result_capture.review_comment_ids` is the finalized current-cycle checklist from `REVIEWER_INSTRUCTIONS_FILE`, which remains the source of the full findings. Include exactly one `review_comment_closure` entry per listed ID, with no missing, extra, duplicate or earlier-cycle IDs. An empty list requires `"review_comment_closure": []`. Each entry keeps `id`, `status`, a concrete `action`, a `files_changed` string list (empty when no file changed) and a nonempty `verification` evidence list. Captured success accepts `addressed` or an evidenced `declined`. A `blocked` comment cannot be reported as success.
 
-For committed success, report the full current commit SHA from the clean worktree. Run every `result_capture.required_checks` entry against that commit and record each command once with passing evidence in `verification.checks`, with `verification.commit_sha` set to the same commit. For a verified no-op, set `commit_sha` to `NONE`, leave `files_committed` empty, keep HEAD unchanged at the attempt's pre-spawn commit, and put that actual HEAD in `verification.commit_sha`. The dispatcher validates against the attempt's pre-spawn HEAD. The review range still starts at the original issue baseline `REVIEW_BASE_SHA`; never substitute either commit for the other.
+For committed success, report the full current commit SHA from the clean worktree. Run every `result_capture.required_checks` entry against that commit and record each command once with passing evidence in `verification.checks`, with `verification.commit_sha` set to the same commit. Path-scoped checks (see **Path-Scoped Verification**) are the only exception: record each once as skipped. For a verified no-op, set `commit_sha` to `NONE`, leave `files_committed` empty, keep HEAD unchanged at the attempt's pre-spawn commit, and put that actual HEAD in `verification.commit_sha`. The dispatcher validates against the attempt's pre-spawn HEAD. The review range still starts at the original issue baseline `REVIEW_BASE_SHA`; never substitute either commit for the other.
 
 When external state or missing information prevents a safe fix, report a typed `blocked` role failure. Put the exact blocker and the smallest next action in `summary`, and concrete observations in `evidence`. You may keep the per-comment closure details. A blocked report needs no commit or passing checks, and it never advances the review cycle. Use typed `failed` for work or verification failures. Replace every illustrative value below with the admitted identity and observed evidence.
 
