@@ -40,21 +40,33 @@ Start with the stage you need. Prepared issues can go straight to `run-with-it`.
 
 The registry controls supported models and availability. The installer registers skills and packages the runtime; it does not install Python, Node.js, or coding agents, sign in to their accounts, or broaden their permissions.
 
-### 1. Get the repository
+### 1. Install Maestro (recommended: `uv` or `pipx`, no clone needed)
+
+With [`uv`](https://docs.astral.sh/uv/):
+
+```text
+uv tool install git+https://github.com/chanakya-net/Maestro-AI.git && maestro install
+```
+
+With [`pipx`](https://pipx.pypa.io/):
+
+```text
+pipx install git+https://github.com/chanakya-net/Maestro-AI.git && maestro install
+```
+
+Add `--dry-run` to `maestro install` first if you want to preview which skill directories will be registered. When run without `--source`, `maestro install` packages the installed `ai-skills` distribution itself into an immutable runtime under `~/.ai-skill-collections/assets/runtimes/` and registers all seven skills for your detected coding agents.
+
+<details>
+<summary><strong>Manual install from a source checkout (macOS / Linux / Windows)</strong></summary>
+
+Clone the repository if you are contributing or installing offline:
 
 ```text
 git clone https://github.com/chanakya-net/Maestro-AI.git
 cd Maestro-AI
 ```
 
-### 2. Install the runtime and skills
-
-Choose your operating system. The dry run previews what the skill installer will change.
-
-<details>
-<summary><strong>macOS / Linux</strong></summary>
-
-Use an installed Python 3.12 or newer. If its command has a different name, substitute it below.
+**macOS / Linux** (Python 3.12+):
 
 ```text
 python3.12 -m venv .venv
@@ -63,12 +75,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m ai_skills install --source .
 ```
 
-</details>
-
-<details>
-<summary><strong>Windows</strong></summary>
-
-Use the Windows Python launcher and the environment's interpreter:
+**Windows**:
 
 ```text
 py -3.12 -m venv .venv
@@ -79,20 +86,18 @@ py -3.12 -m venv .venv
 
 </details>
 
-### 3. Check the setup
-
-In that Python environment, run:
+### 2. Check the setup
 
 ```text
-python -m ai_skills doctor --json
-python -m ai_skills agent list --detected-only
+maestro doctor --json
+maestro harness detect
 ```
 
-Here and below, `python` means the environment's interpreter. Activate the environment or use its full path from step 2. The installed `maestro` and `ai-skills` commands provide the same operations as `python -m ai_skills`. Activate this retained bootstrap environment, or use `.venv/bin/maestro` or `.venv/bin/ai-skills` on macOS/Linux, and `.venv\Scripts\maestro.exe` or `.venv\Scripts\ai-skills.exe` on Windows. Operational commands use a run pin first, then the active managed runtime. No arguments, help, version, doctor, install, and uninstall run locally; doctor reports the invoking environment.
+The `maestro`, `ai-skills`, and `python -m ai_skills` commands provide the same operations. With `uv tool` or `pipx`, `maestro` and `ai-skills` are placed directly on your `PATH`; from a source checkout, activate `.venv` or call `.venv/bin/maestro` (`.venv\Scripts\maestro.exe` on Windows). Operational commands use a run pin first, then the active managed runtime. No arguments, help, version, doctor, install, and uninstall run locally; doctor reports the invoking environment.
 
-`doctor` checks the interpreter and maintained resources. The agent list shows detected tools; use each provider's own sign-in process to establish account access.
+`doctor` checks the interpreter and maintained resources. `harness detect` shows which supported coding CLIs are installed and ready; use each provider's own sign-in process to establish account access.
 
-### 4. Open your coding agent in the project you want to work on
+### 3. Open your coding agent in the project you want to work on
 
 Invoke a skill using your agent's normal skill mechanism. Start with `break-req` for a new idea, `help-me-debug` for a diagnosis, or `run-with-it` for prepared issues. These skill names are not shell commands.
 

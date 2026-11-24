@@ -72,11 +72,43 @@ def _safe_assets(path, home):
     return path
 
 
+def _is_installed_package(source: Path) -> bool:
+    """True when ``source`` is an installed ``ai_skills`` package directory (uv tool / pipx / site-packages)."""
+    return (
+        source.is_dir()
+        and not (source / 'pyproject.toml').is_file()
+        and (source / '__init__.py').is_file()
+        and (source / 'data').is_dir()
+        and (source / 'skills').is_dir()
+    )
+
+
+def _installed_dist_metadata(package_dir: Path):
+    """Read (version, dependencies) from the sibling ``.dist-info`` or active distribution."""
+    for candidate in sorted(package_dir.parent.glob('ai_skills-*.dist-info')):
+        meta_file = candidate / 'METADATA'
+        if meta_file.is_file():
+            info = email.message_from_bytes(meta_file.read_bytes())
+            if info.get('Name', '').lower().replace('_', '-') == 'ai-skills':
+                return info['Version'], info.get_all('Requires-Dist', [])
+    try:
+        dist = metadata.distribution('ai-skills')
+    except metadata.PackageNotFoundError as cause:
+        raise ValueError(f'installed package at {package_dir} has no ai-skills distribution metadata') from cause
+    return dist.version, list(dist.requires or [])
+
+
 def _source(source):
     if source is None:
-        checkout = Path(__file__).resolve().parents[2]
-        if (checkout / 'pyproject.toml').is_file(): source = checkout
-        else: raise ValueError('installed package requires --source <wheel-or-source-directory> to create an immutable runtime')
+        checkout = Path(__file__).resolve().parents[3]
+        if (checkout / 'pyproject.toml').is_file():
+            source = checkout
+        else:
+            installed = Path(__file__).resolve().parents[1]
+            if _is_installed_package(installed):
+                source = installed
+            else:
+                raise ValueError('installed package requires --source <wheel-or-source-directory> to create an immutable runtime')
     source = _absolute(source)
     digest = hashlib.sha256()
     if source.is_file() and source.suffix == '.whl':
@@ -100,6 +132,16 @@ def _source(source):
         paths += [source / 'skills' / name / 'SKILL.md' for name in SKILL_NAMES]
         for path in paths:
             if not path.is_file(): raise ValueError(f'missing maintained source file: {path}')
+            digest.update(str(path.relative_to(source)).replace(os.sep, '/').encode())
+            digest.update(path.read_bytes())
+    elif _is_installed_package(source):
+        version, dependencies = _installed_dist_metadata(source)
+        paths = sorted(p for p in source.rglob('*.py') if '__pycache__' not in p.parts)
+        paths += [source / 'data' / name for name in RESOURCE_NAMES]
+        paths += [source / 'skills' / name / 'SKILL.md' for name in SKILL_NAMES]
+        for path in paths:
+            if not path.is_file() or path.is_symlink():
+                raise ValueError(f'missing maintained package file: {path}')
             digest.update(str(path.relative_to(source)).replace(os.sep, '/').encode())
             digest.update(path.read_bytes())
     else:

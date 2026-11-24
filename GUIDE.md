@@ -225,8 +225,24 @@ For design decisions, not implementation. You pick both colleagues' harness, mod
 
 **You need:** Python 3.12+, Git, at least one installed and signed-in coding CLI (Codex, Claude Code, Antigravity, or GitHub Copilot), and the GitHub CLI (`gh`) for issues and PRs.
 
+**Recommended (no clone needed):**
+
+With [`uv`](https://docs.astral.sh/uv/):
+
+```text
+uv tool install git+https://github.com/chanakya-net/Maestro-AI.git && maestro install
+```
+
+Or with [`pipx`](https://pipx.pypa.io/):
+
+```text
+pipx install git+https://github.com/chanakya-net/Maestro-AI.git && maestro install
+```
+
 <details>
-<summary><strong>macOS / Linux</strong></summary>
+<summary><strong>Manual install from a source checkout (macOS / Linux / Windows)</strong></summary>
+
+**macOS / Linux:**
 
 ```text
 git clone https://github.com/chanakya-net/Maestro-AI.git
@@ -237,10 +253,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m ai_skills install --source .
 ```
 
-</details>
-
-<details>
-<summary><strong>Windows</strong></summary>
+**Windows:**
 
 ```text
 git clone https://github.com/chanakya-net/Maestro-AI.git
@@ -253,11 +266,11 @@ py -3.12 -m venv .venv
 
 </details>
 
-Check the setup (with the environment active):
+Check the setup:
 
 ```text
-python -m ai_skills doctor --json
-python -m ai_skills harness detect
+maestro doctor --json
+maestro harness detect
 ```
 
 Then open your coding agent in the project you want to work on and invoke `break-req` (new idea), `help-me-debug` (something's broken), or `run-with-it` (issues are ready). The skills prepare all runtime files themselves.

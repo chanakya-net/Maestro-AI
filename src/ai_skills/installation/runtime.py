@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import email
@@ -34,7 +35,7 @@ from ai_skills.installation.plan import (
     _absolute, _active_manifest, _backup_stamp, _carry_original, _check_source_revision,
     _dependency_pins, _detect, _external_paths, _hash, _manifest_registrations,
     _object, _owned_backup, _python, _safe_assets, _source, _transition_backup,
-    _contains_symlink, _managed_receipt, _owned_receipt, _receipt,
+    _contains_symlink, _installed_dist_metadata, _is_installed_package, _managed_receipt, _owned_receipt, _receipt,
     _registration_receipt, _require_no_transaction, _transaction_path,
     _tree_hash, _uninstall_view, default_assets_dest, plan_install,
 )
@@ -112,6 +113,71 @@ def _verify_interpreter(python, package_root):
         raise ValueError(f'installed runtime launcher unusable: {python}: {error}') from error
 
 
+def _repack_installed_wheel(package_dir: Path, version: str, dest_dir: Path) -> Path:
+    """Build a PEP 427 wheel from an installed ``ai_skills`` package directory.
+
+    Enables zero-clone ``uv tool install`` / ``pipx install`` followed by
+    ``maestro install`` (no ``--source`` flag required).
+    """
+    wheel_path = dest_dir / f'ai_skills-{version}-py3-none-any.whl'
+    dist_info_name = f'ai_skills-{version}.dist-info'
+    sibling_dist = None
+    for candidate in sorted(package_dir.parent.glob('ai_skills-*.dist-info')):
+        if (candidate / 'METADATA').is_file():
+            sibling_dist = candidate
+            break
+    records: list[tuple[str, str, int]] = []
+
+    def _add_bytes(archive: zipfile.ZipFile, arcname: str, data: bytes) -> None:
+        archive.writestr(arcname, data)
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode('ascii')
+        records.append((arcname, f'sha256={digest}', len(data)))
+
+    with zipfile.ZipFile(wheel_path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        files = sorted(p for p in package_dir.rglob('*.py') if '__pycache__' not in p.parts)
+        files += [package_dir / 'data' / name for name in RESOURCE_NAMES]
+        files += [package_dir / 'skills' / name / 'SKILL.md' for name in SKILL_NAMES]
+        for path in files:
+            arcname = 'ai_skills/' + str(path.relative_to(package_dir)).replace(os.sep, '/')
+            _add_bytes(archive, arcname, path.read_bytes())
+
+        if sibling_dist and (sibling_dist / 'METADATA').is_file():
+            metadata_bytes = (sibling_dist / 'METADATA').read_bytes()
+        else:
+            _, deps = _installed_dist_metadata(package_dir)
+            lines = ['Metadata-Version: 2.1', 'Name: ai-skills', f'Version: {version}']
+            lines += [f'Requires-Dist: {dep}' for dep in deps]
+            metadata_bytes = ('\n'.join(lines) + '\n').encode('utf-8')
+        _add_bytes(archive, f'{dist_info_name}/METADATA', metadata_bytes)
+
+        if sibling_dist and (sibling_dist / 'WHEEL').is_file():
+            wheel_meta = (sibling_dist / 'WHEEL').read_bytes()
+        else:
+            wheel_meta = (
+                'Wheel-Version: 1.0\nGenerator: ai-skills-repack\n'
+                'Root-Is-Purelib: true\nTag: py3-none-any\n'
+            ).encode('utf-8')
+        _add_bytes(archive, f'{dist_info_name}/WHEEL', wheel_meta)
+
+        if sibling_dist and (sibling_dist / 'entry_points.txt').is_file():
+            ep_bytes = (sibling_dist / 'entry_points.txt').read_bytes()
+        else:
+            ep_bytes = (
+                '[console_scripts]\n'
+                'ai-skills = ai_skills.cli:main\n'
+                'maestro = ai_skills.cli:main\n'
+            ).encode('utf-8')
+        _add_bytes(archive, f'{dist_info_name}/entry_points.txt', ep_bytes)
+
+        if sibling_dist and (sibling_dist / 'licenses' / 'LICENSE').is_file():
+            _add_bytes(archive, f'{dist_info_name}/licenses/LICENSE', (sibling_dist / 'licenses' / 'LICENSE').read_bytes())
+
+        record_arc = f'{dist_info_name}/RECORD'
+        record_lines = [f'{arc},{h},{sz}' for arc, h, sz in records] + [f'{record_arc},,']
+        archive.writestr(record_arc, ('\n'.join(record_lines) + '\n').encode('utf-8'))
+    return wheel_path
+
+
 def _install_package(plan):
     # Isolated mode (-I) keeps the invoking checkout off sys.path; the temporary
     # official checkout stays the explicit pip build source.
@@ -121,7 +187,15 @@ def _install_package(plan):
     # destinations cannot write outside it. An ordinary install keeps the caller's
     # cwd and pip configuration, so relative constraints and find-links resolve.
     if plan.source_revision: env, cwd = _pip_environment(plan.python, env, plan.prefix), plan.prefix
-    for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
+    if _is_installed_package(plan.source):
+        with tempfile.TemporaryDirectory(prefix='ai-skills-repack-') as tmpdir:
+            wheel = _repack_installed_wheel(plan.source, plan.version, Path(tmpdir))
+            source_str, wheel_str = str(plan.source), str(wheel)
+            for command in plan.pip_commands:
+                rewritten = tuple(wheel_str if arg == source_str else arg for arg in command)
+                _run_child(rewritten, cwd=cwd, env=env)
+    else:
+        for command in plan.pip_commands: _run_child(command, cwd=cwd, env=env)
     try:
         result = subprocess.run([str(plan.python), '-I', '-m', 'pip', 'check'], cwd=cwd, env=env,
                                 capture_output=True, text=True, check=True)
