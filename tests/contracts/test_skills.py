@@ -152,8 +152,9 @@ def test_verified_noop_examples_are_accepted_by_the_real_artifact_validator(name
 def test_complexity_example_is_valid_and_enforces_grounding_and_peak_floor():
     prompt = resource('complexity-prompt.md')
     examples = [value for value in json_examples(prompt) if 'scores' in value and 'rationale' in value]
-    assert examples and all(artifacts.valid_complexity_payload(value) for value in examples)
+    assert examples and all(artifacts.valid_complexity_payload(value, allow_legacy=False) for value in examples)
     for value in examples:
+        assert value['schema_version'] == artifacts.COMPLEXITY_SCHEMA_VERSION
         assert value['files_inspected']
     assert 'Peak-dimension floor' in prompt
     assert 'must not print those paths' not in prompt
@@ -161,8 +162,10 @@ def test_complexity_example_is_valid_and_enforces_grounding_and_peak_floor():
     coordinator = resource('sub-coordinator-prompt.md')
     run_skill = skill('run-with-it')
     assert 'easy-medium' not in coordinator
-    assert '8–12' not in coordinator and '33–40' not in coordinator
-    assert '9–12 is `quite-easy`' in coordinator and '33–45 `holy-fuck`' in coordinator
+    assert '8–12' not in coordinator and '33–40' not in coordinator and '9–12 is `quite-easy`' not in coordinator
+    assert '7–9 is `quite-easy`' in coordinator and '29–35 `holy-fuck`' in coordinator
+    assert 'score=21' in coordinator and 'score=21' in resource('coordinator-rules.md')
+    assert 'Do **not** include the blind complexity score' in coordinator
     assert '`RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`)' in coordinator
     assert '`RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium`' in run_skill
     assert '(default `medium`)' in run_skill
@@ -178,6 +181,7 @@ def test_plan_example_is_a_valid_nonempty_plan_and_remains_read_only():
         assert value['slices'] and value['complexity_level'] in routing.BAND_ORDER
         assert value['complexity_rationale'].strip()
     assert 'band anchors' in text
+    assert 'blind score' not in text.lower()
     assert 'Do NOT run tests' in text
     assert 'Do NOT edit, stage, or commit any code' in text
     assert 'plan.json' in text and 'plan.md' in text

@@ -840,26 +840,26 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
 
 
 @pytest.mark.parametrize(("score", "expected"), [
+    (7, "quite-easy"),
     (9, "quite-easy"),
-    (12, "quite-easy"),
-    (13, "easy"),
-    (17, "easy"),
-    (18, "medium"),
-    (22, "medium"),
+    (10, "easy"),
+    (14, "easy"),
+    (15, "medium"),
+    (19, "medium"),
+    (20, "medium-hard"),
     (23, "medium-hard"),
-    (27, "medium-hard"),
+    (24, "complex"),
     (28, "complex"),
-    (32, "complex"),
-    (33, "holy-fuck"),
-    (45, "holy-fuck"),
-    (46, "holy-fuck"),
+    (29, "holy-fuck"),
+    (35, "holy-fuck"),
+    (36, "holy-fuck"),
 ])
-def test_score_to_level_matches_9_to_45_rubric_bounds(score, expected):
+def test_score_to_level_matches_7_to_35_rubric_bounds(score, expected):
     registry = load_registry(SOURCE_REGISTRY)
     assert routing.score_to_level(registry, score) == expected
 
 
-@pytest.mark.parametrize("score", [0, 8])
+@pytest.mark.parametrize("score", [0, 6])
 def test_score_to_level_rejects_below_minimum_rubric_score(score):
     registry = load_registry(SOURCE_REGISTRY)
     with pytest.raises(SystemExit) as exc:

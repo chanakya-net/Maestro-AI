@@ -31,7 +31,7 @@ def registry_file(tmp_path):
             "example-alias": {"alias_of": "example", "agents": []},
         },
         "model_routing": {
-            "score_to_weight": [{"label": "medium", "score_min": 18, "score_max": 22, "weight_min": 4, "weight_max": 6}],
+            "score_to_weight": [{"label": "medium", "score_min": 15, "score_max": 19, "weight_min": 4, "weight_max": 6}],
             "usage_distribution": {
                 "default_target_percent": {"codex": 100},
                 "non_complexity_band_target_percent": {"default": {"codex": 100}},

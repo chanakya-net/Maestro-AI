@@ -89,7 +89,7 @@ Preferred upstream flow:
 **Plan Worker** (spawned via `plan-prompt.md`, gated, runs after complexity and before implementation):
 - Reads the issue worktree **read-only** with a strong model and writes a concrete approach plan to `.run-with-it/issues/<n>/plan.md` plus a machine-readable `plan.json` under `workers/plan/`
 - Never edits or commits — it runs before the baseline SHA so it cannot corrupt the implementer's diff
-- Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
+- Independently scores complexity from the real code (without seeing the blind score); the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
 - Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues (`quite-easy`, `easy`) skip planning and route weak regardless
 - The implementer, reviewer, and modifier all consume `plan.md` via `RUN_WITH_IT_PLAN_FILE`
 

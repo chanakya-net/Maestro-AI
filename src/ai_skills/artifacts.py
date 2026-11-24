@@ -27,7 +27,28 @@ COMPLEXITY_BAND_ORDER = (
 
 COMPLEXITY_LEVELS = set(COMPLEXITY_BAND_ORDER)
 
+COMPLEXITY_SCHEMA_VERSION = 2
+
 COMPLEXITY_SCORE_BANDS = (
+    (7, 9, "quite-easy"),
+    (10, 14, "easy"),
+    (15, 19, "medium"),
+    (20, 23, "medium-hard"),
+    (24, 28, "complex"),
+    (29, 35, "holy-fuck"),
+)
+
+COMPLEXITY_SCORE_KEYS = {
+    "coupling_and_blast_radius",
+    "pattern_novelty",
+    "state_and_concurrency_risk",
+    "data_and_rollback_risk",
+    "verification_risk",
+    "ambiguity_of_requirements",
+    "scope_size",
+}
+
+LEGACY_COMPLEXITY_SCORE_BANDS = (
     (9, 12, "quite-easy"),
     (13, 17, "easy"),
     (18, 22, "medium"),
@@ -36,12 +57,12 @@ COMPLEXITY_SCORE_BANDS = (
     (33, 45, "holy-fuck"),
 )
 
-COMPLEXITY_PEAK_FLOORS = {
+LEGACY_COMPLEXITY_PEAK_FLOORS = {
     4: "medium-hard",
     5: "complex",
 }
 
-COMPLEXITY_SCORE_KEYS = {
+LEGACY_COMPLEXITY_SCORE_KEYS = {
     "dependency_complexity",
     "ownership_overlap_risk",
     "architecture_risk",
@@ -292,29 +313,56 @@ def implementation_result_reason(args: argparse.Namespace, payload: Any) -> str:
     return decision.reason
 
 
-def expected_complexity_level(scores: dict[str, int]) -> str:
-    """Compute the canonical complexity band from 9 integer dimension scores (1-5).
+def expected_complexity_level(
+    scores: dict[str, int],
+    *,
+    schema_version: int = COMPLEXITY_SCHEMA_VERSION,
+) -> str:
+    """Compute the canonical complexity band from integer dimension scores (1-5).
 
-    Applies the 9-45 sum thresholds and the peak-dimension floor: any dimension
-    scored 5 floors the band at `complex`, and any dimension scored 4 floors
-    the band at `medium-hard`.
+    Schema v2 (7 dimensions, sum 7-35): applies the 7-35 sum thresholds and a
+    5-only peak-dimension floor (one dimension scored 5 floors at `medium-hard`;
+    two or more dimensions scored 5 floor at `complex`; scores of 4 do not floor).
+    Legacy schema v1 (9 dimensions, sum 9-45): applies the legacy 9-45 sum
+    thresholds and legacy peak-dimension floor (any 4 -> `medium-hard`, any 5 -> `complex`).
     """
     total = sum(scores.values())
+    bands = LEGACY_COMPLEXITY_SCORE_BANDS if schema_version == 1 else COMPLEXITY_SCORE_BANDS
     base = "holy-fuck"
-    for score_min, score_max, label in COMPLEXITY_SCORE_BANDS:
+    for score_min, score_max, label in bands:
         if score_min <= total <= score_max:
             base = label
             break
-    peak = max(scores.values())
-    floor = COMPLEXITY_PEAK_FLOORS.get(peak)
+    if schema_version == 1:
+        peak = max(scores.values())
+        floor = LEGACY_COMPLEXITY_PEAK_FLOORS.get(peak)
+    else:
+        fives = sum(1 for value in scores.values() if value == 5)
+        floor = "complex" if fives >= 2 else ("medium-hard" if fives == 1 else None)
     if floor and COMPLEXITY_BAND_ORDER.index(floor) > COMPLEXITY_BAND_ORDER.index(base):
         return floor
     return base
 
 
-def valid_complexity_payload(payload: Any) -> bool:
+def valid_complexity_payload(payload: Any, *, allow_legacy: bool = True) -> bool:
     if not isinstance(payload, dict):
         return False
+    if "schema_version" in payload:
+        schema_version = payload.get("schema_version")
+        if type(schema_version) is not int:
+            return False
+        if schema_version == COMPLEXITY_SCHEMA_VERSION:
+            expected_keys = COMPLEXITY_SCORE_KEYS
+        elif schema_version == 1 and allow_legacy:
+            expected_keys = LEGACY_COMPLEXITY_SCORE_KEYS
+        else:
+            return False
+    elif allow_legacy:
+        schema_version = 1
+        expected_keys = LEGACY_COMPLEXITY_SCORE_KEYS
+    else:
+        return False
+
     total = payload.get("total")
     if type(total) is not int:
         return False
@@ -323,17 +371,17 @@ def valid_complexity_payload(payload: Any) -> bool:
         return False
     scores = payload.get("scores")
     rationale = payload.get("rationale")
-    if not isinstance(scores, dict) or set(scores) != COMPLEXITY_SCORE_KEYS:
+    if not isinstance(scores, dict) or set(scores) != expected_keys:
         return False
-    if not isinstance(rationale, dict) or set(rationale) != COMPLEXITY_SCORE_KEYS:
+    if not isinstance(rationale, dict) or set(rationale) != expected_keys:
         return False
-    if not all(type(scores[key]) is int and 1 <= scores[key] <= 5 for key in COMPLEXITY_SCORE_KEYS):
+    if not all(type(scores[key]) is int and 1 <= scores[key] <= 5 for key in expected_keys):
         return False
     if total != sum(scores.values()):
         return False
-    if level != expected_complexity_level(scores):
+    if level != expected_complexity_level(scores, schema_version=schema_version):
         return False
-    if not all(non_empty_str(rationale[key]) for key in COMPLEXITY_SCORE_KEYS):
+    if not all(non_empty_str(rationale[key]) for key in expected_keys):
         return False
     files_inspected = payload.get("files_inspected")
     if not isinstance(files_inspected, list) or not all(non_empty_str(item) for item in files_inspected):
@@ -885,7 +933,7 @@ def write_json(args: argparse.Namespace) -> int:
                 reason = 'role-failure-identity-mismatch'
         elif args.role in {"impl", "modify"}:
             reason = implementation_result_reason(validation_args, payload)
-        elif args.role == "complexity" and not valid_complexity_payload(payload):
+        elif args.role == "complexity" and not valid_complexity_payload(payload, allow_legacy=False):
             reason = "invalid-complexity-result-artifact"
         elif args.role == "plan" and not valid_plan_payload(payload):
             reason = "invalid-plan-result-artifact"

@@ -224,6 +224,7 @@ def _complexity_payload(score_overrides=None, **patch):
     if score_overrides:
         scores.update(score_overrides)
     payload = {
+        'schema_version': artifacts.COMPLEXITY_SCHEMA_VERSION,
         'total': sum(scores.values()),
         'level': artifacts.expected_complexity_level(scores),
         'scores': scores,
@@ -234,51 +235,104 @@ def _complexity_payload(score_overrides=None, **patch):
     return payload
 
 
+def _legacy_complexity_payload(score_overrides=None, **patch):
+    scores = {key: 1 for key in artifacts.LEGACY_COMPLEXITY_SCORE_KEYS}
+    if score_overrides:
+        scores.update(score_overrides)
+    payload = {
+        'total': sum(scores.values()),
+        'level': artifacts.expected_complexity_level(scores, schema_version=1),
+        'scores': scores,
+        'rationale': {key: f'Legacy rationale for {key}.' for key in artifacts.LEGACY_COMPLEXITY_SCORE_KEYS},
+        'files_inspected': ['src/ai_skills/artifacts.py'],
+    }
+    payload.update(patch)
+    return payload
+
+
 @pytest.mark.parametrize(('overrides', 'expected_total', 'expected_level'), [
-    ({}, 9, 'quite-easy'),
-    ({'dependency_complexity': 2, 'architecture_risk': 2, 'verification_risk': 2}, 12, 'quite-easy'),
-    ({'dependency_complexity': 2, 'architecture_risk': 2, 'verification_risk': 2, 'blast_radius': 2}, 13, 'easy'),
-    ({k: 2 for k in list(sorted(artifacts.COMPLEXITY_SCORE_KEYS))[:8]}, 17, 'easy'),
-    ({k: 2 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 18, 'medium'),
-    ({'dependency_complexity': 3, 'architecture_risk': 3, 'verification_risk': 3, 'blast_radius': 3,
-      'ownership_overlap_risk': 2, 'orchestration_burden': 2, 'ambiguity_of_requirements': 2,
-      'integration_surface_breadth': 2, 'rollback_recovery_risk': 2}, 22, 'medium'),
-    ({'dependency_complexity': 3, 'architecture_risk': 3, 'verification_risk': 3, 'blast_radius': 3,
-      'ownership_overlap_risk': 3, 'orchestration_burden': 2, 'ambiguity_of_requirements': 2,
-      'integration_surface_breadth': 2, 'rollback_recovery_risk': 2}, 23, 'medium-hard'),
-    ({'architecture_risk': 4}, 12, 'medium-hard'),
-    ({'architecture_risk': 5}, 13, 'complex'),
-    ({'architecture_risk': 5, 'orchestration_burden': 4}, 16, 'complex'),
-    ({k: 4 for k in list(sorted(artifacts.COMPLEXITY_SCORE_KEYS))[:6]} |
-     {k: 3 for k in list(sorted(artifacts.COMPLEXITY_SCORE_KEYS))[6:]}, 33, 'holy-fuck'),
-    ({k: 5 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 45, 'holy-fuck'),
+    ({}, 7, 'quite-easy'),
+    ({'coupling_and_blast_radius': 2, 'pattern_novelty': 2}, 9, 'quite-easy'),
+    ({'coupling_and_blast_radius': 2, 'pattern_novelty': 2, 'verification_risk': 2}, 10, 'easy'),
+    ({k: 2 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 14, 'easy'),
+    ({'coupling_and_blast_radius': 3, 'pattern_novelty': 2, 'state_and_concurrency_risk': 2,
+      'data_and_rollback_risk': 2, 'verification_risk': 2, 'ambiguity_of_requirements': 2, 'scope_size': 2}, 15, 'medium'),
+    ({'coupling_and_blast_radius': 3, 'pattern_novelty': 2, 'state_and_concurrency_risk': 3,
+      'data_and_rollback_risk': 3, 'verification_risk': 3, 'ambiguity_of_requirements': 2, 'scope_size': 3}, 19, 'medium'),
+    ({'coupling_and_blast_radius': 3, 'pattern_novelty': 3, 'state_and_concurrency_risk': 3,
+      'data_and_rollback_risk': 3, 'verification_risk': 3, 'ambiguity_of_requirements': 2, 'scope_size': 3}, 20, 'medium-hard'),
+    ({k: 3 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 21, 'medium-hard'),
+    ({'coupling_and_blast_radius': 4, 'pattern_novelty': 3, 'state_and_concurrency_risk': 4,
+      'data_and_rollback_risk': 3, 'verification_risk': 3, 'ambiguity_of_requirements': 3, 'scope_size': 3}, 23, 'medium-hard'),
+    ({'coupling_and_blast_radius': 4, 'pattern_novelty': 3, 'state_and_concurrency_risk': 4,
+      'data_and_rollback_risk': 3, 'verification_risk': 4, 'ambiguity_of_requirements': 3, 'scope_size': 3}, 24, 'complex'),
+    ({k: 4 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 28, 'complex'),
+    ({'coupling_and_blast_radius': 5, 'pattern_novelty': 4, 'state_and_concurrency_risk': 4,
+      'data_and_rollback_risk': 4, 'verification_risk': 4, 'ambiguity_of_requirements': 4, 'scope_size': 4}, 29, 'holy-fuck'),
+    ({k: 5 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 35, 'holy-fuck'),
+    # Scores of 4 do NOT trigger a peak floor in v2:
+    ({'pattern_novelty': 4}, 10, 'easy'),
+    ({'pattern_novelty': 4, 'verification_risk': 4, 'scope_size': 3}, 15, 'medium'),
+    # One 5 floors at medium-hard; two 5s floor at complex:
+    ({'state_and_concurrency_risk': 5}, 11, 'medium-hard'),
+    ({'state_and_concurrency_risk': 5, 'pattern_novelty': 4}, 14, 'medium-hard'),
+    ({'state_and_concurrency_risk': 5, 'pattern_novelty': 5}, 15, 'complex'),
 ])
 def test_expected_complexity_level_enforces_bands_and_peak_dimension_floor(overrides, expected_total, expected_level):
     payload = _complexity_payload(overrides)
     assert payload['total'] == expected_total
     assert payload['level'] == expected_level
-    assert artifacts.valid_complexity_payload(payload) is True
+    assert artifacts.valid_complexity_payload(payload, allow_legacy=False) is True
 
 
 def test_complexity_validator_accepts_empty_files_inspected_for_greenfield_tasks():
-    assert artifacts.valid_complexity_payload(_complexity_payload(files_inspected=[])) is True
+    assert artifacts.valid_complexity_payload(_complexity_payload(files_inspected=[]), allow_legacy=False) is True
+
+
+def test_complexity_validator_accepts_legacy_v1_on_read_and_rejects_on_write_json(tmp_path):
+    legacy_unversioned = _legacy_complexity_payload({'architecture_risk': 4})  # sum 12, legacy peak-4 floor -> medium-hard
+    legacy_v1 = _legacy_complexity_payload({'architecture_risk': 5}, schema_version=1)  # sum 13, legacy peak-5 floor -> complex
+    assert legacy_unversioned['level'] == 'medium-hard'
+    assert legacy_v1['level'] == 'complex'
+    for payload in (legacy_unversioned, legacy_v1):
+        assert artifacts.valid_complexity_payload(payload, allow_legacy=True) is True
+        assert validate_artifact('complexity', payload, GitEvidence(issue='7')).valid is True
+        assert artifacts.valid_complexity_payload(payload, allow_legacy=False) is False
+
+    # Newly published complexity artifacts via write-json must use schema_version 2.
+    source = tmp_path / 'legacy.json'
+    target = tmp_path / 'result.json'
+    source.write_text(json.dumps(legacy_unversioned))
+    assert artifacts.main(['write-json', '--role', 'complexity', '--issue', '7',
+                           '--payload-file', str(source), '--result-file', str(target)]) == 1
+    assert not target.exists()
+
+    v2 = _complexity_payload({'coupling_and_blast_radius': 3, 'pattern_novelty': 2, 'state_and_concurrency_risk': 3,
+                              'data_and_rollback_risk': 2, 'verification_risk': 3, 'ambiguity_of_requirements': 2, 'scope_size': 3})
+    source.write_text(json.dumps(v2))
+    assert artifacts.main(['write-json', '--role', 'complexity', '--issue', '7',
+                           '--payload-file', str(source), '--result-file', str(target)]) == 0
+    assert json.loads(target.read_text()) == v2
 
 
 @pytest.mark.parametrize('payload', [
-    _complexity_payload(total=10),  # arithmetic mismatch (sum is 9)
-    _complexity_payload(level='easy'),  # band mismatch (9 -> quite-easy)
-    _complexity_payload({'architecture_risk': 5}, level='easy'),  # ignores peak-5 floor
-    _complexity_payload({'architecture_risk': 4}, level='quite-easy'),  # ignores peak-4 floor
+    _complexity_payload(schema_version=3),
+    _complexity_payload(schema_version=True),
+    _complexity_payload(total=10),  # arithmetic mismatch (sum is 7)
+    _complexity_payload(level='easy'),  # band mismatch (7 -> quite-easy)
+    _complexity_payload({'pattern_novelty': 5}, level='easy'),  # ignores single-5 medium-hard floor
+    _complexity_payload({'pattern_novelty': 5, 'state_and_concurrency_risk': 5}, level='medium-hard'),  # ignores two-5 complex floor
     _complexity_payload(total=True),  # bool-as-int in total
-    {**_complexity_payload(), 'scores': {**_complexity_payload()['scores'], 'architecture_risk': True}},  # bool-as-int in score
-    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'architecture_risk': ''}},
-    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'architecture_risk': '   '}},
-    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'architecture_risk': 42}},
+    {**_complexity_payload(), 'scores': {**_complexity_payload()['scores'], 'pattern_novelty': True}},  # bool-as-int in score
+    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'pattern_novelty': ''}},
+    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'pattern_novelty': '   '}},
+    {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'pattern_novelty': 42}},
     {k: v for k, v in _complexity_payload().items() if k != 'files_inspected'},
     _complexity_payload(files_inspected='src/a.py'),
     _complexity_payload(files_inspected=['']),
     _complexity_payload(files_inspected=['src/a.py', '   ']),
     _complexity_payload(files_inspected=[123]),
+    _legacy_complexity_payload({'architecture_risk': 4}, level='quite-easy'),  # legacy v1 ignores legacy peak-4 floor
 ])
 def test_complexity_validator_rejects_inconsistent_or_ungrounded_payloads(payload):
     assert artifacts.valid_complexity_payload(payload) is False

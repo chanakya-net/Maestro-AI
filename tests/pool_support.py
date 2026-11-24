@@ -191,9 +191,10 @@ def finalize_prelaunch_child(child, reason):
 
 
 def valid_complexity_result():
-    from ai_skills.artifacts import COMPLEXITY_SCORE_KEYS
+    from ai_skills.artifacts import COMPLEXITY_SCHEMA_VERSION, COMPLEXITY_SCORE_KEYS
 
-    return {'level':'quite-easy', 'total':len(COMPLEXITY_SCORE_KEYS),
+    return {'schema_version':COMPLEXITY_SCHEMA_VERSION,
+            'level':'quite-easy', 'total':len(COMPLEXITY_SCORE_KEYS),
             'scores':{key:1 for key in COMPLEXITY_SCORE_KEYS},
             'rationale':{key:'fixture' for key in COMPLEXITY_SCORE_KEYS},
             'files_inspected':['src/example.py']}

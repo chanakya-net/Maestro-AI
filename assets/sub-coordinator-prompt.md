@@ -359,12 +359,12 @@ Immediately write `$RUN_WITH_IT_ISSUE_DIR/sub-state.json` with this dispatcher `
 Sub-agent output handling:
 - Parse the `COMPLEXITY|` line for the run log.
 - Parse the JSON blob for per-dimension scores, `files_inspected`, and route-report population.
-- Persist the normalized score/rationale and its artifact path in `sub-state.json`; retain the validated artifact for restart-safe reuse. Delete only redundant temporary scoring payloads, never the sole completion evidence.
+- Persist the normalized score, `level`, rationale, and artifact path in `sub-state.json`; retain the validated artifact for restart-safe reuse. On resume or downstream routing, always pass the persisted `level` (`--complexity-level`) to `ai-skills route` — never re-map a stored numeric `complexity_score` through `score_to_weight` (legacy v1 scores use a different scale). Delete only redundant temporary scoring payloads, never the sole completion evidence.
 
 Fallback chain:
 1. Attempt the selected complexity-scoring model.
 2. On failure, retry with a different eligible complexity-scoring model.
-3. On the second failure, default to `medium-hard` (`score=25`), emit:
+3. On the second failure, default to `medium-hard` (`score=21`), emit:
    `STATUS|type=complexity-fallback|reason=<error>|fallback=medium-hard`
 
 If the fallback is used, set `complexity_source=fallback`. If the override path is used, set `complexity_source=override`. Otherwise set `complexity_source=sub-agent`.
@@ -377,7 +377,7 @@ Use this section only when `ai-skills route` is unavailable or exits non-zero. T
 
 Read version 2 registries through `ai_skills.registry.load_registry(path)` so model memberships, aliases, CLI defaults, and usage defaults are expanded. The editable model entries live in `agent-registry.json`; CLI definitions live in its sibling `agent-definitions.json`. Version 1 registries remain self-contained.
 
-Map the complexity score using `model_routing.score_to_weight`: 9–12 is `quite-easy`, 13–17 `easy`, 18–22 `medium`, 23–27 `medium-hard`, 28–32 `complex`, and 33–45 `holy-fuck`; scores above 45 also map to `holy-fuck`. When routing from a validated complexity artifact, use its `level` (which already applies the peak-dimension floor: any dimension scored `5` floors at `complex`; any dimension scored `4` floors at `medium-hard`). Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
+Map a numeric complexity score override using `model_routing.score_to_weight`: 7–9 is `quite-easy`, 10–14 `easy`, 15–19 `medium`, 20–23 `medium-hard`, 24–28 `complex`, and 29–35 `holy-fuck`; scores above 35 also map to `holy-fuck`. When routing from a validated complexity artifact (including resumed legacy v1 artifacts), always use its persisted `level` rather than re-mapping `total` (v2 applies the 5-only peak-dimension floor: one dimension scored `5` floors at `medium-hard`, two or more dimensions scored `5` floor at `complex`, and scores of `4` do not floor). Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
 
 #### Step 2 — Build Eligible Agent/Model Pairs
 
@@ -425,6 +425,7 @@ Write a fresh attempt-specific `worker.json` using the Native Worker Configurati
 
 **Plan dispatch rules** (differences from the impl spawn):
 - Pass `--repo-root "$ISSUE_WORKTREE_PATH"` so the planner can read real code. The plan is **not** an implementation role, so the dispatcher gives it read access without commit/check-in handling.
+- Do **not** include the blind complexity score, band, or complexity result artifact in the planner's context payload — the planner must judge complexity independently from the real code without anchoring.
 - Do **not** set `CHECKIN_OWNER` / `CHECKIN_TARGET` in the payload — the plan worker never commits.
 - Pass `RUN_WITH_IT_PLAN_FILE` and `RUN_WITH_IT_PLAN_RESULT_FILE` into the context payload (the dispatcher also sets `RUN_WITH_IT_RESULT_FILE` from `--result-file`, which equals `PLAN_RESULT_FILE`).
 - For an eligible AGY planner, set `permission_mode` to `safe`, `gui_mode` to `0` (a string), and supply an explicit cycle. The dispatcher verifies the actual invocation and publishes both artifacts from its terminal response. If admission returns `agy-plan-read-only-unavailable`, reroute with AGY in the current plan request's denylist within the existing retry budget. Preserve forced selectors and use plan-skipped if no eligible route remains. Keep this exclusion scoped to planning.
@@ -500,7 +501,7 @@ If no installed agent supports any model in the bumped reviewer band:
 3. `FORCED_AGENT` forced alone → skip Step 4, run Steps 1–3 restricted to that agent's `known_models`
 4. `COMPLEXITY_LEVEL` forced → use corresponding weight range, skip score computation
 5. `COMPLEXITY_SCORE` forced → use as computed score, run full Steps 1–4
-6. Computed score from nine dimensions → full Steps 1–4
+6. Computed score from seven dimensions → full Steps 1–4
 
 ### Bounded Fallback
 
