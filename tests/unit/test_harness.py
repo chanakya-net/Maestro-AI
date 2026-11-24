@@ -303,3 +303,16 @@ def test_build_plan_rejects_partial_split_when_full_harness_installed_and_warns_
     # AGY alone covers all 6 work bands, so it succeeds with a plan-phase warning
     agy_only = harness.build_plan({"agy": 100, "codex": 0}, ["agy", "codex"], "user", registry=registry)
     assert agy_only["warnings"] and "plan phase" in agy_only["warnings"][0]
+
+
+def test_cli_plan_allow_partial_flag(tmp_path, monkeypatch, capsys):
+    for key, value in fake_path(tmp_path, "copilot", "codex").items():
+        monkeypatch.setenv(key, value)
+    base = ["plan", "--run-root", str(tmp_path), "--registry-file", str(SOURCE_REGISTRY),
+            "--shares", "github-copilot=100,codex=0"]
+    assert harness.main(base) == 2
+    assert "cannot route all complexity bands" in capsys.readouterr().err
+    assert harness.main([*base, "--allow-partial"]) == 0
+    saved = json.loads(capsys.readouterr().out)
+    assert saved["shares"] == {"codex": 0, "github-copilot": 100}
+    assert saved["warnings"]

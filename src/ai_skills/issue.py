@@ -391,6 +391,40 @@ def build_worker_config(
 
 # --------------------------------------------------------------------------- failure-action
 
+_NON_FAILED_WORKER_STATES = frozenset({
+    "completed",
+    "running",
+    "starting",
+    "quiet",
+    "stalled",
+    "admitted",
+})
+
+_ATTEMPT_STATE_RE = re.compile(r"-attempt-([0-9]+)\.state\.json$")
+
+
+def _attempt_sort_key(path: Path) -> tuple[int, int, str]:
+    match = _ATTEMPT_STATE_RE.search(path.name)
+    if match:
+        return (0, int(match.group(1)), path.name)
+    return (1, 0, path.name)
+
+
+def _is_failed_attempt_record(record: dict[str, Any]) -> bool:
+    if not record:
+        return False
+    state_val = str(record.get("state") or "").strip().lower()
+    if state_val in _NON_FAILED_WORKER_STATES:
+        return False
+    if state_val:
+        return True
+    return bool(
+        record.get("failure_class")
+        or record.get("reason")
+        or record.get("stall_reason")
+        or record.get("unavailable_reason")
+    )
+
 
 def decide_failure_action(
     *,
@@ -406,12 +440,12 @@ def decide_failure_action(
     issue_path = Path(issue_dir).absolute()
     role_dir = issue_path / "workers" / role
     if state_files:
-        candidates = [Path(p).absolute() for p in state_files]
+        candidates = sorted((Path(p).absolute() for p in state_files), key=_attempt_sort_key)
     elif role_dir.is_dir():
         prefix = f"cycle-{cycle}-attempt-"
         candidates = sorted(
-            p for p in role_dir.glob(f"{prefix}*.state.json")
-            if p.is_file()
+            (p for p in role_dir.glob(f"{prefix}*.state.json") if p.is_file()),
+            key=_attempt_sort_key,
         )
     else:
         candidates = []
@@ -421,12 +455,13 @@ def decide_failure_action(
     exclude_models: list[str] = []
     last_stall = ""
     last_class = "capability"
-    last_state_file = str(candidates[-1]) if candidates else ""
+    last_state_file = ""
 
     for sf in candidates:
         record = load_json(sf, missing={})
-        if not isinstance(record, dict):
+        if not isinstance(record, dict) or not _is_failed_attempt_record(record):
             continue
+        last_state_file = str(sf)
         stall = str(record.get("stall_reason") or record.get("reason") or "")
         if stall:
             last_stall = stall
@@ -835,6 +870,76 @@ def _int_or_str(value: Any) -> int | str:
     return int(text) if text.isdigit() else text
 
 
+def _parse_int_token(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _collect_worker_token_usage(issue_path: Path) -> dict[str, int]:
+    """Aggregate numeric token telemetry from worker result artifacts and logs."""
+    workers_dir = issue_path / "workers"
+    if not workers_dir.is_dir():
+        return {}
+    totals: dict[str, int] = {}
+
+    def _add(role_key: str, suffix: str, amount: int | None) -> None:
+        if amount is None:
+            return
+        key = f"{role_key}_{suffix}"
+        totals[key] = totals.get(key, 0) + amount
+
+    for role_dir in sorted(p for p in workers_dir.iterdir() if p.is_dir()):
+        role_key = role_dir.name.replace("-", "_")
+        # 1) Prefer structured token_usage/telemetry dicts in worker JSON artifacts.
+        found_in_json = False
+        for path in sorted(list(role_dir.glob("*-result.json")) + list(role_dir.glob("*-status.json"))):
+            payload = load_json(path, missing=None)
+            if not isinstance(payload, dict):
+                continue
+            blob = payload.get("token_usage") or payload.get("telemetry") or payload.get("usage")
+            if not isinstance(blob, dict):
+                continue
+            inp = _parse_int_token(blob.get("input_tokens") if "input_tokens" in blob else blob.get("input"))
+            out = _parse_int_token(blob.get("output_tokens") if "output_tokens" in blob else blob.get("output"))
+            cache = _parse_int_token(
+                blob.get("cache_hit_tokens") if "cache_hit_tokens" in blob
+                else blob.get("cache_read_input_tokens") if "cache_read_input_tokens" in blob
+                else blob.get("cache_hit")
+            )
+            if any(v is not None for v in (inp, out, cache)):
+                found_in_json = True
+                _add(role_key, "input", inp)
+                _add(role_key, "output", out)
+                _add(role_key, "cache_hit", cache)
+        if found_in_json:
+            continue
+        # 2) Fall back to runner-emitted STATUS|type=telemetry|... lines in worker logs.
+        for log_path in sorted(role_dir.glob("*.log")):
+            if log_path.name.endswith(".dispatcher.log"):
+                continue
+            try:
+                text = log_path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                if not line.startswith("STATUS|type=telemetry|"):
+                    continue
+                fields: dict[str, str] = {}
+                for part in line.split("|")[1:]:
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        fields[k] = v
+                _add(role_key, "input", _parse_int_token(fields.get("input_tokens")))
+                _add(role_key, "output", _parse_int_token(fields.get("output_tokens")))
+                _add(role_key, "cache_hit", _parse_int_token(fields.get("cache_hit_tokens")))
+    return totals
+
+
 def write_issue_report(
     *,
     issue_dir: Path | str,
@@ -902,10 +1007,10 @@ def write_issue_report(
         token_usage = load_json(Path(token_usage_file))
         if not isinstance(token_usage, dict):
             raise IssueError(f"token usage file must be a JSON object: {token_usage_file}")
-    elif isinstance(state.get("token_usage"), dict):
+    elif isinstance(state.get("token_usage"), dict) and state["token_usage"]:
         token_usage = dict(state["token_usage"])
     else:
-        token_usage = {}
+        token_usage = _collect_worker_token_usage(issue_path)
 
     skipped = bool(state.get("review_skipped", False)) if review_skipped is None else review_skipped
     skip_reason = (review_skip_reason or state.get("review_skip_reason") or "trivial-change") if skipped else None

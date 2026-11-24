@@ -1,8 +1,13 @@
-"""Module facade helper for split subpackages.
+"""Temporary compatibility bridge for split subpackages.
 
 Allows a former monolithic module (such as ``dispatch.py`` or ``state.py``) to
-be split into cohesive submodules under a package while preserving full
-attribute and ``monkeypatch.setattr(pkg, ...)`` compatibility across submodules.
+be split into cohesive submodules under a package while keeping legacy
+package-level imports and ``monkeypatch.setattr(pkg, ...)`` calls working.
+
+New code should import directly from the owning submodule (for example
+``ai_skills.dispatch.capture`` or ``ai_skills.state.io``) rather than relying
+on package-level re-exports. Once remaining callers and tests migrate to direct
+submodule imports, this module can be deleted cleanly.
 """
 from __future__ import annotations
 

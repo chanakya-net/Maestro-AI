@@ -463,7 +463,7 @@ The dispatcher validates review artifacts via `ai-skills artifact` (safely synth
 
 ### Verdict Routing
 
-Run `ai-skills issue next-step --issue-dir "$RUN_WITH_IT_ISSUE_DIR" --verdict-file "$REVIEWER_STATUS_FILE" --reviewer-model "$REVIEWER_MODEL" --review-head-sha "$REVIEW_HEAD_SHA" --effective-complexity "$EFFECTIVE_COMPLEXITY"` to persist the verdict, update `cycles_used`/`non_approval_count`/`issue_reviewer`, compute escalation and `redesign_required`, and return `action` (`merge`, `spawn-modify`, or `failed-review`).
+Run `ai-skills issue next-step --issue-dir "$RUN_WITH_IT_ISSUE_DIR" --verdict-file "$REVIEWER_STATUS_FILE" --reviewer-model "$REVIEWER_MODEL" --review-head-sha "$REVIEW_HEAD_SHA" --effective-complexity "$EFFECTIVE_COMPLEXITY"` to persist the verdict, update `cycles_used`/`non_approval_count`/`issue_reviewer`, advance `cycle` in `sub-state.json` when `action="spawn-modify"`, compute escalation and `redesign_required`, and return `action` (`merge`, `spawn-modify`, or `failed-review`).
 
 **`verdict=approve`**
 
@@ -471,7 +471,7 @@ When `next-step` returns `action="merge"` (including nitpick-only `approve` — 
 
 **`verdict=revise`**
 
-1. If the current cycle equals the cap (8), terminate the issue as `failed-review` immediately.
+1. If `next-step` returned `action="failed-review"` (cycle cap 8 reached), terminate the issue as `failed-review` immediately.
 2. Otherwise, spawn a modification agent:
    - Use the original implementer band for the first modification request; after two non-approval reviews, use the next higher implementation band.
    - Emit `STATUS|type=modify-spawn|task=<n>|cycle=<n>|agent=<name>|model=<model-id>` before spawning.
@@ -489,7 +489,7 @@ When `next-step` returns `action="merge"` (including nitpick-only `approve` — 
    - **Actual handoff failure**. Apply the Worker Artifact Recovery Contract for missing or invalid artifacts or the dispatcher reason `artifact-recovery-required`. Keep retries in the saved cycle and pass the failed state path, expected result path, reviewer instructions path, available recovery patch/status paths, and same-worktree salvage instructions to the next modifier.
    - **Verified no-op**. Accept dispatcher-validated success with `no_op=true`, `commit_sha=NONE` and `verification.passed=true` when the assigned worktree is still at the saved reviewed head. A captured no-op also requires `verification.commit_sha` equal to that reviewed SHA. A file-published no-op may omit that field. Keep the saved `REVIEW_HEAD_SHA` and leave `MODIFY_COMMIT_SHA` unchanged.
    - **Committed or preserved success**. Check passing verification and confirm the assigned Git worktree and branch. For ordinary committed success, use the validated modifier commit. For a dispatcher-validated `verify_existing` success, use the preserved commit under that contract. Store that concrete SHA as `MODIFY_COMMIT_SHA` and set `REVIEW_HEAD_SHA=MODIFY_COMMIT_SHA`. An actual verification failure or missing required commit follows the existing failure rules without advancing.
-4. Only verified success reaches this step. Persist the review head selected above, the next review phase and the incremented cycle together in `sub-state.json`, and clear the completed modifier from `in_flight_agents`. Return to Per-Cycle Steps and set `REVIEW_HEAD_SHA` from the saved `review_head_sha`. `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA`. Use both concrete SHAs for the next review.
+4. Only verified success reaches this step. Persist the review head selected above and `phase=review` via `ai-skills issue state set` (keeping the `cycle` already advanced by `ai-skills issue next-step` — do not increment `cycle` again), and clear the completed modifier via `ai-skills issue state clear-attempt`. Return to Per-Cycle Steps and set `REVIEW_HEAD_SHA` from the saved `review_head_sha`. `REVIEW_BASE_SHA` stays as `ISSUE_BASE_SHA`. Use both concrete SHAs for the next review.
 
 **`verdict=reject`**
 
@@ -546,10 +546,10 @@ The dispatcher owns `.state.json` and writes managed `.done` only after report v
 When reaching any terminal state (`completed`, `failed-review`, `merge_failed`, `blocked`), write `$SUB_COORD_REPORT_FILE` (fallback `$RUN_WITH_IT_ISSUE_DIR/report.json`) via:
 
 ```text
-ai-skills issue report --issue-dir "$RUN_WITH_IT_ISSUE_DIR" --outcome <outcome> --summary-file summary.txt [--merge-result-file merge.json] [--blocking-reason <reason>] [--report-file "$SUB_COORD_REPORT_FILE"]
+ai-skills issue report --issue-dir "$RUN_WITH_IT_ISSUE_DIR" --outcome <outcome> --summary-file summary.txt [--merge-result-file merge.json] [--verification-file verification.json] [--token-usage-file token-usage.json] [--blocking-reason <reason>] [--report-file "$SUB_COORD_REPORT_FILE"]
 ```
 
-`issue report` assembles `files_modified` (via `--numstat`), `model_usage` (from persisted routes), `review_summary`, `branches`, and `merge` (mapping `merge-issue` output), validates via `ai-skills artifact` (`terminal_report_reason`), and writes atomically:
+`issue report` assembles `files_modified` (via `--numstat`), `model_usage` (from persisted routes), `verification` (from `--verification-file`, `sub-state.json`, merge output, or latest worker result), `token_usage` (from `--token-usage-file`, `sub-state.json`, or worker telemetry/results — pass `--token-usage-file` or persist `token_usage` in `sub-state.json` whenever numeric token counts are available), `review_summary`, `branches`, and `merge` (mapping `merge-issue` output), validates via `ai-skills artifact` (`terminal_report_reason`), and writes atomically:
 
 ```json
 {
@@ -557,10 +557,12 @@ ai-skills issue report --issue-dir "$RUN_WITH_IT_ISSUE_DIR" --outcome <outcome> 
   "issue": "36",
   "outcome": "completed | failed-review | merge_failed | blocked",
   "summary": "One paragraph describing what was done, why it passed/failed, and key decisions.",
+  "verification": { "passed": true, "commands_run": [], "evidence": "" },
+  "token_usage": { "impl_input": 0, "impl_output": 0, "impl_cache_hit": 0 },
   "review_skipped": false,
   "blocking_reasons": [],
   "files_modified": [],
-  "review_summary": { "cycles_used": 1, "non_approval_count": 0, "history": [] },
+  "review_summary": { "cycles_used": 1, "final_verdict": "approve", "reviewer_model": null, "non_approval_count": 0, "history": [] },
   "model_usage": [],
   "merge": {}
 }
