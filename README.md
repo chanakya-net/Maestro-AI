@@ -469,6 +469,14 @@ without an explicit model uses `gemini-4-neon-high`.
 | `medium`, `medium-hard` | 35% | 25% | 40% |
 | `complex`, `holy-fuck` | 38% | 24% | 38% |
 
+Complexity scoring (`schema_version: 2`) uses 7 dimensions (`7–35`, mapped in
+`model_routing.score_to_weight`: `7–9` `quite-easy`, `10–14` `easy`, `15–19`
+`medium`, `20–23` `medium-hard`, `24–28` `complex`, `29–35` `holy-fuck`, with
+peak floors `4 → medium` and `5 → complex`). Passing `--complexity-score` /
+`COMPLEXITY_SCORE` uses this `7–35` scale (scores above `35` clamp to
+`holy-fuck`); resumed legacy v1 (`9–45`) artifacts remain readable and route
+from their persisted `level`.
+
 During automatic selection, a 0% AGY route is a fallback when eligible
 positive-target candidates are exhausted. Explicit agent or model overrides still
 observe compatibility and availability checks. A sticky reviewer preference can

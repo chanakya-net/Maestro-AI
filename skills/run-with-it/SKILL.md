@@ -89,7 +89,7 @@ Preferred upstream flow:
 **Plan Worker** (spawned via `plan-prompt.md`, gated, runs after complexity and before implementation):
 - Reads the issue worktree **read-only** with a strong model and writes a concrete approach plan to `.run-with-it/issues/<n>/plan.md` plus a machine-readable `plan.json` under `workers/plan/`
 - Never edits or commits — it runs before the baseline SHA so it cannot corrupt the implementer's diff
-- Re-scores complexity from the real code; the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
+- Independently scores complexity from the real code (without seeing the blind score); the Sub-Coordinator prefers that grounded band over the blind score when routing implementation and modification (the hybrid refinement)
 - Gated by `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`) and toggled by `RUN_WITH_IT_PLAN_ENABLED` (default `1`); trivial issues (`quite-easy`, `easy`) skip planning and route weak regardless
 - The implementer, reviewer, and modifier all consume `plan.md` via `RUN_WITH_IT_PLAN_FILE`
 
@@ -153,7 +153,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `AGENT` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`; ambient `AGENT` runner telemetry is ignored |
 | `MODEL` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`; ambient `MODEL` runner telemetry is ignored |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
-| `COMPLEXITY_SCORE` | — | Routing override passed through to Sub-Coordinators |
+| `COMPLEXITY_SCORE` | — | Numeric routing override (`7–35` v2 scale: `7–9` `quite-easy`, `10–14` `easy`, `15–19` `medium`, `20–23` `medium-hard`, `24–28` `complex`, `29–35` `holy-fuck`) passed through to Sub-Coordinators |
 | `AGENT_ALLOWLIST` | — | Comma-separated; passed through to Sub-Coordinators |
 | `AGENT_DENYLIST` | — | Comma-separated; passed through to Sub-Coordinators |
 | `MAX_AGENT_FALLBACKS` | `2` | Max agent fallback attempts; passed through |

@@ -2649,13 +2649,12 @@ if {role!r} == 'review':
 
 
 @pytest.mark.parametrize(('role', 'result', 'instructions', 'valid', 'model'), [
-    ('complexity', {'total': 9, 'level': 'quite-easy', 'scores': {key: 1 for key in
-     ('dependency_complexity', 'ownership_overlap_risk', 'architecture_risk',
-      'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
-      'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
-     'rationale': {key: 'reason' for key in ('dependency_complexity', 'ownership_overlap_risk',
-      'architecture_risk', 'orchestration_burden', 'verification_risk', 'ambiguity_of_requirements',
-      'integration_surface_breadth', 'rollback_recovery_risk', 'blast_radius')},
+    ('complexity', {'schema_version': 2, 'total': 7, 'level': 'quite-easy', 'scores': {key: 1 for key in
+     ('coupling_and_blast_radius', 'pattern_novelty', 'state_and_concurrency_risk',
+      'data_and_rollback_risk', 'verification_risk', 'ambiguity_of_requirements', 'scope_size')},
+     'rationale': {key: 'reason' for key in ('coupling_and_blast_radius', 'pattern_novelty',
+      'state_and_concurrency_risk', 'data_and_rollback_risk', 'verification_risk',
+      'ambiguity_of_requirements', 'scope_size')},
      'files_inspected': ['src/example.py']},
      None, True, 'gemini-4-hydrogen-high'),
     ('complexity', {'total': 9}, None, False, 'gemini-4-hydrogen-high'),

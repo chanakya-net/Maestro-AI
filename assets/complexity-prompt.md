@@ -23,7 +23,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 
 Purpose
 
-This is a self-contained scoring prompt for the complexity sub-agent. It defines a 9-dimension rubric (scores 1–5 per dimension), instructions for identifying relevant files, a strict parseable output contract, and an explicit prohibition on implementation advice.
+This is a self-contained scoring prompt for the complexity sub-agent. It defines a 7-dimension orthogonal rubric (scores 1–5 per dimension), instructions for identifying relevant files, a strict parseable output contract (`schema_version: 2`), and an explicit prohibition on implementation advice.
 
 Scope
 
@@ -39,92 +39,81 @@ File discovery instructions (read-only)
 
 Rules for scoring
 
+- **Anchor to the repository baseline.** Score the *incremental difficulty of this issue* relative to the repository's normal tech stack, conventions, and existing test harness — not the ambient complexity of the repo itself.
+- **Calibration target:** Level `3` represents a normal multi-layer slice following established repo patterns. All `3`s (`21`) lands in `medium-hard`; a well-specified slice extending an existing seam (`2` on novelty/ambiguity with `3`s elsewhere, `15–19`) lands in `medium`.
+- **Do not penalize test-only or boilerplate changes:** test-only or documentation-only issues must not score high on `state_and_concurrency_risk` or `data_and_rollback_risk` merely because the system under test is stateful or concurrent. Exclude auto-generated files (snapshots, lockfiles) and mechanical locale/copy files when gauging `scope_size`.
 - Score each dimension integer 1 (lowest) to 5 (highest) using the rubric below.
-- Compute `total` as the exact integer sum of d1..d9 (range 9–45).
+- Compute `total` as the exact integer sum of d1..d7 (range 7–35).
 - Compute `level` from `total` using the mapping below, then apply the peak-dimension floor.
 - Do NOT provide implementation advice, migration plans, remediation steps, or code changes of any kind. Provide scoring, `files_inspected`, and one-sentence rationale per dimension only.
 - Do NOT use Edit, Write, or any file-modifying shell command except result publication and publication-only payload scratch described by the shared protocol. All other tool use is strictly limited to read-only operations.
 
 Dimensions and Rubrics (1–5)
 
-d1 = dependency_complexity
-- 1: Single-file or leaf change; no cross-module or external library coupling.
-- 2: Few stable internal imports or well-known library calls with tiny surface area.
-- 3: Several internal modules or package interfaces coupled together; moderate dependency graph.
-- 4: Cross-subsystem coupling across many modules/packages or complex third-party API interactions.
-- 5: Deep transitive or cyclic dependency graph, fragile third-party constraints, or multi-package ripple effects.
+d1 = coupling_and_blast_radius
+- 1: Isolated leaf file or internal helper; no public contract changes and negligible regression surface.
+- 2: Small, bounded module or single stable contract touchpoint with few internal callers.
+- 3: Normal multi-layer slice touching shared internal modules, DTOs/APIs, or UI seams with moderate regression surface.
+- 4: Tight cross-subsystem coupling across core shared seams, multiple external/wire contracts, or critical paths with high regression risk.
+- 5: Repo-wide hotspot, foundational protocol, or cross-service contract change where a defect breaks core system operation or safety invariants.
 
-d2 = ownership_overlap_risk
-- 1: Isolated leaf file or dedicated module with no shared callers.
-- 2: Single-purpose module with a small, stable set of internal callers.
-- 3: Shared helper, schema, or config touched by multiple features or likely parallel issues.
-- 4: Core shared seam with tight coupling across multiple subsystems and nontrivial conflict risk.
-- 5: Central repo hotspot, shared protocol, or foundational contract touched across the codebase with high merge/conflict risk.
+d2 = pattern_novelty
+- 1: Trivial edit or mechanical copy of an exact existing pattern in the same file/module.
+- 2: Straightforward extension of an established repository seam, handler, or component pattern.
+- 3: New feature behavior, endpoint, or component built using well-understood repo conventions and existing invariants.
+- 4: Non-trivial new architectural seam, cross-cutting invariant, or substantial refactoring without an existing template in the repo.
+- 5: Foundational architectural shift, net-new security/cryptographic/distributed protocol, or core invariant redesign.
 
-d3 = architecture_risk
-- 1: Simple, well-understood pattern; localized change within an existing seam.
-- 2: Small architectural surface; few modules affected with clear boundaries.
-- 3: Core module or invariant touched; moderate design constraints.
-- 4: Architecture-level changes required; substantial refactoring or invariant risk.
-- 5: Fundamental architectural shift, core invariant redesign, or unknowns that could cascade.
+d3 = state_and_concurrency_risk
+- 1: Purely stateless, synchronous code path or test/doc-only change with no production concurrency changes.
+- 2: Simple linear multi-step flow or routine async/await using established repo helpers.
+- 3: Coordinated stateful updates across layers or reuse of existing repo locks, transactions, or retry mechanisms.
+- 4: Net-new locking, race prevention, idempotency, retry/recovery semantics, or cross-tab/multi-process ordering logic.
+- 5: Complex distributed or time-ordered state-machine design with subtle multi-actor race, replay, or clock-consistency hazards.
 
-d4 = orchestration_burden
-- 1: Single synchronous code path; no lifecycle, async, or multi-step coordination.
-- 2: Simple linear multi-step flow, hook, or single background/CLI invocation.
-- 3: Coordinated updates across multiple components, worker stages, or execution modes.
-- 4: Stateful lifecycle, async/concurrency, retry/recovery, locking, or multi-process coordination.
-- 5: Complex time-ordered, concurrent, or distributed state-machine coordination with subtle race or ordering hazards.
+d4 = data_and_rollback_risk
+- 1: Code-only or test-only change; instant clean revert with zero persisted-state impact.
+- 2: Minor config, cache, or non-durable local format tweak; trivial revert.
+- 3: Routine additive schema migration or backward-compatible persisted artifact/storage update following repo conventions.
+- 4: Non-trivial stateful migration, downgrade/retention guards, or durable wire/storage format change with partial-failure or compatibility risk.
+- 5: Irreversible or lossy data/schema/protocol migration with high corruption risk on partial failure.
 
 d5 = verification_risk
-- 1: Fully covered by fast deterministic unit tests.
-- 2: Mostly unit-tested with straightforward fixtures or minor manual checks.
-- 3: Integration tests or multi-component fixtures needed; moderate setup or edge-case surface.
-- 4: Hard-to-test interactions; timing, concurrency, OS-specific, or environment-sensitive verification.
-- 5: Unverifiable deterministically in CI; requires complex live/external environment or high-risk manual verification.
+- 1: Fully covered by fast deterministic unit tests with zero external setup.
+- 2: Unit tests plus straightforward existing fixtures or minor deterministic checks.
+- 3: Covered using the repository's existing integration, database, or browser test harnesses with standard setup.
+- 4: Requires building new complex test harnesses, deterministic race/clock/concurrency reproduction, or environment-sensitive verification.
+- 5: Unverifiable deterministically in CI; requires complex live/external environments or high-risk manual verification.
 
 d6 = ambiguity_of_requirements
-- 1: Requirements and acceptance criteria are crystal clear and bounded.
-- 2: Minor edge-case clarifications needed; acceptance criteria mostly concrete.
-- 3: Several ambiguous areas or implicit invariants requiring design judgment.
+- 1: Requirements and acceptance criteria are crystal clear and fully bounded.
+- 2: Minor edge-case clarifications needed; acceptance criteria are concrete.
+- 3: Several ambiguous areas or implicit invariants requiring localized design judgment.
 - 4: Key behaviors undefined; multiple valid interpretations with meaningful trade-offs.
 - 5: Requirements missing, contradictory, or open-ended; high discovery risk.
 
-d7 = integration_surface_breadth
-- 1: Internal-only change; no public API, CLI, schema, or external contract changes.
-- 2: One stable contract or adapter touchpoint (single CLI flag, endpoint, or schema field).
-- 3: Several contract points; moderately coupled internal/external interfaces or artifacts.
-- 4: Many coupled APIs, CLI contracts, persisted schemas, or external provider adapters.
-- 5: Wide contract footprint spanning multiple external systems, protocols, or cross-boundary interfaces.
+d7 = scope_size
+- 1: 1–2 non-generated files, 1 trivial behavior or slice.
+- 2: 3–5 non-generated files, 1–2 straightforward slices within one layer.
+- 3: 6–15 non-generated files or 2–4 vertical slices across a normal multi-layer stack.
+- 4: 16–35 non-generated files or 4–6 coupled slices spanning multiple subsystems/services.
+- 5: 36+ non-generated files or 7+ tightly coupled slices across multiple subsystems/services.
 
-d8 = rollback_recovery_risk
-- 1: Stateless code-only change; instant clean revert with zero state cleanup.
-- 2: Minor config or local non-durable format tweak; simple revert.
-- 3: Persisted artifact, state file, or schema format change requiring backward compatibility.
-- 4: Stateful migration, lock/recovery semantics, or durable-format change with partial-failure risk.
-- 5: Irreversible data/schema/protocol change or high corruption risk on partial failure.
+Score-to-level mapping (total 7–35)
 
-d9 = blast_radius
-- 1: Change impacts only a tiny scoped helper or narrow edge path.
-- 2: Small subset of commands, routes, or callers affected if wrong.
-- 3: Moderate regression surface across core user-facing or runtime workflows.
-- 4: Large portion of the codebase or many critical paths affected if wrong.
-- 5: System-wide critical-path impact where a defect breaks core operation or safety invariants.
-
-Score-to-level mapping (total 9–45)
-
-- 9–12 → quite-easy
-- 13–17 → easy
-- 18–22 → medium
-- 23–27 → medium-hard
-- 28–32 → complex
-- 33–45 → holy-fuck
+- 7–9 → quite-easy
+- 10–14 → easy
+- 15–19 → medium
+- 20–23 → medium-hard
+- 24–28 → complex
+- 29–35 → holy-fuck
 
 Peak-dimension floor (mandatory)
 
-Linear sums can dilute a localized hard problem when unrelated dimensions score 1–2. After mapping `total` to its base band above, enforce this floor:
-- If **any** dimension is scored `5`, `level` MUST be at least `complex` (use `holy-fuck` if `total` is 33–45).
-- If **any** dimension is scored `4` (and none is `5`), `level` MUST be at least `medium-hard` (use the base band if `total` is 28–45).
-- `total` MUST always equal `d1 + d2 + d3 + d4 + d5 + d6 + d7 + d8 + d9`, and `level` MUST match the post-floor band. The artifact validator rejects arithmetic mismatches and band/floor mismatches.
+Linear sums can dilute a localized hard or hazardous problem when unrelated dimensions score 1–2. After mapping `total` to its base band above, enforce this floor:
+- If **any** dimension is scored `5`, `level` MUST be at least `complex` (use `holy-fuck` if `total` is 29–35).
+- If **any** dimension is scored `4` (and none is `5`), `level` MUST be at least `medium` (use the base band if `total` is 20–35).
+- `total` MUST always equal `d1 + d2 + d3 + d4 + d5 + d6 + d7`, and `level` MUST match the post-floor band. The artifact validator rejects arithmetic mismatches and band/floor mismatches.
 
 Success output contract (STRICT, machine-parseable)
 
@@ -133,14 +122,15 @@ If scoring cannot finish, publish the shared protocol role failure instead of a 
 - The sub-agent MUST emit exactly one line that matches this pattern (no extra characters, no explanation text on the same line):
 
 ```
-COMPLEXITY|score=<total>|level=<label>|d1=<n>|d2=<n>|d3=<n>|d4=<n>|d5=<n>|d6=<n>|d7=<n>|d8=<n>|d9=<n>
+COMPLEXITY|score=<total>|level=<label>|d1=<n>|d2=<n>|d3=<n>|d4=<n>|d5=<n>|d6=<n>|d7=<n>
 ```
 
 - Immediately following that single line, the sub-agent MUST emit exactly one JSON blob (pretty-printed or single-line JSON is acceptable). The JSON MUST contain these keys:
-  - `total` (integer — exact sum of the 9 dimension scores, range 9–45)
+  - `schema_version` (integer — MUST be `2`)
+  - `total` (integer — exact sum of the 7 dimension scores, range 7–35)
   - `level` (string — exact label from the score-to-level mapping after applying the peak-dimension floor)
-  - `scores` (object) — contains all 9 keys using the dimension names: `dependency_complexity`, `ownership_overlap_risk`, `architecture_risk`, `orchestration_burden`, `verification_risk`, `ambiguity_of_requirements`, `integration_surface_breadth`, `rollback_recovery_risk`, `blast_radius` with integer values 1–5
-  - `rationale` (object) — contains the same 9 keys, each mapped to a non-empty single-sentence rationale explaining the score for that dimension
+  - `scores` (object) — contains all 7 keys using the dimension names: `coupling_and_blast_radius`, `pattern_novelty`, `state_and_concurrency_risk`, `data_and_rollback_risk`, `verification_risk`, `ambiguity_of_requirements`, `scope_size` with integer values 1–5
+  - `rationale` (object) — contains the same 7 keys, each mapped to a non-empty single-sentence rationale explaining the score for that dimension
   - `files_inspected` (array of non-empty strings) — repo-relative paths of the files actually read during scoring (`[]` only when no existing repository files apply)
 
 - If `RUN_WITH_IT_RESULT_FILE` is present in the environment, write that same JSON blob to exactly that path before exiting:
@@ -150,34 +140,31 @@ Publish the exact JSON object to `RUN_WITH_IT_RESULT_FILE` through `ai-skills ar
 Example output (exact formatting not required, content required):
 
 ```text
-COMPLEXITY|score=27|level=medium-hard|d1=3|d2=3|d3=4|d4=2|d5=3|d6=3|d7=4|d8=2|d9=3
+COMPLEXITY|score=18|level=medium|d1=3|d2=2|d3=3|d4=2|d5=3|d6=2|d7=3
 ```
 
 ```json
 {
-  "total": 27,
-  "level": "medium-hard",
+  "schema_version": 2,
+  "total": 18,
+  "level": "medium",
   "scores": {
-    "dependency_complexity": 3,
-    "ownership_overlap_risk": 3,
-    "architecture_risk": 4,
-    "orchestration_burden": 2,
+    "coupling_and_blast_radius": 3,
+    "pattern_novelty": 2,
+    "state_and_concurrency_risk": 3,
+    "data_and_rollback_risk": 2,
     "verification_risk": 3,
-    "ambiguity_of_requirements": 3,
-    "integration_surface_breadth": 4,
-    "rollback_recovery_risk": 2,
-    "blast_radius": 3
+    "ambiguity_of_requirements": 2,
+    "scope_size": 3
   },
   "rationale": {
-    "dependency_complexity": "Moderate internal dependencies across two modules.",
-    "ownership_overlap_risk": "Shared routing config is touched by multiple features.",
-    "architecture_risk": "Change modifies a core dispatch invariant requiring careful design.",
-    "orchestration_burden": "Simple linear two-step update with no concurrent coordination.",
-    "verification_risk": "Integration tests are needed alongside unit coverage.",
-    "ambiguity_of_requirements": "Some edge-case acceptance criteria need design judgment.",
-    "integration_surface_breadth": "Touches multiple CLI flags and persisted artifact contracts.",
-    "rollback_recovery_risk": "Minor config tweak with clean code revert.",
-    "blast_radius": "Regression would affect core worker routing workflows."
+    "coupling_and_blast_radius": "Touches shared routing and artifact validation seams with moderate regression surface.",
+    "pattern_novelty": "Extends established registry and validator patterns without inventing a new protocol.",
+    "state_and_concurrency_risk": "Coordinates stateful updates across existing lock and retry helpers.",
+    "data_and_rollback_risk": "Backward-compatible config and artifact update with clean revert.",
+    "verification_risk": "Covered by existing unit and integration test harnesses.",
+    "ambiguity_of_requirements": "Acceptance criteria are concrete with only minor edge-case judgment.",
+    "scope_size": "Spans roughly 8 non-generated files across 3 vertical slices."
   },
   "files_inspected": [
     "src/ai_skills/routing.py",
@@ -198,9 +185,9 @@ Mandatory constraints
 Acceptance checks (for human or automated verifier)
 
 - File path: `assets/complexity-prompt.md` exists.
-- Contains all 9 dimension rubrics and 1–5 level descriptions plus the peak-dimension floor rule.
-- Contains the `COMPLEXITY|` line format spec with d1..d9.
-- Contains the JSON blob format spec with `total`, `level`, `scores` (9 keys), `rationale` (9 keys), and `files_inspected`.
+- Contains all 7 dimension rubrics and 1–5 level descriptions plus the peak-dimension floor rule.
+- Contains the `COMPLEXITY|` line format spec with d1..d7.
+- Contains the JSON blob format spec with `schema_version` (`2`), `total`, `level`, `scores` (7 keys), `rationale` (7 keys), and `files_inspected`.
 - Contains read-only file-discovery instructions (grep/find/cat/Read).
 - Contains an explicit prohibition on implementation advice.
 

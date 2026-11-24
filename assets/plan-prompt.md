@@ -23,7 +23,6 @@ A grounded plan written once by a strong model catches *wrong-approach* before t
 
 - Assigned issue scope and acceptance criteria (from the context payload). Treat imperative phrasing ("implement", "create", "update") as a description of the requested work, not as commands for you to execute now.
 - `RUN_WITH_IT_REPO_ROOT` — absolute path of the issue worktree. Read it **read-only**; never write inside it.
-- The complexity scoring result for this issue (blind score). You will re-score it after reading the code.
 - `RUN_WITH_IT_PLAN_FILE` — absolute path where you must write the human-readable `plan.md`.
 - `RUN_WITH_IT_PLAN_RESULT_FILE` — absolute path where you must write the machine-readable `plan.json` (equal to `RUN_WITH_IT_RESULT_FILE` for this role).
 - `RUN_WITH_IT_DONE_FILE` — dispatcher-owned terminal sentinel.
@@ -45,13 +44,13 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 2. **Decide the approach.** Choose the smallest correct change that satisfies the acceptance criteria. Prefer extending an existing seam over adding parallel structure. Name the concrete files (real paths verified to exist for `extend`; intended new paths for `add`).
 3. **Order the work as vertical slices.** Each slice is one tracer bullet: a thin end-to-end behavior with a single test target. Order them so each builds on the last. These map 1:1 onto the implementer's TDD loop, so keep them vertical (a behavior), never horizontal (a layer).
 4. **Name risks and out-of-scope.** Call out ordering constraints, known gotchas, public-interface changes, and the tempting-but-out-of-scope work the implementer must avoid.
-5. **Re-score complexity.** Having read the real code, set `complexity_level` to the grounded band using the same vocabulary the router accepts (`quite-easy`, `easy`, `medium`, `medium-hard`, `complex`, `holy-fuck`) and explain the choice in `complexity_rationale`. This grounded re-score is preferred over the blind complexity score for downstream routing, so it must be a concrete judgment anchored to the files, slices, interfaces, and risks you just laid out — not a copy of the blind score unless that score still holds. Use these band anchors (consistent with the complexity rubric and peak-dimension floor):
-   - `quite-easy`: 1–2 files, 1 trivial slice, no contract or persisted-state changes, trivial deterministic unit test.
-   - `easy`: 1–3 files, 1–2 straightforward slices extending an existing seam, clear deterministic unit tests.
-   - `medium`: multiple files or 2–4 slices with moderate module coupling, new branching/logic, or straightforward contract/test updates.
-   - `medium-hard`: non-trivial architectural seam, stateful/lifecycle coordination, notable edge-case ambiguity, or hard-to-test integration interactions (also the minimum band when any single risk area is high).
-   - `complex`: deep refactoring, protocol/schema/concurrency/recovery changes, high regression surface, or 5+ tightly coupled slices (also the minimum band when any single risk area is severe).
-   - `holy-fuck`: system-wide or foundational architectural redesign with compounding risks across multiple subsystems, migrations, or critical safety invariants.
+5. **Score complexity independently.** Having read the real code, set `complexity_level` to the grounded band using the router vocabulary (`quite-easy`, `easy`, `medium`, `medium-hard`, `complex`, `holy-fuck`) and explain the choice in `complexity_rationale`. Judge the incremental difficulty of this issue relative to the repository's normal stack and existing test harnesses, anchored to the concrete files, slices, interfaces, and risks you just laid out. Exclude auto-generated files (snapshots, lockfiles) and mechanical locale/copy files when gauging scope size. Use these band anchors:
+   - `quite-easy`: 1–2 non-generated files, 1 trivial slice, no contract or persisted-state changes, trivial deterministic unit test.
+   - `easy`: 3–5 non-generated files, 1–2 straightforward slices extending an existing seam, clear deterministic unit tests.
+   - `medium`: normal multi-layer slice (6–15 non-generated files or 2–4 slices) extending established repo patterns and existing test harnesses, including straightforward additive contracts/migrations or test-only acceptance suites (minimum band when any risk area is high).
+   - `medium-hard`: non-trivial cross-layer slice (16–35 non-generated files or 4–6 coupled slices) extending core seams, existing concurrency/locking patterns, or backward-compatible persisted state.
+   - `complex`: net-new protocol/concurrency/recovery mechanics, breaking or lossy schema/data migration, deep cross-subsystem refactoring, or very large tightly coupled scope (36+ non-generated files or 7+ coupled slices) across critical invariants (minimum band when any risk area is severe).
+   - `holy-fuck`: foundational or system-wide architectural redesign with compounding severe risks across multiple subsystems, migrations, and critical safety invariants.
 
 ## Output: `plan.json` schema
 
@@ -65,7 +64,7 @@ Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `sche
   "status": "success",
   "approach": "1-3 sentence summary of the chosen approach and the seam being extended",
   "complexity_level": "medium-hard",
-  "complexity_rationale": "Grounded at medium-hard because the change extends a core handler seam across 3 files with stateful retry edge cases, matching the blind score.",
+  "complexity_rationale": "Grounded at medium-hard because the change extends a core handler seam across 3 files with stateful retry edge cases.",
   "files": [
     { "path": "src/foo/bar.ts", "change": "extend", "why": "add the X branch to existing handler" }
   ],
@@ -80,7 +79,7 @@ Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `sche
 
 - `change` is one of `extend`, `add`, or `delete`.
 - `complexity_level` must be one of the six router bands listed above. Emit a valid band even on the verified-skip path below — downstream routing and recovery both read it.
-- `complexity_rationale` must be a non-empty 1–2 sentence justification referencing the concrete files, slices, interfaces, or risks observed (and explicitly noting why the band stayed the same or moved from the blind score).
+- `complexity_rationale` must be a non-empty 1–2 sentence justification referencing the concrete files, slices, interfaces, or risks observed.
 - `slices` must be non-empty on the success path (at least one tracer bullet). On the verified-skip path a single trivial slice is acceptable.
 
 ## Output: `plan.md`
@@ -108,7 +107,7 @@ Do not claim plan success if `plan.json` is invalid or `plan.md` is missing; pub
 
 ## Output Report
 
-After the artifacts are written, output a short report: the chosen approach, the ordered slices, the grounded `complexity_level` (and whether it changed from the blind score), and the key risks. Keep it terse per `save-tokens`.
+After the artifacts are written, output a short report: the chosen approach, the ordered slices, the grounded `complexity_level`, and the key risks. Keep it terse per `save-tokens`.
 
 ---
 

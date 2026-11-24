@@ -31,7 +31,7 @@ def registry_file(tmp_path):
             "example-alias": {"alias_of": "example", "agents": []},
         },
         "model_routing": {
-            "score_to_weight": [{"label": "medium", "score_min": 18, "score_max": 22, "weight_min": 4, "weight_max": 6}],
+            "score_to_weight": [{"label": "medium", "score_min": 15, "score_max": 19, "weight_min": 4, "weight_max": 6}],
             "usage_distribution": {
                 "default_target_percent": {"codex": 100},
                 "non_complexity_band_target_percent": {"default": {"codex": 100}},
@@ -238,3 +238,14 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
             "complexity": ["claude", "codex", "agy"],
         },
     }
+
+
+def test_registry_score_to_weight_stays_in_sync_with_artifact_complexity_bands():
+    from ai_skills import artifacts
+
+    source = json.loads(SOURCE_REGISTRY.read_text(encoding="utf-8"))
+    registry_bands = tuple(
+        (int(row["score_min"]), int(row["score_max"]), str(row["label"]))
+        for row in source["model_routing"]["score_to_weight"]
+    )
+    assert registry_bands == artifacts.COMPLEXITY_SCORE_BANDS
