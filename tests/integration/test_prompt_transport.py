@@ -64,7 +64,7 @@ def test_packaged_coordinator_prompt_is_passed_whole_to_codex_style_stdin(tmp_pa
     config = configuration(tmp_path, response="assert sys.argv[-1] == '-'; print('done')")
     config = config.replace(prompt_file=resource_path('sub-coordinator-prompt.md'))
     prompt = config.prompt_file.read_text(encoding='utf-8')
-    assert len(prompt.encode('utf-8')) > 80000
+    assert len(prompt.encode('utf-8')) > 20000
     assert run_agent(config).return_code == 0
     assert (tmp_path/'received.bin').read_bytes() == ('Context λ &|<>^%!"\n\nInstructions:\n\n'+prompt+'\n').rstrip('\n').encode('utf-8')
 

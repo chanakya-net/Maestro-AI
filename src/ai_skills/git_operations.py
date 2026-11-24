@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -154,11 +155,69 @@ def merge_issue(repo_root, shared_branch, issue_branch, *, verify_commands=(), p
         return result
 
 
+def preserve_worktree(repo_root, dest_dir):
+    """Capture unstaged/staged binary diffs and untracked files into ``dest_dir``."""
+    root = Path(repo_root).resolve()
+    if Path(_git(root, 'rev-parse', '--show-toplevel').stdout.strip()).resolve() != root:
+        raise ValueError('repo-root must identify the repository or worktree root')
+    dest = Path(dest_dir).absolute()
+    dest.mkdir(parents=True, exist_ok=True)
+    head = _git(root, 'rev-parse', 'HEAD').stdout.strip()
+    unstaged = subprocess.run(['git', '-C', str(root), 'diff', '--binary'], capture_output=True, timeout=120)
+    staged = subprocess.run(['git', '-C', str(root), 'diff', '--cached', '--binary'], capture_output=True, timeout=120)
+    if unstaged.returncode or staged.returncode:
+        raise ValueError('git diff failed while preserving worktree')
+    patch_path = None
+    if unstaged.stdout:
+        patch_path = str(dest / 'unstaged.patch')
+        (dest / 'unstaged.patch').write_bytes(unstaged.stdout)
+    cached_path = None
+    if staged.stdout:
+        cached_path = str(dest / 'staged.patch')
+        (dest / 'staged.patch').write_bytes(staged.stdout)
+    untracked_raw = subprocess.run(
+        ['git', '-C', str(root), 'ls-files', '--others', '--exclude-standard', '-z'],
+        capture_output=True, timeout=120,
+    )
+    if untracked_raw.returncode:
+        raise ValueError('git ls-files failed while preserving worktree')
+    untracked_files = [p for p in untracked_raw.stdout.decode('utf-8').split('\0') if p]
+    untracked_dir = None
+    copied = []
+    if untracked_files:
+        untracked_root = dest / 'untracked'
+        untracked_root.mkdir(parents=True, exist_ok=True)
+        untracked_dir = str(untracked_root)
+        for rel in untracked_files:
+            rel_path = Path(rel)
+            if rel_path.is_absolute() or '..' in rel_path.parts:
+                continue
+            src = root / rel_path
+            if not src.is_file() or src.is_symlink():
+                continue
+            dst = untracked_root / rel_path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            copied.append(rel)
+    dirty = bool(patch_path or cached_path or copied)
+    return {
+        'schema_version': 1,
+        'repo_root': str(root),
+        'head': head,
+        'dirty': dirty,
+        'patch': patch_path,
+        'cached_patch': cached_path,
+        'untracked_dir': untracked_dir,
+        'untracked_files': copied,
+    }
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ai-skills git')
     commands = parser.add_subparsers(dest='command', required=True)
     prepare = commands.add_parser('prepare-issue')
     merge = commands.add_parser('merge-issue')
+    preserve = commands.add_parser('preserve-worktree')
     for command in (prepare, merge):
         command.add_argument('--repo-root', type=Path, default=Path.cwd())
         command.add_argument('--shared-branch', required=True)
@@ -168,10 +227,14 @@ def main(argv=None):
     merge.add_argument('--issue-branch', required=True)
     merge.add_argument('--verification-file', type=Path)
     merge.add_argument('--push', action='store_true')
+    preserve.add_argument('--repo-root', type=Path, default=Path.cwd())
+    preserve.add_argument('--dest-dir', type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == 'prepare-issue':
             result = prepare_issue(args.repo_root, args.shared_branch, args.issue, args.worktree_root, fetch=not args.offline)
+        elif args.command == 'preserve-worktree':
+            result = preserve_worktree(args.repo_root, args.dest_dir)
         else:
             verification = load_json(args.verification_file) if args.verification_file else ()
             result = merge_issue(args.repo_root, args.shared_branch, args.issue_branch, verify_commands=verification, push=args.push)

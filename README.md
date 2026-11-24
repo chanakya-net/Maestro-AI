@@ -562,11 +562,12 @@ The expanded result can also be saved as a standalone registry override.
 | `agent run`, `agent list`, `agent models` | Provider invocation, detection, and model discovery. |
 | `worker dispatch`, `worker inspect`, `worker emit` | Durable worker execution, inspection, and structured status events. |
 | `run pool`, `run watch`, `run inspect`, `run stop` | Dependency scheduling, event observation, worker inspection, and owned process shutdown. |
-| `state` | Transactional issue and coordinator state operations. |
+| `state` | Transactional main-state operations. |
+| `issue` | Sub-Coordinator state (`sub-state.json`), worker configs, failure classification, review gating, loop transitions, resume plans, and compact reports. |
 | `route` | Registry-driven model selection and budget policy. |
 | `harness detect`, `harness plan`, `harness show` | Detect installed coding CLIs and save or show a run's usage split. |
 | `artifact` | Validate and recover role-specific artifacts against Git evidence. |
-| `git prepare-issue`, `git merge-issue` | Prepare resumable issue worktrees and verify disposable integration worktrees. |
+| `git prepare-issue`, `git merge-issue`, `git preserve-worktree` | Prepare resumable issue worktrees, verify disposable integration worktrees, and preserve binary diffs/untracked files before recovery. |
 | `github update` | Apply authorized issue progress updates through `gh`. |
 | `report pr` | Render the final PR description from persisted results. |
 | `pair` | Start, continue, inspect, and finalize a paired discussion. |

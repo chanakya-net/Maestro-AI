@@ -16,7 +16,7 @@ description: Two-layer orchestration runtime — Main Orchestrator fetches all i
 
 Sole active authority once invoked — no other skill may activate unless called by name via `Skill` tool call; suppress spontaneous external skills until explicit termination or handoff. This isolation governs orchestration flow only; subordinate core behavior, native tool use, and reasoning remain fully operational and cannot be overridden by this skill.
 
-<!-- SYNC: this section is intentionally duplicated in assets/main-orchestrator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/contracts/test_instructions.py asserts key tokens match. -->
+<!-- SYNC: NATIVE_AUTHORITY above is contract-tested across all four coordinator documents; keep Critical Rules aligned with assets/main-orchestrator-rules.md. -->
 ## Critical Main Orchestrator Rules (compaction-safe — always enforce, even after context compression)
 
 These rules apply for the entire lifetime of this skill session. They are stated here first so they survive context compaction and are never dropped:
@@ -598,57 +598,7 @@ After context compression (conversation history cleared), treat the situation as
 
 ## Appendix D: Terminal Issue Comment Contract
 
-### Terminal Issue Comments
-
-Post issue comments immediately for terminal outcomes: `completed`, `blocked`, `failed-review`, or `failed-merge` (set after merge recovery fails).
-Each terminal comment must be posted only after reading the compact report for that issue, and must not wait for unrelated issues or the full pool to finish.
-Populate all fields from the Sub-Coordinator's compact report JSON.
-
-Use the same markdown template for every terminal outcome, with this fixed section order:
-
-1. `## Status`
-2. `## Summary`
-3. `## Verification`
-4. `## Token Usage`
-5. `## Notes`
-6. `## Blocking Reasons` (only when `report.blocking_reasons` is non-empty)
-
-Terminal comment template:
-
-```md
-## Status
-<completed|blocked|failed-review|failed-merge>
-
-## Summary
-<task outcome summary — from report.summary>
-
-## Verification
-<task-specific verification results — from report.verification.evidence>
-
-## Token Usage
-- Input tokens: <n|unknown>
-- Output tokens: <n|unknown>
-- Cache hit tokens: <n|unknown>
-
-## Notes
-Review: <approve|revise (N cycles)>, final verdict: <approve|reject>, reviewer model: <model-id>
-<follow-ups, blockers, or additional reviewer notes — omit line if none>
-
-## Blocking Reasons
-<omit this section entirely when verdict is not reject; when verdict=reject, list each entry from report.blocking_reasons as a separate bullet>
-```
-
-Comment requirements:
-
-- `Token Usage` must report task-specific telemetry only (from `report.token_usage`).
-- If any token value is unavailable, render that value explicitly as `unknown`.
-- `Verification` must summarize the checks run and whether they passed, failed, or were blocked (from `report.verification`).
-- `Notes` must include exactly one review summary line when `DELEGATED_REVIEW=true` and review ran. Format: `Review: <verdict-path>, final verdict: <approve|reject>, reviewer model: <model-id>`. For a straight approval write `approve (1 cycle)`; for a revise-then-approve write `revise (N cycles)`. When `report.review_skipped` is true, write `Review: skipped (trivial-change)` instead.
-- `Blocking Reasons` section must be included **only** when `report.blocking_reasons` is non-empty. Render each entry as a separate markdown bullet. Omit the section entirely otherwise.
-
-## Native GitHub terminal update
-
-Only the Main control plane performs this operation; Sub-Coordinators never do. After validated terminal reporting call once per issue (the helper maintains its idempotent update ledger):
+Only the Main control plane posts terminal GitHub comments and closes issues; Sub-Coordinators never touch GitHub. After reading a terminal compact report (`completed`, `blocked`, `failed-review`, or `failed-merge`), invoke once per issue — `ai-skills github update` renders the canonical comment template (`## Status`, `## Summary`, `## Verification`, `## Token Usage`, `## Notes` — including `Review: skipped (trivial-change)` when `report.review_skipped` is true — and `## Blocking Reasons` when non-empty) and maintains an idempotent update ledger:
 
 ```text
 ai-skills github update --state-file .run-with-it/main-state.json --run-root /absolute/run --issue 42 --outcome completed --report-file .run-with-it/issues/42/report.json

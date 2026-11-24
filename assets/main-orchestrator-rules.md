@@ -1,6 +1,6 @@
 # Main Orchestrator Rules
 
-<!-- SYNC: intentionally duplicated with the Critical Main Orchestrator Rules in skills/run-with-it/SKILL.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/contracts/test_instructions.py asserts key tokens match. -->
+<!-- SYNC: NATIVE_AUTHORITY below is contract-tested across all four coordinator documents; keep Critical Rules aligned with skills/run-with-it/SKILL.md. -->
 
 Re-read this file before EVERY loop iteration and after any context compression event. It is a hard requirement, not a suggestion.
 

@@ -69,11 +69,9 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 5. Expand context around changed public APIs, security-sensitive code, tests, config, and call sites when the diff alone is not enough to prove behavior.
 6. Validate behavior, risk, and verification evidence against requirements.
 7. Complete the required coverage_matrix and Threat Model Pass before choosing a verdict.
-8. Write the status file to `REVIEWER_STATUS_FILE`.
-9. Write the instructions file to `REVIEWER_INSTRUCTIONS_FILE`.
-10. If `RUN_WITH_IT_ARTIFACT_HELPER` is present, validate the review artifacts with it and fix any reported reason before continuing.
-11. Leave managed DONE to the dispatcher after both success JSON files validate. If review cannot finish, publish the shared protocol failure at the primary result path without instructions.
-12. Stop.
+8. Write the status file to `REVIEWER_STATUS_FILE` and instructions file to `REVIEWER_INSTRUCTIONS_FILE` using `ai-skills artifact write-json` (which validates both payloads).
+9. Leave managed DONE to the dispatcher after both success JSON files validate. If review cannot finish, publish the shared protocol failure at the primary result path without instructions.
+10. Stop.
 
 ## Review Completeness
 
@@ -134,7 +132,6 @@ Write exactly **two** JSON files.
 Path contract:
 - `RUN_WITH_IT_RESULT_FILE points to REVIEWER_STATUS_FILE` for review workers. Write the dispatcher-readable status JSON exactly to `REVIEWER_STATUS_FILE`; that is the result file monitored by `ai-skills worker dispatch`.
 - Write the full actionable review JSON exactly to `REVIEWER_INSTRUCTIONS_FILE`.
-- When `RUN_WITH_IT_ARTIFACT_HELPER` is set, run it to validate the success artifacts and treat any non-empty failure reason as invalid output to fix, not as a warning to ignore.
 - The dispatcher owns `RUN_WITH_IT_DONE_FILE`; publish both JSON files for successful review.
 - Do not create alternate review result files and do not rely on final chat output as the machine-readable artifact.
 - Build each JSON payload in a temporary file, then install it atomically with `ai-skills artifact write-json`: use `--role review` for the status payload and `--role review-instructions` for the instructions payload. Pass `--issue "$RUN_WITH_IT_ISSUE"`, the temporary `--payload-file`, and the final `--result-file`. Never generate Python source strings to quote JSON into place.

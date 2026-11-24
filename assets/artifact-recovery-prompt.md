@@ -78,13 +78,9 @@ You may produce exactly one of these decisions:
 
 Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
-2. Inspect structured state and worktree facts:
+2. Inspect structured state and worktree facts: read the failed worker's `.state.json`, any preserved recovery patches/untracked directory, and run `git -C "$ISSUE_WORKTREE_PATH" status --short` and `git -C "$ISSUE_WORKTREE_PATH" log --oneline "$ISSUE_BASE_SHA..HEAD"`.
 
-Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
-
-3. For dirty work, inspect the diff directly:
-
-Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
+3. For dirty work, inspect the diff directly via `git -C "$ISSUE_WORKTREE_PATH" diff` and `git -C "$ISSUE_WORKTREE_PATH" diff --cached` to verify whether all required changes are complete and in scope.
 
 4. Decide whether the failed worker's expected scope is complete.
 
