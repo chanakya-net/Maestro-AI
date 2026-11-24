@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_skills import dispatch, git_operations, issue
+from ai_skills import dispatch, git_operations, github, issue, state as state_mod
 
 
 def _init_repo(tmp_path: Path) -> Path:
@@ -156,6 +156,22 @@ def test_failure_action_separates_availability_and_capability(tmp_path):
     assert out2["recovery_dir"] is not None
 
 
+def test_failure_action_capability_budget_follows_max_fallbacks(tmp_path):
+    issue_dir = tmp_path / "issue-6"
+    role_dir = issue_dir / "workers" / "impl"
+    role_dir.mkdir(parents=True)
+    for n in (1, 2, 3):
+        sf = role_dir / f"cycle-1-attempt-{n}.state.json"
+        sf.write_text(json.dumps({"stall_reason": "missing-result-artifact"}))
+        Path(str(sf) + ".config.json").write_text(json.dumps({"agent_run": {"agent": "claude", "model": f"m-{n}"}}))
+    # With max_fallbacks=4, 3 capability attempts are still within budget (<= 4) -> retry-same-role
+    out = issue.decide_failure_action(issue_dir=issue_dir, role="impl", cycle="1", max_fallbacks=4)
+    assert out["action"] == "retry-same-role"
+    # With max_fallbacks=2, 3 capability attempts exceed budget (> 2) -> artifact-recovery
+    out_exhausted = issue.decide_failure_action(issue_dir=issue_dir, role="impl", cycle="1", max_fallbacks=2)
+    assert out_exhausted["action"] == "artifact-recovery"
+
+
 # ------------------------------------------------------------------ review-gate & next-step
 
 
@@ -179,60 +195,134 @@ def test_review_gate_rules(tmp_path):
     assert big["decision"] == "mandatory"
 
 
-def test_next_step_escalation_redesign_and_cycle_cap(tmp_path):
+def test_next_step_escalation_redesign_idempotency_and_revise_nitpick(tmp_path):
     issue_dir = tmp_path / "issue-9"
     issue.init_sub_state(issue_dir, issue="9")
-    verdict = tmp_path / "status.json"
-    verdict.write_text(json.dumps({"verdict": "revise", "comment_count": 2, "nitpick_only": False}))
 
-    r1 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=verdict, reviewer_model="claude-opus-5-5", effective_complexity="medium")
+    # revise + nitpick_only=True must still spawn a modifier (never merge)
+    v1 = tmp_path / "cycle-1-status.json"
+    v1.write_text(json.dumps({"verdict": "revise", "comment_count": 2, "nitpick_only": True}))
+    r1 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=v1, reviewer_model="claude-opus-5-5", effective_complexity="medium")
     assert r1["action"] == "spawn-modify" and r1["escalated"] is False and r1["modify_band"] == "medium"
     assert r1["issue_reviewer"] == "claude-opus-5-5"
 
-    r2 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=verdict, reviewer_model="other-model")
+    # Re-running on the exact same verdict file after a crash must be idempotent
+    r1_dup = issue.compute_next_step(issue_dir=issue_dir, verdict_file=v1, reviewer_model="claude-opus-5-5", effective_complexity="medium")
+    assert r1_dup == r1
+    assert issue.load_sub_state(issue_dir)["cycles_used"] == 1
+    assert issue.load_sub_state(issue_dir)["non_approval_count"] == 1
+
+    v2 = tmp_path / "cycle-2-status.json"
+    v2.write_text(json.dumps({"verdict": "revise", "comment_count": 1, "nitpick_only": False}))
+    r2 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=v2, reviewer_model="other-model")
     assert r2["action"] == "spawn-modify" and r2["escalated"] is True and r2["modify_band"] == "medium-hard"
     assert r2["issue_reviewer"] == "claude-opus-5-5"  # sticky cycle-1 reviewer preserved
 
-    r3 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=verdict)
+    v3 = tmp_path / "cycle-3-status.json"
+    v3.write_text(json.dumps({"verdict": "revise", "comment_count": 1, "nitpick_only": False}))
+    r3 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=v3)
     assert r3["redesign_required"] is True
 
     # Approve terminates cleanly
-    verdict.write_text(json.dumps({"verdict": "approve", "comment_count": 0, "nitpick_only": False}))
-    r4 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=verdict)
+    v4 = tmp_path / "cycle-4-status.json"
+    v4.write_text(json.dumps({"verdict": "approve", "comment_count": 0, "nitpick_only": False}))
+    r4 = issue.compute_next_step(issue_dir=issue_dir, verdict_file=v4)
     assert r4["action"] == "merge"
 
 
 # ------------------------------------------------------------------ resume-plan & report
 
 
-def test_resume_plan_and_report_mapping(tmp_path, monkeypatch):
+def test_resume_plan_uses_real_inspect_worker_with_worker_config(tmp_path):
     repo = _init_repo(tmp_path)
     base = _head(repo)
     (repo / "a.txt").write_text("line1\nupdated\n", encoding="utf-8")
     subprocess.run(["git", "-C", str(repo), "commit", "-aq", "-m", "work"], check=True)
+    head = _head(repo)
 
     issue_dir = tmp_path / ".run-with-it" / "issues" / "11"
     issue.init_sub_state(issue_dir, issue="11", worktree=str(repo), issue_branch="Maestro/fox-issue-11", issue_base_sha=base)
-    sf = issue_dir / "workers" / "impl" / "cycle-1-attempt-1.state.json"
-    sf.parent.mkdir(parents=True, exist_ok=True)
-    sf.write_text(json.dumps({"pid": 1}))
-    Path(str(sf) + ".config.json").write_text(json.dumps({"agent_run": {"issue": "11", "role": "impl", "cycle": "1"}}))
+    ctx = tmp_path / "ctx.md"
+    ctx.write_text("task")
+    built = issue.build_worker_config(
+        issue_dir=issue_dir, issue="11", role="impl", cycle="1",
+        context_file=ctx, repo_root=repo, agent="codex", model="gpt-6.2-sol", effort="high",
+        issue_base_sha=base, pre_spawn_head=base,
+    )
+    sf = Path(built["paths"]["state_file"])
+    cfg_obj = dispatch.WorkerConfig.from_sources(json.loads(Path(built["config_file"]).read_text()), {})
+    Path(str(sf) + ".config.json").write_text(json.dumps(cfg_obj.to_record()))
+    sf.write_text(json.dumps({"schema_version": 1, "state": "failed", "reason": "missing-result-artifact"}))
     issue.record_attempt(issue_dir, state_file=sf, phase="implement")
 
-    monkeypatch.setattr(dispatch, "inspect_worker", lambda p: dispatch.WorkerSnapshot(
-        liveness="alive", heartbeat_fresh=True, artifact_valid=False, artifact_reason="",
-        done_present=False, current_activity="running", state="running"))
+    # Calls the REAL dispatch.inspect_worker(WorkerConfig) — no monkeypatch!
+    # 1) Terminal failure state (no process record -> liveness 'unknown', worker_state 'failed') -> recover
     resume = issue.build_resume_plan(issue_dir)
-    assert resume["next_action"] == "wait-in-flight"
-    assert resume["in_flight"][0]["action"] == "wait"
+    assert resume["next_action"] == "run-failure-action"
+    assert resume["in_flight"][0]["action"] == "recover"
+    assert resume["in_flight"][0]["worker_state"] == "failed"
 
+    # 2) Active state (no process record yet -> liveness 'unknown', worker_state 'running') -> wait
+    sf.write_text(json.dumps({"schema_version": 1, "state": "running"}))
+    resume_wait = issue.build_resume_plan(issue_dir)
+    assert resume_wait["next_action"] == "wait-in-flight"
+    assert resume_wait["in_flight"][0]["action"] == "wait"
+
+    # 3) Completed state with valid artifact -> process
+    Path(built["paths"]["result_file"]).write_text(json.dumps({
+        "schema_version": 1,
+        "issue": "11",
+        "role": "impl",
+        "status": "success",
+        "commit_sha": head,
+        "summary": "Implemented",
+        "verification": {"passed": True, "commands_run": ["pytest"], "evidence": "ok"},
+        "files_committed": ["a.txt"],
+    }))
+    sf.write_text(json.dumps({"schema_version": 1, "state": "completed"}))
+    resume_done = issue.build_resume_plan(issue_dir)
+    assert resume_done["next_action"] == "process-completed-attempt"
+    assert resume_done["in_flight"][0]["action"] == "process"
+    assert resume_done["in_flight"][0]["artifact_valid"] is True
+
+    # Now verify full report schema compatibility with state.report_file_metrics and github.render_terminal_comment
+    verdict = tmp_path / "rev-status.json"
+    verdict.write_text(json.dumps({"verdict": "approve", "comment_count": 0, "nitpick_only": False}))
+    issue.compute_next_step(issue_dir=issue_dir, verdict_file=verdict, reviewer_model="claude-opus-5-5", review_head_sha=head)
+    issue.set_sub_state_fields(issue_dir, fields={
+        "impl_commit_sha": head,
+        "feature_branch": "Maestro/fox",
+        "token_usage": {"impl_input": 1200, "impl_output": 350, "impl_cache_hit": 500},
+    })
+    verif_file = tmp_path / "verif.json"
+    verif_file.write_text(json.dumps({"passed": True, "commands_run": ["pytest -q"], "evidence": "12 passed"}))
     merge_file = tmp_path / "merge.json"
     merge_file.write_text(json.dumps({"outcome": "completed", "commit_sha": "b" * 40, "evidence": ""}))
+
     rep = issue.write_issue_report(
         issue_dir=issue_dir, outcome="completed", summary="Implemented cleanly.",
-        merge_result_file=merge_file, repo_root=repo,
+        merge_result_file=merge_file, verification_file=verif_file, repo_root=repo,
     )
-    assert rep["report"]["outcome"] == "completed"
-    assert rep["report"]["merge"]["merge_sha"] == "b" * 40
-    assert len(rep["report"]["files_modified"]) == 1
-    assert Path(rep["report_file"]).is_file()
+    report = rep["report"]
+    assert report["outcome"] == "completed"
+    assert report["commit_sha"] == head
+    assert report["merge"]["merge_sha"] == "b" * 40
+    assert report["merge"]["status"] == "completed"
+    assert report["files_modified"][0]["lines_added"] == 1
+    assert report["review_summary"]["final_verdict"] == "approve"
+    assert report["review_summary"]["reviewer_model"] == "claude-opus-5-5"
+    assert isinstance(report["model_usage"][0]["cycle"], int)
+
+    metrics = state_mod.report_file_metrics(report)
+    assert metrics == {"files_modified_count": 1, "lines_added": 1, "lines_deleted": 0}
+
+    comment = github.render_terminal_comment(rep["report_file"], "completed")
+    assert "State: passed" in comment
+    assert "Commands: pytest -q" in comment
+    assert "Evidence: 12 passed" in comment
+    assert "Input tokens: 1200" in comment
+    assert "Output tokens: 350" in comment
+    assert "Cache hit tokens: 500" in comment
+    assert "Review: approve (1 cycle), final verdict: approve, reviewer model: claude-opus-5-5" in comment
+    assert f"Commit: {head}" in comment
+    assert f"Merge: {'b' * 40}" in comment

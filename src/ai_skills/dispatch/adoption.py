@@ -300,7 +300,7 @@ def dispatch_worker(config: WorkerConfig) -> WorkerResult:
     if not config.detach:
         return _work(config)
     supervisor = ProcessSupervisor(run.record_directory or (Path(run.repo_root)/'.ai-skills'/'processes'))
-    root = str(Path(__file__).resolve().parents[1])
+    root = str(Path(__file__).resolve().parents[2])
     bootstrap = 'import sys;sys.path.insert(0,sys.argv[1]);from ai_skills.dispatch import _detached;raise SystemExit(_detached(sys.argv[2]))'
     output = Path(str(state_file)+'.dispatcher.log')
     wrapper_environment = {} if protected_plan else run.environment or {}

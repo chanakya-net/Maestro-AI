@@ -795,7 +795,7 @@ def test_active_foreground_dispatcher_keeps_finalization_ownership_after_provide
                 changed={**before,'launcher_identity':{**before['launcher_identity'],'host':'unreachable-host'}}
                 write_json_atomic(selected.state_file,changed)
             script='import json,sys;sys.path.insert(0,sys.argv[1]);from dataclasses import asdict;from ai_skills.dispatch import adopt_worker;print(json.dumps(asdict(adopt_worker(sys.argv[2])),default=str))'
-            child=subprocess.run([sys.executable,'-c',script,str(Path(dispatch.__file__).resolve().parents[1]),str(selected.state_file)],capture_output=True,text=True,check=True)
+            child=subprocess.run([sys.executable,'-c',script,str(Path(dispatch.__file__).resolve().parents[2]),str(selected.state_file)],capture_output=True,text=True,check=True)
             result=json.loads(child.stdout)
             assert (result['state'],result['reason'])==(expected,reason)
             write_json_atomic(selected.state_file,before)

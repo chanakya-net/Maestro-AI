@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import subprocess
@@ -397,10 +398,11 @@ def decide_failure_action(
     role: str,
     cycle: str,
     max_fallbacks: int = DEFAULT_MAX_FALLBACKS,
-    max_capability_retries: int = DEFAULT_MAX_CAPABILITY_RETRIES,
+    max_capability_retries: int | None = None,
     max_review_retries: int = DEFAULT_MAX_REVIEW_RETRIES,
     state_files: list[str] | None = None,
 ) -> dict[str, Any]:
+    cap_budget = max_fallbacks if max_capability_retries is None else max_capability_retries
     issue_path = Path(issue_dir).absolute()
     role_dir = issue_path / "workers" / role
     if state_files:
@@ -475,7 +477,7 @@ def decide_failure_action(
             action = "blocked"
             reason = f"review-artifact-retries-exhausted ({last_stall or 'invalid-review'})"
     elif role in ("impl", "modify"):
-        if cap_count <= max_capability_retries:
+        if cap_count <= cap_budget:
             action = "retry-same-role"
             reason = last_stall or "capability-retry"
         else:
@@ -524,7 +526,7 @@ def _numstat(repo_root: Path | str, base_sha: str, head_sha: str) -> dict[str, A
         added = int(parts[0]) if parts[0].isdigit() else 0
         deleted = int(parts[1]) if parts[1].isdigit() else 0
         total_lines += added + deleted
-        files.append({"path": parts[2], "added": added, "deleted": deleted})
+        files.append({"path": parts[2], "lines_added": added, "lines_deleted": deleted})
     return {"files_changed": len(files), "total_lines_changed": total_lines, "files": files}
 
 
@@ -574,7 +576,10 @@ def compute_next_step(
     review_head_sha: str = "",
     effective_complexity: str = "",
 ) -> dict[str, Any]:
-    status = load_json(Path(verdict_file))
+    verdict_path = Path(verdict_file).absolute()
+    raw_bytes = verdict_path.read_bytes()
+    verdict_sha = hashlib.sha256(raw_bytes).hexdigest()
+    status = json.loads(raw_bytes.decode("utf-8"))
     if not isinstance(status, dict) or not artifacts.valid_review_status(status):
         raise IssueError(f"invalid review status file: {verdict_file}")
     verdict = str(status["verdict"])
@@ -584,6 +589,19 @@ def compute_next_step(
     result_box: dict[str, Any] = {}
 
     def _update(state: dict[str, Any]) -> None:
+        history = list(state.get("review_history", []))
+        # Idempotency: re-running on the exact same verdict file after a crash
+        # returns the already-recorded decision without double-counting cycles.
+        for prev in reversed(history):
+            if (
+                isinstance(prev, dict)
+                and prev.get("verdict_file") == str(verdict_path)
+                and prev.get("verdict_sha256") == verdict_sha
+                and isinstance(prev.get("decision"), dict)
+            ):
+                result_box.update(prev["decision"])
+                return
+
         cycle = int(state.get("cycle") or 1)
         cycles_used = int(state.get("cycles_used") or 0) + 1
         non_approval = int(state.get("non_approval_count") or 0)
@@ -596,19 +614,9 @@ def compute_next_step(
         if review_head_sha:
             state["review_head_sha"] = review_head_sha
 
-        history = list(state.get("review_history", []))
-        history.append({
-            "cycle": cycle,
-            "verdict": verdict,
-            "comment_count": comment_count,
-            "nitpick_only": nitpick_only,
-            "reviewer_model": reviewer_model or issue_reviewer,
-            "review_head_sha": review_head_sha or state.get("review_head_sha"),
-        })
-        state["review_history"] = history
-        state["cycles_used"] = cycles_used
-
-        if verdict == "approve" or (verdict == "revise" and nitpick_only):
+        # Only verdict == "approve" merges; any "revise" (even nitpick_only)
+        # spawns a modifier or terminates on cycle cap, matching main.
+        if verdict == "approve":
             action = "merge"
             state["phase"] = "merge"
             modify_band = state.get("modify_band") or base_band
@@ -638,8 +646,9 @@ def compute_next_step(
         state["escalated"] = escalated
         state["modify_band"] = modify_band
         state["redesign_required"] = redesign_required
+        state["cycles_used"] = cycles_used
 
-        result_box.update({
+        decision = {
             "schema_version": SCHEMA_VERSION,
             "action": action,
             "verdict": verdict,
@@ -653,7 +662,20 @@ def compute_next_step(
             "escalated": escalated,
             "redesign_required": redesign_required,
             "issue_reviewer": issue_reviewer,
+        }
+        history.append({
+            "cycle": cycle,
+            "verdict": verdict,
+            "comment_count": comment_count,
+            "nitpick_only": nitpick_only,
+            "reviewer_model": reviewer_model or issue_reviewer,
+            "review_head_sha": review_head_sha or state.get("review_head_sha"),
+            "verdict_file": str(verdict_path),
+            "verdict_sha256": verdict_sha,
+            "decision": decision,
         })
+        state["review_history"] = history
+        result_box.update(decision)
 
     _mutate_sub_state(issue_dir, _update)
     return result_box
@@ -691,13 +713,42 @@ def build_resume_plan(issue_dir: Path | str) -> dict[str, Any]:
             })
             any_recover = True
             continue
-        snap = dispatch.inspect_worker(Path(sf))
-        if snap.liveness in ("alive", "unknown") or snap.state in ("running", "starting", "quiet", "stalled"):
+        cfg_path = Path(str(sf) + ".config.json")
+        raw_cfg = load_json(cfg_path, missing=None)
+        if not isinstance(raw_cfg, dict):
+            inspected.append({
+                "role": role,
+                "cycle": cycle,
+                "state_file": str(sf),
+                "liveness": "missing-config",
+                "artifact_valid": False,
+                "action": "recover",
+            })
+            any_recover = True
+            continue
+        try:
+            worker_cfg = dispatch.WorkerConfig.from_record(raw_cfg)
+        except (KeyError, TypeError, ValueError):
+            inspected.append({
+                "role": role,
+                "cycle": cycle,
+                "state_file": str(sf),
+                "liveness": "invalid-config",
+                "artifact_valid": False,
+                "action": "recover",
+            })
+            any_recover = True
+            continue
+        snap = dispatch.inspect_worker(worker_cfg)
+        if snap.liveness == "alive":
             action = "wait"
             any_wait = True
         elif snap.state == "completed" and snap.artifact_valid:
             action = "process"
             any_process = True
+        elif snap.state in ("running", "starting", "quiet", "stalled", "unknown") and snap.liveness != "dead":
+            action = "wait"
+            any_wait = True
         else:
             action = "recover"
             any_recover = True
@@ -741,6 +792,49 @@ def build_resume_plan(issue_dir: Path | str) -> dict[str, Any]:
 # --------------------------------------------------------------------------- report
 
 
+def _normalize_verification(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    commands = raw.get("commands_run")
+    if not isinstance(commands, list):
+        raw_cmds = raw.get("commands")
+        if isinstance(raw_cmds, list):
+            commands = list(raw_cmds)
+        elif isinstance(raw.get("checks"), list):
+            commands = [str(c.get("command") or c.get("name") or "") for c in raw["checks"] if isinstance(c, dict)]
+            commands = [c for c in commands if c]
+        else:
+            commands = []
+    evidence = raw.get("evidence")
+    if not evidence and isinstance(raw.get("checks"), list):
+        parts = [str(c.get("evidence") or "") for c in raw["checks"] if isinstance(c, dict) and c.get("evidence")]
+        evidence = "; ".join(parts)
+    result: dict[str, Any] = {
+        "passed": raw.get("passed"),
+        "commands_run": commands,
+        "evidence": str(evidence or ""),
+    }
+    return result
+
+
+def _latest_worker_verification(issue_path: Path) -> dict[str, Any]:
+    for role in ("modify", "impl"):
+        role_dir = issue_path / "workers" / role
+        if not role_dir.is_dir():
+            continue
+        results = sorted(role_dir.glob("*-result.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for path in results:
+            payload = load_json(path, missing=None)
+            if isinstance(payload, dict) and isinstance(payload.get("verification"), dict):
+                return _normalize_verification(payload["verification"])
+    return {}
+
+
+def _int_or_str(value: Any) -> int | str:
+    text = str(value).strip()
+    return int(text) if text.isdigit() else text
+
+
 def write_issue_report(
     *,
     issue_dir: Path | str,
@@ -748,10 +842,16 @@ def write_issue_report(
     summary: str,
     blocking_reasons: list[str] | None = None,
     merge_result_file: Path | str | None = None,
+    verification_file: Path | str | None = None,
+    token_usage_file: Path | str | None = None,
+    evidence_file: Path | str | None = None,
+    commit_sha: str = "",
+    feature_branch: str = "",
     repo_root: Path | str | None = None,
     head_sha: str = "HEAD",
     report_file: Path | str | None = None,
     review_skipped: bool | None = None,
+    review_skip_reason: str | None = None,
 ) -> dict[str, Any]:
     issue_path = Path(issue_dir).absolute()
     state = load_sub_state(issue_path, missing_ok=True)
@@ -759,50 +859,114 @@ def write_issue_report(
     if not isinstance(base_meta, dict):
         base_meta = {}
 
-    issue_number = str(state.get("issue_number") or base_meta.get("issue") or issue_path.name)
+    issue_number_str = str(state.get("issue_number") or base_meta.get("issue") or issue_path.name)
+    raw_merge = load_json(Path(merge_result_file)) if merge_result_file else None
     merge_info: dict[str, Any] = {}
-    if merge_result_file:
-        raw_merge = load_json(Path(merge_result_file))
-        if isinstance(raw_merge, dict):
-            merge_info = {
-                "outcome": raw_merge.get("outcome", outcome),
-                "merge_sha": raw_merge.get("merge_sha") or raw_merge.get("commit_sha") or "",
-                "merge_worktree": raw_merge.get("merge_worktree") or "",
-                "failure_reason": raw_merge.get("failure_reason") or raw_merge.get("reason") or "",
-                "evidence": raw_merge.get("evidence") or "",
-                "conflict_files": raw_merge.get("conflict_files") or [],
-            }
+    if isinstance(raw_merge, dict):
+        merge_outcome = raw_merge.get("outcome", outcome)
+        merge_status = "completed" if merge_outcome == "completed" else "failed"
+        merge_info = {
+            "status": merge_status,
+            "outcome": merge_outcome,
+            "merge_sha": raw_merge.get("merge_sha") or raw_merge.get("commit_sha") or "",
+            "merge_worktree": raw_merge.get("merge_worktree") or "",
+            "failure_reason": raw_merge.get("failure_reason") or raw_merge.get("reason") or None,
+            "evidence": raw_merge.get("evidence") or "",
+            "conflict_files": raw_merge.get("conflict_files") or [],
+        }
 
     files_modified: list[dict[str, Any]] = []
     base_sha = state.get("issue_base_sha") or base_meta.get("issue_base_sha") or ""
     worktree = str(repo_root or state.get("worktree") or base_meta.get("worktree") or "")
+    resolved_commit = (
+        commit_sha
+        or str(state.get("modify_commit_sha") or state.get("impl_commit_sha") or state.get("review_head_sha") or "")
+    )
+    diff_head = resolved_commit or head_sha
     if worktree and base_sha and Path(worktree).is_dir():
         try:
-            files_modified = _numstat(worktree, base_sha, head_sha)["files"]
+            files_modified = _numstat(worktree, base_sha, diff_head)["files"]
         except IssueError:
             files_modified = []
 
+    if verification_file:
+        verification_info = _normalize_verification(load_json(Path(verification_file)))
+    elif isinstance(state.get("verification"), dict):
+        verification_info = _normalize_verification(state["verification"])
+    elif isinstance(raw_merge, dict) and isinstance(raw_merge.get("verification"), dict):
+        verification_info = _normalize_verification(raw_merge["verification"])
+    else:
+        verification_info = _latest_worker_verification(issue_path)
+
+    if token_usage_file:
+        token_usage = load_json(Path(token_usage_file))
+        if not isinstance(token_usage, dict):
+            raise IssueError(f"token usage file must be a JSON object: {token_usage_file}")
+    elif isinstance(state.get("token_usage"), dict):
+        token_usage = dict(state["token_usage"])
+    else:
+        token_usage = {}
+
     skipped = bool(state.get("review_skipped", False)) if review_skipped is None else review_skipped
+    skip_reason = (review_skip_reason or state.get("review_skip_reason") or "trivial-change") if skipped else None
+    history = list(state.get("review_history") or [])
+    last_review = history[-1] if history and isinstance(history[-1], dict) else {}
+    if skipped:
+        final_verdict = "approve"
+        reviewer_model = None
+        nitpick_only = False
+    else:
+        final_verdict = last_review.get("verdict")
+        reviewer_model = last_review.get("reviewer_model") or state.get("issue_reviewer")
+        nitpick_only = bool(last_review.get("nitpick_only", False))
+
+    model_usage = []
+    for item in state.get("routes") or []:
+        if not isinstance(item, dict):
+            continue
+        entry = dict(item)
+        if "cycle" in entry and not isinstance(entry["cycle"], int):
+            entry["cycle"] = int(entry["cycle"]) if str(entry["cycle"]).isdigit() else None
+        model_usage.append(entry)
+
+    issue_branch = state.get("issue_branch") or base_meta.get("issue_branch") or ""
+    feat_branch = feature_branch or state.get("feature_branch") or ""
     report: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "issue": issue_number,
+        "issue": issue_number_str,
+        "issue_number": _int_or_str(issue_number_str),
         "outcome": outcome,
         "summary": summary,
         "blocking_reasons": list(blocking_reasons or []),
-        "review_skipped": skipped,
+        "commit_sha": resolved_commit,
+        "issue_branch": issue_branch,
+        "feature_branch": feat_branch,
+        "worktree_path": worktree,
         "branches": {
-            "issue_branch": state.get("issue_branch") or base_meta.get("issue_branch") or "",
+            "issue_branch": issue_branch,
+            "feature_branch": feat_branch,
             "issue_base_sha": base_sha,
         },
+        "verification": verification_info,
+        "token_usage": token_usage,
+        "review_skipped": skipped,
+        "review_skip_reason": skip_reason,
         "merge": merge_info,
         "files_modified": files_modified,
         "review_summary": {
             "cycles_used": int(state.get("cycles_used") or 0),
+            "final_verdict": final_verdict,
+            "reviewer_model": reviewer_model,
             "non_approval_count": int(state.get("non_approval_count") or 0),
-            "history": list(state.get("review_history") or []),
+            "nitpick_only": nitpick_only,
+            "history": history,
         },
-        "model_usage": list(state.get("routes") or []),
+        "model_usage": model_usage,
     }
+    if evidence_file:
+        ev = load_json(Path(evidence_file))
+        if isinstance(ev, dict):
+            report["evidence"] = ev
 
     reason = artifacts.terminal_report_reason("sub-coord", report)
     if reason:
@@ -882,7 +1046,7 @@ def _build_parser() -> argparse.ArgumentParser:
     fa.add_argument("--role", required=True)
     fa.add_argument("--cycle", required=True)
     fa.add_argument("--max-fallbacks", type=int, default=DEFAULT_MAX_FALLBACKS)
-    fa.add_argument("--max-capability-retries", type=int, default=DEFAULT_MAX_CAPABILITY_RETRIES)
+    fa.add_argument("--max-capability-retries", type=int, default=None)
     fa.add_argument("--max-review-retries", type=int, default=DEFAULT_MAX_REVIEW_RETRIES)
     fa.add_argument("--state-file", action="append", default=[])
 
@@ -910,10 +1074,16 @@ def _build_parser() -> argparse.ArgumentParser:
     rep.add_argument("--summary-file", default="")
     rep.add_argument("--blocking-reason", action="append", default=[])
     rep.add_argument("--merge-result-file", default="")
+    rep.add_argument("--verification-file", default="")
+    rep.add_argument("--token-usage-file", default="")
+    rep.add_argument("--evidence-file", default="")
+    rep.add_argument("--commit-sha", default="")
+    rep.add_argument("--feature-branch", default="")
     rep.add_argument("--repo-root", default="")
     rep.add_argument("--head-sha", default="HEAD")
     rep.add_argument("--report-file", default="")
     rep.add_argument("--review-skipped", choices=["true", "false"], default=None)
+    rep.add_argument("--review-skip-reason", default=None)
 
     return parser
 
@@ -996,8 +1166,14 @@ def main(argv: list[str] | None = None) -> int:
                 issue_dir=args.issue_dir, outcome=args.outcome, summary=summary_text,
                 blocking_reasons=args.blocking_reason,
                 merge_result_file=args.merge_result_file or None,
+                verification_file=args.verification_file or None,
+                token_usage_file=args.token_usage_file or None,
+                evidence_file=args.evidence_file or None,
+                commit_sha=args.commit_sha,
+                feature_branch=args.feature_branch,
                 repo_root=args.repo_root or None, head_sha=args.head_sha,
                 report_file=args.report_file or None, review_skipped=rev_skip,
+                review_skip_reason=args.review_skip_reason,
             )
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0

@@ -184,12 +184,74 @@ def plan_path(run_root: Path | str) -> Path:
     return Path(run_root).absolute() / RUN_DIRECTORY / PLAN_FILE
 
 
-def build_plan(shares: dict[str, int], installed, source: str) -> dict:
+def coverage_gaps(registry: dict, shares: dict[str, int]) -> dict:
+    """Report work bands or roles that have zero eligible models under ``shares``."""
+    from ai_skills.registry import BANDS
+    from ai_skills import runner
+
+    enabled = [agent for agent, share in shares.items() if share > 0]
+    covered_work: set[str] = set()
+    for agent in enabled:
+        covered_work.update(work_bands(registry, agent))
+    missing_work_bands = [band for band in BANDS if band not in covered_work]
+
+    # Check whether any enabled harness can run the read-only plan phase.
+    # AGY requires a verified read-only profile; other enabled harnesses can plan
+    # if they cover the bumped plan bands (medium..extreme).
+    agy_can_plan = runner.resolve_agy_plan_profile(registry) is not None
+    plan_harnesses = [a for a in enabled if a != 'agy' or agy_can_plan]
+    plan_covered: set[str] = set()
+    for agent in plan_harnesses:
+        plan_covered.update(work_bands(registry, agent))
+    plan_bands = ('medium', 'medium-hard', 'complex', 'extreme')
+    missing_plan_bands = [band for band in plan_bands if band not in plan_covered]
+
+    warnings = []
+    if missing_work_bands:
+        warnings.append(
+            f'selected harnesses ({", ".join(sorted(enabled))}) have no configured models for bands: '
+            f'{", ".join(missing_work_bands)}'
+        )
+    if missing_plan_bands and not missing_work_bands:
+        warnings.append(
+            f'selected harnesses ({", ".join(sorted(enabled))}) cannot run the pre-implementation plan phase '
+            f'for bands: {", ".join(missing_plan_bands)} (planning will be skipped)'
+        )
+    return {
+        'missing_work_bands': missing_work_bands,
+        'missing_plan_bands': missing_plan_bands,
+        'warnings': warnings,
+    }
+
+
+def build_plan(
+    shares: dict[str, int],
+    installed,
+    source: str,
+    *,
+    registry: dict | None = None,
+    allow_partial: bool = False,
+) -> dict:
     if source not in SOURCES:
         raise HarnessError(f'source must be one of {", ".join(SOURCES)}')
     complete = validate_shares(shares, installed)
-    return {'schema_version': SCHEMA_VERSION, 'detected': sorted(installed), 'shares': complete,
+    warnings: list[str] = []
+    if registry is not None:
+        gaps = coverage_gaps(registry, complete)
+        warnings = gaps['warnings']
+        if gaps['missing_work_bands'] and not allow_partial:
+            # Allow a partial default only if the installed set itself cannot cover all bands.
+            installed_gaps = coverage_gaps(registry, {a: 1 for a in installed})
+            if not installed_gaps['missing_work_bands']:
+                raise HarnessError(
+                    f'split cannot route all complexity bands (missing: {", ".join(gaps["missing_work_bands"])}); '
+                    'give a positive share to a full-coverage harness or pass --allow-partial'
+                )
+    plan = {'schema_version': SCHEMA_VERSION, 'detected': sorted(installed), 'shares': complete,
             'source': source, 'created_at': dt.datetime.now(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}
+    if warnings:
+        plan['warnings'] = warnings
+    return plan
 
 
 def validate_plan(plan) -> dict:
@@ -309,6 +371,8 @@ def main(argv=None) -> int:
     group.add_argument('--defaults', action='store_true', help='Use the default split for the installed harnesses.')
     group.add_argument('--shares', help='Comma-separated harness=percent values that add up to 100.')
     plan_parser.add_argument('--source', choices=SOURCES, default=None)
+    plan_parser.add_argument('--allow-partial', action='store_true',
+                             help='Allow a split that leaves some complexity bands uncovered.')
     plan_parser.add_argument('--force', action='store_true')
     plan_parser.add_argument('--registry-file', default='')
     show_parser = commands.add_parser('show', help='Print the saved split for a run.')
@@ -333,7 +397,7 @@ def main(argv=None) -> int:
             shares, source = report['default_shares'], args.source or 'default'
         else:
             shares, source = parse_shares(registry, args.shares), args.source or 'user'
-        plan = build_plan(shares, installed, source)
+        plan = build_plan(shares, installed, source, registry=registry, allow_partial=args.allow_partial)
         path = save_plan(args.run_root, plan, force=args.force)
         print(json.dumps({**plan, 'path': str(path), 'summary': _describe(plan, registry)}, indent=2, sort_keys=True))
         return 0

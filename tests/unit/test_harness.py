@@ -287,3 +287,19 @@ def test_cli_plan_rejects_bad_split_and_harness_not_installed(tmp_path, monkeypa
 
 def test_cli_show_without_plan_fails(tmp_path, capsys):
     assert harness.main(["show", "--run-root", str(tmp_path), "--registry-file", str(SOURCE_REGISTRY)]) == 1
+
+
+def test_build_plan_rejects_partial_split_when_full_harness_installed_and_warns_for_agy_only(registry):
+    with pytest.raises(HarnessError, match="cannot route all complexity bands"):
+        harness.build_plan({"github-copilot": 100, "codex": 0}, ["github-copilot", "codex"], "user", registry=registry)
+
+    # Explicit opt-in succeeds with warnings
+    partial = harness.build_plan(
+        {"github-copilot": 100, "codex": 0}, ["github-copilot", "codex"], "user",
+        registry=registry, allow_partial=True,
+    )
+    assert partial["warnings"] and "medium" in partial["warnings"][0]
+
+    # AGY alone covers all 6 work bands, so it succeeds with a plan-phase warning
+    agy_only = harness.build_plan({"agy": 100, "codex": 0}, ["agy", "codex"], "user", registry=registry)
+    assert agy_only["warnings"] and "plan phase" in agy_only["warnings"][0]
