@@ -163,7 +163,7 @@ def test_complexity_example_is_valid_and_enforces_grounding_and_peak_floor():
     run_skill = skill('run-with-it')
     assert 'easy-medium' not in coordinator
     assert '8–12' not in coordinator and '33–40' not in coordinator and '9–12 is `quite-easy`' not in coordinator
-    assert '7–9 is `quite-easy`' in coordinator and '29–35 `holy-fuck`' in coordinator
+    assert '7–9 is `quite-easy`' in coordinator and '29–35 `extreme`' in coordinator
     assert 'score=21' in coordinator and 'score=21' in resource('coordinator-rules.md')
     assert 'Do **not** include the blind complexity score' in coordinator
     assert '`RUN_WITH_IT_PLAN_MIN_COMPLEXITY` (default `medium`)' in coordinator

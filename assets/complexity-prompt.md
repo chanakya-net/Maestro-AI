@@ -106,12 +106,12 @@ Score-to-level mapping (total 7–35)
 - 15–19 → medium
 - 20–23 → medium-hard
 - 24–28 → complex
-- 29–35 → holy-fuck
+- 29–35 → extreme
 
 Peak-dimension floor (mandatory)
 
 Linear sums can dilute a localized hard or hazardous problem when unrelated dimensions score 1–2. After mapping `total` to its base band above, enforce this floor:
-- If **any** dimension is scored `5`, `level` MUST be at least `complex` (use `holy-fuck` if `total` is 29–35).
+- If **any** dimension is scored `5`, `level` MUST be at least `complex` (use `extreme` if `total` is 29–35).
 - If **any** dimension is scored `4` (and none is `5`), `level` MUST be at least `medium` (use the base band if `total` is 20–35).
 - `total` MUST always equal `d1 + d2 + d3 + d4 + d5 + d6 + d7`, and `level` MUST match the post-floor band. The artifact validator rejects arithmetic mismatches and band/floor mismatches.
 

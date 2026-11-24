@@ -158,7 +158,7 @@ def test_simple_agy_flash_catalog_entries_are_exact_and_scoring_eligibility_is_e
         "complexity_weight": 5, "exclude_from_complexity": True,
     }
     assert catalog["gemini-4-hydrogen-high"]["complexity_bands"] == [
-        "quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck",
+        "quite-easy", "easy", "medium", "medium-hard", "complex", "extreme",
     ]
 
 
@@ -187,8 +187,8 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         "gemini-4-neon-medium": ["quite-easy", "easy"],
         "gemini-4-neon-high": ["medium", "medium-hard", "complex"],
         "gemini-4-neon-xhigh": ["complex"],
-        "gemini-4-carbon-high": ["holy-fuck"],
-        "gemini-4-carbon-xhigh": ["holy-fuck"],
+        "gemini-4-carbon-high": ["extreme"],
+        "gemini-4-carbon-xhigh": ["extreme"],
     }
     for model in explicit_only:
         assert catalog[model]["agents"] == ["agy"]
@@ -211,6 +211,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         assert definitions["agents"][agent]["model"]["default"] == expected_default
     assert source["model_routing"]["usage_distribution"] == {
         "default_target_percent": {"agy": 38, "codex": 37, "claude": 25},
+        "harness_default_share_percent": {"agy": 38, "codex": 37, "claude": 25, "github-copilot": 10},
         "role_target_percent": {
             "complexity": {"codex": 33, "claude": 33, "agy": 33},
             "impl": {"codex": 65, "claude": 30, "agy": 5},
@@ -226,7 +227,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
             "easy": {"codex": 33, "claude": 33, "agy": 33},
             "medium": {"agy": 40, "codex": 35, "claude": 25},
             "medium-hard": {"agy": 40, "codex": 35, "claude": 25},
-            "holy-fuck": {"codex": 38, "agy": 38, "claude": 24},
+            "extreme": {"codex": 38, "agy": 38, "claude": 24},
         },
         "role_band_target_percent": {
             "complexity": {

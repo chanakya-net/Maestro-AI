@@ -10,7 +10,76 @@ from pathlib import Path
 from ai_skills.resources import resource_path
 
 
-BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck")
+BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "extreme")
+
+# Former band names still accepted on input so in-flight runs, saved complexity
+# and plan artifacts, and custom registries keep working. Output always uses the
+# canonical name.
+LEGACY_BAND_ALIASES = {"holy-fuck": "extreme"}
+
+
+def canonical_band(band):
+    """Return the canonical band name for ``band`` (legacy aliases mapped)."""
+    return LEGACY_BAND_ALIASES.get(band, band) if isinstance(band, str) else band
+
+
+def _band_keys(mapping):
+    if not isinstance(mapping, dict):
+        return mapping
+    result = {}
+    for key, value in mapping.items():
+        canonical = canonical_band(key)
+        # The canonical spelling wins when both spellings are present.
+        if canonical in result and key != canonical:
+            continue
+        result[canonical] = value
+    return result
+
+
+def _band_list(values):
+    if not isinstance(values, list):
+        return values
+    result = []
+    for value in values:
+        value = canonical_band(value)
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def canonicalize_bands(registry):
+    """Rewrite legacy band names in a raw or expanded registry, in place."""
+    for entry in (registry.get("model_catalog") or {}).values():
+        if not isinstance(entry, dict):
+            continue
+        for field in ("work_bands", "required_bands", "complexity_bands", "routing_bands"):
+            if field in entry:
+                entry[field] = _band_list(entry[field])
+        if "effort_by_band" in entry:
+            entry["effort_by_band"] = _band_keys(entry["effort_by_band"])
+        if "min_band" in entry:
+            entry["min_band"] = canonical_band(entry["min_band"])
+    routing = registry.get("model_routing")
+    if not isinstance(routing, dict):
+        return registry
+    for row in routing.get("score_to_weight") or []:
+        if isinstance(row, dict) and "label" in row:
+            row["label"] = canonical_band(row["label"])
+    for field in ("non_complexity_band_policy", "band_required_models"):
+        if field in routing:
+            routing[field] = _band_keys(routing[field])
+    efforts = routing.get("effort_by_model_and_band")
+    if isinstance(efforts, dict):
+        routing["effort_by_model_and_band"] = {model: _band_keys(bands) for model, bands in efforts.items()}
+    distribution = routing.get("usage_distribution")
+    if isinstance(distribution, dict):
+        if "non_complexity_band_target_percent" in distribution:
+            distribution["non_complexity_band_target_percent"] = _band_keys(
+                distribution["non_complexity_band_target_percent"])
+        role_bands = distribution.get("role_band_target_percent")
+        if isinstance(role_bands, dict):
+            distribution["role_band_target_percent"] = {role: _band_keys(bands) for role, bands in role_bands.items()}
+    return registry
 
 
 def _merge(defaults, overrides):
@@ -32,7 +101,7 @@ def _object(source):
 
 def load_registry(path=None):
     source = Path(path) if path else resource_path("agent-registry.json")
-    registry = _object(source)
+    registry = canonicalize_bands(_object(source))
     version = registry.get("schema_version", 1)
     if version not in (1, 2):
         raise ValueError(f"unsupported registry schema_version: {version}")

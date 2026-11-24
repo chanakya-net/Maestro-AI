@@ -95,13 +95,14 @@ def _agent(registry, name):
     if name not in registry['agents']:
         raise ValueError(f'unknown agent: {name}')
     agent = registry['agents'][name]
-    if name == 'github-copilot' or agent.get('routing_disabled'):
+    if agent.get('routing_disabled'):
         raise ValueError(f'agent is disabled: {name} ({agent.get("routing_disabled_reason", "blocked from automatic routing and direct use")})')
     return name, agent
 
 
-def runner_environment(config):
-    env = dict(os.environ if config.environment is None else config.environment)
+def bootstrap_path(env):
+    """Add the usual per-user CLI install directories to a copy of ``env``'s PATH."""
+    env = dict(env)
     if env.get('RUN_AGENT_BOOTSTRAP_PATH', '1') != '0':
         home = Path(env.get('HOME') or env.get('USERPROFILE') or Path.home())
         directories = ['/opt/homebrew/bin', '/usr/local/bin', *(str(home / p) for p in ('.npm-global/bin', '.local/bin', '.cargo/bin', '.bun/bin', '.dotnet/tools'))]
@@ -110,6 +111,34 @@ def runner_environment(config):
             if Path(directory).is_dir() and directory not in current:
                 current.insert(0, directory)
         env['PATH'] = os.pathsep.join(current)
+    return env
+
+
+def detect_agents(registry, environment, repo_root):
+    """Return ``(name, display_name, status, reason)`` for every registered harness.
+
+    ``status`` is ``detected``, ``missing`` or ``disabled``. ``environment``
+    should already carry the bootstrapped PATH (see ``bootstrap_path``).
+    """
+    rows = []
+    for name, agent in registry['agents'].items():
+        status, reason = 'detected', 'detected'
+        try:
+            _agent(registry, name)
+        except ValueError as error:
+            status, reason = 'disabled', str(error)
+        else:
+            command = agent.get('detection', {}).get('command', '')
+            if not shutil.which(command, path=environment.get('PATH')):
+                status, reason = 'missing', 'missing command: ' + command
+            elif not _configured(agent, environment, Path(repo_root)):
+                status, reason = 'missing', agent.get('user_model_configuration', {}).get('skip_message') or 'missing user model configuration'
+        rows.append((name, agent.get('display_name', name), status, reason))
+    return rows
+
+
+def runner_environment(config):
+    env = bootstrap_path(os.environ if config.environment is None else config.environment)
     for key, value in {'REPO_ROOT':config.repo_root, 'RUN_WITH_IT_STATUS_FILE':config.status_file,
                        'RUN_WITH_IT_EVENTS_LOG':config.events_log, 'RUN_WITH_IT_LOG_FILE':config.log_file,
                        'RUN_WITH_IT_DONE_FILE':config.done_file, 'RUN_WITH_IT_RESULT_FILE':config.result_file,
@@ -994,20 +1023,9 @@ def main(argv=None):
         registry = load_registry(config.registry_file)
         if action == 'list' or args.list_agents:
             environment = runner_environment(config)
-            for name, agent in registry['agents'].items():
-                status, reason = 'detected', 'detected'
-                try:
-                    _agent(registry, name)
-                except ValueError as error:
-                    status, reason = 'disabled', str(error)
-                else:
-                    command = agent.get('detection', {}).get('command', '')
-                    if not shutil.which(command, path=environment.get('PATH')):
-                        status, reason = 'missing', 'missing command: ' + command
-                    elif not _configured(agent, environment, Path(config.repo_root)):
-                        status, reason = 'missing', agent.get('user_model_configuration', {}).get('skip_message') or 'missing user model configuration'
-                if not args.detected_only or status == 'detected':
-                    print('\t'.join((name, agent.get('display_name', name), status, reason)))
+            for row in detect_agents(registry, environment, config.repo_root):
+                if not args.detected_only or row[2] == 'detected':
+                    print('\t'.join(row))
             return 0
         if args.list_models or action == 'models':
             name, agent = _agent(registry, args.list_models or config.agent)

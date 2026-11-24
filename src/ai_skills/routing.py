@@ -16,21 +16,22 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ai_skills import runner
+from ai_skills import harness, runner
+from ai_skills.registry import BANDS, LEGACY_BAND_ALIASES, canonical_band
 
 
-BAND_ORDER = ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
+BAND_ORDER = list(BANDS)
 REVIEW_BUMP = {
     "quite-easy": "easy",
     "easy": "medium",
     "medium": "medium-hard",
     "medium-hard": "complex",
-    "complex": "holy-fuck",
-    "holy-fuck": "holy-fuck",
+    "complex": "extreme",
+    "extreme": "extreme",
 }
 # Planning is reasoning-bound: a vague plan makes weak executors worse, so the
 # planner must always be a high-ability model regardless of the issue's own
-# complexity. Shift the base band up two levels (capped at holy-fuck) so only
+# complexity. Shift the base band up two levels (capped at extreme) so only
 # strong models qualify. Unlike review, plan routing does not depend on the
 # blind complexity score for capability — the gate already filters which issues
 # get a plan at all.
@@ -38,12 +39,11 @@ PLAN_BUMP = {
     "quite-easy": "medium",
     "easy": "medium-hard",
     "medium": "complex",
-    "medium-hard": "holy-fuck",
-    "complex": "holy-fuck",
-    "holy-fuck": "holy-fuck",
+    "medium-hard": "extreme",
+    "complex": "extreme",
+    "extreme": "extreme",
 }
 DEFAULT_AGENTS = ["codex", "agy", "claude"]
-PERMANENTLY_BLOCKED_AGENTS = {"github-copilot"}
 GLOBAL_DEBT_WEIGHT = 1.5
 
 
@@ -134,9 +134,6 @@ def add_unavailable_entry(availability: Availability, entry: Any) -> None:
 
 def registry_availability(registry: dict[str, Any]) -> Availability:
     availability = empty_availability()
-    for agent_id in PERMANENTLY_BLOCKED_AGENTS:
-        availability["agents"].add(agent_id)
-
     for agent_id, agent in registry.get("agents", {}).items():
         if agent.get("routing_disabled") is True:
             availability["agents"].add(str(agent_id))
@@ -353,7 +350,7 @@ def score_to_level(registry: dict[str, Any], score: int) -> str:
             return str(row["label"])
     max_score = max((int(row["score_max"]) for row in rows), default=35)
     if score > max_score:
-        return "holy-fuck"
+        return "extreme"
     fail(f"complexity score does not map to a routing band: {score}")
 
 
@@ -368,6 +365,7 @@ def min_band_allows(model_entry: dict[str, Any], level: str) -> bool:
     min_band = model_entry.get("min_band")
     if not min_band:
         return True
+    min_band, level = canonical_band(min_band), canonical_band(level)
     if min_band not in BAND_ORDER or level not in BAND_ORDER:
         return True
     return BAND_ORDER.index(level) >= BAND_ORDER.index(min_band)
@@ -619,6 +617,7 @@ def select_pair(
     prefer_model: str | None = None,
 ) -> dict[str, Any]:
     exclude_models = normalize_model_exclusions(exclude_models)
+    base_level = canonical_band(base_level)
     level = routing_level(role, base_level)
     if forced_agent and forced_model:
         reason = "forced-agent-and-model"
@@ -797,6 +796,9 @@ def build_output(
         "availability_exclusions": selection.get("availability_exclusions", {}),
         "model_exclusions": selection.get("model_exclusions", []),
     }
+    plan = registry.get("model_routing", {}).get("harness_plan")
+    if plan:
+        output["harness_plan"] = plan
     return output
 
 
@@ -809,9 +811,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         choices=["complexity", "impl", "review", "modify", "artifact-recovery", "merge-recovery", "plan"],
     )
-    parser.add_argument("--complexity-level", choices=BAND_ORDER)
+    parser.add_argument("--complexity-level", choices=[*BAND_ORDER, *LEGACY_BAND_ALIASES], type=canonical_band,
+                        help="routing band (former band names are accepted and mapped to current ones)")
     parser.add_argument("--complexity-score", type=int)
-    parser.add_argument("--detected-agents", default=",".join(DEFAULT_AGENTS))
+    parser.add_argument("--detected-agents", default=None,
+                        help="comma-separated installed harnesses; defaults to the run's harness plan "
+                             "(.run-with-it/harness-plan.json beside the ledger), else codex,agy,claude")
     parser.add_argument("--allowlist", default="")
     parser.add_argument("--denylist", default="")
     parser.add_argument("--forced-agent", default="")
@@ -862,6 +867,32 @@ def load_run_registry(requested: str, ledger_file: Path) -> dict[str, Any]:
     return registry
 
 
+def harness_scope(
+    registry: dict[str, Any],
+    plan: dict[str, Any] | None,
+    detected_agents: set[str] | None,
+) -> tuple[dict[str, Any], set[str]]:
+    """Apply a run's harness plan to routing policy and the usable agent set.
+
+    Without a plan the registry is unchanged and detection falls back to the
+    explicit list or ``DEFAULT_AGENTS``. With a plan, only harnesses with a
+    positive share are usable; an explicit detected list can narrow that set
+    but never widen it.
+    """
+    if plan is None:
+        return registry, set(detected_agents) if detected_agents is not None else set(DEFAULT_AGENTS)
+    try:
+        registry = harness.apply_plan(registry, plan)
+    except harness.HarnessError as exc:
+        fail(f"invalid harness plan: {exc}")
+    registry.setdefault("model_routing", {})["harness_plan"] = {
+        "source": plan["source"], "shares": dict(plan["shares"])}
+    enabled = set(harness.enabled_agents(plan))
+    if detected_agents is not None:
+        enabled &= set(detected_agents)
+    return registry, enabled
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     ledger_file = Path(args.ledger_file)
@@ -877,7 +908,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         fail("pass --complexity-level or --complexity-score")
 
-    detected_agents = set(split_csv(args.detected_agents))
+    detected_agents = set(split_csv(args.detected_agents)) if args.detected_agents is not None else None
+    try:
+        plan = harness.load_plan(ledger_file.absolute().parent)
+    except (harness.HarnessError, OSError) as exc:
+        fail(f"cannot load harness plan: {exc}")
+    registry, detected_agents = harness_scope(registry, plan, detected_agents)
     allowlist = set(split_csv(args.allowlist))
     denylist = set(split_csv(args.denylist))
     forced_agent = args.forced_agent or None
@@ -944,7 +980,7 @@ from copy import deepcopy
 class RouteRequest:
     role: str
     complexity_level: str = "medium"
-    detected_agents: frozenset[str] = frozenset(DEFAULT_AGENTS)
+    detected_agents: frozenset[str] | None = None  # None: harness plan, else DEFAULT_AGENTS
     allowlist: frozenset[str] = frozenset()
     denylist: frozenset[str] = frozenset()
     forced_agent: str | None = None
@@ -953,6 +989,7 @@ class RouteRequest:
     prefer_model: str | None = None
     model_denylist: str = ""
     availability: Availability | None = None
+    harness_plan: dict | None = None
 
 @dataclass(frozen=True)
 class RouteDecision:
@@ -970,11 +1007,13 @@ class RouteDecision:
 
 
 def select_route(request: RouteRequest, registry: dict, ledger: dict) -> RouteDecision:
+    detected = set(request.detected_agents) if request.detected_agents is not None else None
+    registry, detected = harness_scope(registry, request.harness_plan, detected)
     availability = merge_availability(registry_availability(registry), env_model_denylist_availability(request.model_denylist))
     if request.availability is not None:
         availability = merge_availability(availability, request.availability)
     return RouteDecision(select_pair(registry, normalize_ledger(deepcopy(ledger)), request.role, request.complexity_level,
-        set(request.detected_agents), set(request.allowlist), set(request.denylist), availability,
+        detected, set(request.allowlist), set(request.denylist), availability,
         request.forced_agent, request.forced_model, set(request.exclude_models), request.prefer_model))
 
 

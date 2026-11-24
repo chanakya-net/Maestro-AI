@@ -15,7 +15,7 @@ def test_no_legacy_executable_sources_remain():
 
 def test_current_public_docs_use_native_runtime():
     pattern = re.compile(r'(?:run-agent|worker-watch|pair-colleague|run-with-it-[\w-]+)\.(?:sh|ps1|py)\b|(?:un)?install\.(?:sh|ps1)\b')
-    for path in [ROOT / 'README.md', ROOT / 'explainer.html']:
+    for path in [ROOT / 'README.md', ROOT / 'GUIDE.md']:
         assert not pattern.search(path.read_text(encoding='utf-8')), str(path)
 
 

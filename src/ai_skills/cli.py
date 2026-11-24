@@ -40,7 +40,7 @@ def runtime_command(arguments: list[str]) -> list[str] | None:
         config = json.loads(Path(source).read_text(encoding='utf-8'))
         if not isinstance(config, dict):
             raise ValueError('command configuration must be an object')
-    candidate = (option('--run-dir') or option('--run-root') or config.get('run_root')
+    candidate = (option('--run-dir') or option('--run-root') or option('--issue-dir') or config.get('run_root')
                  or os.environ.get('AI_SKILLS_RUN_ROOT'))
     state_file = option('--state-file') or config.get('state_file')
     if not candidate and state_file:
@@ -99,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f'ai-skills runtime selection: {error}', file=sys.stderr)
         return 2
     modules = {'agent': 'runner', 'worker': 'dispatch', 'pair': 'pair',
-               'state': 'state', 'route': 'routing', 'artifact': 'artifacts',
+               'state': 'state', 'route': 'routing', 'artifact': 'artifacts', 'harness': 'harness',
+               'issue': 'issue',
                'github': 'github', 'report': 'reports', 'git': 'git_operations',
                'install': 'installation', 'uninstall': 'installation', 'update': 'update'}
     if arguments and arguments[0] == 'run':

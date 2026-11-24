@@ -268,8 +268,8 @@ def _legacy_complexity_payload(score_overrides=None, **patch):
       'data_and_rollback_risk': 3, 'verification_risk': 4, 'ambiguity_of_requirements': 3, 'scope_size': 3}, 24, 'complex'),
     ({k: 4 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 28, 'complex'),
     ({'coupling_and_blast_radius': 5, 'pattern_novelty': 4, 'state_and_concurrency_risk': 4,
-      'data_and_rollback_risk': 4, 'verification_risk': 4, 'ambiguity_of_requirements': 4, 'scope_size': 4}, 29, 'holy-fuck'),
-    ({k: 5 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 35, 'holy-fuck'),
+      'data_and_rollback_risk': 4, 'verification_risk': 4, 'ambiguity_of_requirements': 4, 'scope_size': 4}, 29, 'extreme'),
+    ({k: 5 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 35, 'extreme'),
     # Peak-dimension floor in v2: any 4 floors at medium (keeping medium reachable
     # while preventing under-routing to easy/quite-easy); any 5 floors at complex:
     ({'state_and_concurrency_risk': 4}, 10, 'medium'),

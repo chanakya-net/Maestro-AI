@@ -335,7 +335,7 @@ Rules for this section:
 
 ```yaml
 agent_routing:
-  complexity_hint: <quite-easy|easy|medium|medium-hard|complex|holy-fuck>
+  complexity_hint: <quite-easy|easy|medium|medium-hard|complex|extreme>
   required_capability: <fast|balanced|advanced>
   parallel_safe: <true|false>
   cost_preference: <low|balanced|high>

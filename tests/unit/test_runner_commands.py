@@ -110,11 +110,17 @@ def test_agy_preserves_unrelated_extra_args(config):
     assert spec.argv.count('--model') == 1
 
 
-def test_disabled_provider_cannot_be_unblocked_by_registry_copy(config):
+def test_routing_disabled_provider_cannot_be_invoked(config):
     registry = load_registry()
-    registry['agents']['github-copilot'].pop('routing_disabled')
+    registry['agents']['github-copilot']['routing_disabled'] = True
     with pytest.raises(ValueError, match='disabled'):
         build_invocation(config.replace(agent='copilot'), registry)
+
+
+def test_copilot_is_invocable_by_default(config):
+    spec = build_invocation(config.replace(agent='copilot', model='gpt-5.4'), load_registry())
+    assert spec.argv[0].endswith('copilot') or 'copilot' in spec.argv[0]
+    assert '--model' in spec.argv and 'gpt-5.4' in spec.argv
 
 
 def test_npm_cmd_adapter_preserves_payload_without_cmd_shell(tmp_path):
@@ -317,7 +323,7 @@ def test_explicit_adjustment_survives_repeated_preparation(config):
 @pytest.mark.parametrize('role', ['review', 'complexity'])
 def test_structured_ordinary_roles_remain_capped_for_difficult_prompts(config, agent, role, tmp_path):
     prompt = tmp_path / 'difficult-plan.md'
-    prompt.write_text('Plan a holy-fuck complexity task')
+    prompt.write_text('Plan a extreme complexity task')
     argv = build_invocation(config.replace(agent=agent, role=role, effort='maximum', prompt_file=prompt), load_registry()).argv
     assert ('model_reasoning_effort=high' in argv if agent.startswith('codex') else
             argv[argv.index('--effort') + 1] == 'high')

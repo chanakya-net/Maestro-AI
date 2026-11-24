@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">Maestro-AI architecture</title>
+  <desc id="desc">Requests move from break-req to create-git-issue to run-with-it and a final pull request. The run-with-it runtime schedules issues in isolated Git worktrees, routes workers across installed coding CLIs, verifies results, and merges accepted work into one feature branch.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; fill: #0f172a; }
+      .h { font-size: 19px; font-weight: 700; }
+      .t { font-size: 15px; font-weight: 600; }
+      .s { font-size: 13px; fill: #334155; }
+      .xs { font-size: 12px; fill: #475569; }
+      .tag { font-size: 12px; font-weight: 600; }
+      .line { stroke: #475569; stroke-width: 2; fill: none; }
+      .dash { stroke: #94a3b8; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="640" rx="18" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="40" y="46" class="h">Maestro-AI: from request to reviewed pull request</text>
+  <text x="40" y="70" class="s">You make the decisions at each gate. Maestro handles scheduling, isolation, verification, and recovery in between.</text>
+
+  <!-- Stage row -->
+  <g>
+    <rect x="40" y="100" width="230" height="108" rx="12" fill="#eef2ff" stroke="#6366f1" stroke-width="1.5"/>
+    <text x="58" y="128" class="tag" fill="#4338ca" style="fill:#4338ca">1 · UNDERSTAND</text>
+    <text x="58" y="153" class="t">break-req</text>
+    <text x="58" y="176" class="s">Interview + codebase reading</text>
+    <text x="58" y="195" class="xs">→ technical_requirements.md</text>
+  </g>
+  <g>
+    <rect x="320" y="100" width="230" height="108" rx="12" fill="#ecfeff" stroke="#0891b2" stroke-width="1.5"/>
+    <text x="338" y="128" class="tag" style="fill:#0e7490">2 · PLAN</text>
+    <text x="338" y="153" class="t">create-git-issue</text>
+    <text x="338" y="176" class="s">PRD + small dependent issues</text>
+    <text x="338" y="195" class="xs">You approve both before publishing</text>
+  </g>
+  <g>
+    <rect x="600" y="100" width="290" height="108" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="618" y="128" class="tag" style="fill:#15803d">3 · BUILD AND CHECK</text>
+    <text x="618" y="153" class="t">run-with-it</text>
+    <text x="618" y="176" class="s">Parallel, verified issue delivery</text>
+    <text x="618" y="195" class="xs">Runtime details below ↓</text>
+  </g>
+  <g>
+    <rect x="940" y="100" width="220" height="108" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+    <text x="958" y="128" class="tag" style="fill:#c2410c">4 · REVIEW</text>
+    <text x="958" y="153" class="t">One final PR</text>
+    <text x="958" y="176" class="s">You review and merge</text>
+    <text x="958" y="195" class="xs">Never auto-merged</text>
+  </g>
+  <path d="M270,154 L316,154" class="line" marker-end="url(#arrow)"/>
+  <path d="M550,154 L596,154" class="line" marker-end="url(#arrow)"/>
+  <path d="M890,154 L936,154" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Runtime panel -->
+  <rect x="40" y="236" width="1120" height="292" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text x="62" y="266" class="t">Inside run-with-it (Python runtime)</text>
+  <path d="M745,208 L745,236" class="dash"/>
+
+  <g>
+    <rect x="62" y="286" width="220" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="78" y="312" class="t">Main orchestrator</text>
+    <text x="78" y="334" class="s">Loads issues and</text>
+    <text x="78" y="352" class="s">dependencies, watches the</text>
+    <text x="78" y="370" class="s">run, writes the final PR</text>
+  </g>
+  <g>
+    <rect x="322" y="286" width="230" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="338" y="312" class="t">Scheduler pool</text>
+    <text x="338" y="334" class="s">Up to 4 issues at once</text>
+    <text x="338" y="352" class="s">Respects dependencies and</text>
+    <text x="338" y="370" class="s">file ownership; saves state</text>
+  </g>
+  <g>
+    <rect x="592" y="286" width="546" height="96" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="608" y="312" class="t">One coordinator per issue, in its own Git worktree</text>
+    <g transform="translate(608,328)">
+      <rect x="0" y="0" width="78" height="38" rx="8" fill="#eef2ff"/><text x="39" y="24" class="s" text-anchor="middle">score</text>
+      <rect x="92" y="0" width="78" height="38" rx="8" fill="#eef2ff"/><text x="131" y="24" class="s" text-anchor="middle">plan</text>
+      <rect x="184" y="0" width="100" height="38" rx="8" fill="#ecfeff"/><text x="234" y="24" class="s" text-anchor="middle">implement</text>
+      <rect x="298" y="0" width="78" height="38" rx="8" fill="#f0fdf4"/><text x="337" y="24" class="s" text-anchor="middle">review</text>
+      <rect x="390" y="0" width="118" height="38" rx="8" fill="#fff7ed"/><text x="449" y="24" class="s" text-anchor="middle">fix if needed</text>
+      <path d="M78,19 L90,19" class="line" marker-end="url(#arrow)"/>
+      <path d="M170,19 L182,19" class="line" marker-end="url(#arrow)"/>
+      <path d="M284,19 L296,19" class="line" marker-end="url(#arrow)"/>
+      <path d="M376,19 L388,19" class="line" marker-end="url(#arrow)"/>
+    </g>
+  </g>
+  <path d="M282,334 L318,334" class="line" marker-end="url(#arrow)"/>
+  <path d="M552,334 L588,334" class="line" marker-end="url(#arrow)"/>
+
+  <g>
+    <rect x="62" y="404" width="490" height="102" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="78" y="430" class="t">Evidence, not exit codes</text>
+    <text x="78" y="453" class="s">Work counts as done only with a valid result file, a real commit,</text>
+    <text x="78" y="472" class="s">and passing checks. Crashes and context resets resume from saved</text>
+    <text x="78" y="491" class="s">state without launching duplicate work.</text>
+  </g>
+  <g>
+    <rect x="592" y="404" width="546" height="102" rx="10" fill="#ffffff" stroke="#94a3b8"/>
+    <text x="608" y="430" class="t">Verified merge into one shared feature branch</text>
+    <text x="608" y="453" class="s">Accepted issues merge one at a time; conflicts go to a recovery</text>
+    <text x="608" y="472" class="s">worker. Finished issues close on GitHub as they complete; blocked</text>
+    <text x="608" y="491" class="s">ones stay open with the reason.</text>
+  </g>
+  <path d="M865,382 L865,400" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Harness strip -->
+  <rect x="40" y="548" width="1120" height="68" rx="14" fill="#0f172a"/>
+  <text x="62" y="576" class="t" style="fill:#ffffff">Runs on the coding CLIs you already pay for, not metered API keys</text>
+  <text x="62" y="600" class="s" style="fill:#cbd5e1">Codex · Claude Code · Antigravity · GitHub Copilot. Detected automatically; you choose the % split. Each task is matched to a model by difficulty.</text>
+</svg>

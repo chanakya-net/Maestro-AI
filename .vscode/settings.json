@@ -1,7 +1,0 @@
-{
-    "chat.tools.terminal.autoApprove": {
-        "npx -y skills": true,
-        "mv": true,
-        "command": true
-    }
-}

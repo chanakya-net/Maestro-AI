@@ -27,10 +27,10 @@ def _model_allows_xhigh(registry, model) -> bool:
     if not model or not isinstance(registry, dict):
         return False
     band_map = registry.get('model_routing', {}).get('effort_by_model_and_band', {}).get(model, {})
-    if isinstance(band_map, dict) and band_map.get('holy-fuck') == 'xhigh':
+    if isinstance(band_map, dict) and band_map.get('extreme') == 'xhigh':
         return True
     entry = registry.get('model_catalog', {}).get(model, {})
-    if isinstance(entry, dict) and (entry.get('effort_by_band') or {}).get('holy-fuck') == 'xhigh':
+    if isinstance(entry, dict) and (entry.get('effort_by_band') or {}).get('extreme') == 'xhigh':
         return True
     return False
 
