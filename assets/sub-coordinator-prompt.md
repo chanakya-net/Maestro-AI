@@ -20,7 +20,7 @@ Sole active authority for this session once invoked. No other skill may activate
 Before any other action (including reading files, routing, spawning workers, or writing status), attempt to invoke `save-tokens`.
 - Every child agent you spawn must be instructed to activate `save-tokens`.
 
-**GitHub Copilot disabled:** `github-copilot` is blocked in `agent-definitions.json` and the Python runtime because the Copilot plan is exhausted. Do not select, force, allowlist-only, or spawn GitHub Copilot. If it appears installed or detected, treat it as unavailable; the alias remains only so direct requests fail fast with a clear disabled-agent error.
+**Harness plan:** when `.run-with-it/harness-plan.json` exists, the user chose which installed harnesses this run may use and their usage split. `ai-skills route` reads it from beside the usage ledger automatically: only harnesses with a positive share are eligible, including GitHub Copilot when the user gave it a share. Never edit that file, and never route around it by hand.
 
 <!-- SYNC: this section is intentionally duplicated in assets/coordinator-rules.md; the repository copy is authoritative over any installed mirror. Edit both twins in the same commit — tests/contracts/test_instructions.py asserts key tokens match. -->
 ## Critical Rules (compaction-safe — re-read coordinator-rules.md before every major phase)
@@ -294,7 +294,7 @@ ai-skills route --ledger-file <usage-ledger.json> --role <role> --complexity-lev
 
 Omit `--registry-file`: the router uses the run's pinned registry, or `AGENT_REGISTRY_FILE` when the operator set one. It refuses a registry that differs from the pinned runtime's. Treat that refusal as a configuration error; do not work around it by choosing another registry.
 
-Pass trusted forced selectors, detected-agent availability, all cumulative `--exclude-model` values and sticky `--prefer-model` explicitly. Save the entire route decision before dispatch; never infer it from logs.
+Pass trusted forced selectors, all cumulative `--exclude-model` values and sticky `--prefer-model` explicitly. Do not pass `--detected-agents` when the run has a harness plan: the router takes the eligible harnesses from `.run-with-it/harness-plan.json`, and an explicit list can only narrow that set. Save the entire route decision before dispatch, including its `harness_plan` echo; never infer it from logs.
 
 
 Route helper inputs by phase:
@@ -387,7 +387,7 @@ If manual fallback is necessary:
 1. An explicit forced model replaces automatic candidate selection; a forced agent restricts compatible agents. Preserve compatibility and availability checks in both cases.
 2. For implementation, review, modification, planning, and recovery, use `model_routing.non_complexity_band_policy[effective_band].models` plus its provider additions. These lists are expanded from model `work_bands`; do not substitute a weight-filtered pool.
 3. For the complexity-scoring worker, preserve the router's separate scoring policy: exclude explicit-only and `exclude_from_complexity` models; honor model `routing_bands` (expanded from `complexity_bands`) when present, otherwise use weight 1–6 and `min_band`. Include eligible models in `model_routing.band_required_models[effective_band]` (expanded from `required_bands`). Only when this model candidate list is empty, expand the weight maximum by one, up to three times, retaining the existing restrictions.
-4. Keep compatible pairs using agent `model.known_models` (expanded from model `agents` membership), detected CLIs, allow/deny lists, disabled agents/models, and runtime availability exclusions. Google models may execute only through `agy`. GitHub Copilot remains blocked, including forced requests.
+4. Keep compatible pairs using agent `model.known_models` (expanded from model `agents` membership), detected CLIs, allow/deny lists, disabled agents/models, and runtime availability exclusions. Google models may execute only through `agy`. When `.run-with-it/harness-plan.json` exists, only harnesses with a positive share are eligible, including forced requests. Apply its split as the global target and reweight role/band targets as `ai_skills.harness.apply_plan` does.
    For `plan`, AGY eligibility requires a verified enforced read-only profile from the runtime. If the runtime router cannot establish eligibility, exclude AGY from manual plan selection, including forced requests. Registry flags and CLI support for streaming do not establish enforcement.
 5. If no compatible pair remains, report the filter diagnostics; do not invent an unavailable route.
 

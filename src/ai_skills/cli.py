@@ -99,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f'ai-skills runtime selection: {error}', file=sys.stderr)
         return 2
     modules = {'agent': 'runner', 'worker': 'dispatch', 'pair': 'pair',
-               'state': 'state', 'route': 'routing', 'artifact': 'artifacts',
+               'state': 'state', 'route': 'routing', 'artifact': 'artifacts', 'harness': 'harness',
                'github': 'github', 'report': 'reports', 'git': 'git_operations',
                'install': 'installation', 'uninstall': 'installation', 'update': 'update'}
     if arguments and arguments[0] == 'run':

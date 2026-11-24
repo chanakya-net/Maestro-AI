@@ -18,9 +18,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -43,9 +41,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -70,9 +66,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -95,9 +89,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -122,9 +114,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -147,9 +137,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -174,9 +162,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -199,9 +185,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -226,9 +210,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -251,9 +233,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -278,9 +258,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -303,9 +281,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -330,9 +306,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -355,9 +329,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -382,9 +354,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -407,9 +377,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -434,9 +402,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -459,9 +425,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -486,9 +450,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -511,9 +473,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -538,9 +498,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -563,9 +521,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -590,9 +546,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -615,9 +569,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -642,9 +594,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -667,9 +617,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -694,9 +642,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -719,9 +665,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -746,9 +690,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -771,9 +713,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -798,9 +738,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -823,9 +761,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -850,9 +786,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -875,9 +809,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -902,9 +834,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -927,9 +857,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -954,9 +882,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -979,9 +905,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1006,9 +930,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1031,9 +953,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1058,9 +978,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1083,9 +1001,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1110,9 +1026,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1135,9 +1049,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1162,9 +1074,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1187,9 +1097,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1214,9 +1122,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1239,9 +1145,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1266,9 +1170,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1291,9 +1193,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1318,9 +1218,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1343,9 +1241,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1370,9 +1266,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1395,9 +1289,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1422,9 +1314,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1447,9 +1337,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1474,9 +1362,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1499,9 +1385,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1526,9 +1410,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1551,9 +1433,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1578,9 +1458,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1603,9 +1481,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1630,9 +1506,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1655,9 +1529,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1682,9 +1554,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1707,9 +1577,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1734,9 +1602,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1759,9 +1625,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1786,9 +1650,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1811,9 +1673,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1838,9 +1698,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1863,9 +1721,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1890,9 +1746,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1915,9 +1769,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1942,9 +1794,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1967,9 +1817,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -1994,9 +1842,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2019,9 +1865,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2046,9 +1890,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2071,9 +1913,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2098,9 +1938,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2123,9 +1961,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2150,9 +1986,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2175,9 +2009,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2198,9 +2030,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2221,9 +2051,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2245,9 +2073,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2272,9 +2098,7 @@
         "gpt-6.1-terra"
       ],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2295,9 +2119,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2318,9 +2140,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2346,9 +2166,7 @@
         "gpt-6.2-sol"
       ],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2371,9 +2189,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2396,9 +2212,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2419,9 +2233,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [
           "claude-sonnet-5-5"
         ],
@@ -2459,9 +2271,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2482,9 +2292,7 @@
       "complexity_level": "easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2505,9 +2313,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2528,9 +2334,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2551,9 +2355,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2574,9 +2376,7 @@
       "complexity_level": "holy-fuck",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2599,9 +2399,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2623,9 +2421,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [
           "gemini-4-argon-high"
         ],
@@ -2653,9 +2449,7 @@
         "gemini-4-argon-high"
       ],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2676,9 +2470,7 @@
       "complexity_level": "medium",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2699,9 +2491,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2722,9 +2512,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2745,9 +2533,7 @@
       "complexity_level": "medium-hard",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2768,9 +2554,7 @@
       "complexity_level": "complex",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }
@@ -2791,9 +2575,7 @@
       "complexity_level": "quite-easy",
       "model_exclusions": [],
       "availability_exclusions": {
-        "agents": [
-          "github-copilot"
-        ],
+        "agents": [],
         "models": [],
         "agent_models": []
       }

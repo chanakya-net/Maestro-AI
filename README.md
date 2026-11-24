@@ -36,7 +36,7 @@ Start with the stage you need. Prepared issues can go straight to `run-with-it`.
 - An installed, authenticated coding-agent CLI for execution, such as Codex, Claude Code, Agy, or OpenCode. Providers distributed through npm also need Node.js.
 - The authenticated **GitHub CLI (`gh`)** for GitHub issues and PRs. Local planning and runtime diagnostics do not require GitHub access.
 
-The registry controls supported models and availability. Copilot runtime selection remains disabled while its configured plan is exhausted. The installer registers skills and packages the runtime; it does not install Python, Node.js, or coding agents, sign in to their accounts, or broaden their permissions.
+The registry controls supported models and availability. The installer registers skills and packages the runtime; it does not install Python, Node.js, or coding agents, sign in to their accounts, or broaden their permissions.
 
 ### 1. Get the repository
 
@@ -186,6 +186,31 @@ The default is up to **four issue coordinators** at once, subject to readiness a
 Only completed prerequisites release dependent issues. GitHub task dependencies come from `## Blocked by`; a parent PRD link is context, not a dependency. New plans use strict concurrency rules to keep overlapping work apart.
 
 A final PR proposes accepted changes to the base branch. Creating it does not merge it. Successful issues are closed during the run; failed and blocked issues stay open with evidence.
+
+<a id="harness-shares"></a>
+
+### Use the subscriptions you already have
+
+Maestro doesn't call paid model APIs itself. Workers run through the coding CLIs you already have installed and signed in to: **Codex**, **Claude Code**, **Antigravity (`agy`)** and **GitHub Copilot**. Their usage counts against your existing subscriptions, not a separate API bill.
+
+When a new `run-with-it` run starts, Maestro checks which of these CLIs are installed and asks once how to split the work, with the default split as the recommended option:
+
+```text
+Found Codex, Claude Code, Antigravity, GitHub Copilot. How should work be split?
+- (Recommended) Default: Antigravity 34% · Codex 34% · Claude Code 23% · GitHub Copilot 9%
+- Custom split, e.g. codex=50, claude=30, agy=20   (0 leaves a CLI out)
+```
+
+- Only installed CLIs that have usable models are offered. With just one installed, Maestro uses it without asking.
+- Your split is the run's overall target. The registry's per-difficulty preferences are kept but shifted toward your split; for example, Antigravity still gets a little more `medium` work than its overall share. A CLI at 0% is never used.
+- The split is a target, not a quota. A CLI only gets work at difficulty levels where it has suitable models. With the current model list, GitHub Copilot only takes `quite-easy` and `easy` work.
+- The answer is saved to `.run-with-it/harness-plan.json` and reused on resume. Set `HARNESS_SHARES=default` or `HARNESS_SHARES=codex=60,claude=40` to skip the question.
+
+```text
+python -m ai_skills harness detect
+python -m ai_skills harness plan --run-root . --shares codex=60,claude=40
+python -m ai_skills harness show --run-root .
+```
 
 <details>
 <summary><strong>Detailed execution flow and architecture diagram</strong></summary>
@@ -435,6 +460,10 @@ edit `model_routing.usage_distribution`:
   can override it.
 - `role_target_percent` retains legacy role summaries in route output and the
   scoring fallback policy. Worker selection uses the **band** targets above.
+- `harness_default_share_percent` sets the default split offered when a new
+  `run-with-it` run asks which installed harnesses to use (it falls back to
+  `default_target_percent`). A run's saved split replaces these targets for
+  that run; see [Use the subscriptions you already have](#harness-shares).
 
 The installed AGY catalog lists 22 exact IDs, including 15 Gemini 4 variants.
 All 22 IDs are registered for AGY only.
@@ -533,6 +562,7 @@ The expanded result can also be saved as a standalone registry override.
 | `run pool`, `run watch`, `run inspect`, `run stop` | Dependency scheduling, event observation, worker inspection, and owned process shutdown. |
 | `state` | Transactional issue and coordinator state operations. |
 | `route` | Registry-driven model selection and budget policy. |
+| `harness detect`, `harness plan`, `harness show` | Detect installed coding CLIs and save or show a run's usage split. |
 | `artifact` | Validate and recover role-specific artifacts against Git evidence. |
 | `git prepare-issue`, `git merge-issue` | Prepare resumable issue worktrees and verify disposable integration worktrees. |
 | `github update` | Apply authorized issue progress updates through `gh`. |

@@ -131,7 +131,7 @@ def test_routing_availability_excludes_model_pair_without_disabling_agy(tmp_path
     ).selection
 
     assert selection["model"] == "gemini-4-neon-medium"
-    assert availability["agents"] == {"github-copilot"}
+    assert availability["agents"] == set()
     assert availability["pairs"] == {("agy", "gemini-4-neon-high")}
 
 

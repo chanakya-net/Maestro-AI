@@ -59,8 +59,6 @@
       "fallback_order": ["codex", "agy"]
     },
     "github-copilot": {
-      "routing_disabled": true,
-      "routing_disabled_reason": "GitHub Copilot plan is exhausted; keep blocked from automatic routing and direct run-agent use until explicitly re-enabled.",
       "display_name": "GitHub Copilot",
       "detection": {"command": "copilot"},
       "invocation": {

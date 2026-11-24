@@ -211,6 +211,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         assert definitions["agents"][agent]["model"]["default"] == expected_default
     assert source["model_routing"]["usage_distribution"] == {
         "default_target_percent": {"agy": 38, "codex": 37, "claude": 25},
+        "harness_default_share_percent": {"agy": 38, "codex": 37, "claude": 25, "github-copilot": 10},
         "role_target_percent": {
             "complexity": {"codex": 33, "claude": 33, "agy": 33},
             "impl": {"codex": 65, "claude": 30, "agy": 5},

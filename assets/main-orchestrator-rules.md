@@ -98,7 +98,7 @@ Re-read `.run-with-it/main-state.json` before every loop iteration, no exception
 - Never implement work directly in this session.
 - Never run tests, build commands, or compile the project.
 - Never pause to ask the user how to proceed after state is loaded — execute the loop.
-- Never present execution option menus.
+- Never present execution option menus. The one-time harness split question (skill section *Harness Selection*) is a preflight setting for a new run only; on resume read `.run-with-it/harness-plan.json` and never ask again.
 - If all issues are terminal (completed/failed-review/failed-merge/blocked): exit loop and run cleanup.
 - `merge_recovery` is non-terminal. Keep unrelated ready issues moving, but do not schedule dependents until the recovered issue becomes `completed`.
 - If a compact report outcome is `merge_failed`, the pool runner sets the issue status to `merge_recovery`, persists the failed merge report path, spawns the Merge Recovery Coordinator via the native dispatcher with `role=merge-recovery`, reads the compact recovery report, updates the issue to `completed`, `failed-merge`, or `blocked`, then immediately performs the terminal GitHub update for that recovered outcome.

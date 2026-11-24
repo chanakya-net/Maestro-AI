@@ -25,7 +25,7 @@ These rules apply for the entire lifetime of this skill session. They are stated
 - **Never implement work directly in this session.** All implementation belongs to Sub-Coordinators spawned via the native dispatcher (`ai-skills worker dispatch`) with `role=sub-coord`, which wraps `ai-skills agent run` with `sub-coordinator-prompt.md`. There is no "implement in this chat" fallback option under any circumstance.
 - **Never run tests, build commands, or compile the project** in this session. Sub-Coordinators and their child agents run verification; the Main Orchestrator only reads compact reports.
 - **Never pause after planning to ask the user how to proceed.** Enter the Main Loop immediately after the execution plan is written.
-- **Never present execution option menus** (Option A / B / C style choices).
+- **Never present execution option menus** (Option A / B / C style choices). The one-time harness split question in *Harness Selection* is a preflight setting for a new run, not an execution menu; never ask it again on resume.
 - **Always pull issue data from GitHub** (`gh`) when a remote exists. Only fall back to local files if `gh` is unavailable, authentication fails, an approved permission-escalation attempt fails, or no GitHub remote exists.
 - **Never delete user-modified files** during cleanup. Check `git status --short` before removing any workspace artifact.
 - **Never load full sub-coordinator log files into context.** Sub-Coordinator logs live under `.run-with-it/issues/<n>/sub-coordinator.log`. Do not tail raw logs into AI context; only read the compact report JSON from `.run-with-it/issues/<n>/report.json`.
@@ -137,6 +137,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `RUN_WITH_IT_PLAN_MIN_COMPLEXITY` | `medium` | Minimum blind complexity band that triggers a plan; below it the phase is skipped (trivial issues route weak regardless) |
 | `SUB_COORD_AGENT` | `codex` | Agent slug for every Sub-Coordinator |
 | `SUB_COORD_MODEL` | `gpt-6.2-sol` | Model for every Sub-Coordinator (Sub-Coordinators route their own children independently) |
+| `HARNESS_SHARES` | — | Skip the harness split question for a new run: `default`, or `codex=50,claude=30,agy=20` (must add up to 100; installed harnesses left out get 0%). See *Harness Selection* |
 | `SUB_COORD_TIMEOUT_SECONDS` | `0` | Optional Sub-Coordinator execution deadline in seconds; `0` disables the deadline |
 | `STATUS_POLL_SECONDS` | `10` | Native polling cadence for status line output |
 | `POOL_WATCH_SECONDS` | `240` | Watch-window length for each bounded `ai-skills run watch` call in Step D |
@@ -204,6 +205,25 @@ effective value returned by the shared policy.
 Run `ai-skills doctor --json` and `ai-skills agent list --detected-only`. Resolve maintained prompt/rule Markdown and `agent-registry.json` from the selected installed package (or its authoritative source checkout during development). `ASSETS_DEST` selects the installation manifest root, not a flat prompt directory. Use `AGENT_REGISTRY_FILE` for an explicit registry override. Executables and resources come from the same pinned package. Use the active manifest's `resources` path as `ASSET_ROOT`; for a source checkout use its `assets/` directory. For an existing run use the pinned package's resources, even if the active manifest changed; `.run-with-it/engine.json` names the pinned interpreter. Do not take `ASSET_ROOT`, prompt paths, or the registry from a checkout's `.venv` or any other separately installed copy unless it is the selected runtime. The Python API `ai_skills.resources.resource_path(name)` resolves an individual maintained file from that interpreter. No OS-dependent helper inventory is needed.
 
 Use file tools to copy maintained `main-orchestrator-rules.md` and `coordinator-rules.md` into `.run-with-it/` for compaction-safe re-reads. The repository copy remains authoritative over an installed mirror. Verify GitHub authentication, issue intake label, run branch/base, coordinator availability, and supplied context/artifact paths before admission. For a new authorized project initialize Git with `git init`; do not require Git merely to locate maintained resources. Never launch paid work in preflight.
+
+## Harness Selection (new runs only)
+
+Maestro runs workers through the coding CLIs the user already has installed and signed in to (their existing subscriptions), not through metered API keys. Before any paid work in a **new** run, after preflight and before creating the run branch, decide which installed harnesses to use and how much:
+
+1. Run `ai-skills harness detect --repo-root <run-root>`. Its JSON lists every supported harness, `installed` (detected **and** with at least one routable model), `default_shares` (always adding up to 100) and `notes` (for example a harness that can only take easy work with the current model list). Harnesses such as OpenCode that are installed but have no routable models are reported, not offered.
+2. If `installed` is empty, stop and tell the user which supported CLIs to install or sign in to. Do not create the run branch.
+3. If exactly one harness is installed, do not ask; save it at 100% with `--defaults`.
+4. If `HARNESS_SHARES` was supplied, do not ask; save `default` with `--defaults --source env` or the given split with `--shares <value> --source env`.
+5. Otherwise ask the user **one** question, using the host's structured question tool when available. List the installed harnesses by display name, offer the default split first, marked as recommended, and allow a custom split. Show any `notes`. For example:
+
+   > Found Codex, Claude Code, Antigravity, GitHub Copilot. How should work be split?
+   > - (Recommended) Default: Antigravity 34% · Codex 34% · Claude Code 23% · GitHub Copilot 9%
+   > - Custom split, e.g. `codex=50, claude=30, agy=20` (`0` excludes a harness)
+
+6. Save the answer: `ai-skills harness plan --run-root <run-root> --defaults` or `ai-skills harness plan --run-root <run-root> --shares codex=50,claude=30,agy=20`. If it rejects the split (not 100, harness not installed), show the error and ask again. Never edit `harness-plan.json` by hand.
+7. Emit `STATUS|type=harness|source=<user|default|env>|shares=<agent:percent,...>` and continue straight into intake.
+
+The saved `.run-with-it/harness-plan.json` sits beside `usage-ledger.json`, so `ai-skills route` applies it to every worker without coordinators passing anything: only harnesses with a positive share are eligible, the split becomes the overall usage target, and the registry's per-band and per-role target tables are reweighted toward the split instead of being discarded (so, for example, a harness favoured for `medium` work stays somewhat favoured there). Hard zero rules stay zero. The split is a target, not a quota: a harness only receives work in bands where it has eligible models, and availability failures still reroute. Sub-Coordinator and merge-recovery processes keep using `SUB_COORD_AGENT`/`SUB_COORD_MODEL`. Explicit `FORCED_AGENT` must name a harness with a positive share. On resume, never ask again; run `ai-skills harness show --run-root <run-root>` and report the saved split.
 
 ## Initial Batch Issue Fetch
 
@@ -561,7 +581,7 @@ On startup, if `.run-with-it/main-state.json` exists, prompt the user (per Prefl
    the pool over manual requeues.
 4. Identify all issues with `status="pending"` — these haven't started yet.
 5. Identify all issues with `status="completed"`, `"failed-review"`, `"failed-merge"`, or `"blocked"` — skip these entirely.
-6. Re-enter Main Loop at Step A.
+6. Re-enter Main Loop at Step A. Do not repeat *Harness Selection*: the saved `.run-with-it/harness-plan.json` stays authoritative for the whole run. Report it with `ai-skills harness show --run-root <run-root>`. A legacy run without that file keeps the registry's default routing.
 7. Emit: `STATUS|type=resume|tasks_restored=<n>|completed=<n>|supervisor=<alive|relaunched>|re_queued_in_progress=<m>|parallel_jobs=<PARALLEL_JOBS>`
 
 If `.run-with-it/main-state.json` is missing or unparseable when the user types `resume`, emit:

@@ -54,7 +54,7 @@ Re-read this file before every major phase: routing, plan spawn, implementation 
 
 - Assemble the context payload file before spawning each worker-agent. Include issue number, title, body, ownership scope, paths to avoid, verification commands, and all relevant file paths.
 - Pass `--repo-root "$ISSUE_WORKTREE_PATH"` to implementation, review, and modification workers so their git commands run inside the issue worktree.
-- Select worker agent/model pairs through `ai-skills route` when available. It must record every route in `.run-with-it/usage-ledger.json` so subscription usage stays near the configured overall target: Codex 60%, Claude 35%, Agy 5%. GitHub Copilot is disabled while the plan is exhausted and must not be selected even if installed.
+- Select worker agent/model pairs through `ai-skills route` when available. It must record every route in `.run-with-it/usage-ledger.json` so subscription usage stays near the run's target split: the user's choice in `.run-with-it/harness-plan.json` when present (only harnesses with a positive share are eligible), otherwise the registry's `default_target_percent`. Never edit the harness plan or route around it.
 - If the router helper fails, emit `STATUS|type=route-helper-failed|issue=<n>|role=<role>|action=prompt-fallback` and use the prompt fallback router once for that phase.
 - Spawn exactly one implementer worker-agent per implementation pass.
 - Do not spawn multiple worker-agents for the same role and cycle.
