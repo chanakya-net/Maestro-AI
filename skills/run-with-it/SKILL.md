@@ -153,7 +153,7 @@ Provide a task summary before execution. All other inputs are optional overrides
 | `AGENT` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_AGENT`; ambient `AGENT` runner telemetry is ignored |
 | `MODEL` | — | Deprecated top-level alias; only an explicitly user-supplied value is normalized to `FORCED_MODEL`; ambient `MODEL` runner telemetry is ignored |
 | `COMPLEXITY_LEVEL` | — | Routing override passed through to Sub-Coordinators |
-| `COMPLEXITY_SCORE` | — | Routing override passed through to Sub-Coordinators |
+| `COMPLEXITY_SCORE` | — | Numeric routing override (`7–35` v2 scale: `7–9` `quite-easy`, `10–14` `easy`, `15–19` `medium`, `20–23` `medium-hard`, `24–28` `complex`, `29–35` `holy-fuck`) passed through to Sub-Coordinators |
 | `AGENT_ALLOWLIST` | — | Comma-separated; passed through to Sub-Coordinators |
 | `AGENT_DENYLIST` | — | Comma-separated; passed through to Sub-Coordinators |
 | `MAX_AGENT_FALLBACKS` | `2` | Max agent fallback attempts; passed through |

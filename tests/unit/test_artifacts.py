@@ -270,12 +270,12 @@ def _legacy_complexity_payload(score_overrides=None, **patch):
     ({'coupling_and_blast_radius': 5, 'pattern_novelty': 4, 'state_and_concurrency_risk': 4,
       'data_and_rollback_risk': 4, 'verification_risk': 4, 'ambiguity_of_requirements': 4, 'scope_size': 4}, 29, 'holy-fuck'),
     ({k: 5 for k in artifacts.COMPLEXITY_SCORE_KEYS}, 35, 'holy-fuck'),
-    # Scores of 4 do NOT trigger a peak floor in v2:
-    ({'pattern_novelty': 4}, 10, 'easy'),
+    # Peak-dimension floor in v2: any 4 floors at medium (keeping medium reachable
+    # while preventing under-routing to easy/quite-easy); any 5 floors at complex:
+    ({'state_and_concurrency_risk': 4}, 10, 'medium'),
     ({'pattern_novelty': 4, 'verification_risk': 4, 'scope_size': 3}, 15, 'medium'),
-    # One 5 floors at medium-hard; two 5s floor at complex:
-    ({'state_and_concurrency_risk': 5}, 11, 'medium-hard'),
-    ({'state_and_concurrency_risk': 5, 'pattern_novelty': 4}, 14, 'medium-hard'),
+    ({'data_and_rollback_risk': 5}, 11, 'complex'),
+    ({'state_and_concurrency_risk': 5, 'pattern_novelty': 4}, 14, 'complex'),
     ({'state_and_concurrency_risk': 5, 'pattern_novelty': 5}, 15, 'complex'),
 ])
 def test_expected_complexity_level_enforces_bands_and_peak_dimension_floor(overrides, expected_total, expected_level):
@@ -289,7 +289,7 @@ def test_complexity_validator_accepts_empty_files_inspected_for_greenfield_tasks
     assert artifacts.valid_complexity_payload(_complexity_payload(files_inspected=[]), allow_legacy=False) is True
 
 
-def test_complexity_validator_accepts_legacy_v1_on_read_and_rejects_on_write_json(tmp_path):
+def test_complexity_validator_accepts_legacy_v1_on_read_and_rejects_on_fresh_paths(tmp_path):
     legacy_unversioned = _legacy_complexity_payload({'architecture_risk': 4})  # sum 12, legacy peak-4 floor -> medium-hard
     legacy_v1 = _legacy_complexity_payload({'architecture_risk': 5}, schema_version=1)  # sum 13, legacy peak-5 floor -> complex
     assert legacy_unversioned['level'] == 'medium-hard'
@@ -307,12 +307,26 @@ def test_complexity_validator_accepts_legacy_v1_on_read_and_rejects_on_write_jso
                            '--payload-file', str(source), '--result-file', str(target)]) == 1
     assert not target.exists()
 
+    # Log capture and canonical-retry synthesis also reject legacy v1 payloads.
+    log_file = tmp_path / 'worker.log'
+    done_file = tmp_path / 'worker.done'
+    done_file.write_text('DONE')
+    log_file.write_text(json.dumps(legacy_unversioned) + '\n')
+    assert artifacts.complexity_payload_from_log(str(log_file)) is None
+    synth_args = argparse.Namespace(role='complexity', issue='7', result_file=str(tmp_path / 'cycle-1-attempt-2-result.json'),
+                                    done_file=str(done_file), log_file=str(log_file), issue_dir='', repo_root='', pre_spawn_head='')
+    (tmp_path / 'cycle-1-result.json').write_text(json.dumps(legacy_unversioned))
+    assert artifacts.synthesize_complexity(synth_args) is False
+    assert not Path(synth_args.result_file).exists()
+
     v2 = _complexity_payload({'coupling_and_blast_radius': 3, 'pattern_novelty': 2, 'state_and_concurrency_risk': 3,
                               'data_and_rollback_risk': 2, 'verification_risk': 3, 'ambiguity_of_requirements': 2, 'scope_size': 3})
     source.write_text(json.dumps(v2))
     assert artifacts.main(['write-json', '--role', 'complexity', '--issue', '7',
                            '--payload-file', str(source), '--result-file', str(target)]) == 0
     assert json.loads(target.read_text()) == v2
+    log_file.write_text(json.dumps(v2) + '\n')
+    assert artifacts.complexity_payload_from_log(str(log_file)) == v2
 
 
 @pytest.mark.parametrize('payload', [
@@ -320,8 +334,8 @@ def test_complexity_validator_accepts_legacy_v1_on_read_and_rejects_on_write_jso
     _complexity_payload(schema_version=True),
     _complexity_payload(total=10),  # arithmetic mismatch (sum is 7)
     _complexity_payload(level='easy'),  # band mismatch (7 -> quite-easy)
-    _complexity_payload({'pattern_novelty': 5}, level='easy'),  # ignores single-5 medium-hard floor
-    _complexity_payload({'pattern_novelty': 5, 'state_and_concurrency_risk': 5}, level='medium-hard'),  # ignores two-5 complex floor
+    _complexity_payload({'state_and_concurrency_risk': 4}, level='easy'),  # ignores peak-4 medium floor
+    _complexity_payload({'data_and_rollback_risk': 5}, level='medium-hard'),  # ignores peak-5 complex floor
     _complexity_payload(total=True),  # bool-as-int in total
     {**_complexity_payload(), 'scores': {**_complexity_payload()['scores'], 'pattern_novelty': True}},  # bool-as-int in score
     {**_complexity_payload(), 'rationale': {**_complexity_payload()['rationale'], 'pattern_novelty': ''}},

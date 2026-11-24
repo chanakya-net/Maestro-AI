@@ -94,10 +94,10 @@ d6 = ambiguity_of_requirements
 
 d7 = scope_size
 - 1: 1–2 non-generated files, 1 trivial behavior or slice.
-- 2: 2–5 non-generated files, 1–2 straightforward slices within one layer.
-- 3: ~5–15 non-generated files or 2–4 vertical slices across a normal multi-layer stack.
-- 4: ~15–35 non-generated files or 4–6 coupled slices spanning multiple subsystems/services.
-- 5: 35+ non-generated files or 7+ tightly coupled slices across multiple subsystems/services.
+- 2: 3–5 non-generated files, 1–2 straightforward slices within one layer.
+- 3: 6–15 non-generated files or 2–4 vertical slices across a normal multi-layer stack.
+- 4: 16–35 non-generated files or 4–6 coupled slices spanning multiple subsystems/services.
+- 5: 36+ non-generated files or 7+ tightly coupled slices across multiple subsystems/services.
 
 Score-to-level mapping (total 7–35)
 
@@ -110,9 +110,9 @@ Score-to-level mapping (total 7–35)
 
 Peak-dimension floor (mandatory)
 
-Linear sums can dilute an extreme localized risk when unrelated dimensions score 1–2. After mapping `total` to its base band above, enforce this floor (scores of `4` do **not** trigger a floor):
-- If **two or more** dimensions are scored `5`, `level` MUST be at least `complex` (use `holy-fuck` if `total` is 29–35).
-- If **exactly one** dimension is scored `5`, `level` MUST be at least `medium-hard` (use the base band if `total` is 24–35).
+Linear sums can dilute a localized hard or hazardous problem when unrelated dimensions score 1–2. After mapping `total` to its base band above, enforce this floor:
+- If **any** dimension is scored `5`, `level` MUST be at least `complex` (use `holy-fuck` if `total` is 29–35).
+- If **any** dimension is scored `4` (and none is `5`), `level` MUST be at least `medium` (use the base band if `total` is 20–35).
 - `total` MUST always equal `d1 + d2 + d3 + d4 + d5 + d6 + d7`, and `level` MUST match the post-floor band. The artifact validator rejects arithmetic mismatches and band/floor mismatches.
 
 Success output contract (STRICT, machine-parseable)

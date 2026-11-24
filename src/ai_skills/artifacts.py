@@ -48,6 +48,11 @@ COMPLEXITY_SCORE_KEYS = {
     "scope_size",
 }
 
+COMPLEXITY_PEAK_FLOORS = {
+    4: "medium",
+    5: "complex",
+}
+
 LEGACY_COMPLEXITY_SCORE_BANDS = (
     (9, 12, "quite-easy"),
     (13, 17, "easy"),
@@ -320,9 +325,9 @@ def expected_complexity_level(
 ) -> str:
     """Compute the canonical complexity band from integer dimension scores (1-5).
 
-    Schema v2 (7 dimensions, sum 7-35): applies the 7-35 sum thresholds and a
-    5-only peak-dimension floor (one dimension scored 5 floors at `medium-hard`;
-    two or more dimensions scored 5 floor at `complex`; scores of 4 do not floor).
+    Schema v2 (7 dimensions, sum 7-35): applies the 7-35 sum thresholds and peak
+    floor (any dimension scored 4 floors at `medium`; any dimension scored 5
+    floors at `complex`).
     Legacy schema v1 (9 dimensions, sum 9-45): applies the legacy 9-45 sum
     thresholds and legacy peak-dimension floor (any 4 -> `medium-hard`, any 5 -> `complex`).
     """
@@ -333,12 +338,9 @@ def expected_complexity_level(
         if score_min <= total <= score_max:
             base = label
             break
-    if schema_version == 1:
-        peak = max(scores.values())
-        floor = LEGACY_COMPLEXITY_PEAK_FLOORS.get(peak)
-    else:
-        fives = sum(1 for value in scores.values() if value == 5)
-        floor = "complex" if fives >= 2 else ("medium-hard" if fives == 1 else None)
+    peak = max(scores.values())
+    floors = LEGACY_COMPLEXITY_PEAK_FLOORS if schema_version == 1 else COMPLEXITY_PEAK_FLOORS
+    floor = floors.get(peak)
     if floor and COMPLEXITY_BAND_ORDER.index(floor) > COMPLEXITY_BAND_ORDER.index(base):
         return floor
     return base
@@ -439,7 +441,7 @@ def complexity_payload_from_log(log_file: str) -> dict[str, Any] | None:
         except json.JSONDecodeError:
             index = start + 1
             continue
-        if valid_complexity_payload(payload):
+        if valid_complexity_payload(payload, allow_legacy=False):
             return payload
         index = start + max(end, 1)
 
@@ -872,7 +874,7 @@ def synthesize_complexity(args: argparse.Namespace) -> bool:
     canonical_result_file = canonical_complexity_retry_result_file(args.result_file)
     if canonical_result_file:
         canonical_payload, canonical_error = load_json(canonical_result_file)
-        if not canonical_error and valid_complexity_payload(canonical_payload):
+        if not canonical_error and valid_complexity_payload(canonical_payload, allow_legacy=False):
             payload = dict(canonical_payload)
             payload.setdefault("source", "dispatcher-copied-from-canonical-retry")
             write_json_atomic(args.result_file, payload)

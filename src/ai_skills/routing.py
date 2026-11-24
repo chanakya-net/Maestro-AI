@@ -351,7 +351,7 @@ def score_to_level(registry: dict[str, Any], score: int) -> str:
     for row in rows:
         if int(row["score_min"]) <= score <= int(row["score_max"]):
             return str(row["label"])
-    max_score = max((int(row["score_max"]) for row in rows), default=45)
+    max_score = max((int(row["score_max"]) for row in rows), default=35)
     if score > max_score:
         return "holy-fuck"
     fail(f"complexity score does not map to a routing band: {score}")
