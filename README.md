@@ -9,11 +9,13 @@ There are two parts:
 - **Seven skills** guide the conversations and tasks: requirements, planning, coding, debugging, design discussions, and concise replies.
 - **A Python runtime** starts agents, schedules ready work, saves progress, validates results, and helps recover interruptions. It uses the same commands on **Windows, macOS, and Linux**.
 
-You bring your code repository and installed, authenticated coding agents. Their models and accounts provide the AI; Maestro-AI coordinates the work.
+You bring your code repository and installed, authenticated coding agents (Codex, Claude Code, Antigravity, GitHub Copilot). Maestro-AI uses the subscriptions you already have, not metered API keys, and coordinates the work.
+
+![Maestro-AI architecture: break-req, create-git-issue, run-with-it and a final PR, with the run-with-it runtime below](.github/images/architecture.svg)
 
 [Get started](#get-started) · [Choose a skill](#choose-a-skill) · [How a run works](#how-a-run-works) · [Technical reference](#technical-reference) · [Credits](#credits)
 
-Prefer a visual walkthrough? Open [explainer.html](explainer.html).
+New to Maestro-AI? Read the illustrated **[practical guide](GUIDE.md)** first.
 
 ## The usual workflow
 
@@ -689,6 +691,8 @@ State updates use atomic replacement and ownership-aware directory locks. Proces
 | [`src/ai_skills/`](src/ai_skills/) | Python installation, scheduling, dispatch, routing, state, result validation, Git integration, and paired discussions. |
 | [`assets/`](assets/) | Worker prompts, coordinator rules, agent definitions, model policy, and the shared result-reporting protocol. |
 | [`tests/`](tests/) | Unit, integration, contract, and packaging checks using fixture providers and temporary repositories. |
+| [`GUIDE.md`](GUIDE.md) | Illustrated, plain-language guide to the workflow, roles, routing, and recovery. |
+| [`.github/images/`](.github/images/) | Diagrams used by the README and guide. |
 | [`pyproject.toml`](pyproject.toml) | Dependencies, the CLI entry point, and packaged resources. |
 | [`.github/workflows/test.yml`](.github/workflows/test.yml) | Native test matrix for Windows, macOS, and Linux with Python 3.12 and 3.15. |
 

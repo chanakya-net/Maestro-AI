@@ -27,7 +27,7 @@ pythonpath = ["src"]
 packages = ["src/ai_skills"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/pyproject.toml", "/README.md", "/LICENSE", "/explainer.html", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json", "/assets/agent-definitions.json", "/skills/**/*.md", "/examples/*.py"]
+include = ["/pyproject.toml", "/README.md", "/LICENSE", "/GUIDE.md", "/src/ai_skills", "/tests/**/*.py", "/tests/**/*.json", "/assets/*.md", "/assets/agent-registry.json", "/assets/agent-definitions.json", "/skills/**/*.md", "/examples/*.py"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "assets/agent-definitions.json" = "ai_skills/data/agent-definitions.json"

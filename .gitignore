@@ -172,3 +172,6 @@ build/
 
 # Local planning and design notes
 /docs/
+
+# Personal editor settings
+.vscode/
