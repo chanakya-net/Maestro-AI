@@ -364,8 +364,8 @@ Each `model_catalog` entry groups a model's settings together:
   "context_window": 1050000,
   "reasoning_effort": "high",
   "agents": ["codex"],
-  "work_bands": ["medium-hard", "complex", "holy-fuck"],
-  "effort_by_band": {"medium-hard": "high", "complex": "high", "holy-fuck": "high"}
+  "work_bands": ["medium-hard", "complex", "extreme"],
+  "effort_by_band": {"medium-hard": "high", "complex": "high", "extreme": "high"}
 }
 ```
 
@@ -483,7 +483,7 @@ Automatic non-scoring AGY work follows the approved band matrix. Only Neon Mediu
 (`gemini-4-neon-high`) serves `medium`, `medium-hard`, and `complex` (fallback),
 Neon XHigh (`gemini-4-neon-xhigh`) is preferred at `complex` when available
 (falling back to Neon High), and Carbon XHigh (`gemini-4-carbon-xhigh`) is
-preferred at `holy-fuck` when available (falling back to Carbon High,
+preferred at `extreme` when available (falling back to Carbon High,
 `gemini-4-carbon-high`). Hydrogen High (`gemini-4-hydrogen-high`) is the sole
 AGY complexity-scoring model and is eligible at all six scoring bands. AGY
 models outside Hydrogen High carry `explicit_only`. The Gemini 4 work models
@@ -496,14 +496,14 @@ without an explicit model uses `gemini-4-neon-high`.
 | --- | ---: | ---: | ---: |
 | `quite-easy`, `easy` | 33% | 33% | 33% |
 | `medium`, `medium-hard` | 35% | 25% | 40% |
-| `complex`, `holy-fuck` | 38% | 24% | 38% |
+| `complex`, `extreme` | 38% | 24% | 38% |
 
 Complexity scoring (`schema_version: 2`) uses 7 dimensions (`7–35`, mapped in
 `model_routing.score_to_weight`: `7–9` `quite-easy`, `10–14` `easy`, `15–19`
-`medium`, `20–23` `medium-hard`, `24–28` `complex`, `29–35` `holy-fuck`, with
+`medium`, `20–23` `medium-hard`, `24–28` `complex`, `29–35` `extreme`, with
 peak floors `4 → medium` and `5 → complex`). Passing `--complexity-score` /
 `COMPLEXITY_SCORE` uses this `7–35` scale (scores above `35` clamp to
-`holy-fuck`); resumed legacy v1 (`9–45`) artifacts remain readable and route
+`extreme`); resumed legacy v1 (`9–45`) artifacts remain readable and route
 from their persisted `level`.
 
 During automatic selection, a 0% AGY route is a fallback when eligible

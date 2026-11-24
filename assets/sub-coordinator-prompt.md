@@ -377,7 +377,7 @@ Use this section only when `ai-skills route` is unavailable or exits non-zero. T
 
 Read version 2 registries through `ai_skills.registry.load_registry(path)` so model memberships, aliases, CLI defaults, and usage defaults are expanded. The editable model entries live in `agent-registry.json`; CLI definitions live in its sibling `agent-definitions.json`. Version 1 registries remain self-contained.
 
-Map a numeric complexity score override using `model_routing.score_to_weight`: 7–9 is `quite-easy`, 10–14 `easy`, 15–19 `medium`, 20–23 `medium-hard`, 24–28 `complex`, and 29–35 `holy-fuck`; scores above 35 also map to `holy-fuck`. When routing from a validated complexity artifact (including resumed legacy v1 artifacts), always use its persisted `level` rather than re-mapping `total` (v2 applies the peak-dimension floor: any dimension scored `4` floors at `medium`, and any dimension scored `5` floors at `complex`). Review raises the band by one and planning by two, capped at `holy-fuck`. Other roles retain the base band. Preserve both the base and effective band in the result.
+Map a numeric complexity score override using `model_routing.score_to_weight`: 7–9 is `quite-easy`, 10–14 `easy`, 15–19 `medium`, 20–23 `medium-hard`, 24–28 `complex`, and 29–35 `extreme`; scores above 35 also map to `extreme`. When routing from a validated complexity artifact (including resumed legacy v1 artifacts), always use its persisted `level` rather than re-mapping `total` (v2 applies the peak-dimension floor: any dimension scored `4` floors at `medium`, and any dimension scored `5` floors at `complex`). Review raises the band by one and planning by two, capped at `extreme`. Other roles retain the base band. Preserve both the base and effective band in the result.
 
 #### Step 2 — Build Eligible Agent/Model Pairs
 
@@ -476,14 +476,14 @@ For each review pass, bump the current implementation band up exactly one level 
 | `easy`           | `medium`      |
 | `medium`         | `medium-hard` |
 | `medium-hard`    | `complex`     |
-| `complex`        | `holy-fuck`   |
-| `holy-fuck`      | `holy-fuck` (different model) |
+| `complex`        | `extreme`   |
+| `extreme`      | `extreme` (different model) |
 
 Reviewer model selection rules:
 1. Set `current_level` to the bumped reviewer band.
 2. Reuse the main model-first algorithm.
 3. Exclude the current implementation `model_id` from the candidate pool.
-4. If the current implementation model is already at `holy-fuck`, stay at `holy-fuck` and pick a different model.
+4. If the current implementation model is already at `extreme`, stay at `extreme` and pick a different model.
 5. **Sticky reviewer across cycles.** See the reviewer entry under *Route helper inputs by phase* (Appendix A) — the cycle-1 reviewer model is the issue reviewer and is passed as `PREFER_MODEL` on later cycles; exclusions and availability still win, and a fallback selection does not overwrite the established issue reviewer.
 
 ### Degraded Fallback
@@ -665,7 +665,7 @@ Skip modification entirely. Terminate the issue as `failed-review` immediately. 
 - Track non-approval review results. A `revise` verdict counts as non-approval.
 - The first modification request uses the original implementer band.
 - After two non-approval review results, select the modification agent from the next higher implementation band.
-- If the original implementer band is already `holy-fuck`, stay at `holy-fuck` and select a different compatible model.
+- If the original implementer band is already `extreme`, stay at `extreme` and select a different compatible model.
 - Ledger selection reason must mention escalation after two non-approval reviews.
 
 ### Redesign Checkpoint

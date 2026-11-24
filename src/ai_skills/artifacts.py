@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from ai_skills.outcomes import review_instructions_file
 from ai_skills import verification
+from ai_skills.registry import LEGACY_BAND_ALIASES, canonical_band
 from ai_skills.git import git_output, git_success, current_head, repo_available, working_tree_clean, commit_exists, resolve_commit, is_ancestor, abort_cherry_pick, commit_salvaged_tree
 
 
@@ -22,10 +23,13 @@ COMPLEXITY_BAND_ORDER = (
     "medium",
     "medium-hard",
     "complex",
-    "holy-fuck",
+    "extreme",
 )
 
 COMPLEXITY_LEVELS = set(COMPLEXITY_BAND_ORDER)
+
+# Saved artifacts from earlier runs may still use the former band name.
+ACCEPTED_COMPLEXITY_LEVELS = COMPLEXITY_LEVELS | set(LEGACY_BAND_ALIASES)
 
 COMPLEXITY_SCHEMA_VERSION = 2
 
@@ -35,7 +39,7 @@ COMPLEXITY_SCORE_BANDS = (
     (15, 19, "medium"),
     (20, 23, "medium-hard"),
     (24, 28, "complex"),
-    (29, 35, "holy-fuck"),
+    (29, 35, "extreme"),
 )
 
 COMPLEXITY_SCORE_KEYS = {
@@ -59,7 +63,7 @@ LEGACY_COMPLEXITY_SCORE_BANDS = (
     (18, 22, "medium"),
     (23, 27, "medium-hard"),
     (28, 32, "complex"),
-    (33, 45, "holy-fuck"),
+    (33, 45, "extreme"),
 )
 
 LEGACY_COMPLEXITY_PEAK_FLOORS = {
@@ -333,7 +337,7 @@ def expected_complexity_level(
     """
     total = sum(scores.values())
     bands = LEGACY_COMPLEXITY_SCORE_BANDS if schema_version == 1 else COMPLEXITY_SCORE_BANDS
-    base = "holy-fuck"
+    base = "extreme"
     for score_min, score_max, label in bands:
         if score_min <= total <= score_max:
             base = label
@@ -369,7 +373,7 @@ def valid_complexity_payload(payload: Any, *, allow_legacy: bool = True) -> bool
     if type(total) is not int:
         return False
     level = payload.get("level")
-    if not isinstance(level, str) or level not in COMPLEXITY_LEVELS:
+    if not isinstance(level, str) or level not in ACCEPTED_COMPLEXITY_LEVELS:
         return False
     scores = payload.get("scores")
     rationale = payload.get("rationale")
@@ -381,7 +385,7 @@ def valid_complexity_payload(payload: Any, *, allow_legacy: bool = True) -> bool
         return False
     if total != sum(scores.values()):
         return False
-    if level != expected_complexity_level(scores, schema_version=schema_version):
+    if canonical_band(level) != expected_complexity_level(scores, schema_version=schema_version):
         return False
     if not all(non_empty_str(rationale[key]) for key in expected_keys):
         return False
@@ -412,7 +416,7 @@ def valid_plan_payload(payload: Any) -> bool:
     approach = payload.get("approach")
     if not isinstance(approach, str) or not approach.strip():
         return False
-    if payload.get("complexity_level") not in COMPLEXITY_LEVELS:
+    if payload.get("complexity_level") not in ACCEPTED_COMPLEXITY_LEVELS:
         return False
     if not non_empty_str(payload.get("complexity_rationale")):
         return False

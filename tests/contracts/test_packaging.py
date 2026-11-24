@@ -170,7 +170,7 @@ catalog = bundled['model_catalog']
 assert {name for name, model in catalog.items() if 'agy' in model.get('agents', [])} == expected
 assert catalog['gemini-4-neon-medium']['work_bands'] == ['quite-easy', 'easy']
 assert catalog['gemini-4-hydrogen-high']['complexity_bands'] == [
-    'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'holy-fuck']
+    'quite-easy', 'easy', 'medium', 'medium-hard', 'complex', 'extreme']
 assert sum(model.get('explicit_only') is True for model in catalog.values()) == 21
 assert definitions['agents']['agy']['model']['default'] == 'gemini-4-neon-high'
 assert definitions['agents']['agy']['model']['flag_template'] == '--model {{model}}'
@@ -180,7 +180,7 @@ matrix = {
     'medium': {'gemini-4-neon-high'},
     'medium-hard': {'gemini-4-neon-high'},
     'complex': {'gemini-4-neon-xhigh', 'gemini-4-neon-high'},
-    'holy-fuck': {'gemini-4-carbon-xhigh', 'gemini-4-carbon-high'},
+    'extreme': {'gemini-4-carbon-xhigh', 'gemini-4-carbon-high'},
 }
 agy = frozenset({'agy'})
 for band, candidates in matrix.items():
@@ -352,7 +352,7 @@ def test_installed_agy_requires_verified_read_only(marker_harnesses, purpose):
     route = ["route", "--role", "plan", "--complexity-level", "medium-hard",
              "--detected-agents", "agy,codex", "--ledger-file", work / "ledger.json"]
     error = rejected_cli(*route, "--forced-agent", "agy", work=work, env=env)
-    assert "no compatible routing candidates role=plan level=holy-fuck" in error
+    assert "no compatible routing candidates role=plan level=extreme" in error
     alternate = run(sys.executable, "-m", "ai_skills", *route, cwd=work, env=env)
     assert json.loads(alternate.stdout)["agent"] == "codex"
 

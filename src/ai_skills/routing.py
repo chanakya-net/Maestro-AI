@@ -17,20 +17,21 @@ from pathlib import Path
 from typing import Any
 
 from ai_skills import harness, runner
+from ai_skills.registry import BANDS, LEGACY_BAND_ALIASES, canonical_band
 
 
-BAND_ORDER = ["quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck"]
+BAND_ORDER = list(BANDS)
 REVIEW_BUMP = {
     "quite-easy": "easy",
     "easy": "medium",
     "medium": "medium-hard",
     "medium-hard": "complex",
-    "complex": "holy-fuck",
-    "holy-fuck": "holy-fuck",
+    "complex": "extreme",
+    "extreme": "extreme",
 }
 # Planning is reasoning-bound: a vague plan makes weak executors worse, so the
 # planner must always be a high-ability model regardless of the issue's own
-# complexity. Shift the base band up two levels (capped at holy-fuck) so only
+# complexity. Shift the base band up two levels (capped at extreme) so only
 # strong models qualify. Unlike review, plan routing does not depend on the
 # blind complexity score for capability — the gate already filters which issues
 # get a plan at all.
@@ -38,9 +39,9 @@ PLAN_BUMP = {
     "quite-easy": "medium",
     "easy": "medium-hard",
     "medium": "complex",
-    "medium-hard": "holy-fuck",
-    "complex": "holy-fuck",
-    "holy-fuck": "holy-fuck",
+    "medium-hard": "extreme",
+    "complex": "extreme",
+    "extreme": "extreme",
 }
 DEFAULT_AGENTS = ["codex", "agy", "claude"]
 GLOBAL_DEBT_WEIGHT = 1.5
@@ -349,7 +350,7 @@ def score_to_level(registry: dict[str, Any], score: int) -> str:
             return str(row["label"])
     max_score = max((int(row["score_max"]) for row in rows), default=35)
     if score > max_score:
-        return "holy-fuck"
+        return "extreme"
     fail(f"complexity score does not map to a routing band: {score}")
 
 
@@ -364,6 +365,7 @@ def min_band_allows(model_entry: dict[str, Any], level: str) -> bool:
     min_band = model_entry.get("min_band")
     if not min_band:
         return True
+    min_band, level = canonical_band(min_band), canonical_band(level)
     if min_band not in BAND_ORDER or level not in BAND_ORDER:
         return True
     return BAND_ORDER.index(level) >= BAND_ORDER.index(min_band)
@@ -615,6 +617,7 @@ def select_pair(
     prefer_model: str | None = None,
 ) -> dict[str, Any]:
     exclude_models = normalize_model_exclusions(exclude_models)
+    base_level = canonical_band(base_level)
     level = routing_level(role, base_level)
     if forced_agent and forced_model:
         reason = "forced-agent-and-model"
@@ -808,7 +811,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         choices=["complexity", "impl", "review", "modify", "artifact-recovery", "merge-recovery", "plan"],
     )
-    parser.add_argument("--complexity-level", choices=BAND_ORDER)
+    parser.add_argument("--complexity-level", choices=[*BAND_ORDER, *LEGACY_BAND_ALIASES], type=canonical_band,
+                        help="routing band (former band names are accepted and mapped to current ones)")
     parser.add_argument("--complexity-score", type=int)
     parser.add_argument("--detected-agents", default=None,
                         help="comma-separated installed harnesses; defaults to the run's harness plan "

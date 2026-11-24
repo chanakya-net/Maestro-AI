@@ -12,11 +12,11 @@ from ai_skills.resources import resource_path
 from ai_skills import routing
 
 SOURCE_REGISTRY = Path(__file__).parents[2] / "assets" / "agent-registry.json"
-BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "holy-fuck")
+BANDS = ("quite-easy", "easy", "medium", "medium-hard", "complex", "extreme")
 
 def test_role_band_bumps():
     assert routing_level("plan", "easy") == "medium-hard"
-    assert routing_level("review", "complex") == "holy-fuck"
+    assert routing_level("review", "complex") == "extreme"
 
 
 @pytest.mark.parametrize("band, model", [
@@ -58,9 +58,9 @@ AGY_WORK_MATRIX = {
     "medium": {"gemini-4-neon-high"},
     "medium-hard": {"gemini-4-neon-high"},
     "complex": {"gemini-4-neon-xhigh", "gemini-4-neon-high"},
-    "holy-fuck": {"gemini-4-carbon-xhigh", "gemini-4-carbon-high"},
+    "extreme": {"gemini-4-carbon-xhigh", "gemini-4-carbon-high"},
 }
-NON_AGY_BANDS = ("complex", "holy-fuck")
+NON_AGY_BANDS = ("complex", "extreme")
 
 
 @pytest.mark.parametrize("band", BANDS)
@@ -196,7 +196,7 @@ def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors, expected
                            **selectors)
     registry = load_registry(SOURCE_REGISTRY)
     selected = select_route(request, registry, {})
-    assert (selected.agent, selected.model, selected.routing_level) == ("agy", expected_model, "holy-fuck")
+    assert (selected.agent, selected.model, selected.routing_level) == ("agy", expected_model, "extreme")
 
 
 @pytest.mark.parametrize("availability", [
@@ -217,11 +217,11 @@ def test_verified_agy_plan_preserves_availability_exclusions(monkeypatch, availa
 
 def test_explicit_valid_band_override_still_routes_non_agy_planning():
     selection = select_route(
-        RouteRequest(role="plan", complexity_level="holy-fuck", forced_agent="claude", forced_model="claude-sonnet-5-5"),
+        RouteRequest(role="plan", complexity_level="extreme", forced_agent="claude", forced_model="claude-sonnet-5-5"),
         load_registry(SOURCE_REGISTRY), {},
     ).selection
     assert (selection["agent"], selection["model"], selection["routing_level"]) == (
-        "claude", "claude-sonnet-5-5", "holy-fuck",
+        "claude", "claude-sonnet-5-5", "extreme",
     )
 
 
@@ -482,7 +482,7 @@ def test_nonobject_ledger_rejected(payload):
     ("medium", "claude-opus-5-5", "high"),
     ("medium-hard", "claude-opus-5-5", "high"),
     ("complex", "claude-fable-5-2", "medium"),
-    ("holy-fuck", "claude-fable-5-2", "high"),
+    ("extreme", "claude-fable-5-2", "high"),
 ])
 def test_claude_routes_use_current_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="claude"), load_registry(SOURCE_REGISTRY), {})
@@ -511,7 +511,7 @@ def test_retired_claude_models_cannot_be_routed(model):
     ("medium", "gpt-6.2-sol", "high"),
     ("medium-hard", "gpt-6.2-sol", "high"),
     ("complex", "gpt-6.2-astra", "high"),
-    ("holy-fuck", "gpt-6.2-astra", "xhigh"),
+    ("extreme", "gpt-6.2-astra", "xhigh"),
 ])
 def test_codex_routes_use_requested_model_families(band, model, effort):
     decision = select_route(RouteRequest(role="impl", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -520,7 +520,7 @@ def test_codex_routes_use_requested_model_families(band, model, effort):
 
 @pytest.mark.parametrize("band, model, effort", [
     ("quite-easy", "gpt-6.1-terra", "high"), ("easy", "gpt-6.1-terra", "high"), ("medium", "gpt-6.1-terra", "high"),
-    ("medium-hard", "gpt-6.1-terra", "high"), ("complex", "gpt-6.1-terra", "high"), ("holy-fuck", "gpt-6.1-terra", "high"),
+    ("medium-hard", "gpt-6.1-terra", "high"), ("complex", "gpt-6.1-terra", "high"), ("extreme", "gpt-6.1-terra", "high"),
 ])
 def test_codex_complexity_scoring_has_a_supported_model_at_every_band(band, model, effort):
     decision = select_route(RouteRequest(role="complexity", complexity_level=band, forced_agent="codex"), load_registry(SOURCE_REGISTRY), {})
@@ -558,7 +558,7 @@ def test_direct_non_planning_effort_is_high_or_lower_configured(agent, model, ro
         load_registry(SOURCE_REGISTRY), {})
     assert decision.model == model
     if agent == "codex":
-        expected = "xhigh" if (model == "gpt-6.2-astra" and decision.routing_level == "holy-fuck") else "high"
+        expected = "xhigh" if (model == "gpt-6.2-astra" and decision.routing_level == "extreme") else "high"
         assert decision.effort == expected
     else:
         assert decision.effort in {"low", "medium", "high"}
@@ -580,7 +580,7 @@ def test_high_difficulty_never_grants_planning_effort_to_ordinary_roles(agent, m
     decision = select_route(
         RouteRequest(role="review", complexity_level=band, forced_agent=agent, forced_model=model),
         load_registry(SOURCE_REGISTRY), {})
-    if model == "gpt-6.2-astra" and decision.routing_level == "holy-fuck":
+    if model == "gpt-6.2-astra" and decision.routing_level == "extreme":
         assert decision.effort == "xhigh"
     else:
         assert decision.effort != "xhigh"
@@ -807,7 +807,7 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
     from ai_skills.runner import AgentRunConfig, build_invocation
 
     registry = load_registry(SOURCE_REGISTRY)
-    codex = select_route(RouteRequest(role="impl", complexity_level="holy-fuck", forced_agent="codex"), registry, {})
+    codex = select_route(RouteRequest(role="impl", complexity_level="extreme", forced_agent="codex"), registry, {})
     assert (codex.agent, codex.model, codex.effort) == ("codex", "gpt-6.2-astra", "xhigh")
     ctx, prm = tmp_path / "context.md", tmp_path / "prompt.md"
     ctx.write_text("ctx")
@@ -819,15 +819,15 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
     )
     assert any(spec.argv[i:i + 2] == ("-c", "model_reasoning_effort=xhigh") for i in range(len(spec.argv) - 1))
 
-    claude = select_route(RouteRequest(role="impl", complexity_level="holy-fuck", forced_agent="claude"), registry, {})
+    claude = select_route(RouteRequest(role="impl", complexity_level="extreme", forced_agent="claude"), registry, {})
     assert (claude.agent, claude.model, claude.effort) == ("claude", "claude-fable-5-2", "high")
 
-    agy_primary = select_route(RouteRequest(role="impl", complexity_level="holy-fuck", forced_agent="agy"), registry, {})
+    agy_primary = select_route(RouteRequest(role="impl", complexity_level="extreme", forced_agent="agy"), registry, {})
     assert (agy_primary.agent, agy_primary.model) == ("agy", "gemini-4-carbon-xhigh")
     agy_fallback = select_route(
         RouteRequest(
             role="impl",
-            complexity_level="holy-fuck",
+            complexity_level="extreme",
             forced_agent="agy",
             availability={"models": {"gemini-4-carbon-xhigh"}},
         ),
@@ -835,7 +835,7 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
         {},
     )
     assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-carbon-high")
-    for band in ("complex", "holy-fuck"):
+    for band in ("complex", "extreme"):
         assert routing.target_policy(registry, "impl", band) == {"codex": 38, "agy": 38, "claude": 24}
 
 
@@ -850,9 +850,9 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
     (23, "medium-hard"),
     (24, "complex"),
     (28, "complex"),
-    (29, "holy-fuck"),
-    (35, "holy-fuck"),
-    (36, "holy-fuck"),
+    (29, "extreme"),
+    (35, "extreme"),
+    (36, "extreme"),
 ])
 def test_score_to_level_matches_7_to_35_rubric_bounds(score, expected):
     registry = load_registry(SOURCE_REGISTRY)

@@ -442,7 +442,7 @@ def test_pair_purpose_is_independent_of_task_and_environment(pair_fixture, monke
     (root / 'task.md').write_text('Produce a detailed plan. Explicit planning task, highest difficulty.')
     for key, value in {'RUN_WITH_IT_ROLE': 'agent' if purpose == 'plan' else 'plan',
                        'MODEL_EFFORT': 'maximum', 'RUN_WITH_IT_PLAN_ENABLED': '1',
-                       'TASK_COMPLEXITY': 'holy-fuck', 'PAIR_COLLEAGUE_PURPOSE': 'plan'}.items():
+                       'TASK_COMPLEXITY': 'extreme', 'PAIR_COLLEAGUE_PURPOSE': 'plan'}.items():
         monkeypatch.setenv(key, value)
     # Reverse colleagues and use canonical IDs to ensure neither slot nor provider drives policy.
     args = _direct_args('claude', 'maximum', 'low')
