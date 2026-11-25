@@ -169,8 +169,8 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         if "agy" in entry.get("agents", [])
     )
     expected_agy_models = [
-        *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
-        *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen", "carbon") for effort in ("low", "medium", "high", "xhigh")),
+        *(f"gemini-4-{family}-{effort}" for family in ("argon", "carbon") for effort in ("low", "medium", "high")),
+        *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
         *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
         *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
         "gpt-oss-120b-medium",
@@ -179,7 +179,7 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
     assert not set(agy_models) & {
         "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-3.5-flash-high",
         "gemini-3.5-flash-medium", "gemini-3.8-flash-low", "gemini-3.8-flash-medium",
-        "gemini-3.8-flash-high", "gpt-0ss-120b-medium",
+        "gemini-3.8-flash-high", "gpt-0ss-120b-medium", "gemini-4-carbon-xhigh",
     }
     catalog = source["model_catalog"]
     explicit_only = set(expected_agy_models) - {"gemini-4-hydrogen-high"}
@@ -188,7 +188,6 @@ def test_agy_inventory_is_exact_and_direct_harnesses_keep_their_lineups():
         "gemini-4-neon-high": ["medium", "medium-hard", "complex"],
         "gemini-4-neon-xhigh": ["complex"],
         "gemini-4-carbon-high": ["extreme"],
-        "gemini-4-carbon-xhigh": ["extreme"],
     }
     for model in explicit_only:
         assert catalog[model]["agents"] == ["agy"]

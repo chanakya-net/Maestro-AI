@@ -539,7 +539,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "extreme",
@@ -779,7 +779,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "extreme",
@@ -827,7 +827,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "extreme",
@@ -1115,7 +1115,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "extreme",
@@ -1403,7 +1403,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "extreme",
@@ -1691,7 +1691,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "usage-share-debt",
       "routing_level": "extreme",
@@ -2369,7 +2369,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "extreme",
@@ -2505,7 +2505,7 @@
     },
     "expected": {
       "agent": "agy",
-      "model": "gemini-4-carbon-xhigh",
+      "model": "gemini-4-carbon-high",
       "effort": "",
       "selection_reason": "forced-agent",
       "routing_level": "extreme",

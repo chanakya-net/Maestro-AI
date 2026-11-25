@@ -237,15 +237,6 @@
       "agents": ["agy"],
       "work_bands": ["extreme"]
     },
-    "gemini-4-carbon-xhigh": {
-      "provider": "google",
-      "ability": "frontier",
-      "complexity_weight": 8,
-      "exclude_from_complexity": true,
-      "explicit_only": true,
-      "agents": ["agy"],
-      "work_bands": ["extreme"]
-    },
     "claude-opus-5-5-low": {
       "provider": "anthropic",
       "ability": "frontier",

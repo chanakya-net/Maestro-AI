@@ -58,7 +58,7 @@ AGY_WORK_MATRIX = {
     "medium": {"gemini-4-neon-high"},
     "medium-hard": {"gemini-4-neon-high"},
     "complex": {"gemini-4-neon-xhigh", "gemini-4-neon-high"},
-    "extreme": {"gemini-4-carbon-xhigh", "gemini-4-carbon-high"},
+    "extreme": {"gemini-4-carbon-high"},
 }
 NON_AGY_BANDS = ("complex", "extreme")
 
@@ -184,8 +184,8 @@ def test_normal_planning_selection_stays_non_agy_at_every_band(band):
 
 
 @pytest.mark.parametrize("selectors, expected_model", [
-    ({}, "gemini-4-carbon-xhigh"),
-    ({"forced_agent": "agy"}, "gemini-4-carbon-xhigh"),
+    ({}, "gemini-4-carbon-high"),
+    ({"forced_agent": "agy"}, "gemini-4-carbon-high"),
     ({"forced_model": "gemini-4-neon-high"}, "gemini-4-neon-high"),
 ])
 def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors, expected_model):
@@ -200,8 +200,8 @@ def test_agy_plan_routes_by_verified_capability(monkeypatch, selectors, expected
 
 
 @pytest.mark.parametrize("availability", [
-    {"agents": {"agy"}}, {"models": {"gemini-4-carbon-xhigh", "gemini-4-carbon-high"}},
-    {"pairs": {("agy", "gemini-4-carbon-xhigh"), ("agy", "gemini-4-carbon-high")}},
+    {"agents": {"agy"}}, {"models": {"gemini-4-carbon-high"}},
+    {"pairs": {("agy", "gemini-4-carbon-high")}},
 ])
 def test_verified_agy_plan_preserves_availability_exclusions(monkeypatch, availability):
     from ai_skills import runner
@@ -274,8 +274,8 @@ def test_forced_agy_model_keeps_explicit_band_exception():
 
 
 AGY_EXPLICIT_MODELS = (
-    *(f"gemini-4-argon-{effort}" for effort in ("low", "medium", "high")),
-    *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen", "carbon") for effort in ("low", "medium", "high", "xhigh")),
+    *(f"gemini-4-{family}-{effort}" for family in ("argon", "carbon") for effort in ("low", "medium", "high")),
+    *(f"gemini-4-{family}-{effort}" for family in ("neon", "hydrogen") for effort in ("low", "medium", "high", "xhigh")),
     *(f"claude-opus-5-5-{effort}" for effort in ("low", "medium", "high")),
     *(f"claude-sonnet-5-5-{effort}" for effort in ("low", "medium", "high")),
     "gpt-oss-120b-medium",
@@ -803,7 +803,7 @@ def test_complex_uses_astra_high_fable_medium_and_neon_xhigh_with_high_fallback(
     assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-neon-high")
 
 
-def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallback(tmp_path):
+def test_extreme_uses_astra_xhigh_fable_high_and_carbon_high(tmp_path):
     from ai_skills.runner import AgentRunConfig, build_invocation
 
     registry = load_registry(SOURCE_REGISTRY)
@@ -823,18 +823,7 @@ def test_holy_fuck_uses_astra_xhigh_fable_high_and_carbon_xhigh_with_high_fallba
     assert (claude.agent, claude.model, claude.effort) == ("claude", "claude-fable-5-2", "high")
 
     agy_primary = select_route(RouteRequest(role="impl", complexity_level="extreme", forced_agent="agy"), registry, {})
-    assert (agy_primary.agent, agy_primary.model) == ("agy", "gemini-4-carbon-xhigh")
-    agy_fallback = select_route(
-        RouteRequest(
-            role="impl",
-            complexity_level="extreme",
-            forced_agent="agy",
-            availability={"models": {"gemini-4-carbon-xhigh"}},
-        ),
-        registry,
-        {},
-    )
-    assert (agy_fallback.agent, agy_fallback.model) == ("agy", "gemini-4-carbon-high")
+    assert (agy_primary.agent, agy_primary.model) == ("agy", "gemini-4-carbon-high")
     for band in ("complex", "extreme"):
         assert routing.target_policy(registry, "impl", band) == {"codex": 38, "agy": 38, "claude": 24}
 
