@@ -371,7 +371,7 @@ def test_readme_installed_catalog_and_pool_examples(tmp_path, monkeypatch, capsy
     models = invoke(next(cmd for cmd in commands if cmd[:2] == ['agent', 'models'])).splitlines()
     inventory = readme.split('| Family | Explicit model IDs |', 1)[1].split('\n\n', 1)[0]
     registry = load_registry(ROOT / 'assets/agent-registry.json')
-    assert len(models) == 22
+    assert len(models) == 21
     assert set(re.findall(r'`([\w.-]+)`', inventory)) == set(models)
     table = readme.split('| Effective worker band | Codex | Claude | AGY |', 1)[1].split('\n\n', 1)[0]
     targets = {}

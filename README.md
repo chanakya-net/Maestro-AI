@@ -472,15 +472,15 @@ edit `model_routing.usage_distribution`:
   `default_target_percent`). A run's saved split replaces these targets for
   that run; see [Use the subscriptions you already have](#harness-shares).
 
-The installed AGY catalog lists 22 exact IDs, including 15 Gemini 4 variants.
-All 22 IDs are registered for AGY only.
+The installed AGY catalog lists 21 exact IDs, including 14 Gemini 4 variants.
+All 21 IDs are registered for AGY only.
 
 | Family | Explicit model IDs |
 | --- | --- |
 | Gemini 4 Argon | `gemini-4-argon-low`, `gemini-4-argon-medium`, `gemini-4-argon-high` |
 | Gemini 4 Neon | `gemini-4-neon-low`, `gemini-4-neon-medium`, `gemini-4-neon-high`, `gemini-4-neon-xhigh` |
 | Gemini 4 Hydrogen | `gemini-4-hydrogen-low`, `gemini-4-hydrogen-medium`, `gemini-4-hydrogen-high`, `gemini-4-hydrogen-xhigh` |
-| Gemini 4 Carbon | `gemini-4-carbon-low`, `gemini-4-carbon-medium`, `gemini-4-carbon-high`, `gemini-4-carbon-xhigh` |
+| Gemini 4 Carbon | `gemini-4-carbon-low`, `gemini-4-carbon-medium`, `gemini-4-carbon-high` |
 | Claude Opus 5.5 through AGY | `claude-opus-5-5-low`, `claude-opus-5-5-medium`, `claude-opus-5-5-high` |
 | Claude Sonnet 5.5 through AGY | `claude-sonnet-5-5-low`, `claude-sonnet-5-5-medium`, `claude-sonnet-5-5-high` |
 | GPT-OSS | `gpt-oss-120b-medium` |
@@ -489,12 +489,11 @@ Automatic non-scoring AGY work follows the approved band matrix. Only Neon Mediu
 (`gemini-4-neon-medium`) serves `quite-easy` and `easy`, Neon High
 (`gemini-4-neon-high`) serves `medium`, `medium-hard`, and `complex` (fallback),
 Neon XHigh (`gemini-4-neon-xhigh`) is preferred at `complex` when available
-(falling back to Neon High), and Carbon XHigh (`gemini-4-carbon-xhigh`) is
-preferred at `extreme` when available (falling back to Carbon High,
-`gemini-4-carbon-high`). Hydrogen High (`gemini-4-hydrogen-high`) is the sole
+(falling back to Neon High), and Carbon High (`gemini-4-carbon-high`) serves
+`extreme`. Hydrogen High (`gemini-4-hydrogen-high`) is the sole
 AGY complexity-scoring model and is eligible at all six scoring bands. AGY
 models outside Hydrogen High carry `explicit_only`. The Gemini 4 work models
-above also carry `work_bands`. The 15 Gemini 4 IDs declare no context limit. Select
+above also carry `work_bands`. The 14 Gemini 4 IDs declare no context limit. Select
 Carbon by exact ID with an entitled account. Listing the model or selecting a
 route performs no authenticated inference or entitlement check. A direct AGY run
 without an explicit model uses `gemini-4-neon-high`.
