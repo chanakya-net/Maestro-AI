@@ -798,11 +798,15 @@ def test_route_cli_applies_unexpired_run_wide_quota_without_spending_budget(tmp_
     _state_file(run_dir / 'issues' / '916' / 'workers' / 'review' / 'cycle-1-attempt-1.state.json', 'agy', 'm',
                 state='failed', failure_class='infrastructure', reason='policy-refusal', completed_at=now)
     assert routing.run_quota_exclusions(run_dir, now=now)['agents'] == {'claude'}
+    _state_file(run_dir / 'issues' / '920' / 'attempts' / 'sub-coord-abc' / 'worker.state.json', 'codex', 'm',
+                state='failed', failure_class='infrastructure', reason='quota', completed_at=now,
+                unavailable_until=now + 1800)
+    assert routing.run_quota_exclusions(run_dir, now=now)['agents'] == {'claude', 'codex'}
     for role in ('impl', 'modify', 'review'):
         routing.main(['--registry-file', str(resource_path('agent-registry.json')), '--role', role,
                       '--complexity-level', 'medium-hard', '--max-availability-retries', '0',
                       '--ledger-file', str(run_dir / 'usage-ledger.json')])
-        assert json.loads(capsys.readouterr().out)['agent'] != 'claude'
+        assert json.loads(capsys.readouterr().out)['agent'] not in {'claude', 'codex'}
 
 
 @pytest.mark.parametrize("band", routing.BAND_ORDER)

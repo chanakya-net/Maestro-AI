@@ -24,7 +24,7 @@ Managed DONE is dispatcher-owned. Never create, edit, repair or remove `RUN_WITH
 
 When `RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH` is set, the dispatcher stops this attempt at that Unix time (`RUN_WITH_IT_ATTEMPT_DEADLINE` is the same moment in UTC) with no usable grace period. Anything not published by then is lost, and committed work goes to artifact recovery.
 
-- Before each long step (a full or unfiltered suite, a browser run, a re-run), compare `date +%s` with the deadline. Do not start a step that will not finish at least 15 minutes before it.
+- Before each long step (a full or unfiltered suite, a browser run, a re-run), compare the current Unix time with `RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH`. Do not start a step that will not finish at least 15 minutes before it.
 - Publish as soon as the role's evidence is complete; do not run optional extra suites first. Never wait on a background command past the deadline; wait in bounded intervals.
 - Implementation and modification: if required checks remain after the handoff commit and will not fit, publish a typed `interrupted` report with `reason="attempt-deadline"`, the commit SHA, each check already passed with its evidence, and each check still to run. The coordinator then applies the verification-only retry rules to the unchanged commit instead of recovering the work.
 

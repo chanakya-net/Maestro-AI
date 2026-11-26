@@ -753,6 +753,21 @@ def _claude_terminal_error(text):
     return '\n'.join(str(part) for part in parts if part)
 
 
+def _agy_terminal_error(stdout_text):
+    """Error text of the last AGY stream-json result event; never model-written step text."""
+    for line in reversed(stdout_text.splitlines()):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get('event') == 'result':
+            result = event.get('result')
+            if isinstance(result, dict) and result.get('status') != 'SUCCESS':
+                return str(result.get('error') or '')
+            return ''
+    return ''
+
+
 def unavailability_text(stdout_text, stderr_text):
     """Provider-owned failure text from raw stream tails, for classify_unavailable."""
     structured = _claude_terminal_error(stdout_text)
@@ -775,23 +790,26 @@ def quota_reset_at(text, now=None):
 
     Understands Claude Code forms such as ``resets 3:40am (Asia/Calcutta)``,
     ``resets Mon 9:00am`` and ``resets Dec 1, 3pm (UTC)``; a missing zone means
-    local time. The result is the first such moment after ``now``.
+    local time. The result is the first such moment after ``now``. A named zone
+    that cannot be resolved returns None (routing then uses its default window)
+    rather than guessing local time, which could be off by many hours.
     """
     from datetime import timedelta
-    try:
-        from zoneinfo import ZoneInfo
-    except ImportError:  # pragma: no cover - Python < 3.9
-        ZoneInfo = None
+    from zoneinfo import ZoneInfo
     match = _RESET_RE.search(text or '')
     if not match:
         return None
     now = time.time() if now is None else now
     zone = None
-    if match.group('zone') and ZoneInfo is not None:
-        try:
-            zone = ZoneInfo(match.group('zone'))
-        except (ValueError, KeyError, OSError):
-            zone = None
+    name = match.group('zone')
+    if name:
+        if name.upper() in ('UTC', 'GMT', 'Z'):
+            zone = timezone.utc  # needs no tz database (absent on Windows without tzdata)
+        else:
+            try:
+                zone = ZoneInfo(name)
+            except (ValueError, KeyError, OSError):  # ZoneInfoNotFoundError is a KeyError
+                return None
     current = datetime.fromtimestamp(now, zone) if zone else datetime.fromtimestamp(now).astimezone()
     hour, minute = int(match.group('hour')), int(match.group('minute') or 0)
     if not 1 <= hour <= 12 or minute > 59:
@@ -1037,6 +1055,9 @@ def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None, 
                     pass
             if agy_stream:
                 code, reason = _finish_agy(tails, code, model, bus, managed=stream_capture)
+                if reason == 'quota':
+                    unavailable_until = (quota_reset_at(_agy_terminal_error(tails[0].recent))
+                                         or quota_reset_at(_last_lines(tails[1].recent)))
                 if code and not reason and not config.dispatcher_managed:
                     _report_agy_stderr(tails[1], errors if config.stream_directory else None)
             else:

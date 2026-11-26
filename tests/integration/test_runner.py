@@ -121,6 +121,7 @@ def test_claude_terminal_result_classifies_only_structured_errors(tmp_path, even
     ('resets Mon 9:00am (UTC)', '2026-11-30T09:00+00:00'),
     ('usage limit reached', None),
     ('resets 25:00pm (UTC)', None),
+    ('resets 3:40am (Mars/Olympus)', None),
 ])
 def test_quota_reset_at_returns_next_named_reset(text, expected):
     from datetime import datetime

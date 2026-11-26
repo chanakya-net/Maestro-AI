@@ -179,6 +179,7 @@ def test_repo_merge_gate_is_read_from_shared_tip_and_honours_when_changed(reposi
     json.dumps({'schema_version': 2, 'commands': []}),
     json.dumps({'schema_version': 1, 'commands': [{'argv': []}]}),
     json.dumps({'schema_version': 1, 'commands': [{'argv': ['true'], 'cwd': '../outside'}]}),
+    json.dumps({'schema_version': 1, 'commands': [{'argv': ['true'], 'cwd': ''}]}),
     json.dumps({'schema_version': 1, 'commands': [{'argv': ['true'], 'timeout_seconds': 0}]}),
 ])
 def test_invalid_repo_merge_gate_fails_closed(repository, gate):
@@ -191,3 +192,33 @@ def test_invalid_repo_merge_gate_fails_closed(repository, gate):
     prepared, _ = _issue_commit(api, repository, '42', 'new.txt', 'x\n')
     result = api.merge_issue(repository, 'feature', prepared['issue_branch'])
     assert (result['outcome'], result['reason']) == ('merge_failed', 'invalid-merge-gate')
+
+
+def test_successful_merge_removes_worktree_despite_untracked_gate_output(repository):
+    import sys
+    api = importlib.import_module('ai_skills.git_operations')
+    install = "import pathlib; p = pathlib.Path('node_modules/pkg/index.js'); p.parent.mkdir(parents=True); p.write_text('x')"
+    _declare_gate(repository, [{'name': 'deps', 'argv': [sys.executable, '-c', install]}])
+    prepared, _ = _issue_commit(api, repository, '43', 'app.txt', 'ok\n')
+    result = api.merge_issue(repository, 'feature', prepared['issue_branch'])
+    assert result['outcome'] == 'completed', result
+    assert 'cleanup_pending' not in result
+    assert not Path(result['merge_worktree']).exists()
+
+
+@pytest.mark.skipif(__import__('os').name == 'nt', reason='symlink creation needs privilege on Windows')
+def test_merge_gate_rejects_cwd_symlink_escaping_repository(repository, tmp_path):
+    import sys
+    api = importlib.import_module('ai_skills.git_operations')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    git(repository, 'checkout', '-q', 'feature')
+    (repository / 'escape').symlink_to(outside, target_is_directory=True)
+    git(repository, 'add', 'escape'); git(repository, 'commit', '-qm', 'symlink')
+    git(repository, 'checkout', '-q', 'main')
+    marker = "import pathlib; pathlib.Path('ran').write_text('x')"
+    _declare_gate(repository, [{'name': 'escaping', 'argv': [sys.executable, '-c', marker], 'cwd': 'escape'}])
+    prepared, _ = _issue_commit(api, repository, '44', 'app.txt', 'ok\n')
+    result = api.merge_issue(repository, 'feature', prepared['issue_branch'])
+    assert (result['outcome'], result['reason'], result['failed_gate']) == ('merge_failed', 'invalid-merge-gate', 'escaping')
+    assert not (outside / 'ran').exists()

@@ -341,7 +341,8 @@ def run_quota_exclusions(run_dir: Path, *, registry: dict[str, Any] | None = Non
     issues = Path(run_dir) / "issues"
     if not issues.is_dir():
         return availability
-    states = sorted(issues.glob("*/workers/*/*.state.json"))
+    # Role workers, plus Sub-Coordinator and Merge Recovery attempts (issues/<n>/attempts/<kind>-<id>/).
+    states = sorted([*issues.glob("*/workers/*/*.state.json"), *issues.glob("*/attempts/*/*.state.json")])
     for agent, _model, reason in failed_attempt_routes(states, registry=registry, now=now):
         if reason == "quota":
             availability["agents"].add(agent)

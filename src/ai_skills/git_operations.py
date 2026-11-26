@@ -137,7 +137,8 @@ def _merge_gate(tree, base):
         if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and arg for arg in argv):
             raise ValueError(f'{label}.argv must be a nonempty list of strings')
         cwd = entry.get('cwd', '.')
-        if not isinstance(cwd, str) or Path(cwd).is_absolute() or '..' in Path(cwd).parts:
+        if (not isinstance(cwd, str) or not cwd or Path(cwd).is_absolute() or Path(cwd).drive
+                or '..' in Path(cwd).parts):
             raise ValueError(f'{label}.cwd must be a relative path inside the repository')
         timeout = entry.get('timeout_seconds', MERGE_GATE_DEFAULT_TIMEOUT)
         if type(timeout) is not int or not 1 <= timeout <= MERGE_GATE_MAX_TIMEOUT:
@@ -205,9 +206,14 @@ def merge_issue(repo_root, shared_branch, issue_branch, *, verify_commands=(), p
                     report['skipped'].append(command['name'])
                     continue
                 from .runner import resolve_executable
+                # A committed symlink can point outside the tree although the path is relative.
+                gate_cwd = (tree / command['cwd']).resolve()
+                if not gate_cwd.is_relative_to(tree.resolve()):
+                    return {**result, 'reason': 'invalid-merge-gate', 'failed_gate': command['name'],
+                            'evidence': f"cwd {command['cwd']!r} resolves outside the repository"}
                 try:
                     argv = resolve_executable(tuple(command['argv']), dict(os.environ))
-                    checked = subprocess.run(argv, cwd=tree / command['cwd'], capture_output=True, text=True,
+                    checked = subprocess.run(argv, cwd=gate_cwd, capture_output=True, text=True,
                                              timeout=command['timeout_seconds'])
                 except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                     return {**result, 'reason': 'merge-gate-failed', 'failed_gate': command['name'], 'evidence': str(error)}
@@ -230,7 +236,10 @@ def merge_issue(repo_root, shared_branch, issue_branch, *, verify_commands=(), p
         from .storage import StateStore
         StateStore(runtime / 'integration.json').transaction(lambda metadata: metadata.update({shared_branch: head}))
         result.update(outcome='completed', reason='', commit_sha=head)
-        cleanup = _git(root, 'worktree', 'remove', str(tree), check=False)
+        # Tracked files and the index were proven clean above, so anything left is
+        # untracked gate output (node_modules, build artifacts) that would otherwise
+        # make a plain remove refuse and orphan a full checkout per merge.
+        cleanup = _git(root, 'worktree', 'remove', '--force', str(tree), check=False)
         if cleanup.returncode:
             result['cleanup_pending'] = True
         return result
