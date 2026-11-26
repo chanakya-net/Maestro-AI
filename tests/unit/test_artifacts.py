@@ -328,6 +328,23 @@ def test_complexity_validator_accepts_legacy_v1_on_read_and_rejects_on_fresh_pat
     log_file.write_text(json.dumps(v2) + '\n')
     assert artifacts.complexity_payload_from_log(str(log_file)) == v2
 
+    # When multiple valid complexity JSON blobs appear in the log, prefer the last one.
+    v2_later = _complexity_payload({'coupling_and_blast_radius': 4, 'pattern_novelty': 3, 'state_and_concurrency_risk': 4,
+                                    'data_and_rollback_risk': 3, 'verification_risk': 4, 'ambiguity_of_requirements': 3, 'scope_size': 4})
+    log_file.write_text(json.dumps(v2) + '\nrevised:\n' + json.dumps(v2_later) + '\n')
+    assert artifacts.complexity_payload_from_log(str(log_file)) == v2_later
+
+    # Dispatcher-managed clean exits have no DONE sentinel yet when synthesis runs.
+    missing_done = tmp_path / 'managed.done'
+    managed_target = tmp_path / 'managed-complexity-result.json'
+    base_args = dict(role='complexity', issue='7', result_file=str(managed_target),
+                     done_file=str(missing_done), log_file=str(log_file), issue_dir='', repo_root='', pre_spawn_head='')
+    assert artifacts.synthesize_complexity(argparse.Namespace(**base_args)) is False
+    assert not managed_target.exists()
+    assert artifacts.synthesize_complexity(argparse.Namespace(**base_args, provider_exited_cleanly=True)) is True
+    synthesized = json.loads(managed_target.read_text())
+    assert synthesized['total'] == v2_later['total'] and synthesized['source'] == 'dispatcher-synthesized-from-log'
+
 
 @pytest.mark.parametrize('payload', [
     _complexity_payload(schema_version=3),

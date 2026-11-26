@@ -36,6 +36,7 @@ from ai_skills.outcomes import canonical_path, outcome_path, pending_outcome, ou
 
 DEFAULT_QUIET_SECONDS = 900
 DEFAULT_STALL_SECONDS = 1200
+DEFAULT_HARD_LIMIT_SECONDS = 21600
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ class WorkerConfig:
 
     def __post_init__(self):
         if self.hard_limit_seconds is None:
-            default_limit = 0 if self.agent_run.role in ('sub-coord', 'merge-recovery') else 7200
+            default_limit = 0 if self.agent_run.role in ('sub-coord', 'merge-recovery') else DEFAULT_HARD_LIMIT_SECONDS
             object.__setattr__(self, 'hard_limit_seconds', default_limit)
         verification.validate_configuration(self)
         if type(self.detach) is not bool:
@@ -183,11 +184,12 @@ def _process_record(config):
     return _optional(path)
 
 
-def _artifact_args(config, *, from_stall=False):
+def _artifact_args(config, *, from_stall=False, provider_exited_cleanly=False):
     run = config.agent_run
     return SimpleNamespace(role=run.role, issue=str(run.issue), result_file=str(run.result_file or ''),
                            done_file=str(run.done_file or ''), log_file=str(run.log_file or ''),
-                           issue_dir=str(run.issue_dir or ''), repo_root=str(run.repo_root), pre_spawn_head=config.pre_spawn_head, from_stall=from_stall, worker_config=config)
+                           issue_dir=str(run.issue_dir or ''), repo_root=str(run.repo_root), pre_spawn_head=config.pre_spawn_head,
+                           from_stall=from_stall, provider_exited_cleanly=provider_exited_cleanly, worker_config=config)
 
 
 def expected_artifact_paths(config: WorkerConfig) -> dict[str, str]:

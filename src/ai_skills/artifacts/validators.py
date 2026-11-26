@@ -234,17 +234,18 @@ def complexity_payload_from_log(log_file: str) -> dict[str, Any] | None:
 
     decoder = json.JSONDecoder()
     index = 0
+    matched: dict[str, Any] | None = None
     while True:
         start = text.find("{", index)
         if start == -1:
-            return None
+            return matched
         try:
             payload, end = decoder.raw_decode(text[start:])
         except json.JSONDecodeError:
             index = start + 1
             continue
         if valid_complexity_payload(payload, allow_legacy=False):
-            return payload
+            matched = payload
         index = start + max(end, 1)
 
 

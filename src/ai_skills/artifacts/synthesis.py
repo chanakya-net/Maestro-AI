@@ -250,7 +250,8 @@ def synthesize_complexity(args: argparse.Namespace) -> bool:
             write_json_atomic(args.result_file, payload)
             return result_failure_reason(args) == ""
 
-    if not args.done_file or not os.path.exists(args.done_file) or os.path.getsize(args.done_file) == 0:
+    have_done = bool(args.done_file) and os.path.exists(args.done_file) and os.path.getsize(args.done_file) > 0
+    if not have_done and not getattr(args, "provider_exited_cleanly", False):
         return False
 
     payload = complexity_payload_from_log(getattr(args, "log_file", ""))

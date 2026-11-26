@@ -703,13 +703,25 @@ def _check_cli_capabilities(argv, spec, invocation):
             raise _CLIUnsupported('Upgrade AGY CLI: ' + reason + '; see ' + invocation.get('protocol_documentation', 'https://antigravity.google/docs/cli/headless/'))
 
 
+_QUOTA_PATTERNS = (
+    re.compile(r"you(?:'ve| have) hit your (?:[\w-]+ )?limit"),
+)
+
+
 def classify_unavailable(text):
     text = text.lower()
     for reason, phrases in [('auth', ('failed to authenticate', 'invalid authentication credentials', 'api error: 401', 'authentication failed')),
-                            ('quota', ('usage limit', 'quota', 'rate limit')),
-                            ('model-unsupported', ('unsupported model', 'model is not supported', 'not supported'))]:
+                            ('quota', ('usage limit', 'quota', 'rate limit', '5-hour limit')),
+                            ('model-unsupported', ('unsupported model', 'model is not supported', 'not supported')),
+                            ('policy-refusal', ('flagged for possible cybersecurity risk',
+                                                'flagged as potentially violating our usage policy',
+                                                'violates our usage policy',
+                                                'content_policy_violation',
+                                                'blocked by content filtering'))]:
         if any(phrase in text for phrase in phrases):
             return reason
+    if any(pattern.search(text) for pattern in _QUOTA_PATTERNS):
+        return 'quota'
     return ''
 
 
@@ -727,12 +739,12 @@ def _stream_unavailability(source, tail):
 
 def _classify_agy(text, model):
     reason = classify_unavailable(text)
-    return reason if reason in ('auth', 'quota') else agy_diagnostics.classify(text, model)
+    return reason if reason in ('auth', 'quota', 'policy-refusal') else agy_diagnostics.classify(text, model)
 
 
 def _unavailability_scope(reason):
     """Choose whether retry routing should exclude a harness or one model pair."""
-    if reason in ('auth', 'quota', 'missing-command', 'cli-unsupported'):
+    if reason in ('auth', 'quota', 'missing-command', 'cli-unsupported', 'policy-refusal'):
         return 'agent'
     return 'agent-model'
 

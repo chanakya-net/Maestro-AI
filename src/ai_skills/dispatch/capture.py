@@ -108,7 +108,7 @@ def _read_bound_outcome(config):
     return None if payload is missing else payload
 
 
-def _safe_synthesis(config, reason):
+def _safe_synthesis(config, reason, *, provider_return_code=None):
     """Only absent outputs may be reconstructed; never erase provider bytes."""
     if config.execution_mode == 'verify_existing':
         return False
@@ -136,7 +136,11 @@ def _safe_synthesis(config, reason):
                 return False
     elif Path(paths['result']).exists():
         return False
-    args = _artifact_args(config, from_stall=reason in ('interrupted','hard-limit-exceeded','dispatch-timeout'))
+    args = _artifact_args(
+        config,
+        from_stall=reason in ('interrupted','hard-limit-exceeded','dispatch-timeout'),
+        provider_exited_cleanly=(provider_return_code == 0 and not reason),
+    )
     if run.role in ('impl','modify') and config.pre_spawn_head and git.repo_available(str(run.repo_root)):
         try:
             args.from_stall = args.from_stall or git.current_head(str(run.repo_root)) != config.pre_spawn_head

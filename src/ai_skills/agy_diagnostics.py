@@ -26,6 +26,7 @@ _REMEDIES = {
                           'signed-in account or ask its administrator'),
     'auth': 'authenticate interactively by running `agy` and signing in, then retry',
     'quota': 'check AGY usage and retry after the quota resets',
+    'policy-refusal': 'the provider safety filter refused this request; retry with an alternate harness',
 }
 
 

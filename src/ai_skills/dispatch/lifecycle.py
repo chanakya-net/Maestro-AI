@@ -305,7 +305,7 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         else:
             artifact_reason = capture_reason if protected_plan else _artifact_reason(config)
             if artifact_reason and not protected_plan and not terminal and not prelaunch_failure:
-                _safe_synthesis(config, reason)
+                _safe_synthesis(config, reason, provider_return_code=provider_return_code)
                 artifact_reason = _artifact_reason(config)
             if artifact_reason == 'artifact-recovery-required':
                 reason, code = artifact_reason, 75

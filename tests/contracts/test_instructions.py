@@ -139,7 +139,7 @@ def test_coordinator_deadline_policy_and_child_worker_examples_stay_aligned():
     skill_worker=worker_example(skill)
     sub_worker=worker_example(sub)
     for worker in (skill_worker, sub_worker):
-        assert (worker['quiet_seconds'], worker['stall_seconds'], worker['hard_limit_seconds']) == (900,1200,7200)
+        assert (worker['quiet_seconds'], worker['stall_seconds'], worker['hard_limit_seconds']) == (900,1200,21600)
     assert {key:skill_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')} == {
         key:sub_worker[key] for key in ('quiet_seconds','stall_seconds','hard_limit_seconds')}
 
