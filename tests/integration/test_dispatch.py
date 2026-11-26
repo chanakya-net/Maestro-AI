@@ -25,6 +25,27 @@ def worker_config(tmp_path, source, **overrides):
     return WorkerConfig(agent_run=agent,state_file=tmp_path/'worker.state.json',poll_seconds=.02,**overrides)
 
 
+@pytest.mark.parametrize('hard_limit', [600.0, 0.0])
+def test_bounded_attempt_receives_its_deadline(tmp_path, hard_limit):
+    import time
+    probe = tmp_path / 'deadline.json'
+    config = worker_config(tmp_path, f"""import json, os
+from pathlib import Path
+Path({str(probe)!r}).write_text(json.dumps({{key: os.environ.get(key) for key in
+    ('RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH', 'RUN_WITH_IT_ATTEMPT_DEADLINE', 'RUN_WITH_IT_ATTEMPT_HARD_LIMIT_SECONDS')}}))
+""", hard_limit_seconds=hard_limit)
+    started = time.time()
+    dispatch_worker(config)
+    seen = json.loads(probe.read_text())
+    record = json.loads(Path(str(config.state_file) + '.config.json').read_text())
+    assert 'RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH' not in json.dumps(record)
+    if not hard_limit:
+        assert seen == dict.fromkeys(seen)
+        return
+    assert started + hard_limit - 5 <= int(seen['RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH']) <= time.time() + hard_limit
+    assert seen['RUN_WITH_IT_ATTEMPT_DEADLINE'].endswith('Z') and seen['RUN_WITH_IT_ATTEMPT_HARD_LIMIT_SECONDS'] == '600'
+
+
 def test_admission_persists_pending_bound_outcome_before_provider(tmp_path):
     config=worker_config(tmp_path, '''import json,os
 from pathlib import Path
@@ -395,6 +416,36 @@ def test_cli_json_config_can_execute_without_shell_wrapper(tmp_path):
     path=tmp_path/'config.json';path.write_text(json.dumps(config.to_record()))
     assert main(['dispatch','--config',str(path)])==0
     assert main(['inspect','--config',str(path)])==0
+
+
+def test_quota_after_commit_keeps_harness_exclusion_through_artifact_recovery(tmp_path):
+    """918 regression: work committed, then the Claude 5-hour limit ended the session."""
+    import subprocess
+    from dataclasses import replace
+    from ai_skills import routing
+    def git(*args):
+        return subprocess.check_output(['git','-C',str(tmp_path),*args],stderr=subprocess.DEVNULL,text=True).strip()
+    git('init');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+    (tmp_path/'initial').write_text('initial');git('add','initial');git('commit','-m','initial')
+    pre=git('rev-parse','HEAD')
+    config=worker_config(tmp_path, """import subprocess, sys
+from pathlib import Path
+Path('committed-work').write_text('implemented')
+subprocess.check_call(['git','add','committed-work'])
+subprocess.check_call(['git','commit','-m','implementation'])
+print("You've hit your 5-hour limit \u00b7 resets 3:40am (Asia/Calcutta)", file=sys.stderr)
+sys.exit(1)
+""")
+    config=replace(config,agent_run=config.agent_run.replace(role='impl'),pre_spawn_head=pre)
+    result=dispatch_worker(config)
+    assert result.state=='artifact-recovery-required'
+    state=json.loads(config.state_file.read_text())
+    assert (state['failure_class'], state['reason'], state['unavailable_reason']) == (
+        'infrastructure', 'artifact-recovery-required', 'quota')
+    assert 0 < state['unavailable_until'] - state['completed_at'] <= 24 * 3600
+    routes = routing.failed_attempt_routes([config.state_file], now=state['completed_at'])
+    assert [reason for _agent, _model, reason in routes] == ['quota']
+    assert routing.failed_attempt_routes([config.state_file], now=state['unavailable_until'] + 1) == []
 
 
 def test_commit_without_artifact_requires_recovery_not_verified_success(tmp_path):

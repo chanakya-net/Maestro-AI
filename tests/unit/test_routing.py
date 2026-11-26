@@ -745,6 +745,66 @@ def test_route_cli_deduplicates_failed_attempt_states_and_canonicalizes_aliases(
     ]
 
 
+def _state_file(path, agent, model, **state):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state), encoding='utf-8')
+    Path(str(path) + '.config.json').write_text(
+        json.dumps({'agent_run': {'agent': agent, 'model': model, 'role': 'impl', 'cycle': '1'}}), encoding='utf-8')
+    return path
+
+
+def test_artifact_recovery_state_counts_only_with_recorded_unavailable_reason(tmp_path):
+    recovered = _state_file(tmp_path / 'quota.state.json', 'claude', 'm', state='artifact-recovery-required',
+                            failure_class='infrastructure', reason='artifact-recovery-required',
+                            unavailable_reason='quota', completed_at=1000.0, unavailable_until=2000.0)
+    salvage = _state_file(tmp_path / 'salvage.state.json', 'codex', 'm', state='artifact-recovery-required',
+                          failure_class='capability', reason='artifact-recovery-required')
+    bare = _state_file(tmp_path / 'bare.state.json', 'agy', 'm', state='artifact-recovery-required',
+                       failure_class='infrastructure', reason='artifact-recovery-required')
+    assert routing.failed_attempt_routes([recovered, salvage, bare], now=1500.0) == [('claude', 'm', 'quota')]
+    assert routing.availability_from_failed_attempts([recovered], now=1500.0)['agents'] == {'claude'}
+
+
+@pytest.mark.parametrize('state,now,active', [
+    ({'unavailable_until': 2000.0, 'completed_at': 1000.0}, 1999.0, True),
+    ({'unavailable_until': 2000.0, 'completed_at': 1000.0}, 2000.0, False),
+    ({'completed_at': 1000.0}, 1000.0 + routing.DEFAULT_QUOTA_EXCLUSION_SECONDS - 1, True),
+    ({'completed_at': 1000.0}, 1000.0 + routing.DEFAULT_QUOTA_EXCLUSION_SECONDS, False),
+    ({}, 10 ** 12, True),
+])
+def test_quota_exclusion_expires_at_reset_or_default_window(tmp_path, state, now, active):
+    path = _state_file(tmp_path / 'q.state.json', 'claude', 'm', state='failed', failure_class='infrastructure',
+                       reason='quota', **state)
+    assert routing.quota_exclusion_active(state, now) is active
+    assert bool(routing.failed_attempt_routes([path], now=now)) is active
+
+
+def test_expiry_applies_only_to_quota(tmp_path):
+    path = _state_file(tmp_path / 'a.state.json', 'claude', 'm', state='failed', failure_class='infrastructure',
+                       reason='auth', completed_at=1.0)
+    assert routing.failed_attempt_routes([path], now=10 ** 12) == [('claude', 'm', 'auth')]
+
+
+def test_route_cli_applies_unexpired_run_wide_quota_without_spending_budget(tmp_path, capsys):
+    import time
+    run_dir = tmp_path / '.run-with-it'
+    now = time.time()
+    _state_file(run_dir / 'issues' / '918' / 'workers' / 'impl' / 'cycle-1-attempt-1.state.json', 'claude', 'm',
+                state='artifact-recovery-required', failure_class='infrastructure', reason='artifact-recovery-required',
+                unavailable_reason='quota', completed_at=now, unavailable_until=now + 3600)
+    _state_file(run_dir / 'issues' / '917' / 'workers' / 'review' / 'cycle-1-attempt-1.state.json', 'codex', 'm',
+                state='failed', failure_class='infrastructure', reason='quota', completed_at=now - 7200,
+                unavailable_until=now - 60)
+    _state_file(run_dir / 'issues' / '916' / 'workers' / 'review' / 'cycle-1-attempt-1.state.json', 'agy', 'm',
+                state='failed', failure_class='infrastructure', reason='policy-refusal', completed_at=now)
+    assert routing.run_quota_exclusions(run_dir, now=now)['agents'] == {'claude'}
+    for role in ('impl', 'modify', 'review'):
+        routing.main(['--registry-file', str(resource_path('agent-registry.json')), '--role', role,
+                      '--complexity-level', 'medium-hard', '--max-availability-retries', '0',
+                      '--ledger-file', str(run_dir / 'usage-ledger.json')])
+        assert json.loads(capsys.readouterr().out)['agent'] != 'claude'
+
+
 @pytest.mark.parametrize("band", routing.BAND_ORDER)
 def test_complexity_scoring_uses_only_terra_sonnet_and_hydrogen_high_equally(band):
     registry = load_registry(SOURCE_REGISTRY)

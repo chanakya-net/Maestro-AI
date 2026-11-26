@@ -88,6 +88,7 @@ class AgentRunResult:
     agent: str
     model: str
     unavailable_reason: str = ''
+    unavailable_until: float | None = None
 
 
 def _agent(registry, name):
@@ -707,12 +708,124 @@ _QUOTA_PATTERNS = (
     re.compile(r"you(?:'ve| have) hit your (?:[\w-]+ )?limit"),
 )
 
+# Provider limit phrases only. Bare words such as "quota" or "rate limit" also
+# appear in product test output (licensing, capacity, throttling suites), and a
+# quota match now excludes the whole harness, so each phrase names the failure.
+_QUOTA_PHRASES = (
+    'usage limit reached', 'usage limit exceeded', 'usage_limit_reached', '5-hour limit',
+    'quota exceeded', 'exceeded your current quota', 'insufficient_quota', 'resource_exhausted',
+    'rate limit exceeded', 'rate limit reached', 'rate_limit_error', 'rate_limit_exceeded',
+    'api error: 429',
+)
+
+# Fatal provider errors are the last thing a CLI prints. Classify only that
+# tail so mid-run tool and test output cannot pose as provider unavailability.
+UNAVAILABILITY_TAIL_LINES = 20
+UNAVAILABILITY_TAIL_CHARS = 4096
+
+
+def _last_lines(text, lines=UNAVAILABILITY_TAIL_LINES, chars=UNAVAILABILITY_TAIL_CHARS):
+    kept = [line for line in text.splitlines() if line.strip()][-lines:]
+    return '\n'.join(kept)[-chars:]
+
+
+def _claude_terminal_error(text):
+    """Structured error text of a Claude ``--output-format json`` result, else None.
+
+    Returns '' for a non-error terminal result: its ``result`` is model text.
+    """
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return None
+    try:
+        event = json.loads(lines[-1])
+    except ValueError:
+        return None
+    if not isinstance(event, dict) or event.get('type') != 'result':
+        return None
+    if event.get('is_error') is not True and not str(event.get('subtype', '')).startswith('error'):
+        return ''
+    parts = [event.get('result'), event.get('error'), event.get('api_error'), event.get('api_error_type')]
+    errors = event.get('errors')
+    parts.extend(errors if isinstance(errors, list) else [errors])
+    if event.get('api_error_status'):
+        parts.append(f"api error: {event['api_error_status']}")
+    return '\n'.join(str(part) for part in parts if part)
+
+
+def unavailability_text(stdout_text, stderr_text):
+    """Provider-owned failure text from raw stream tails, for classify_unavailable."""
+    structured = _claude_terminal_error(stdout_text)
+    stdout_part = _last_lines(stdout_text) if structured is None else structured
+    return '\n'.join(part for part in (stdout_part, _last_lines(stderr_text)) if part)
+
+
+_RESET_RE = re.compile(
+    r'resets\s+(?:(?:at|on)\s+)?(?:(?P<weekday>mon|tue|wed|thu|fri|sat|sun)[a-z]*\s+|'
+    r'(?P<month>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(?P<day>\d{1,2}),?\s+(?:at\s+)?)?'
+    r'(?P<hour>\d{1,2})(?::(?P<minute>\d{2}))?\s*(?P<ampm>am|pm)\b(?:\s*\((?P<zone>[A-Za-z_+\-/]+)\))?',
+    re.IGNORECASE)
+_MONTHS = ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec')
+_WEEKDAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+QUOTA_RESET_MAX_SECONDS = 8 * 24 * 3600
+
+
+def quota_reset_at(text, now=None):
+    """Epoch seconds of the next reset a provider limit message names, else None.
+
+    Understands Claude Code forms such as ``resets 3:40am (Asia/Calcutta)``,
+    ``resets Mon 9:00am`` and ``resets Dec 1, 3pm (UTC)``; a missing zone means
+    local time. The result is the first such moment after ``now``.
+    """
+    from datetime import timedelta
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:  # pragma: no cover - Python < 3.9
+        ZoneInfo = None
+    match = _RESET_RE.search(text or '')
+    if not match:
+        return None
+    now = time.time() if now is None else now
+    zone = None
+    if match.group('zone') and ZoneInfo is not None:
+        try:
+            zone = ZoneInfo(match.group('zone'))
+        except (ValueError, KeyError, OSError):
+            zone = None
+    current = datetime.fromtimestamp(now, zone) if zone else datetime.fromtimestamp(now).astimezone()
+    hour, minute = int(match.group('hour')), int(match.group('minute') or 0)
+    if not 1 <= hour <= 12 or minute > 59:
+        return None
+    hour = hour % 12 + (12 if match.group('ampm').lower() == 'pm' else 0)
+    candidate = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if match.group('month'):
+        try:
+            candidate = candidate.replace(month=_MONTHS.index(match.group('month').lower()[:3]) + 1,
+                                          day=int(match.group('day')))
+        except ValueError:
+            return None
+        if candidate.timestamp() <= now:
+            try:
+                candidate = candidate.replace(year=candidate.year + 1)
+            except ValueError:
+                return None
+    elif match.group('weekday'):
+        ahead = (_WEEKDAYS.index(match.group('weekday').lower()[:3]) - candidate.weekday()) % 7
+        candidate += timedelta(days=ahead)
+        if candidate.timestamp() <= now:
+            candidate += timedelta(days=7)
+    elif candidate.timestamp() <= now:
+        candidate += timedelta(days=1)
+    reset = candidate.timestamp()
+    return reset if 0 < reset - now <= QUOTA_RESET_MAX_SECONDS else None
+
 
 def classify_unavailable(text):
     text = text.lower()
     for reason, phrases in [('auth', ('failed to authenticate', 'invalid authentication credentials', 'api error: 401', 'authentication failed')),
-                            ('quota', ('usage limit', 'quota', 'rate limit', '5-hour limit')),
-                            ('model-unsupported', ('unsupported model', 'model is not supported', 'not supported')),
+                            ('quota', _QUOTA_PHRASES),
+                            ('model-unsupported', ('unsupported model', 'model is not supported', 'model not supported',
+                                                   'is not a supported model')),
                             ('policy-refusal', ('flagged for possible cybersecurity risk',
                                                 'flagged as potentially violating our usage policy',
                                                 'violates our usage policy',
@@ -851,6 +964,7 @@ def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None, 
         Path(config.done_file).unlink(missing_ok=True)
     bus.emit('agent-start', fields)
     reason = ''
+    unavailable_until = None
     code = 1
     stream_context = nullcontext(config.stream_directory) if config.stream_directory else tempfile.TemporaryDirectory(prefix='ai-skills-streams-')
     with stream_context as temporary:
@@ -926,12 +1040,17 @@ def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None, 
                 if code and not reason and not config.dispatcher_managed:
                     _report_agy_stderr(tails[1], errors if config.stream_directory else None)
             else:
-                reason = classify_unavailable(''.join(t.recent for t in tails)) if code else ''
+                failure_text = unavailability_text(tails[0].recent, tails[1].recent) if code else ''
+                reason = classify_unavailable(failure_text)
                 if stream_capture:
                     reason = reason or _stream_unavailability(source, tails[0])
                     code = code or (1 if reason else 0)
+                if reason == 'quota':
+                    unavailable_until = quota_reset_at(failure_text or ''.join(t.recent for t in tails))
             if stream_capture and reason:
                 state['unavailable_reason'] = reason
+                if unavailable_until:
+                    state['unavailable_until'] = unavailable_until
             if config.process_state_file and (not source or code != 0):
                 write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
         except FileNotFoundError as error:
@@ -973,7 +1092,7 @@ def run_agent(config: AgentRunConfig, protected: ProtectedLaunch | None = None, 
     if source and config.process_state_file and code == 0:
         # Adoption needs durable proof that the runner finished after the owned provider.
         write_json_atomic(Path(config.process_state_file), {**state, 'state':'dead', 'return_code':code})
-    return AgentRunResult(code, name, model, reason)
+    return AgentRunResult(code, name, model, reason, unavailable_until if reason == 'quota' else None)
 
 
 def _configured(agent, env, root):

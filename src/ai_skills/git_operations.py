@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -102,12 +103,69 @@ def prepare_issue(repo_root, shared_branch, issue, worktree_root=None, *, fetch=
         return result
 
 
+MERGE_GATE_PATH = '.maestro/merge-gate.json'
+MERGE_GATE_DEFAULT_TIMEOUT = 1800
+MERGE_GATE_MAX_TIMEOUT = 4 * 3600
+
+
+def _merge_gate(tree, base):
+    """Repo-declared post-merge checks, read from the shared branch before this merge.
+
+    Reading the pre-merge tip means an issue branch cannot weaken or delete the
+    gate that judges its own merge. Returns None when the repository declares none.
+    Schema::
+
+        {"schema_version": 1, "commands": [
+          {"name": "frontend i18n coverage", "argv": ["bun", "run", "test", "--run", "src/app/core/i18n"],
+           "cwd": "src/frontend", "timeout_seconds": 900, "when_changed": ["src/frontend/*"]}]}
+    """
+    shown = _git(tree, 'show', f'{base}:{MERGE_GATE_PATH}', check=False)
+    if shown.returncode:
+        return None
+    try:
+        gate = json.loads(shown.stdout)
+    except ValueError as error:
+        raise ValueError(f'{MERGE_GATE_PATH} is not valid JSON: {error}') from error
+    if not isinstance(gate, dict) or gate.get('schema_version') != 1 or not isinstance(gate.get('commands'), list):
+        raise ValueError(f'{MERGE_GATE_PATH} must be an object with schema_version 1 and a commands list')
+    commands = []
+    for index, entry in enumerate(gate['commands']):
+        label = f'{MERGE_GATE_PATH} commands[{index}]'
+        if not isinstance(entry, dict):
+            raise ValueError(f'{label} must be an object')
+        argv = entry.get('argv')
+        if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and arg for arg in argv):
+            raise ValueError(f'{label}.argv must be a nonempty list of strings')
+        cwd = entry.get('cwd', '.')
+        if not isinstance(cwd, str) or Path(cwd).is_absolute() or '..' in Path(cwd).parts:
+            raise ValueError(f'{label}.cwd must be a relative path inside the repository')
+        timeout = entry.get('timeout_seconds', MERGE_GATE_DEFAULT_TIMEOUT)
+        if type(timeout) is not int or not 1 <= timeout <= MERGE_GATE_MAX_TIMEOUT:
+            raise ValueError(f'{label}.timeout_seconds must be an integer from 1 to {MERGE_GATE_MAX_TIMEOUT}')
+        when = entry.get('when_changed', [])
+        if not isinstance(when, list) or not all(isinstance(pattern, str) and pattern for pattern in when):
+            raise ValueError(f'{label}.when_changed must be a list of glob strings')
+        name = entry.get('name') or ' '.join(argv)
+        if not isinstance(name, str):
+            raise ValueError(f'{label}.name must be a string')
+        commands.append({'name': name, 'argv': argv, 'cwd': cwd, 'timeout_seconds': timeout, 'when_changed': when})
+    return commands
+
+
+def _gate_applies(command, changed):
+    patterns = command['when_changed']
+    return not patterns or any(fnmatch.fnmatchcase(path, pattern) for path in changed for pattern in patterns)
+
+
 def merge_issue(repo_root, shared_branch, issue_branch, *, verify_commands=(), push=False):
     """Merge in a disposable tree under a lock; failed recovery work is retained.
 
     Offline progress uses a private integration tip instead of changing a checked
     out shared branch. Project-specific verification should be supplied by the
-    coordinator; the default is Git's whitespace/conflict-marker diff check.
+    coordinator; the default is Git's whitespace/conflict-marker diff check. A
+    repository may also declare ``MERGE_GATE_PATH``; those checks always run after
+    the coordinator's, so a narrowly scoped issue cannot merge a cross-cutting
+    regression (for example missing translations) that breaks later issues.
     """
     root = Path(repo_root).resolve()
     runtime = _runtime(root)
@@ -135,6 +193,29 @@ def merge_issue(repo_root, shared_branch, issue_branch, *, verify_commands=(), p
             result['verification']['commands_run'].append(list(command))
             if checked.returncode:
                 return {**result, 'reason': 'verification-failed', 'evidence': (checked.stderr or checked.stdout)[-4000:]}
+        try:
+            gate = _merge_gate(tree, base)
+        except ValueError as error:
+            return {**result, 'reason': 'invalid-merge-gate', 'evidence': str(error)}
+        if gate is not None:
+            changed = [line for line in _git(tree, 'diff', '--name-only', base, 'HEAD').stdout.splitlines() if line]
+            report = result['merge_gate'] = {'source': f'{base}:{MERGE_GATE_PATH}', 'commands_run': [], 'skipped': []}
+            for command in gate:
+                if not _gate_applies(command, changed):
+                    report['skipped'].append(command['name'])
+                    continue
+                from .runner import resolve_executable
+                try:
+                    argv = resolve_executable(tuple(command['argv']), dict(os.environ))
+                    checked = subprocess.run(argv, cwd=tree / command['cwd'], capture_output=True, text=True,
+                                             timeout=command['timeout_seconds'])
+                except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                    return {**result, 'reason': 'merge-gate-failed', 'failed_gate': command['name'], 'evidence': str(error)}
+                report['commands_run'].append(command['name'])
+                result['verification']['commands_run'].append(list(command['argv']))
+                if checked.returncode:
+                    return {**result, 'reason': 'merge-gate-failed', 'failed_gate': command['name'],
+                            'evidence': (checked.stderr or checked.stdout)[-4000:]}
         head = _git(tree, 'rev-parse', 'HEAD').stdout.strip()
         if head != merged_head:
             return {**result, 'reason': 'verification-changed-head',

@@ -116,7 +116,7 @@ Use the assigned issue worktree as the explicit working directory for Git. Compa
 Run tests before declaring work complete. All tests must pass. Do not mark work done if any test is failing.
 
 1. Run the narrowest test scope that covers the changed code first.
-2. Then run the full test suite.
+2. Then run every coordinator-supplied required command, and the full test suite when it fits the attempt deadline (see the appended `artifact-protocol.md`). Cross-cutting suites the repository declares in its merge gate also run at merge.
 3. Fix failures within the assigned work before claiming success. If they prevent completion, publish the typed failure result with evidence.
 
 **Out-of-scope test failures**: Investigate whether your changes introduced regressions. If a required gate stays red, publish the shared protocol failed or blocked report with exact evidence and preserve the work for coordinator attribution; never manufacture success or omit the handoff.
@@ -126,7 +126,7 @@ Examples:
 - `bun run test` (frontend scope when applicable)
 - `dotnet test` (backend scope when applicable)
 
-If a full-suite run is prohibitively slow, run the narrowest passing scope, document exactly which suite was skipped and why, and flag it as a follow-up risk in your output report. Skipping must be the exception, not the default.
+If a full-suite run is prohibitively slow or will not fit the attempt deadline, run the narrowest passing scope, document exactly which suite was skipped and why, and flag it as a follow-up risk in your output report. Skipping must be the exception, not the default.
 
 **Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 

@@ -232,8 +232,31 @@ def routing_availability(
     return availability
 
 
-def _failed_attempt_route(state_file: Path, *, aliases: dict[str, Any] | None = None) -> tuple[str, str, str] | None:
-    """Return (agent, model, reason) for a dispatcher-owned infrastructure failure, else None."""
+# Exclusion lifetime for a quota failure whose provider named no reset time;
+# matches the shortest common provider window (Claude's five-hour session).
+DEFAULT_QUOTA_EXCLUSION_SECONDS = 5 * 3600
+
+
+def quota_exclusion_active(state: dict[str, Any], now: float | None = None) -> bool:
+    """Whether a recorded quota failure still excludes its harness at ``now``."""
+    now = time.time() if now is None else now
+    until = state.get("unavailable_until")
+    if type(until) in (int, float) and until > 0:
+        return now < until
+    completed = state.get("completed_at")
+    if type(completed) in (int, float) and completed > 0:
+        return now < completed + DEFAULT_QUOTA_EXCLUSION_SECONDS
+    return True
+
+
+def _failed_attempt_route(state_file: Path, *, aliases: dict[str, Any] | None = None,
+                          now: float | None = None) -> tuple[str, str, str] | None:
+    """Return (agent, model, reason) for a dispatcher-owned infrastructure failure, else None.
+
+    An attempt whose committed work went to artifact recovery still counts when the
+    dispatcher recorded a provider ``unavailable_reason``. Quota failures stop
+    counting once the provider's reset time (or the default window) has passed.
+    """
     try:
         state = json.loads(state_file.read_text(encoding="utf-8"))
         config = json.loads(Path(str(state_file) + ".config.json").read_text(encoding="utf-8"))
@@ -241,11 +264,19 @@ def _failed_attempt_route(state_file: Path, *, aliases: dict[str, Any] | None = 
         return None
     if not isinstance(state, dict) or not isinstance(config, dict):
         return None
-    if state.get("state") != "failed" or state.get("failure_class") != "infrastructure":
+    if state.get("failure_class") != "infrastructure":
+        return None
+    recorded = state.get("unavailable_reason")
+    if state.get("state") == "failed":
+        reason = state.get("reason")
+    elif state.get("state") == "artifact-recovery-required" and isinstance(recorded, str):
+        reason = recorded
+    else:
         return None
     run = config.get("agent_run")
-    reason = state.get("reason")
     if not isinstance(run, dict) or not isinstance(reason, str) or not reason:
+        return None
+    if reason == "quota" and not quota_exclusion_active(state, now):
         return None
     agent = state.get("agent") or run.get("agent")
     model = state.get("model") or run.get("model")
@@ -256,7 +287,8 @@ def _failed_attempt_route(state_file: Path, *, aliases: dict[str, Any] | None = 
     return agent, model, reason
 
 
-def failed_attempt_routes(state_files: Any, *, registry: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
+def failed_attempt_routes(state_files: Any, *, registry: dict[str, Any] | None = None,
+                          now: float | None = None) -> list[tuple[str, str, str]]:
     """Dispatcher-owned infrastructure failures as (agent, model, reason); others are ignored."""
     aliases = registry.get("aliases", {}) if isinstance(registry, dict) else None
     seen: set[Path] = set()
@@ -270,16 +302,18 @@ def failed_attempt_routes(state_files: Any, *, registry: dict[str, Any] | None =
         if key in seen:
             continue
         seen.add(key)
-        route = _failed_attempt_route(path, aliases=aliases)
+        route = _failed_attempt_route(path, aliases=aliases, now=now)
         if route is not None:
             routes.append(route)
     return routes
 
 
-def availability_from_failed_attempts(state_files: Any, *, registry: dict[str, Any] | None = None) -> Availability:
+def availability_from_failed_attempts(state_files: Any, *, registry: dict[str, Any] | None = None,
+                                      now: float | None = None) -> Availability:
     """Fold dispatcher-owned failed-attempt records into cumulative exclusions.
 
-    Only a worker state with ``state=failed`` and ``failure_class=infrastructure`` and its
+    Only a worker state with ``failure_class=infrastructure`` (``state=failed``, or
+    ``state=artifact-recovery-required`` with a recorded ``unavailable_reason``) and its
     dispatcher-written records count (resolved agent/model from the state, else its config); provider-supplied status lines are never consulted.
     Auth/quota/missing/unsupported-CLI reasons exclude the harness, any other reason only the
     agent/model pair. Unreadable or non-matching records are ignored.
@@ -287,11 +321,30 @@ def availability_from_failed_attempts(state_files: Any, *, registry: dict[str, A
     from ai_skills.runner import _unavailability_scope
 
     availability = empty_availability()
-    for agent, model, reason in failed_attempt_routes(state_files, registry=registry):
+    for agent, model, reason in failed_attempt_routes(state_files, registry=registry, now=now):
         if _unavailability_scope(reason) == "agent":
             availability["agents"].add(agent)
         elif model:
             availability["pairs"].add((agent, model))
+    return availability
+
+
+def run_quota_exclusions(run_dir: Path, *, registry: dict[str, Any] | None = None,
+                         now: float | None = None) -> Availability:
+    """Harnesses with an unexpired quota failure anywhere in this run.
+
+    Provider quota belongs to the account, not to one issue or role, so a quota
+    hit by any worker excludes that harness for every route until it resets.
+    These ambient exclusions never spend a caller's availability retry budget.
+    """
+    availability = empty_availability()
+    issues = Path(run_dir) / "issues"
+    if not issues.is_dir():
+        return availability
+    states = sorted(issues.glob("*/workers/*/*.state.json"))
+    for agent, _model, reason in failed_attempt_routes(states, registry=registry, now=now):
+        if reason == "quota":
+            availability["agents"].add(agent)
     return availability
 
 
@@ -926,6 +979,9 @@ def main(argv: list[str] | None = None) -> int:
     prefer_model = args.prefer_model or None
     availability = routing_availability(registry, args.model_denylist, args.availability_file)
     availability = merge_availability(availability, availability_from_failed_attempts(args.failed_attempt_state, registry=registry))
+    run_dir = ledger_file.absolute().parent
+    if run_dir.name == ".run-with-it":
+        availability = merge_availability(availability, run_quota_exclusions(run_dir, registry=registry))
     retries = len(failed_attempt_routes(args.failed_attempt_state, registry=registry))
     if args.max_availability_retries is not None and retries > args.max_availability_retries:
         fail(f"all-routes-unavailable: availability retry budget reached "

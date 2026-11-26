@@ -21,6 +21,7 @@ If the `Skill` tool is unavailable in this session, continue without activation 
 - Resolve the failed merge between one issue branch and the shared run feature branch.
 - Inspect the shared feature branch holistically because it already contains work from other Sub-Coordinators.
 - Keep the fix limited to conflict resolution, integration glue, and verification failures caused by the merge.
+- A `merge-gate-failed` reason names the failed repository gate (`failed_gate`, from `.maestro/merge-gate.json` on the shared branch). Fix the issue's change so that gate passes; never edit or remove the gate itself to get a merge through.
 - Push the shared feature branch after a successful recovery merge.
 
 ## Inputs Expected

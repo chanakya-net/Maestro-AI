@@ -194,12 +194,29 @@ def _availability_reason(config, *, provider_code=1):
     _, model, agy_stream = _resolved_route(config)
     if agy_stream:
         return _agy_adoption_diagnostic(config, model, process, raw, provider_code=provider_code)
-    text = ''
+    return classify_unavailable(_provider_failure_text(process, raw))
+
+
+def _provider_failure_text(process, raw):
+    from ai_skills.runner import unavailability_text
+    texts = {}
     for key, stream_key in (('stdout_file','stdout'),('stderr_file','stderr')):
         path = process.get(key) or raw.get('spec',{}).get(stream_key)
-        if path and Path(path).is_file():
-            text += _read_tail_text(path)
-    return classify_unavailable(text)
+        texts[stream_key] = _read_tail_text(path) if path and Path(path).is_file() else ''
+    return unavailability_text(texts['stdout'], texts['stderr'])
+
+
+def _availability_until(config, reason):
+    """Quota reset recorded by the runner, else parsed from the provider's own failure text."""
+    if reason != 'quota':
+        return None
+    from ai_skills.runner import quota_reset_at
+    process, supervisor = _provider_record(config)
+    recorded = process.get('unavailable_until')
+    if isinstance(recorded, (int, float)) and recorded > 0:
+        return float(recorded)
+    raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+    return quota_reset_at(_provider_failure_text(process, raw))
 
 
 def _launcher_state(state):
