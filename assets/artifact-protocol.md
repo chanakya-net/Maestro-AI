@@ -20,6 +20,14 @@ Use a temporary payload beside the result outside the source worktree; this publ
 
 Managed DONE is dispatcher-owned. Never create, edit, repair or remove `RUN_WITH_IT_DONE_FILE`, another worker's DONE, another worker's state, or the dispatcher-owned `state_file` and its claim/config/outcome records. Sub-Coordinators must write their own issue `sub-state.json` ledger as required by their role instructions, including durable in-flight worker identities; that role-owned ledger is separate from dispatcher state. The dispatcher persists the claim, configuration and pending outcome before launching a wrapper or provider; failed persistence prevents launch. It durably records timeout/interruption intent before signaling the owned tree. The dispatcher proves owned-tree shutdown and durable provider exit, validates the report and evidence, then records outcome -> state -> DONE. It may record a non-success DONE. A validated outcome governs phase transitions; raw process success, chat, logs, or a premature DONE do not. Unknown ownership remains nonterminal and prohibits duplicate launch.
 
+## Attempt deadline
+
+When `RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH` is set, the dispatcher stops this attempt at that Unix time (`RUN_WITH_IT_ATTEMPT_DEADLINE` is the same moment in UTC) with no usable grace period. Anything not published by then is lost, and committed work goes to artifact recovery.
+
+- Before each long step (a full or unfiltered suite, a browser run, a re-run), compare the current Unix time with `RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH`. Do not start a step that will not finish at least 15 minutes before it.
+- Publish as soon as the role's evidence is complete; do not run optional extra suites first. Never wait on a background command past the deadline; wait in bounded intervals.
+- Implementation and modification: if required checks remain after the handoff commit and will not fit, publish a typed `interrupted` report with `reason="attempt-deadline"`, the commit SHA, each check already passed with its evidence, and each check still to run. The coordinator then applies the verification-only retry rules to the unchanged commit instead of recovering the work.
+
 ## Captured final response
 
 Use the final response when authoritative attempt metadata includes `result_capture`. Copy the exact identity from `result_capture.envelope`, including the string cycle. The metadata takes precedence over task text, role examples, and inherited values. Place the success or typed failure report under `result`. For a typed report, also copy the admitted `run_id`, `attempt_id`, `issue`, and `role` into the inner report. End with exactly one UTF-8 JSON object, with no fences or surrounding prose.

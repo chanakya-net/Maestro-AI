@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass, fields, replace
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -50,8 +51,31 @@ from ai_skills.dispatch.capture import (
     _plan_handoff_fingerprint, _plan_paths, _protected_artifact_bytes,
     _protected_plan_capture, _provider_record, _publish_captured_result,
     _publish_protected_plan, _read_bound_outcome, _read_tail_text, _record_stop_intent,
-    _resolved_route, _safe_synthesis, _unknown_attempt, write_text_atomic,
+    _resolved_route, _safe_synthesis, _unknown_attempt, write_text_atomic, _availability_until,
 )
+
+_STOP_REASONS = frozenset({'interrupted', 'hard-limit-exceeded', 'dispatch-timeout', 'dispatch-bootstrap-failed',
+                           'shutdown-identity-unknown'})
+
+
+def _with_attempt_deadline(run, hard_limit_seconds):
+    """Give a bounded attempt its wall-clock deadline so it can publish before the kill.
+
+    The hard-limit stop has no useful grace period for an LLM, so the only way a
+    worker keeps its result is to publish before the deadline (artifact protocol).
+    Only the launched copy carries the variables; persisted configs are unchanged.
+    Protected read-only AGY plan launches are skipped: their admitted invocation,
+    environment included, must match exactly.
+    """
+    if not hard_limit_seconds or hard_limit_seconds <= 0 or _protected_plan_capture(run):
+        return run
+    deadline = time.time() + hard_limit_seconds
+    environment = dict(os.environ if run.environment is None else run.environment)
+    environment['RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH'] = str(int(deadline))
+    environment['RUN_WITH_IT_ATTEMPT_DEADLINE'] = datetime.fromtimestamp(deadline, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    environment['RUN_WITH_IT_ATTEMPT_HARD_LIMIT_SECONDS'] = str(int(hard_limit_seconds))
+    return run.replace(environment=environment)
+
 
 def _stop_provider(config, grace=.1):
     record = _process_record(config)
@@ -70,9 +94,10 @@ def _work(config):
     write_json_atomic(Path(config.state_file), base)
     bus.emit('dispatch-ready', common)
     results, errors = [], []
+    launch = _with_attempt_deadline(run, config.hard_limit_seconds)
     def invoke():
         try:
-            results.append(run_agent(run))
+            results.append(run_agent(launch))
         except BaseException as error:
             errors.append(str(error))
     thread = threading.Thread(target=invoke, name='owned-agent-runner', daemon=True)
@@ -155,7 +180,7 @@ def _work(config):
     return _finalize_attempt(config, provider_return_code=code, reason=reason,
         failure_class='infrastructure' if result.unavailable_reason else 'capability',
         prelaunch_failure=prelaunch, runner_failed=result.return_code != 0,
-        route=(result.agent, result.model))
+        route=(result.agent, result.model), unavailable_until=result.unavailable_until)
 
 
 def _bind_result_capture(config, registry, original_run):
@@ -237,7 +262,8 @@ def _check_protected_plan_locations(config, original_run):
 def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                       reason: str = '', failure_class: str = 'capability',
                       prelaunch_failure: bool = False, runner_failed: bool = False,
-                      route: tuple[str, str] | None = None) -> WorkerResult:
+                      route: tuple[str, str] | None = None,
+                      unavailable_until: float | None = None) -> WorkerResult:
     """Journal one decision after callers prove owned death or no launch.
 
     Outcome -> state -> DONE -> event. A storage failure propagates, retaining
@@ -279,6 +305,11 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
                 failure_class = 'infrastructure'
         if stop_intent:
             reason = stop_intent['reason']
+        # Kept apart from ``reason``, which artifact recovery may overwrite, so
+        # routing still excludes an unavailable harness after salvaged work.
+        unavailable_reason = reason if failure_class == 'infrastructure' and reason not in _STOP_REASONS else ''
+        if unavailable_reason == 'quota' and unavailable_until is None:
+            unavailable_until = _availability_until(config, unavailable_reason)
         capture_reason = 'capture-attempt-not-bound' if protected_plan and previous is None else ''
         plan_handoff = None
         if previous is not None and not terminal and capture_source(run):
@@ -305,7 +336,7 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         else:
             artifact_reason = capture_reason if protected_plan else _artifact_reason(config)
             if artifact_reason and not protected_plan and not terminal and not prelaunch_failure:
-                _safe_synthesis(config, reason)
+                _safe_synthesis(config, reason, provider_return_code=provider_return_code)
                 artifact_reason = _artifact_reason(config)
             if artifact_reason == 'artifact-recovery-required':
                 reason, code = artifact_reason, 75
@@ -359,6 +390,10 @@ def _finalize_attempt(config: WorkerConfig, *, provider_return_code: int | None,
         state.update(state=worker_state,return_code=code,exit_code=code,reason=reason,
             completed_at=outcome['finished_at'],alive=False,provider_identity=process.get('identity'),
             failure_class=failure_class)
+        if unavailable_reason:
+            state['unavailable_reason'] = unavailable_reason
+            if unavailable_reason == 'quota' and isinstance(unavailable_until, (int, float)) and unavailable_until > 0:
+                state['unavailable_until'] = float(unavailable_until)
         if route and failure_class == 'infrastructure' and not state_was_terminal:
             state.update(agent=route[0], model=route[1])  # resolved route, dispatcher-owned
         write_json_atomic(Path(config.state_file),state)

@@ -143,7 +143,7 @@ For ordinary managed implementation on any supported enabled route, include `res
   "poll_seconds": 20,
   "quiet_seconds": 900,
   "stall_seconds": 1200,
-  "hard_limit_seconds": 7200,
+  "hard_limit_seconds": 21600,
   "detach": true
 }
 ```
@@ -513,7 +513,7 @@ After approval or a valid review skip, the Sub-Coordinator owns the normal merge
 ai-skills git merge-issue --repo-root /absolute/run --shared-branch Maestro/cunning-fox --issue-branch Maestro/cunning-fox-issue-42 --verification-file merge-verification.json --push
 ```
 
-The native operation owns the merge lock, disposable worktree and verified shared-branch update. A failed merge/verification retains `merge_worktree` for semantic recovery; successful integration cleans up its disposable tree. Read its JSON outcome, merge commit and conflict evidence. Never checkout/merge the shared branch in the shared root or handwrite lock algorithms. On conflict preserve evidence, emit `merge-failed`, and write `outcome=merge_failed`; the Main control plane delegates semantic conflict resolution to the Merge Recovery Coordinator. Never publish unverified salvage as success.
+If the repository commits `.maestro/merge-gate.json`, `merge-issue` also runs those checks (read from the shared branch, not the issue branch) after yours; a failure returns `reason=merge-gate-failed` with `failed_gate` and is handled like any merge failure. The native operation owns the merge lock, disposable worktree and verified shared-branch update. A failed merge/verification retains `merge_worktree` for semantic recovery; successful integration cleans up its disposable tree. Read its JSON outcome, merge commit and conflict evidence. Never checkout/merge the shared branch in the shared root or handwrite lock algorithms. On conflict preserve evidence, emit `merge-failed`, and write `outcome=merge_failed`; the Main control plane delegates semantic conflict resolution to the Merge Recovery Coordinator. Never publish unverified salvage as success.
 
 ### Sandbox
 

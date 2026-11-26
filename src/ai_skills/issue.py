@@ -352,7 +352,7 @@ def build_worker_config(
         "poll_seconds": 20,
         "quiet_seconds": dispatch.DEFAULT_QUIET_SECONDS,
         "stall_seconds": dispatch.DEFAULT_STALL_SECONDS,
-        "hard_limit_seconds": 7200,
+        "hard_limit_seconds": dispatch.DEFAULT_HARD_LIMIT_SECONDS,
         "detach": detach,
         "execution_mode": execution_mode,
     }

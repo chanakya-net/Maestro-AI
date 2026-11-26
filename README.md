@@ -627,6 +627,21 @@ The stop command first requests that pool admission halt, then verifies and stop
 
 `git merge-issue` accepts `--verification-file` containing a JSON list of argument lists, for example `[["python", "-m", "pytest", "-q"]]`. Commands run without a shell. Supply the project's actual verification commands; the default Git whitespace check alone does not establish project correctness. Pushing requires explicit `--push`.
 
+A target repository can also commit a merge gate at `.maestro/merge-gate.json`. `merge-issue` runs it after the coordinator's commands on every issue merge, so a narrowly verified issue cannot merge a cross-cutting regression (for example missing translations) that then fails the baseline for every later issue. The gate is read from the shared branch tip before the merge, so an issue branch cannot weaken its own gate. It runs in a fresh disposable worktree, so list setup steps (dependency installs) first:
+
+```json
+{
+  "schema_version": 1,
+  "commands": [
+    {"name": "frontend deps", "argv": ["bun", "install", "--frozen-lockfile"], "cwd": "src/frontend", "when_changed": ["src/frontend/*"]},
+    {"name": "i18n coverage", "argv": ["bun", "run", "test", "--run", "src/app/core/i18n"], "cwd": "src/frontend",
+     "timeout_seconds": 900, "when_changed": ["src/frontend/*"]}
+  ]
+}
+```
+
+`cwd` is relative to the repository root, `timeout_seconds` defaults to 1800 (maximum 14400), and `when_changed` globs (matched against the merge's changed paths) skip a check when nothing relevant changed. A missing file means no gate; an invalid file fails the merge with `reason=invalid-merge-gate`, and a failing check returns `reason=merge-gate-failed` with `failed_gate`.
+
 Provider selection follows explicit configuration, environment overrides, then registry defaults. `SUB_COORD_AGENT`/`SUB_COORD_MODEL` select coordinator execution; `FORCED_AGENT`/`FORCED_MODEL` constrain worker routing independently. Deprecated ambient `AGENT`/`MODEL` aliases remain available for direct agent execution, while dispatchers clear them before launching providers. Credentials are inherited at execution time and are not serialized into runtime records.
 
 </details>

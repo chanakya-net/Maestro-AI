@@ -55,8 +55,17 @@ def test_quiet_owned_provider_emits_heartbeat_and_stops_on_completion(tmp_path):
     assert 'type=agent-complete' in lines[-1]
 
 
-@pytest.mark.parametrize('message,reason', [('API error: 401 invalid authentication credentials','auth'), ('usage limit exceeded', 'quota'), ('model is not supported', 'model-unsupported')])
-def test_nonzero_exit_classification_done_marker_and_telemetry(tmp_path, message, reason):
+@pytest.mark.parametrize('message,reason,scope', [
+    ('API error: 401 invalid authentication credentials', 'auth', 'agent'),
+    ('usage limit exceeded', 'quota', 'agent'),
+    ("You've hit your 5-hour limit · resets 8:50pm (Asia/Calcutta)", 'quota', 'agent'),
+    ("You've hit your weekly limit · resets Mon 9:00am", 'quota', 'agent'),
+    ("You've hit your limit · resets 3:40am (Asia/Calcutta)", 'quota', 'agent'),
+    ('model is not supported', 'model-unsupported', 'agent-model'),
+    ('ERROR: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.', 'policy-refusal', 'agent'),
+    ('Request was flagged as potentially violating our usage policy.', 'policy-refusal', 'agent'),
+])
+def test_nonzero_exit_classification_done_marker_and_telemetry(tmp_path, message, reason, scope):
     config = fixture_config(tmp_path, f'import sys; print({message!r}, file=sys.stderr); sys.exit(7)')
     config.done_file.write_text('stale success', encoding='utf-8')
     result = run_agent(config)
@@ -64,8 +73,65 @@ def test_nonzero_exit_classification_done_marker_and_telemetry(tmp_path, message
     assert result.unavailable_reason == reason
     assert 'status=failed' in config.done_file.read_text()
     assert 'stale' not in config.done_file.read_text()
-    assert f'reason={reason}|action=exclude-route' in config.events_log.read_text()
+    assert f'reason={reason}|action=exclude-route|scope={scope}' in config.events_log.read_text()
     assert 'type=telemetry|agent=fake|model=fixture|input_tokens=unknown' in config.log_file.read_text()
+
+
+@pytest.mark.parametrize('message', [
+    'AssertionError: customer credit limit exceeded in billing test',
+    'Test failed: maximum retry limit reached for order checkout',
+    'Tests passed; quota table migrated',
+    'P0602 capacity quota guard failed',
+    'rate limit middleware returned 503 in throttling test',
+    'feature not supported on this platform, skipping',
+])
+def test_domain_limit_errors_are_not_misclassified_as_unavailable(tmp_path, message):
+    config = fixture_config(tmp_path, f'import sys; print({message!r}, file=sys.stderr); sys.exit(1)')
+    result = run_agent(config)
+    assert result.return_code == 1
+    assert result.unavailable_reason == ''
+    assert 'type=agent-unavailable|' not in config.events_log.read_text()
+
+
+def test_provider_phrase_before_later_output_is_not_unavailability(tmp_path):
+    source = ("import sys\nprint('quota exceeded for shop North', file=sys.stderr)\n"
+              "for n in range(40): print(f'test line {n}', file=sys.stderr)\nsys.exit(1)")
+    result = run_agent(fixture_config(tmp_path, source))
+    assert (result.return_code, result.unavailable_reason) == (1, '')
+
+
+@pytest.mark.parametrize('event,reason', [
+    ({'type': 'result', 'subtype': 'success', 'is_error': False,
+      'result': 'Fixed the quota exceeded and rate limit exceeded checks'}, ''),
+    ({'type': 'result', 'subtype': 'success', 'is_error': True, 'api_error_status': 429,
+      'api_error_type': 'rate_limit_error', 'api_error': 'usage_limit_reached',
+      'result': "You've hit your 5-hour limit \u00b7 resets 3:40am (Asia/Calcutta)"}, 'quota'),
+])
+def test_claude_terminal_result_classifies_only_structured_errors(tmp_path, event, reason):
+    source = f"import json, sys\nprint(json.dumps({event!r}))\nsys.exit(1)"
+    result = run_agent(fixture_config(tmp_path, source))
+    assert (result.return_code, result.unavailable_reason) == (1, reason)
+    assert (result.unavailable_until is not None) is (reason == 'quota')
+
+
+@pytest.mark.parametrize('text,expected', [
+    ("You've hit your 5-hour limit \u00b7 resets 3:40am (Asia/Calcutta)", '2026-11-25T03:40+05:30'),
+    ('resets 8:50pm (Asia/Calcutta)', '2026-11-24T20:50+05:30'),
+    ('limit reached, resets Dec 1, 3pm (UTC)', '2026-12-01T15:00+00:00'),
+    ('resets Mon 9:00am (UTC)', '2026-11-30T09:00+00:00'),
+    ('usage limit reached', None),
+    ('resets 25:00pm (UTC)', None),
+    ('resets 3:40am (Mars/Olympus)', None),
+])
+def test_quota_reset_at_returns_next_named_reset(text, expected):
+    from datetime import datetime
+    from ai_skills.runner import quota_reset_at
+    now = datetime.fromisoformat('2026-11-24T20:00+05:30').timestamp()
+    reset = quota_reset_at(text, now=now)
+    if expected is None:
+        assert reset is None
+    else:
+        assert reset == datetime.fromisoformat(expected).timestamp()
 
 
 def test_cli_environment_aliases_and_dry_run(tmp_path, monkeypatch, capsys):

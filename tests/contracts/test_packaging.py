@@ -313,7 +313,7 @@ recovery = supervisor.worker('1', kind='merge-recovery')
 assert (recovery.timeout_seconds, recovery.hard_limit_seconds) == (0, 0)
 assert (recovery.quiet_seconds, recovery.stall_seconds) == (900, 1200)
 child = WorkerConfig(replace(recovery.agent_run, role='impl'), recovery.state_file)
-assert (child.timeout_seconds, child.hard_limit_seconds) == (0, 7200)
+assert (child.timeout_seconds, child.hard_limit_seconds) == (0, 21600)
 assert (child.quiet_seconds, child.stall_seconds) == (900, 1200)
 """
 

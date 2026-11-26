@@ -47,7 +47,7 @@ from ai_skills.dispatch.capture import (
     _artifact_reason, inspect_worker,
     _agy_adoption_diagnostic, _availability_reason, _bound_stop_intent,
     _launcher_state, _provider_record, _read_bound_outcome, _resolved_route,
-    _unknown_attempt, write_text_atomic,
+    _unknown_attempt, write_text_atomic, _availability_until,
 )
 from ai_skills.dispatch.lifecycle import (
     _bind_agy_plan_capture, _bind_result_capture, _check_protected_plan_locations,
@@ -178,7 +178,8 @@ def _adopt_released(config, state, code):
         elif code:
             reason = _availability_reason(config, provider_code=code)
     return _finalize_attempt(config,provider_return_code=code,reason=reason,
-        failure_class='infrastructure' if reason else 'capability', route=route)
+        failure_class='infrastructure' if reason else 'capability', route=route,
+        unavailable_until=_availability_until(config, reason))
 
 
 def adopt_worker(state_file) -> WorkerResult:

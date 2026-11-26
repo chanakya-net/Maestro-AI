@@ -108,7 +108,7 @@ def _read_bound_outcome(config):
     return None if payload is missing else payload
 
 
-def _safe_synthesis(config, reason):
+def _safe_synthesis(config, reason, *, provider_return_code=None):
     """Only absent outputs may be reconstructed; never erase provider bytes."""
     if config.execution_mode == 'verify_existing':
         return False
@@ -136,7 +136,11 @@ def _safe_synthesis(config, reason):
                 return False
     elif Path(paths['result']).exists():
         return False
-    args = _artifact_args(config, from_stall=reason in ('interrupted','hard-limit-exceeded','dispatch-timeout'))
+    args = _artifact_args(
+        config,
+        from_stall=reason in ('interrupted','hard-limit-exceeded','dispatch-timeout'),
+        provider_exited_cleanly=(provider_return_code == 0 and not reason),
+    )
     if run.role in ('impl','modify') and config.pre_spawn_head and git.repo_available(str(run.repo_root)):
         try:
             args.from_stall = args.from_stall or git.current_head(str(run.repo_root)) != config.pre_spawn_head
@@ -190,12 +194,29 @@ def _availability_reason(config, *, provider_code=1):
     _, model, agy_stream = _resolved_route(config)
     if agy_stream:
         return _agy_adoption_diagnostic(config, model, process, raw, provider_code=provider_code)
-    text = ''
+    return classify_unavailable(_provider_failure_text(process, raw))
+
+
+def _provider_failure_text(process, raw):
+    from ai_skills.runner import unavailability_text
+    texts = {}
     for key, stream_key in (('stdout_file','stdout'),('stderr_file','stderr')):
         path = process.get(key) or raw.get('spec',{}).get(stream_key)
-        if path and Path(path).is_file():
-            text += _read_tail_text(path)
-    return classify_unavailable(text)
+        texts[stream_key] = _read_tail_text(path) if path and Path(path).is_file() else ''
+    return unavailability_text(texts['stdout'], texts['stderr'])
+
+
+def _availability_until(config, reason):
+    """Quota reset recorded by the runner, else parsed from the provider's own failure text."""
+    if reason != 'quota':
+        return None
+    from ai_skills.runner import quota_reset_at
+    process, supervisor = _provider_record(config)
+    recorded = process.get('unavailable_until')
+    if isinstance(recorded, (int, float)) and recorded > 0:
+        return float(recorded)
+    raw = supervisor.lookup_attempt(config.agent_run.run_id, config.agent_run.attempt_id) or {}
+    return quota_reset_at(_provider_failure_text(process, raw))
 
 
 def _launcher_state(state):

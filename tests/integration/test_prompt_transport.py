@@ -670,6 +670,34 @@ def test_agy_stream_capture_preserves_explicit_failure(tmp_path, capsys, case, e
     assert any(CARBON in line and remedy in line and 'STATUS|' not in line for line in log.splitlines())
 
 
+@pytest.mark.parametrize('where', ['terminal-error', 'stderr', 'model-step'])
+def test_agy_quota_records_reset_only_from_provider_text(tmp_path, capsys, where):
+    cid = 'conv-quota'
+    reset = '; resets 9:00pm (UTC)'
+    error = 'RESOURCE_EXHAUSTED: usage quota exceeded' + (reset if where == 'terminal-error' else '')
+    events = [{'event': 'init', 'conversation_id': cid, 'init': {'model': CARBON}}]
+    if where == 'model-step':
+        events.append({'event': 'step_update', 'step_update': {'conversation_id': cid, 'step_index': 0,
+                       'step_type': 'user_input', 'state': 'DONE', 'text_delta': 'quota' + reset}})
+    events.append({'event': 'result', 'result': {'status': 'ERROR', 'error': error, 'conversation_id': cid}})
+    stderr = 'quota' + reset if where == 'stderr' else ''
+    script = (f'print({stderr!r}, file=sys.stderr)\nfor event in {events!r}: print(json.dumps(event))\n'
+              'raise SystemExit(2)')
+    config = configuration(tmp_path, 'agy', response=script)
+    config = config.replace(model=CARBON, role='impl', dispatcher_managed=True, state_file=tmp_path / 'worker.json',
+                            result_file=tmp_path / 'result.json', result_capture_context={'source': 'agy-stream-json'})
+    outcome = run_agent(config)
+    capsys.readouterr()
+    assert outcome.unavailable_reason == 'quota'
+    state = json.loads(config.process_state_file.read_bytes())
+    if where == 'model-step':
+        assert outcome.unavailable_until is None and 'unavailable_until' not in state
+        return
+    assert 0 < outcome.unavailable_until - time.time() <= 24 * 3600
+    assert time.gmtime(outcome.unavailable_until)[3:5] == (21, 0)
+    assert state['unavailable_until'] == outcome.unavailable_until
+
+
 @pytest.mark.parametrize('exit_code', [0, 1])
 @pytest.mark.parametrize('error', [
     'permission denied: tool write_file may not modify /etc/hosts',

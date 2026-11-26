@@ -25,6 +25,27 @@ def worker_config(tmp_path, source, **overrides):
     return WorkerConfig(agent_run=agent,state_file=tmp_path/'worker.state.json',poll_seconds=.02,**overrides)
 
 
+@pytest.mark.parametrize('hard_limit', [600.0, 0.0])
+def test_bounded_attempt_receives_its_deadline(tmp_path, hard_limit):
+    import time
+    probe = tmp_path / 'deadline.json'
+    config = worker_config(tmp_path, f"""import json, os
+from pathlib import Path
+Path({str(probe)!r}).write_text(json.dumps({{key: os.environ.get(key) for key in
+    ('RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH', 'RUN_WITH_IT_ATTEMPT_DEADLINE', 'RUN_WITH_IT_ATTEMPT_HARD_LIMIT_SECONDS')}}))
+""", hard_limit_seconds=hard_limit)
+    started = time.time()
+    dispatch_worker(config)
+    seen = json.loads(probe.read_text())
+    record = json.loads(Path(str(config.state_file) + '.config.json').read_text())
+    assert 'RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH' not in json.dumps(record)
+    if not hard_limit:
+        assert seen == dict.fromkeys(seen)
+        return
+    assert started + hard_limit - 5 <= int(seen['RUN_WITH_IT_ATTEMPT_DEADLINE_EPOCH']) <= time.time() + hard_limit
+    assert seen['RUN_WITH_IT_ATTEMPT_DEADLINE'].endswith('Z') and seen['RUN_WITH_IT_ATTEMPT_HARD_LIMIT_SECONDS'] == '600'
+
+
 def test_admission_persists_pending_bound_outcome_before_provider(tmp_path):
     config=worker_config(tmp_path, '''import json,os
 from pathlib import Path
@@ -282,7 +303,7 @@ def test_from_sources_cli_over_environment_and_forwarded_fields(tmp_path):
     assert config.hard_limit_seconds == 42
 
 
-@pytest.mark.parametrize(('role', 'hard_limit'), [('impl', 7200), ('sub-coord', 0), ('merge-recovery', 0)])
+@pytest.mark.parametrize(('role', 'hard_limit'), [('impl', 21600), ('sub-coord', 0), ('merge-recovery', 0)])
 def test_role_defaults_and_explicit_recorded_deadlines(tmp_path, role, hard_limit):
     config = worker_config(tmp_path, 'from pathlib import Path;Path("result.json").write_text("{}")')
     config = replace(config, agent_run=config.agent_run.replace(role=role), hard_limit_seconds=None)
@@ -395,6 +416,36 @@ def test_cli_json_config_can_execute_without_shell_wrapper(tmp_path):
     path=tmp_path/'config.json';path.write_text(json.dumps(config.to_record()))
     assert main(['dispatch','--config',str(path)])==0
     assert main(['inspect','--config',str(path)])==0
+
+
+def test_quota_after_commit_keeps_harness_exclusion_through_artifact_recovery(tmp_path):
+    """918 regression: work committed, then the Claude 5-hour limit ended the session."""
+    import subprocess
+    from dataclasses import replace
+    from ai_skills import routing
+    def git(*args):
+        return subprocess.check_output(['git','-C',str(tmp_path),*args],stderr=subprocess.DEVNULL,text=True).strip()
+    git('init');git('config','user.name','Fixture');git('config','user.email','fixture@example.invalid')
+    (tmp_path/'initial').write_text('initial');git('add','initial');git('commit','-m','initial')
+    pre=git('rev-parse','HEAD')
+    config=worker_config(tmp_path, """import subprocess, sys
+from pathlib import Path
+Path('committed-work').write_text('implemented')
+subprocess.check_call(['git','add','committed-work'])
+subprocess.check_call(['git','commit','-m','implementation'])
+print("You've hit your 5-hour limit \u00b7 resets 3:40am (Asia/Calcutta)", file=sys.stderr)
+sys.exit(1)
+""")
+    config=replace(config,agent_run=config.agent_run.replace(role='impl'),pre_spawn_head=pre)
+    result=dispatch_worker(config)
+    assert result.state=='artifact-recovery-required'
+    state=json.loads(config.state_file.read_text())
+    assert (state['failure_class'], state['reason'], state['unavailable_reason']) == (
+        'infrastructure', 'artifact-recovery-required', 'quota')
+    assert 0 < state['unavailable_until'] - state['completed_at'] <= 24 * 3600
+    routes = routing.failed_attempt_routes([config.state_file], now=state['completed_at'])
+    assert [reason for _agent, _model, reason in routes] == ['quota']
+    assert routing.failed_attempt_routes([config.state_file], now=state['unavailable_until'] + 1) == []
 
 
 def test_commit_without_artifact_requires_recovery_not_verified_success(tmp_path):
@@ -555,6 +606,88 @@ def test_runtime_outcome_owns_terminal_done_and_events(tmp_path,source,status,st
     assert 'type=provider-exit|' in events
     assert 'type=worker-done|' not in events
     assert outcome['failure_class']==('infrastructure' if code==7 else 'capability')
+
+
+def test_managed_complexity_synthesizes_valid_stdout_json_on_clean_exit(tmp_path):
+    payload = {
+        'schema_version': 2,
+        'total': 18,
+        'level': 'medium',
+        'scores': {
+            'coupling_and_blast_radius': 3,
+            'pattern_novelty': 2,
+            'state_and_concurrency_risk': 3,
+            'data_and_rollback_risk': 2,
+            'verification_risk': 3,
+            'ambiguity_of_requirements': 2,
+            'scope_size': 3,
+        },
+        'rationale': {
+            'coupling_and_blast_radius': 'Bounded module.',
+            'pattern_novelty': 'Existing seam.',
+            'state_and_concurrency_risk': 'Standard lock.',
+            'data_and_rollback_risk': 'Additive only.',
+            'verification_risk': 'Existing harness.',
+            'ambiguity_of_requirements': 'Clear criteria.',
+            'scope_size': 'Moderate slice.',
+        },
+        'files_inspected': ['src/ai_skills/runner.py'],
+    }
+    source = (
+        f"import json; print('COMPLEXITY|score=18|level=medium|d1=3|d2=2|d3=3|d4=2|d5=3|d6=2|d7=3'); "
+        f"print('```json'); print(json.dumps({payload!r})); print('```')"
+    )
+    config = worker_config(tmp_path, source)
+    config = replace(config, agent_run=config.agent_run.replace(role='complexity'))
+    result = dispatch_worker(config)
+    assert (result.state, result.return_code, result.reason) == ('completed', 0, '')
+    saved = json.loads(config.agent_run.result_file.read_text(encoding='utf-8'))
+    assert saved['total'] == 18 and saved['level'] == 'medium'
+    assert saved['source'] == 'dispatcher-synthesized-from-log'
+
+
+def test_managed_complexity_never_synthesizes_from_nonzero_exit(tmp_path):
+    payload = {
+        'schema_version': 2,
+        'total': 18,
+        'level': 'medium',
+        'scores': {
+            'coupling_and_blast_radius': 3,
+            'pattern_novelty': 2,
+            'state_and_concurrency_risk': 3,
+            'data_and_rollback_risk': 2,
+            'verification_risk': 3,
+            'ambiguity_of_requirements': 2,
+            'scope_size': 3,
+        },
+        'rationale': {k: 'reason' for k in (
+            'coupling_and_blast_radius', 'pattern_novelty', 'state_and_concurrency_risk',
+            'data_and_rollback_risk', 'verification_risk', 'ambiguity_of_requirements', 'scope_size',
+        )},
+        'files_inspected': ['src/ai_skills/runner.py'],
+    }
+    source = f"import json, sys; print(json.dumps({payload!r})); sys.exit(1)"
+    config = worker_config(tmp_path, source)
+    config = replace(config, agent_run=config.agent_run.replace(role='complexity'))
+    result = dispatch_worker(config)
+    assert result.state == 'failed' and result.return_code == 1
+    assert not config.agent_run.result_file.exists()
+
+
+@pytest.mark.parametrize(('message', 'expected_reason'), [
+    ("You've hit your 5-hour limit · resets 8:50pm (Asia/Calcutta)", 'quota'),
+    ('ERROR: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request.', 'policy-refusal'),
+])
+def test_managed_quota_and_policy_refusal_exclude_harness(tmp_path, message, expected_reason):
+    from ai_skills import routing
+    source = f"import sys; print({message!r}, file=sys.stderr); sys.exit(1)"
+    config = worker_config(tmp_path, source)
+    result = dispatch_worker(config)
+    state = json.loads(config.state_file.read_text(encoding='utf-8'))
+    assert (result.state, result.reason) == ('failed', expected_reason)
+    assert (state['failure_class'], state['reason']) == ('infrastructure', expected_reason)
+    availability = routing.availability_from_failed_attempts([config.state_file])
+    assert config.agent_run.agent in availability['agents']
 
 
 @pytest.mark.parametrize('status',['failed','blocked','interrupted'])

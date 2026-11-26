@@ -343,7 +343,7 @@ Write one JSON configuration per role/cycle/attempt using file tools; use absolu
   "poll_seconds": 20,
   "quiet_seconds": 900,
   "stall_seconds": 1200,
-  "hard_limit_seconds": 7200,
+  "hard_limit_seconds": 21600,
   "detach": true
 }
 ```

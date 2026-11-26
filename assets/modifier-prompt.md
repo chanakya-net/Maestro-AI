@@ -360,7 +360,7 @@ The dispatcher publishes managed DONE after validating the actual role outcome. 
 You must run tests after addressing reviewer comments.
 
 1. Run every verification command supplied by the coordinator.
-2. If those commands are incomplete or absent, run the narrowest relevant test scope first, then the full suite when practical.
+2. If those commands are incomplete or absent, run the narrowest relevant test scope first. Run a broader or unfiltered suite only when it fits the attempt deadline (see the appended `artifact-protocol.md`); otherwise record which suite was skipped and why.
 3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`ai-skills artifact`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and publish a typed failed/blocked report if a required gate cannot pass. Never mark a command passing when it failed.
 4. Re-run the failing command after each fix until it passes.
 
