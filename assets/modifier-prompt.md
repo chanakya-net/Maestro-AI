@@ -319,7 +319,7 @@ When external state or missing information prevents a safe fix, report a typed `
         "status": "addressed",
         "action": "Added the missing bounds guard",
         "files_changed": ["src/example.py"],
-        "verification": ["python -m pytest tests -q: 42 passed, exit 0"]
+        "verification": ["<repo test command>: 42 passed, exit 0"]
       },
       {
         "id": "R002",
@@ -332,9 +332,9 @@ When external state or missing information prevents a safe fix, report a typed `
     "verification": {
       "passed": true,
       "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
-      "commands": ["python -m pytest tests -q"],
+      "commands": ["<repo test command>"],
       "checks": [
-        {"command": "python -m pytest tests -q", "passed": true, "evidence": "42 passed. Exit status 0."}
+        {"command": "<repo test command>", "passed": true, "evidence": "42 passed. Exit status 0."}
       ]
     }
   }
@@ -362,7 +362,7 @@ A captured typed blocked report (illustrative values):
     "status": "blocked",
     "reason": "review-dependency-unavailable",
     "summary": "Blocker: the local fixture database refused connections, so R001 cannot be verified. Smallest next action: restart the fixture database and rerun the modifier.",
-    "evidence": ["python -m pytest tests -q: connection refused on localhost:5432"],
+    "evidence": ["<repo test command>: connection refused on localhost:5432"],
     "review_comment_closure": [
       {"id": "R001", "status": "blocked", "action": "Awaiting the fixture database", "files_changed": [], "verification": ["connection refused"]}
     ]

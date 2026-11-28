@@ -203,7 +203,7 @@ Use this mode when an implementation/modification attempt committed the requeste
     "source_state_file": "/absolute/run/.run-with-it/issues/42/workers/impl/cycle-1-attempt-1.state.json",
     "source_attempt_id": "exact-source-attempt-id-from-saved-config",
     "expected_commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "required_checks": ["python -m pytest tests -q", "Native UI acceptance checks"]
+    "required_checks": ["<repo test command>", "<named manual acceptance check>"]
   }
 }
 ```

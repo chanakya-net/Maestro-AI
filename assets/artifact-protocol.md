@@ -66,10 +66,10 @@ The values below are illustrative. Use the admitted identity and your observed e
     "verification": {
       "passed": true,
       "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "commands": ["python -m pytest tests -q"],
+      "commands": ["<repo test command>"],
       "checks": [
         {
-          "command": "python -m pytest tests -q",
+          "command": "<repo test command>",
           "passed": true,
           "evidence": "42 passed. Exit status 0."
         }
@@ -102,9 +102,9 @@ A captured verified no-op (illustrative values):
     "verification": {
       "passed": true,
       "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "commands": ["python -m pytest tests -q"],
+      "commands": ["<repo test command>"],
       "checks": [
-        {"command": "python -m pytest tests -q", "passed": true, "evidence": "Exact observed result, exit 0"}
+        {"command": "<repo test command>", "passed": true, "evidence": "Exact observed result, exit 0"}
       ]
     }
   }
@@ -132,7 +132,7 @@ A captured report for a failed check.
     "status": "failed",
     "reason": "required-verification-failed",
     "summary": "The bounds check failed. Partial changes remain in the worktree.",
-    "verification": {"passed": false, "commands": ["python -m pytest tests -q"]},
+    "verification": {"passed": false, "commands": ["<repo test command>"]},
     "evidence": ["tests/test_reading.py::test_bounds failed with exit status 1"]
   }
 }
@@ -185,7 +185,7 @@ A captured modifier report for an unavailable prerequisite.
     "status": "blocked",
     "reason": "review-dependency-unavailable",
     "summary": "Blocker: the local fixture database refused connections, so R001 cannot be verified. Smallest next action: restart the fixture database and rerun the modifier.",
-    "evidence": ["python -m pytest tests -q: connection refused on localhost:5432"]
+    "evidence": ["<repo test command>: connection refused on localhost:5432"]
   }
 }
 ```
@@ -204,7 +204,7 @@ Publish using the normal `ai-skills artifact write-json` command with the assign
   "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "checks": [
     {
-      "command": "python -m pytest tests -q",
+      "command": "<repo test command>",
       "passed": true,
       "evidence": "Exact observed result, including test counts and exit status"
     }
@@ -225,7 +225,7 @@ Examples below use illustrative identities. Replace them with authoritative atte
   "no_op": true,
   "commit_sha": "NONE",
   "files_committed": [],
-  "verification": {"passed": true, "commands": ["python -m pytest tests/unit -q: passed"]}
+  "verification": {"passed": true, "commands": ["<targeted test command>: passed"]}
 }
 ```
 
@@ -242,7 +242,7 @@ A failed verification report needs no commit:
   "status": "failed",
   "reason": "required-verification-failed",
   "summary": "Required tests failed; changes remain uncommitted for recovery.",
-  "verification": {"passed": false, "commands": ["python -m pytest tests -q: exit 1"]},
+  "verification": {"passed": false, "commands": ["<repo test command>: exit 1"]},
   "evidence": ["tests/test_reading.py::test_bounds failed"]
 }
 ```

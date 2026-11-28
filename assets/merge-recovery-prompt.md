@@ -85,7 +85,7 @@ Write compact JSON to `MERGE_RECOVERY_REPORT_FILE` when set, otherwise to the re
   ],
   "verification": {
     "passed": true,
-    "commands_run": ["npm test"],
+    "commands_run": ["<repo test command>"],
     "evidence": "all tests passed"
   },
   "blocking_reasons": []
