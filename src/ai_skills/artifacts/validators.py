@@ -221,7 +221,27 @@ def valid_plan_payload(payload: Any) -> bool:
     slices = payload.get("slices")
     if not isinstance(slices, list) or not slices:
         return False
-    return True
+    return valid_verification_plan(payload.get("verification_plan"))
+
+
+VERIFICATION_PLAN_KEYS = ("fast_loop_checks", "final_required_checks", "advisory_not_applicable_notes")
+
+
+def valid_verification_plan(plan: Any) -> bool:
+    """Optional plan.json field. Absent is valid (older plans). When present it
+    holds lists of nonblank strings; final_required_checks feeds the worker's
+    required checks, so its entries must also be unique. The notes are advisory
+    only: nothing here authorizes skipping a check."""
+    if plan is None:
+        return True
+    if not isinstance(plan, dict) or not set(plan) <= set(VERIFICATION_PLAN_KEYS):
+        return False
+    for key in VERIFICATION_PLAN_KEYS:
+        items = plan.get(key, [])
+        if not isinstance(items, list) or not all(non_empty_str(item) for item in items):
+            return False
+    final = plan.get("final_required_checks", [])
+    return len(set(final)) == len(final)
 
 
 def complexity_payload_from_log(log_file: str) -> dict[str, Any] | None:

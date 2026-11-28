@@ -207,6 +207,8 @@ def _bind_result_capture(config, registry, original_run):
         if Path(path).is_symlink():
             raise ValueError('capture paths must not be symlinks')
     contract = {'required_checks': list(config.result_capture['required_checks']), 'review_comment_ids': list(ids)}
+    if 'force_checks' in config.result_capture:
+        contract['force_checks'] = list(config.result_capture['force_checks'])
     identity = verification.capture_identity(run)
     context = {'schema_version': 1, 'source': source, 'cycle': identity['cycle'],
         **contract, 'envelope': identity}

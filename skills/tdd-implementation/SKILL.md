@@ -112,7 +112,8 @@ After tests pass:
 - Remove duplication
 - Deepen modules behind stable interfaces
 - Improve naming and readability
-- Re-run tests after each refactor step
+- Re-run the targeted tests for the slice after each refactor step
+- Leave full integration, end-to-end, and release suites for one final pass after the last edit; an edit made after such a run invalidates it
 
 Never refactor while red.
 

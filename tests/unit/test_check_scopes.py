@@ -166,3 +166,62 @@ def test_check_scope_working_tree_previews_uncommitted_and_untracked_changes(rep
     # Combining --working-tree with --to is rejected.
     assert main(base_args + ['--working-tree', '--to', 'HEAD'] + check_args) == 2
     assert 'cannot be combined' in capsys.readouterr().err
+
+
+def scoped(root, role, base, start, end, **contract):
+    from types import SimpleNamespace
+    from ai_skills.verification import _scoped_skippable
+    config = SimpleNamespace(agent_run=SimpleNamespace(role=role, repo_root=root), issue_base_sha=base)
+    return _scoped_skippable(config, {'required_checks': CHECKS, **contract}, start, end)
+
+
+def test_impl_skips_are_judged_over_the_whole_issue_diff(repo):
+    root, base, start = repo
+    # A backend-only implementation may skip the frontend checks.
+    assert scoped(root, 'impl', base, '', start) == {BUILD, E2E}
+    # A retry on top of an earlier frontend commit cannot hide that commit: an
+    # impl is measured from the issue base whatever head the attempt started on.
+    frontend = commit(root, {'web/app.ts': '2'}, 'frontend attempt')
+    retry = commit(root, {'api/h.cs': '3'}, 'backend retry')
+    assert scoped(root, 'impl', base, frontend, retry) == frozenset()
+    # The same range judged as a modify fix from the reviewed head still skips.
+    assert scoped(root, 'modify', base, frontend, retry) == {BUILD, E2E}
+
+
+def test_impl_skips_fail_closed_without_base_or_map(tmp_path, repo):
+    root, base, start = repo
+    assert scoped(root, 'impl', '', '', start) == frozenset()
+    assert scoped(root, 'impl', start, '', start) == frozenset()
+    bare = tmp_path / 'bare'
+    bare.mkdir()
+    git(bare, 'init', '-q')
+    git(bare, 'config', 'user.name', 'Test')
+    git(bare, 'config', 'user.email', 'test@example.invalid')
+    first = commit(bare, {'api/h.cs': '1'}, 'base')
+    second = commit(bare, {'api/h.cs': '2'}, 'impl')
+    assert scoped(bare, 'impl', first, '', second) == frozenset()
+
+
+@pytest.mark.parametrize('role', ['impl', 'modify'])
+def test_force_checks_are_never_skippable(repo, role):
+    root, base, start = repo
+    end = commit(root, {'api/h.cs': '3'}, 'fix')
+    assert scoped(root, role, base, start, end, force_checks=[E2E]) == {BUILD}
+    skip = {'command': E2E, 'skipped': True, 'evidence': 'path-scoped'}
+    ran = [{'command': check, 'passed': True, 'evidence': 'exit 0'} for check in (BUILD, BACKEND)]
+    assert check_evidence_reason(evidence(skip, *ran), expected_commit='a' * 40, required_checks=CHECKS,
+        skippable_checks=scoped(root, role, base, start, end, force_checks=[E2E])) == \
+        'verification-check-skip-not-allowed'
+
+
+def test_force_checks_contract_validation():
+    from ai_skills.verification import validate_result_capture
+    base = {'required_checks': CHECKS, 'review_comment_ids': []}
+    validate_result_capture(base)
+    validate_result_capture({**base, 'force_checks': []})
+    validate_result_capture({**base, 'force_checks': [E2E, BACKEND]})
+    for bad in (['not a required check'], [E2E, E2E], E2E, [1], None):
+        with pytest.raises(ValueError):
+            validate_result_capture({**base, 'force_checks': bad})
+    with pytest.raises(ValueError):
+        validate_result_capture({**base, 'other': []})

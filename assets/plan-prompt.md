@@ -44,7 +44,8 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 2. **Decide the approach.** Choose the smallest correct change that satisfies the acceptance criteria. Prefer extending an existing seam over adding parallel structure. Name the concrete files (real paths verified to exist for `extend`; intended new paths for `add`).
 3. **Order the work as vertical slices.** Each slice is one tracer bullet: a thin end-to-end behavior with a single test target. Order them so each builds on the last. These map 1:1 onto the implementer's TDD loop, so keep them vertical (a behavior), never horizontal (a layer).
 4. **Name risks and out-of-scope.** Call out ordering constraints, known gotchas, public-interface changes, and the tempting-but-out-of-scope work the implementer must avoid.
-5. **Score complexity independently.** Having read the real code, set `complexity_level` to the grounded band using the router vocabulary (`quite-easy`, `easy`, `medium`, `medium-hard`, `complex`, `extreme`) and explain the choice in `complexity_rationale`. Judge the incremental difficulty of this issue relative to the repository's normal stack and existing test harnesses, anchored to the concrete files, slices, interfaces, and risks you just laid out. Exclude auto-generated files (snapshots, lockfiles) and mechanical locale/copy files when gauging scope size. Use these band anchors:
+5. **Plan verification.** Read the repository's verification instructions (`AGENTS.md`, `CLAUDE.md`, project READMEs, `.ai-skills-check-scopes.json` and `.maestro/merge-gate.json` when present) and fill `verification_plan`: the fast targeted commands the implementer should use while iterating, and the exact commands that must pass once at handoff for the projects this change touches. Use the repository's own command text. Leave out commands the merge gate already declares unless the issue's acceptance criteria name them. Do not run any of them.
+6. **Score complexity independently.** Having read the real code, set `complexity_level` to the grounded band using the router vocabulary (`quite-easy`, `easy`, `medium`, `medium-hard`, `complex`, `extreme`) and explain the choice in `complexity_rationale`. Judge the incremental difficulty of this issue relative to the repository's normal stack and existing test harnesses, anchored to the concrete files, slices, interfaces, and risks you just laid out. Exclude auto-generated files (snapshots, lockfiles) and mechanical locale/copy files when gauging scope size. Use these band anchors:
    - `quite-easy`: 1–2 non-generated files, 1 trivial slice, no contract or persisted-state changes, trivial deterministic unit test.
    - `easy`: 3–5 non-generated files, 1–2 straightforward slices extending an existing seam, clear deterministic unit tests.
    - `medium`: normal multi-layer slice (6–15 non-generated files or 2–4 slices) extending established repo patterns and existing test harnesses, including straightforward additive contracts/migrations or test-only acceptance suites (minimum band when any risk area is high).
@@ -73,18 +74,24 @@ Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `sche
   ],
   "interfaces": ["public signature changes, if any"],
   "risks": ["known gotchas, ordering constraints, out-of-scope temptations to avoid"],
-  "out_of_scope": ["explicitly NOT doing Y"]
+  "out_of_scope": ["explicitly NOT doing Y"],
+  "verification_plan": {
+    "fast_loop_checks": ["bun run test --run src/foo/bar.test.ts"],
+    "final_required_checks": ["bun run test --watch=false", "bun run build"],
+    "advisory_not_applicable_notes": ["backend integration suite: no file under src/backend is planned to change"]
+  }
 }
 ```
 
 - `change` is one of `extend`, `add`, or `delete`.
 - `complexity_level` must be one of the six router bands listed above. Emit a valid band even on the verified-skip path below — downstream routing and recovery both read it.
 - `complexity_rationale` must be a non-empty 1–2 sentence justification referencing the concrete files, slices, interfaces, or risks observed.
+- `verification_plan` is optional and may be omitted when the repository documents no verification commands. Each of its three keys is a list of nonblank strings. `fast_loop_checks` are narrow commands for the TDD loop. `final_required_checks` are exact, unique, runnable commands (or short named manual checks) that the coordinator copies into the implementer's required checks, so never put prose scenarios there. `advisory_not_applicable_notes` are hints only: a plan is written before any edit exists, so it cannot authorize skipping a check. Skips are decided later from the real diff and `.ai-skills-check-scopes.json`.
 - `slices` must be non-empty on the success path (at least one tracer bullet). On the verified-skip path a single trivial slice is acceptable.
 
 ## Output: `plan.md`
 
-Write a terse human-readable companion to `RUN_WITH_IT_PLAN_FILE`. Mirror the JSON: a one-paragraph approach, the grounded `complexity_level` and `complexity_rationale`, a files table, the ordered slice list with test targets, and short risks / out-of-scope sections. Keep it scannable — the implementer reads this first.
+Write a terse human-readable companion to `RUN_WITH_IT_PLAN_FILE`. Mirror the JSON: a one-paragraph approach, the grounded `complexity_level` and `complexity_rationale`, a files table, the ordered slice list with test targets, the verification plan (fast loop commands, then final required commands), and short risks / out-of-scope sections. Keep it scannable — the implementer reads this first.
 
 ## Verified-skip path
 

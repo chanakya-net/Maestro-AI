@@ -113,11 +113,48 @@ Use the assigned issue worktree as the explicit working directory for Git. Compa
 
 ## Verification
 
-Run tests before declaring work complete. All tests must pass. Do not mark work done if any test is failing.
+Run tests before declaring work complete. All required checks must pass. Do not mark work done if any test is failing.
 
-1. Run the narrowest test scope that covers the changed code first.
-2. Then run every coordinator-supplied required command, and the full test suite when it fits the attempt deadline (see the appended `artifact-protocol.md`). Cross-cutting suites the repository declares in its merge gate also run at merge.
+1. While editing, run the narrowest test scope that covers the changed code.
+2. After the handoff commit, run every coordinator-supplied required command once on that commit, in the order set by **Verification Order** below. When the coordinator supplied no required commands, run the narrowest scope that covers the change plus the suites the repository instructions require for the projects you touched, within the attempt deadline (see the appended `artifact-protocol.md`).
 3. Fix failures within the assigned work before claiming success. If they prevent completion, publish the typed failure result with evidence.
+
+## Verification Order
+
+<!-- SYNC: intentionally duplicated in assets/modifier-prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
+
+Follow one order and run each required check once:
+
+1. **While you are still editing** (TDD, debugging, review fixes), run only fast targeted checks: a filtered test, a single spec, a targeted harness. Do not start an unfiltered integration suite, a full web test/build/release audit, or a full-stack Compose or browser run while you still expect to edit. Any later edit invalidates that run.
+2. **When the edits are complete and the targeted checks pass, make the handoff commit first.**
+3. **Then run each required check once against that committed `HEAD`.** Never run a required check on the uncommitted tree and then again after committing the same tree.
+4. **If a required check fails on `HEAD`:** fix the defect, prove the fix with a targeted test, commit the fix (a new commit or an amend), and run the required checks again on the new `HEAD`. Evidence from an earlier commit does not count for a later one. Only a path-scoped skip that the dispatcher approves (see **Path-Scoped Verification**) lets you leave a required check out.
+5. **Do not add unfiltered suites the coordinator did not list.** Suites the repository declares in its merge gate (`.maestro/merge-gate.json`) run once at merge; do not run them in this attempt unless they are in your required checks.
+
+**A long required check fails on one or two tests.** Do not rerun the whole check straight away:
+
+- First run only the failing tests in isolation and keep the failure output.
+- If they fail in isolation, it is a real defect: follow step 4, or the out-of-scope rule when the failure is outside your change.
+- If they pass in isolation, treat it as a likely flake and rerun the exact required command **once**. An isolated pass never satisfies the required check itself. When the rerun passes, record both the first failure and the passing rerun in that check's evidence.
+- If the rerun fails again, stop. Publish a typed `failed` report (or `blocked` when the failing tests are outside your change) with both outputs. Do not run the check a third time.
+
+## Path-Scoped Verification
+
+<!-- SYNC: counterpart of the same section in assets/modifier-prompt.md. An implementation measures its whole diff from the issue base; keep the other rules aligned. -->
+
+A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. An implementation is judged over its whole diff from the issue base commit (`ISSUE_BASE_SHA`, the `issue_base_sha` of this attempt). Before committing, preview which required checks your uncommitted edits and untracked files may skip with `--working-tree`:
+
+```text
+ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <ISSUE_BASE_SHA> --from <ISSUE_BASE_SHA> --working-tree --required-check "<exact check text>" ...
+```
+
+After your handoff commit, confirm the committed diff against `--to HEAD` without `--working-tree`:
+
+```text
+ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <ISSUE_BASE_SHA> --from <ISSUE_BASE_SHA> --to HEAD --required-check "<exact check text>" ...
+```
+
+Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. A check listed in `result_capture.force_checks` is never skippable, whatever the command prints. The dispatcher always recomputes the allowed skips from Git commits (`ISSUE_BASE_SHA..HEAD`) and the base-commit scope map and rejects any other skip, so an empty list means run everything. A skip is only recorded through `result_capture`; without it, run every required check. `verification.passed` stays `true` only when every check you ran passed.
 
 **Out-of-scope test failures**: Investigate whether your changes introduced regressions. If a required gate stays red, publish the shared protocol failed or blocked report with exact evidence and preserve the work for coordinator attribution; never manufacture success or omit the handoff.
 
@@ -126,7 +163,7 @@ Examples:
 - `bun run test` (frontend scope when applicable)
 - `dotnet test` (backend scope when applicable)
 
-If a full-suite run is prohibitively slow or will not fit the attempt deadline, run the narrowest passing scope, document exactly which suite was skipped and why, and flag it as a follow-up risk in your output report. Skipping must be the exception, not the default.
+If a required check will not fit the attempt deadline, follow the deadline rule in the appended `artifact-protocol.md`. Never leave a required check out silently.
 
 **Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 
@@ -138,7 +175,7 @@ If authoritative attempt metadata contains `verification_contract.execution_mode
 
 ## Mandatory Commit Before Handoff
 
-**Only proceed here after all tests pass.** This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit on the issue worktree branch, the reviewer cannot isolate your changes.
+**Only proceed here after the edits are complete and your targeted checks pass.** The required checks then run once on this commit (see **Verification Order**); do not run them on the uncommitted tree first. This commit is the handoff boundary — the reviewer reads your work via this exact SHA, not via `HEAD`. Multiple implementers run concurrently; without a commit on the issue worktree branch, the reviewer cannot isolate your changes.
 
 Commit sequence:
 Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
@@ -206,7 +243,7 @@ Capture import requires a pending attempt, confirmed owned-tree shutdown, durabl
 
 For failed checks, use a typed `failed` result. For an unavailable prerequisite, use `blocked`. Include the original reason and concrete evidence. The inner typed result binds the exact admitted run, attempt, issue, and role. It can report partial work without a commit or passing checks.
 
-For committed success, report the full current commit SHA from the clean worktree and every configured check against that commit with concrete passing evidence. For a verified no-op, set the role report's `commit_sha` to `NONE` and leave `files_committed` empty. Keep HEAD unchanged and the worktree clean. Use the actual checked HEAD in `verification.commit_sha` and include one passing evidence entry per required check. See `artifact-protocol.md` for the no-op and typed examples. Replace every illustrative value below with the admitted identity and observed evidence.
+For committed success, report the full current commit SHA from the clean worktree and every configured check against that commit with concrete passing evidence. Path-scoped checks the dispatcher allows may be recorded as skipped instead (see **Path-Scoped Verification**). For a verified no-op, set the role report's `commit_sha` to `NONE` and leave `files_committed` empty. Keep HEAD unchanged and the worktree clean. Use the actual checked HEAD in `verification.commit_sha` and include one passing evidence entry per required check. See `artifact-protocol.md` for the no-op and typed examples. Replace every illustrative value below with the admitted identity and observed evidence.
 
 ```json
 {

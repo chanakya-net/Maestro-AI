@@ -68,9 +68,9 @@ If `MAX_AGENT_DEPTH` is set in the run context and its value is `1`, you are alr
 2. Identify every actionable reviewer comment, stable comment `id`, category, verification instruction, and blocking reason.
 3. When `PRIOR_REVIEW_LEDGER` is present, read each listed prior `instructions` file and its `modify_result` so you know which behaviors earlier fixes closed and must keep closed.
 4. Edit the working tree to address all reviewer comments that can be fixed safely, then complete the **Invariant & Boundary Check** and the **Test-Fidelity Self-Check** before verification.
-5. Run the required verification commands supplied by the coordinator (using **Path-Scoped Verification** when `.ai-skills-check-scopes.json` applies).
+5. Follow **Verification Order**: targeted checks while editing, then the handoff commit, then each required verification command supplied by the coordinator once on that commit (using **Path-Scoped Verification** when `.ai-skills-check-scopes.json` applies).
 6. If any test fails, diagnose whether the reviewed change caused it. Fix caused failures; for pre-existing or infrastructure failures, record evidence and do not broaden the patch unless the reviewer explicitly requested it.
-7. Re-run verification until all required checks pass.
+7. After a fix, commit it and run the required checks on the new commit until they pass, within the retry limit in **Verification Order**.
 8. Produce a verified success report after verification passes; otherwise publish the typed failure report with actual evidence.
 
 ## Invariant & Boundary Check
@@ -99,9 +99,28 @@ Before committing tests you authored or rewrote, check that they prove what they
 
 When `RUN_WITH_IT_REDESIGN_REQUIRED=1` is set, earlier patches on this issue have not converged. Before editing, read every prior `instructions` and `modify_result` in `PRIOR_REVIEW_LEDGER` and name the single contract those findings share (for example "a retained receipt must be validated the same way on first delivery and on replay"). Then fix that contract at its boundary — one coherent design covering every caller and delivery path — instead of patching the previous patch. Record the contract you identified and how the design covers each earlier finding in the closure `action` text (and under key modification decisions when you use file publication). Closure IDs still follow the current cycle's checklist only.
 
+## Verification Order
+
+<!-- SYNC: intentionally duplicated in assets/prompt.md (isolated worker sessions cannot follow cross-file pointers). Edit both copies together. -->
+
+Follow one order and run each required check once:
+
+1. **While you are still editing** (TDD, debugging, review fixes), run only fast targeted checks: a filtered test, a single spec, a targeted harness. Do not start an unfiltered integration suite, a full web test/build/release audit, or a full-stack Compose or browser run while you still expect to edit. Any later edit invalidates that run.
+2. **When the edits are complete and the targeted checks pass, make the handoff commit first.**
+3. **Then run each required check once against that committed `HEAD`.** Never run a required check on the uncommitted tree and then again after committing the same tree.
+4. **If a required check fails on `HEAD`:** fix the defect, prove the fix with a targeted test, commit the fix (a new commit or an amend), and run the required checks again on the new `HEAD`. Evidence from an earlier commit does not count for a later one. Only a path-scoped skip that the dispatcher approves (see **Path-Scoped Verification**) lets you leave a required check out.
+5. **Do not add unfiltered suites the coordinator did not list.** Suites the repository declares in its merge gate (`.maestro/merge-gate.json`) run once at merge; do not run them in this attempt unless they are in your required checks.
+
+**A long required check fails on one or two tests.** Do not rerun the whole check straight away:
+
+- First run only the failing tests in isolation and keep the failure output.
+- If they fail in isolation, it is a real defect: follow step 4, or the out-of-scope rule when the failure is outside your change.
+- If they pass in isolation, treat it as a likely flake and rerun the exact required command **once**. An isolated pass never satisfies the required check itself. When the rerun passes, record both the first failure and the passing rerun in that check's evidence.
+- If the rerun fails again, stop. Publish a typed `failed` report (or `blocked` when the failing tests are outside your change) with both outputs. Do not run the check a third time.
+
 ## Path-Scoped Verification
 
-A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. Before committing (during step 5 verification), preview which required checks your uncommitted edits and untracked files may skip with `--working-tree`:
+A repository can declare in `.ai-skills-check-scopes.json` which checks depend only on which paths. Before committing, preview which required checks your uncommitted edits and untracked files may skip with `--working-tree`:
 
 ```text
 ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --working-tree --required-check "<exact check text>" ...
@@ -113,7 +132,7 @@ After your handoff commit (and before emitting a captured handoff or `verify_exi
 ai-skills artifact check-scope --repo-root <issue-worktree> --issue-base-sha <REVIEW_BASE_SHA> --from <REVIEW_HEAD_SHA> --to HEAD --required-check "<exact check text>" ...
 ```
 
-Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. The dispatcher always recomputes the allowed skips from Git commits (`from..HEAD`) and the base-commit scope map and rejects any other skip, so an empty list means run everything. `verification.passed` stays `true` only when every check you ran passed.
+Pass one `--required-check` per required check, with its exact text. The output's `skippable_checks` lists the checks whose declared paths your change did not touch, judged by the map at the issue base commit. For each of those you may record `{"command": "<exact text>", "skipped": true, "evidence": "path-scoped: no changed file under the check's declared paths"}` in `verification.checks` instead of running it; do not set `passed` on a skipped entry. Run every other required check. A check listed in `result_capture.force_checks` is never skippable, whatever the command prints. The dispatcher always recomputes the allowed skips from Git commits (`from..HEAD`) and the base-commit scope map and rejects any other skip, so an empty list means run everything. `verification.passed` stays `true` only when every check you ran passed.
 
 ## Code Size & Maintainability
 
@@ -169,7 +188,7 @@ If authoritative attempt metadata contains `verification_contract.execution_mode
 
 **A successful modification MUST commit all changes (or report a verified no-op — see below).** This is required for safe parallel operation — multiple modifier/reviewer pairs may be running concurrently, and the next reviewer retrieves your work by a specific commit SHA from the issue worktree branch, not by `HEAD`. Without a commit, the reviewer cannot isolate this issue's changes.
 
-Commit sequence (after verification passes and all reviewer comments are addressed):
+Commit sequence (after your targeted checks pass and all reviewer comments are addressed; the required checks then run once on this commit, see **Verification Order**):
 Use the assigned issue worktree as the explicit working directory for Git. Compare `git rev-parse --show-toplevel` and `git branch --show-current` with the supplied root/issue branch; stop on mismatch. Only the assigned check-in owner may stage scoped files, commit, then record `git rev-parse HEAD` and `git show --name-only --pretty=format: HEAD`. Never commit in the shared checkout.
 
 **If there is nothing to commit** (no files changed), there are two distinct cases:
@@ -359,10 +378,10 @@ The dispatcher publishes managed DONE after validating the actual role outcome. 
 
 You must run tests after addressing reviewer comments.
 
-1. Run every verification command supplied by the coordinator.
-2. If those commands are incomplete or absent, run the narrowest relevant test scope first. Run a broader or unfiltered suite only when it fits the attempt deadline (see the appended `artifact-protocol.md`); otherwise record which suite was skipped and why.
+1. Run every verification command supplied by the coordinator, once, on the handoff commit (see **Verification Order**).
+2. If those commands are incomplete or absent, run the narrowest relevant test scope that covers the fix plus the suites the repository instructions require for the projects you touched, within the attempt deadline (see the appended `artifact-protocol.md`). Do not add unfiltered suites beyond that.
 3. Fix any failing test caused by the reviewed change before reporting completion, regardless of where in the tree the failure surfaces. Coordinator-supplied required verification commands must pass and be reported with `verification.passed=true` — the validator (`ai-skills artifact`) rejects any modify result whose `verification.passed` is not `true`, so a required-command failure is never reportable as a completed modification. The pre-existing/infrastructure evidence path applies only to failures outside those required commands (for example, discovered during a broader full-suite run): record the concrete evidence per the Scope rules in your report and closure entries instead of broadening the patch, and publish a typed failed/blocked report if a required gate cannot pass. Never mark a command passing when it failed.
-4. Re-run the failing command after each fix until it passes.
+4. After each fix, re-run the failing command on the new commit until it passes, within the retry limit in **Verification Order**.
 
 Do not report completion while tests you are responsible for are failing. A failing test suite caused by this change is a failed modification.
 

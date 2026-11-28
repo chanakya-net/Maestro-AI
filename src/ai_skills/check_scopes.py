@@ -1,9 +1,11 @@
-"""Path-scoped verification: which required checks a modify commit may skip.
+"""Path-scoped verification: which required checks a change may skip.
 
 A repository opts in by committing ``.ai-skills-check-scopes.json``. Each scope
 says that checks starting with one of its ``check_prefixes`` depend only on
-files matching its ``paths`` globs. A modify commit that changes no file under
-any scope of a check may record that check as skipped instead of re-running it.
+files matching its ``paths`` globs. A change that touches no file under any
+scope of a check may record that check as skipped instead of running it. A
+modify change is measured from the reviewed head, an implementation from the
+issue base (its whole diff).
 
 The map is read from the issue base commit, never from the worktree, so a
 worker cannot widen its own skips. A commit that touches the map, an invalid
@@ -153,7 +155,7 @@ def main(argv=None):
         f'skipped under the {SCOPE_FILE} map at the issue base commit.'))
     parser.add_argument('--repo-root', required=True)
     parser.add_argument('--issue-base-sha', required=True)
-    parser.add_argument('--from', dest='from_sha', required=True, help='Commit the change starts from (pre-spawn HEAD).')
+    parser.add_argument('--from', dest='from_sha', required=True, help='Commit the change starts from (modify: pre-spawn HEAD; impl: the issue base).')
     parser.add_argument('--to', dest='to_sha', default=None, help='Commit the change ends at (default HEAD).')
     parser.add_argument('--working-tree', action='store_true', default=False,
         help='Preview against tracked working-tree changes and untracked files since --from (before committing).')
