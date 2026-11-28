@@ -98,3 +98,31 @@ def test_saved_plan_with_either_band_name_validates(level):
     payload = {"schema_version": 1, "issue": "7", "role": "plan", "status": "success", "approach": "Do it",
                "complexity_level": level, "complexity_rationale": "Cross-cutting redesign.", "slices": [{"id": 1}]}
     assert artifacts.valid_plan_payload(payload) is True
+
+
+def _plan(**extra):
+    return {"schema_version": 1, "issue": "7", "role": "plan", "status": "success", "approach": "Do it",
+            "complexity_level": "medium", "complexity_rationale": "Extends one seam.", "slices": [{"id": 1}], **extra}
+
+
+def test_plan_without_verification_plan_still_validates():
+    assert artifacts.valid_plan_payload(_plan()) is True
+
+
+@pytest.mark.parametrize("plan", [
+    {},
+    {"fast_loop_checks": ["pytest tests/unit/test_a.py -q"]},
+    {"fast_loop_checks": [], "final_required_checks": ["pytest -q", "ruff check ."],
+     "advisory_not_applicable_notes": ["frontend build: no file under web/ is planned to change"]},
+])
+def test_plan_with_valid_verification_plan_validates(plan):
+    assert artifacts.valid_plan_payload(_plan(verification_plan=plan)) is True
+
+
+@pytest.mark.parametrize("plan", [
+    [], "pytest -q", {"final_required_checks": "pytest -q"}, {"final_required_checks": [" "]},
+    {"final_required_checks": ["pytest -q", "pytest -q"]}, {"fast_loop_checks": [1]},
+    {"not_applicable_checks": ["pytest -q"]},
+])
+def test_plan_with_invalid_verification_plan_is_rejected(plan):
+    assert artifacts.valid_plan_payload(_plan(verification_plan=plan)) is False

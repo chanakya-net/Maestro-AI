@@ -29,7 +29,7 @@ def validate_configuration(config):
     contract = config.retry_contract
     if config.agent_run.role not in ('impl', 'modify') or not config.agent_run.cycle:
         raise ValueError('verify_existing requires impl/modify and an explicit cycle')
-    if not isinstance(contract, dict) or set(contract) != {
+    if not isinstance(contract, dict) or set(contract) - {'force_checks'} != {
             'source_state_file', 'source_attempt_id', 'expected_commit_sha', 'required_checks'}:
         raise ValueError('invalid retry_contract')
     for name in ('source_state_file', 'source_attempt_id', 'expected_commit_sha'):
@@ -41,14 +41,16 @@ def validate_configuration(config):
         if not isinstance(sha, str) or not re.fullmatch('[0-9a-f]{40}', sha):
             raise ValueError('verify_existing requires canonical commit SHAs')
     _validate_required_checks(contract['required_checks'])
+    _validate_force_checks(contract)
 
 
 def validate_result_capture(contract):
     if contract is None:
         return
-    if not isinstance(contract, dict) or set(contract) != {'required_checks', 'review_comment_ids'}:
+    if not isinstance(contract, dict) or set(contract) - {'force_checks'} != {'required_checks', 'review_comment_ids'}:
         raise ValueError('invalid result_capture')
     _validate_required_checks(contract['required_checks'])
+    _validate_force_checks(contract)
     ids = contract['review_comment_ids']
     if (not isinstance(ids, list) or any(not isinstance(item, str) or not item.strip() for item in ids) or
             len(set(ids)) != len(ids)):
@@ -60,6 +62,16 @@ def _validate_required_checks(checks):
             any(not isinstance(check, str) or not check.strip() for check in checks) or
             len(set(checks)) != len(checks)):
         raise ValueError('required_checks must be unique nonempty strings')
+
+
+def _validate_force_checks(contract):
+    """Optional coordinator-named checks that path scoping may never skip."""
+    if 'force_checks' not in contract:
+        return
+    forced = contract['force_checks']
+    if (not isinstance(forced, list) or len(set(map(str, forced))) != len(forced) or
+            any(not isinstance(check, str) or check not in contract['required_checks'] for check in forced)):
+        raise ValueError('force_checks must be unique entries of required_checks')
 
 
 def capture_cycle(cycle):
@@ -160,7 +172,7 @@ def _captured_commit_reason(config, payload):
     decision = validate_artifact(run.role, payload, GitEvidence(issue=str(run.issue), repo_available=True,
         head=head, canonical_commit=head, pre_spawn_head=start, canonical_pre_spawn_head=start))
     required = config.result_capture['required_checks']
-    skippable = _modify_skippable(config, start, head, required) if run.role == 'modify' and not no_op else ()
+    skippable = () if no_op else _scoped_skippable(config, config.result_capture, start, head)
     reason = decision.reason or check_evidence_reason(payload.get('verification'), expected_commit=head,
         required_checks=required, skippable_checks=skippable)
     if not reason and run.role == 'modify':
@@ -278,21 +290,29 @@ def result_reason(config, payload):
         return 'verification-commit-mismatch'
     if not isinstance(payload.get('files_committed'), list) or not payload['files_committed']:
         return 'invalid-verification-result'
-    skippable = ()
+    source_head = ''
     if run.role == 'modify':
         try:
             source_head = _source(config).pre_spawn_head
         except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
             source_head = ''
-        skippable = _modify_skippable(config, source_head, expected, contract['required_checks'])
+    skippable = _scoped_skippable(config, contract, source_head, expected)
     return check_evidence_reason(payload.get('verification'), expected_commit=expected,
         required_checks=contract['required_checks'], skippable_checks=skippable)
 
 
-def _modify_skippable(config, from_sha, to_sha, required_checks):
-    """Checks a modify change may skip, recomputed from Git and the base-commit scope map."""
-    return frozenset(check_scopes.skippable_checks(str(config.agent_run.repo_root),
-        base_sha=config.issue_base_sha, from_sha=from_sha, to_sha=to_sha, required_checks=required_checks))
+def _scoped_skippable(config, contract, modify_from_sha, to_sha):
+    """Checks the change may skip, recomputed from Git and the base-commit scope map.
+
+    A modify change is judged from the head it started on. An implementation is
+    always judged over the whole issue diff from the issue base, so a retry on
+    top of an earlier attempt's commit cannot hide that commit's paths. A check
+    the coordinator listed in ``force_checks`` is never skippable.
+    """
+    from_sha = modify_from_sha if config.agent_run.role == 'modify' else config.issue_base_sha
+    allowed = check_scopes.skippable_checks(str(config.agent_run.repo_root), base_sha=config.issue_base_sha,
+        from_sha=from_sha, to_sha=to_sha, required_checks=contract['required_checks'])
+    return frozenset(allowed) - frozenset(contract.get('force_checks', ()))
 
 
 def check_evidence_reason(verification, *, expected_commit, required_checks, skippable_checks=()):

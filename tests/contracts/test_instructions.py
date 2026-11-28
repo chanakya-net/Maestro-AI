@@ -399,3 +399,20 @@ def test_readme_installed_catalog_and_pool_examples(tmp_path, monkeypatch, capsy
     invoke(validate)
     (worker,) = (json.loads(line) for line in invoke([*launch, '--dry-run']).splitlines() if line.startswith('{'))
     assert (worker['agent_run']['agent'], worker['agent_run']['model']) == (config.sub_coord_agent, config.sub_coord_model)
+
+
+def test_force_checks_round_trip_through_worker_configuration():
+    import json
+    import pytest
+    from ai_skills.dispatch import WorkerConfig
+
+    text = (ROOT / 'assets/sub-coordinator-prompt.md').read_text(encoding='utf-8')
+    section = text.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    example = json.loads(re.search(r'```json\n(.*?)\n```', section, re.S)[1])
+    check = example['result_capture']['required_checks'][0]
+    capture = {**example['result_capture'], 'force_checks': [check]}
+    config = WorkerConfig.from_sources({**example, 'result_capture': capture}, {})
+    assert config.result_capture == capture
+    assert WorkerConfig.from_record(config.to_record()).result_capture == capture
+    with pytest.raises(ValueError):
+        WorkerConfig.from_sources({**example, 'result_capture': {**capture, 'force_checks': ['unlisted check']}}, {})

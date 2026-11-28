@@ -185,7 +185,7 @@ This is read directly by the modifier worker-agent (never by the Sub-Coordinator
       "fix": "concrete suggested change",
       "evidence": "what in the diff or context proves this is a problem",
       "expected_change": "what the modifier must change",
-      "verification": "specific command, test, or inspection that should prove closure"
+      "verification": "one exact runnable command that proves closure, or 'inspect: <what to check>'"
     }
   ],
   "blocking_reasons": ["list when verdict=reject"],
@@ -208,6 +208,9 @@ The `comments` array must include every distinct actionable finding from the com
 - Use `category="requirement"` for missed or partially satisfied acceptance criteria.
 - Use `category="security"` for exploitable input handling, secrets, permissions, unsafe filesystem, subprocess, Git, network, or artifact-boundary behavior.
 - Use `category="test"` for missing or misleading verification that could let a regression ship.
+- Do not raise a blocking `category="test"` finding because a required check was recorded as skipped under `.ai-skills-check-scopes.json`. The dispatcher already validated that skip against Git. Raise it only when the diff touches a path or contract the skipped check really depends on, and name that path as evidence.
+- Do not ask for a suite to be run again only to repeat a passing run on the same commit, and do not ask for suites the repository's merge gate (`.maestro/merge-gate.json`) runs at merge.
+- Write each `comments[].verification` as exactly one of two forms. **A command:** one exact runnable command, as narrow as proves closure (a filtered test, a single spec, a targeted harness); name an unfiltered suite only when the finding is a cross-cutting regression that a narrow command cannot show. **An inspection:** the prefix `inspect:` followed by what to check or which scenario the new test must cover. Never mix prose into a command or put several steps in one value; the coordinator copies command values verbatim into the modifier's required checks and treats `inspect:` values as closure guidance.
 - For `approve`, comments must be empty or nitpick-only. Any warning, critical, blocking, requirement, security, correctness, regression, or test-coverage finding requires `revise` or `reject`.
 
 ## Nitpick Policy

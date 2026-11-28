@@ -431,11 +431,83 @@ def test_path_scoped_skips_are_documented_and_dispatcher_owned():
     assert 'ai-skills artifact check-scope' in scoped and '--working-tree' in scoped and '"skipped": true' in scoped
     assert 'do not set `passed` on a skipped entry' in scoped and 'rejects any other skip' in scoped
     assert 'Path-scoped checks (see **Path-Scoped Verification**) are the only exception' in modifier
+    implementer = section(resource('prompt.md'), 'Path-Scoped Verification')
+    for scoped_section in (scoped, implementer):
+        assert '`result_capture.force_checks` is never skippable' in scoped_section
+    assert '--from <ISSUE_BASE_SHA> --to HEAD' in implementer and '--from <ISSUE_BASE_SHA> --working-tree' in implementer
+    assert 'do not set `passed` on a skipped entry' in implementer and 'rejects any other skip' in implementer
     protocol = resource('artifact-protocol.md')
-    assert "The one exception is a modification's path-scoped skip" in protocol
+    assert 'The one exception is a path-scoped skip' in protocol
+    assert '--from <REVIEW_HEAD_SHA>' in protocol and '--from <issue_base_sha>' in protocol
+    assert 'not in the contract\'s `force_checks`' in protocol
     coordinator = resource('sub-coordinator-prompt.md')
-    assert 'Keep every applicable check in `required_checks`' in coordinator
-    assert 'Implementation attempts never skip checks' in coordinator
+    assert 'Keep every applicable check even when the repository has a `.ai-skills-check-scopes.json` map' in coordinator
+    assert 'Implementation attempts never skip checks' not in coordinator
+    assert 'an implementation over its whole diff from `issue_base_sha`' in coordinator
+    assert '"force_checks": ["<exact required check>"]' in coordinator
+    assert 'pass `ISSUE_BASE_SHA=<issue_base_sha>` in the task context' in coordinator
     readme = (ROOT / 'README.md').read_text(encoding='utf-8')
     assert '.ai-skills-check-scopes.json' in readme and 'read from the issue\'s base commit' in readme
     assert '--working-tree' in readme and 'by induction' in readme
+    assert 'Initial implementation attempts never skip checks' not in readme and 'force_checks' in readme
+
+
+def test_verification_runs_once_on_the_handoff_commit():
+    implementer, modifier = resource('prompt.md'), resource('modifier-prompt.md')
+    blocks = []
+    for text, other in ((implementer, 'modifier-prompt.md'), (modifier, 'prompt.md')):
+        order = section(text, 'Verification Order')
+        marker = f'<!-- SYNC: intentionally duplicated in assets/{other} '
+        assert marker in order
+        blocks.append(order.replace(marker, '<!-- SYNC: '))
+    assert blocks[0].strip() == blocks[1].strip()
+    order = blocks[0]
+    assert 'make the handoff commit first' in order
+    assert 'run each required check once against that committed `HEAD`' in order
+    assert 'Never run a required check on the uncommitted tree and then again after committing the same tree' in order
+    assert 'Evidence from an earlier commit does not count for a later one' in order
+    assert 'Do not start an unfiltered integration suite' in order
+    # Flaky checks: isolate, one rerun of the exact command, then a typed failure.
+    assert 'First run only the failing tests in isolation' in order
+    assert 'rerun the exact required command **once**' in order
+    assert 'An isolated pass never satisfies the required check itself' in order
+    assert 'Do not run the check a third time' in order
+    # Merge-gate suites are not run per attempt.
+    assert '`.maestro/merge-gate.json`) run once at merge' in order
+    assert 'the full test suite when it fits the attempt deadline' not in implementer
+    assert 'Only proceed here after all tests pass' not in implementer
+    assert 'do not run them on the uncommitted tree first' in implementer
+    assert 'the required checks then run once on this commit' in modifier
+    protocol = resource('artifact-protocol.md')
+    assert 'commit first and then run every entry in `result_capture.required_checks` once against the committed HEAD' in protocol
+    assert 'Do not also run a required check on the same tree before committing' in protocol
+    assert 'rerun the exact required command once' in protocol
+    tdd = (ROOT / 'skills/tdd-implementation/SKILL.md').read_text(encoding='utf-8')
+    assert 'Re-run the targeted tests for the slice after each refactor step' in tdd
+    assert 'one final pass after the last edit' in tdd
+
+
+def test_required_checks_stay_runnable_scoped_and_out_of_the_merge_gate():
+    coordinator = resource('sub-coordinator-prompt.md')
+    native = coordinator.split('## Native Worker Configuration', 1)[1].split('## Verification-only retries', 1)[0]
+    assert 'Entries are runnable commands or named manual checks' in native
+    assert 'Never put a prose scenario' in native
+    assert 'verification_plan.final_required_checks' in native and 'include `result_capture` rather than omitting it' in native
+    assert '`verification_plan.advisory_not_applicable_notes` are hints: they never remove a check' in native
+    assert 'leave out of `required_checks` any command that file already declares' in native
+    assert '`ai-skills git merge-issue` runs it after approval' in native
+    revise = coordinator.split('**`verdict=revise`**', 1)[1].split('**`verdict=reject`**', 1)[0]
+    assert 'becomes a required check only when it is one exact runnable command or a named manual check' in revise
+    assert 'starts with `inspect:`' in revise and 'never a reason to omit `result_capture`' in revise
+    review = resource('review-prompt.md')
+    assert "or 'inspect: <what to check>'" in review
+    assert 'recorded as skipped under `.ai-skills-check-scopes.json`' in review
+    assert 'only to repeat a passing run on the same commit' in review
+    assert 'the prefix `inspect:`' in review and 'as narrow as proves closure' in review
+    plan = resource('plan-prompt.md')
+    assert '"verification_plan"' in plan and 'it cannot authorize skipping a check' in plan
+    for key in artifacts.VERIFICATION_PLAN_KEYS:
+        assert f'"{key}"' in plan
+    example = next(value for value in map(json.loads, fences(plan, 'json')) if 'verification_plan' in value)
+    assert artifacts.valid_plan_payload(example)
+    assert 'Checks declared here run once per issue at merge' in (ROOT / 'README.md').read_text(encoding='utf-8')

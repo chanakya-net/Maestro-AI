@@ -287,9 +287,9 @@ Failed or interrupted runs retain state and worktrees. Before discarding a run, 
 </details>
 
 <details>
-<summary><strong>Skipping unaffected checks during review fixes</strong></summary>
+<summary><strong>Skipping unaffected checks</strong></summary>
 
-By default every review-fix (modify) round re-runs every required check. To skip checks a fix cannot affect, such as a frontend build after a backend-only fix, commit `.ai-skills-check-scopes.json` to the repository:
+By default every implementation and every review-fix (modify) round runs every required check. To skip checks a change cannot affect, such as a frontend build for a backend-only change, commit `.ai-skills-check-scopes.json` to the repository:
 
 ```json
 {
@@ -300,14 +300,15 @@ By default every review-fix (modify) round re-runs every required check. To skip
 }
 ```
 
-A required check whose text starts with one of a scope's `check_prefixes` is declared to depend only on files matching that scope's `paths` globs (`*`, `?` and `**`). When a modify commit changes no such file, the worker may record the check as skipped. Only list paths a check truly depends on: if a frontend test calls the real backend, or both sides share contract files, include those paths too.
+A required check whose text starts with one of a scope's `check_prefixes` is declared to depend only on files matching that scope's `paths` globs (`*`, `?` and `**`). When the change touches no such file, the worker may record the check as skipped. A modify round is measured from the reviewed commit; an implementation is measured over its whole diff from the issue base. Only list paths a check truly depends on: if a frontend test calls the real backend, or both sides share contract files, include those paths too.
 
 The rules are deliberately strict:
 
 - The map is read from the issue's base commit, so a worker cannot change it to skip its own checks. A commit that edits the map skips nothing.
 - The dispatcher recomputes the allowed skips from Git commits and rejects any other skip.
-- Initial implementation attempts never skip checks. A missing or invalid map skips nothing.
-- There is no separate pre-merge full-suite rerun after approval: safety holds by induction from the full `impl` run plus each modify commit that touched a scope's declared paths, so include every shared contract or cross-layer dependency in each dependent scope's `paths`.
+- A missing or invalid map skips nothing. Skips are only accepted through the dispatcher's `result_capture` contract.
+- A coordinator can list checks in `result_capture.force_checks`; those are never skipped, which suits acceptance issues that must run cross-project suites whatever they touch.
+- There is no separate pre-merge full-suite rerun after approval beyond the merge gate: safety holds by induction from a passing shared branch plus each change that touched a scope's declared paths, so include every shared contract or cross-layer dependency in each dependent scope's `paths`.
 
 Workers query the allowed skips with `ai-skills artifact check-scope` (`--working-tree` to preview before committing, and `--to HEAD` to confirm after committing).
 
@@ -640,7 +641,7 @@ A target repository can also commit a merge gate at `.maestro/merge-gate.json`. 
 }
 ```
 
-`cwd` is relative to the repository root, `timeout_seconds` defaults to 1800 (maximum 14400), and `when_changed` globs (matched against the merge's changed paths) skip a check when nothing relevant changed. A missing file means no gate; an invalid file fails the merge with `reason=invalid-merge-gate`, and a failing check returns `reason=merge-gate-failed` with `failed_gate`.
+`cwd` is relative to the repository root, `timeout_seconds` defaults to 1800 (maximum 14400), and `when_changed` globs (matched against the merge's changed paths) skip a check when nothing relevant changed. Checks declared here run once per issue at merge, so the Sub-Coordinator leaves them out of the per-attempt required checks unless the issue's acceptance criteria name them; this is the place for slow cross-project suites that would otherwise run on every implementation and review-fix round. A missing file means no gate; an invalid file fails the merge with `reason=invalid-merge-gate`, and a failing check returns `reason=merge-gate-failed` with `failed_gate`.
 
 Provider selection follows explicit configuration, environment overrides, then registry defaults. `SUB_COORD_AGENT`/`SUB_COORD_MODEL` select coordinator execution; `FORCED_AGENT`/`FORCED_MODEL` constrain worker routing independently. Deprecated ambient `AGENT`/`MODEL` aliases remain available for direct agent execution, while dispatchers clear them before launching providers. Credentials are inherited at execution time and are not serialized into runtime records.
 
