@@ -67,18 +67,18 @@ Write exactly this shape to `RUN_WITH_IT_PLAN_RESULT_FILE`. Required keys: `sche
   "complexity_level": "medium-hard",
   "complexity_rationale": "Grounded at medium-hard because the change extends a core handler seam across 3 files with stateful retry edge cases.",
   "files": [
-    { "path": "src/foo/bar.ts", "change": "extend", "why": "add the X branch to existing handler" }
+    { "path": "path/to/handler.ext", "change": "extend", "why": "add the X branch to existing handler" }
   ],
   "slices": [
-    { "order": 1, "behavior": "happy path for X", "test_target": "bar.test.ts::handles X", "files": ["src/foo/bar.ts"] }
+    { "order": 1, "behavior": "happy path for X", "test_target": "<test file>::handles X", "files": ["path/to/handler.ext"] }
   ],
   "interfaces": ["public signature changes, if any"],
   "risks": ["known gotchas, ordering constraints, out-of-scope temptations to avoid"],
   "out_of_scope": ["explicitly NOT doing Y"],
   "verification_plan": {
-    "fast_loop_checks": ["bun run test --run src/foo/bar.test.ts"],
-    "final_required_checks": ["bun run test --watch=false", "bun run build"],
-    "advisory_not_applicable_notes": ["backend integration suite: no file under src/backend is planned to change"]
+    "fast_loop_checks": ["<repo command running only the changed test file>"],
+    "final_required_checks": ["<repo full test command>", "<repo build command>"],
+    "advisory_not_applicable_notes": ["<suite name>: no file under <its source path> is planned to change"]
   }
 }
 ```

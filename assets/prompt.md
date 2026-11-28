@@ -158,16 +158,11 @@ Pass one `--required-check` per required check, with its exact text. The output'
 
 **Out-of-scope test failures**: Investigate whether your changes introduced regressions. If a required gate stays red, publish the shared protocol failed or blocked report with exact evidence and preserve the work for coordinator attribution; never manufacture success or omit the handoff.
 
-Examples:
-
-- `bun run test` (frontend scope when applicable)
-- `dotnet test` (backend scope when applicable)
-
 If a required check will not fit the attempt deadline, follow the deadline rule in the appended `artifact-protocol.md`. Never leave a required check out silently.
 
-**Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, `vstest` IPC failure, socket permission error), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
+**Sandbox failures**: If a test command fails with a permission error caused by sandbox restrictions (e.g. named-pipe access denied, test-runner IPC failure, socket permission error), use the current tool's explicit approved permission-escalation flow when available, then retry the exact same command. If escalation is unavailable or denied, record verification as blocked with the permission error evidence.
 
-Before running each required command, record `verification_applicability` as `applicable`, `not_applicable`, or `failed`. `not_applicable` is allowed only when a concrete lifecycle precondition is absent (for example, a breaking-change baseline has no module on the base ref because this issue introduces the first module); record the inspected ref/path evidence. An applicable command that exits nonzero is `failed`, never `not_applicable`.
+Before running each required command, record `verification_applicability` as `applicable`, `not_applicable`, or `failed`. `not_applicable` is allowed only when a concrete lifecycle precondition is absent (for example, a baseline comparison has nothing on the base ref to compare against because this issue introduces the first version); record the inspected ref/path evidence. An applicable command that exits nonzero is `failed`, never `not_applicable`.
 
 ## Verification-only assignment
 
@@ -265,10 +260,10 @@ For committed success, report the full current commit SHA from the clean worktre
     "verification": {
       "passed": true,
       "commit_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "commands": ["python -m pytest tests -q"],
+      "commands": ["<repo test command>"],
       "checks": [
         {
-          "command": "python -m pytest tests -q",
+          "command": "<repo test command>",
           "passed": true,
           "evidence": "42 passed. Exit status 0."
         }

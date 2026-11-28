@@ -158,8 +158,8 @@ COMPLEXITY|score=18|level=medium|d1=3|d2=2|d3=3|d4=2|d5=3|d6=2|d7=3
     "scope_size": 3
   },
   "rationale": {
-    "coupling_and_blast_radius": "Touches shared routing and artifact validation seams with moderate regression surface.",
-    "pattern_novelty": "Extends established registry and validator patterns without inventing a new protocol.",
+    "coupling_and_blast_radius": "Touches shared request handling and validation seams with moderate regression surface.",
+    "pattern_novelty": "Extends established handler and validator patterns without inventing a new protocol.",
     "state_and_concurrency_risk": "Coordinates stateful updates across existing lock and retry helpers.",
     "data_and_rollback_risk": "Backward-compatible config and artifact update with clean revert.",
     "verification_risk": "Covered by existing unit and integration test harnesses.",
@@ -167,9 +167,9 @@ COMPLEXITY|score=18|level=medium|d1=3|d2=2|d3=3|d4=2|d5=3|d6=2|d7=3
     "scope_size": "Spans roughly 8 non-generated files across 3 vertical slices."
   },
   "files_inspected": [
-    "src/ai_skills/routing.py",
-    "src/ai_skills/artifacts.py",
-    "assets/agent-registry.json"
+    "path/to/handler.ext",
+    "path/to/validator.ext",
+    "path/to/config.ext"
   ]
 }
 ```
